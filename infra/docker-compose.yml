@@ -1,11 +1,57 @@
-# Infra local da plataforma. Apenas o object storage sobe em container: DuckDB e dbt
-# rodam no venv da plataforma (platform/.venv), para iterar num modelo sem rebuild.
+# Infra local da plataforma: object storage + Airflow com LocalExecutor.
 #
-# O MinIO e o unico servico com estado. O container `mc` cria os buckets e sai: o host
-# nao tem o binario `mc`, e depender de uma instalacao local para preparar o bucket
-# tornaria `make up` nao reproduzivel.
+# O MinIO e o Postgres sao os unicos servicos com estado. O container `mc` cria os
+# buckets e sai: o host nao tem o binario `mc`, e depender de uma instalacao local para
+# preparar o bucket tornaria `make up` nao reproduzivel.
+#
+# NENHUM CODIGO VAI PARA A IMAGEM. O repositorio e montado em /opt/retail-lakehouse e
+# alcancado por PYTHONPATH, para que editar um modelo dbt ou um modulo da plataforma nao
+# exija rebuild. Ver infra/Dockerfile.airflow.
 
 name: retail-lakehouse
+
+x-airflow-common: &airflow-common
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile.airflow
+  image: retail-lakehouse/airflow:2.10.5
+  # Roda com o UID do host para que os arquivos que o DAG escreve em data/ nao fiquem
+  # com dono 50000 no checkout. AIRFLOW_UID vem do .env.
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/retail-lakehouse/orchestration/airflow/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-dev-only-not-a-secret}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+
+    # Onde o DAG encontra as duas runtimes. A Source roda no interpretador do Airflow
+    # (dependencies = [], nada para conflitar); a plataforma no venv isolado da imagem.
+    RETAIL_REPO_ROOT: /opt/retail-lakehouse
+    RETAIL_SOURCE_PYTHON: python3
+    RETAIL_PLATFORM_PYTHON: /opt/platform-venv/bin/python
+    RETAIL_DBT: /opt/platform-venv/bin/dbt
+
+    # DENTRO DA REDE DO COMPOSE O ENDPOINT E `minio`, NAO `localhost`. Estas variaveis
+    # sobrescrevem o .env montado — config.load_dotenv() nao sobrepoe o que ja esta no
+    # ambiente, exatamente para que este caso funcione.
+    S3_ENDPOINT: http://minio:9000
+    S3_ENDPOINT_HOST: minio:9000
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    RAW_BUCKET: ${RAW_BUCKET:-retail-raw}
+    LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-retail-lakehouse}
+    DUCKDB_PATH: /opt/retail-lakehouse/platform/dbt/retail.duckdb
+    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+  volumes:
+    # Repositorio montado read-write: o DAG escreve os snapshots em data/.
+    - ../:/opt/retail-lakehouse
+    - airflow-logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
 
 services:
   minio:
@@ -55,5 +101,91 @@ services:
         echo "buckets prontos:"
         mc ls local
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: retail-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Migra o schema, cria o usuario da UI e — o que importa para a arquitetura — cria o
+  # POOL de 1 slot. Sem ele o LocalExecutor rodaria varios `extract` em paralelo e
+  # dobraria a taxa de requisicao contra a fonte, porque o throttle da Source e por
+  # processo. Roda uma vez e sai.
+  airflow-init:
+    <<: *airflow-common
+    container_name: retail-airflow-init
+    # ROOT de proposito, e o unico servico que roda assim: o volume airflow-logs nasce
+    # com dono root, e scheduler/webserver rodam como AIRFLOW_UID. Sem o chown abaixo, o
+    # scheduler morre com PermissionError ao escrever o log de parse — e o sintoma e
+    # enganoso, porque `airflow dags list` (que le arquivo) funciona enquanto o DAG nunca
+    # chega ao banco.
+    user: "0:0"
+    # `command`, NAO `entrypoint`: sobrescrever o entrypoint pularia o /entrypoint da
+    # imagem, que e quem cria a entrada em /etc/passwd para o AIRFLOW_UID do host. Sem
+    # ela o Airflow morre em getpass.getuser() com "no username".
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        mkdir -p /opt/airflow/logs
+        chown -R "$${AIRFLOW_UID}:0" /opt/airflow/logs
+        chmod -R g+rwX /opt/airflow/logs
+        airflow db migrate
+        airflow users create --role Admin --username admin --password admin \
+          --firstname admin --lastname admin --email admin@example.com || true
+        airflow pools set mercadona_api 1 \
+          "Serializa requisicoes contra a API: o throttle da Source e por processo"
+        echo "airflow-init concluido"
+    restart: "no"
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: retail-airflow-scheduler
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: retail-airflow-webserver
+    command: webserver
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
 volumes:
   minio-data:
+  postgres-data:
+  airflow-logs:

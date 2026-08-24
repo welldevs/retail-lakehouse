@@ -16,7 +16,10 @@ SOURCE_DIR    ?= sources/mercadona-catalog-source
 SOURCE_SRC     = $(SOURCE_DIR)/src
 PLATFORM_PY   ?= platform/.venv/bin/python
 DBT           ?= platform/.venv/bin/dbt
-COMPOSE       ?= docker compose -f infra/docker-compose.yml
+# --env-file e OBRIGATORIO: o project dir do compose e infra/, entao sem isto o .env da
+# raiz nao e lido e ${AIRFLOW_UID} cai no default 50000 — o container roda como outro
+# usuario e nao consegue ler os arquivos da particao, que a Source grava com modo 600.
+COMPOSE       ?= docker compose --env-file .env -f infra/docker-compose.yml
 
 DATA_ROOT     ?= data/source
 WH            ?= mad1
@@ -24,13 +27,20 @@ DATE          ?= $(shell date -u +%F)
 PARTITION      = $(DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
 
 .PHONY: help up down logs status venv test source-test platform-test \
-        extract validate land verify-landing silver daily query duckdb-secret clean-duckdb
+        extract validate land verify-landing silver daily query duckdb-secret \
+        airflow airflow-down airflow-logs airflow-trigger clean-duckdb
 
 help:
 	@echo "infra"
-	@echo "  up              sobe o MinIO e cria os buckets"
-	@echo "  down            derruba o stack (mantem o volume)"
+	@echo "  up              sobe o MinIO e cria os buckets (so o plano de dados)"
+	@echo "  down            derruba tudo (mantem os volumes)"
 	@echo "  status          estado dos containers e conteudo dos buckets"
+	@echo ""
+	@echo "orquestracao"
+	@echo "  airflow         builda e sobe Postgres + scheduler + webserver (:8080)"
+	@echo "  airflow-trigger dispara o DAG de hoje e acompanha"
+	@echo "  airflow-logs    logs do scheduler"
+	@echo "  airflow-down    derruba so o Airflow, mantendo o MinIO de pe"
 	@echo ""
 	@echo "pipeline (DATE=$(DATE) WH=$(WH))"
 	@echo "  extract         extrai um snapshot para $(PARTITION)"
@@ -52,8 +62,10 @@ help:
 	@echo "  venv            cria platform/.venv e instala a plataforma"
 
 # ---- infra -----------------------------------------------------------------
+# So o plano de dados. O Airflow e ~2 GB de RAM e nao e necessario para iterar num
+# modelo dbt ou rodar `make daily` a mao.
 up:
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d minio mc
 	@echo "MinIO: http://localhost:$(or $(MINIO_CONSOLE_PORT),9001) (console)"
 
 down:
@@ -61,6 +73,26 @@ down:
 
 logs:
 	$(COMPOSE) logs --tail=50
+
+# ---- orquestracao ----------------------------------------------------------
+# airflow-init roda antes e cria o pool mercadona_api com 1 slot. Sem ele o
+# LocalExecutor rodaria varios extract em paralelo e dobraria a taxa contra a fonte.
+airflow: up
+	$(COMPOSE) up -d --build airflow-scheduler airflow-webserver
+	@echo ""
+	@echo "Airflow UI: http://localhost:$(or $(AIRFLOW_PORT),8080)   (admin / admin)"
+
+airflow-down:
+	$(COMPOSE) stop airflow-scheduler airflow-webserver
+	$(COMPOSE) rm -f airflow-scheduler airflow-webserver airflow-init
+
+airflow-logs:
+	$(COMPOSE) logs --tail=60 airflow-scheduler
+
+airflow-trigger:
+	$(COMPOSE) exec airflow-scheduler airflow dags unpause mercadona_catalog_daily
+	$(COMPOSE) exec airflow-scheduler airflow dags trigger mercadona_catalog_daily
+	@echo "disparado. acompanhe com: make airflow-logs"
 
 status:
 	@$(COMPOSE) ps

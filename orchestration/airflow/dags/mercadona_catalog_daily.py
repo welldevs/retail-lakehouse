@@ -26,13 +26,25 @@ try:  # Airflow 3.x
 except ImportError:  # Airflow 2.x
     from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
-# Raiz do repositorio. Em producao vem de uma Variable ou do ambiente do worker; o
-# default serve para rodar `airflow dags test` a partir do proprio repo.
+# Raiz do repositorio, montada no container ou o proprio checkout no host.
 REPO = os.environ.get("RETAIL_REPO_ROOT", "/opt/retail-lakehouse")
-SOURCE_SRC = f"{REPO}/sources/mercadona-catalog-source/src"
-PLATFORM_PY = f"{REPO}/platform/.venv/bin/python"
-DBT = f"{REPO}/platform/.venv/bin/dbt"
 DATA_ROOT = f"{REPO}/data/source"
+
+# Nenhum codigo e importado deste DAG: tudo e invocado por subprocesso, com PYTHONPATH
+# apontando para o repositorio montado. Assim editar um modulo nao exige rebuild da
+# imagem, e o DAG nao carrega dependencia nenhuma da Source ou da plataforma.
+SOURCE_SRC = f"{REPO}/sources/mercadona-catalog-source/src"
+PLATFORM_SRC = f"{REPO}/platform/src"
+
+# DUAS RUNTIMES. A Source tem dependencies = [] e roda no proprio interpretador do
+# Airflow — nao existe pacote de terceiros para conflitar. A plataforma precisa de
+# boto3/duckdb/dbt, que colidem com os pins do Airflow (jinja2, click, pydantic), entao
+# vive num venv separado. Os defaults abaixo apontam para o venv do HOST, para que
+# `airflow dags test` funcione a partir do checkout; no container o compose sobrescreve
+# com /opt/platform-venv.
+SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
+PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
+DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
 WAREHOUSES = ["mad1"]
 
@@ -49,13 +61,39 @@ EXIT_PARTIAL = 1
 EXIT_FATAL = 2
 
 
-def _run(argv: list[str], cwd: str, env_extra: dict | None = None) -> int:
+def _run(argv: list[str], env_extra: dict | None = None) -> int:
+    """Executa e ENCAMINHA a saida linha a linha para o log da tarefa.
+
+    Deixar o subprocesso herdar os descritores parece funcionar e nao funciona: a saida
+    vai para o stdout do container, nao para o log da tarefa, e um exit code diferente de
+    zero chega ao Airflow sem nenhuma explicacao ao lado. Streaming linha a linha (em vez
+    de capturar tudo no fim) importa porque o extract leva ~227 s: sem isto a tarefa fica
+    muda durante quatro minutos.
+    """
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
     print("$", " ".join(argv))
-    completed = subprocess.run(argv, cwd=cwd, env=env, text=True)
-    return completed.returncode
+    process = subprocess.Popen(
+        argv, cwd=REPO, env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1,
+    )
+    with process.stdout:
+        for line in process.stdout:
+            print(line, end="")
+    return process.wait()
+
+
+def _run_source(argv: list[str]) -> int:
+    """Invoca a Source no interpretador do Airflow. Seguro porque dependencies = []."""
+    return _run([SOURCE_PYTHON, "-m", "mercadona_catalog_source", *argv],
+                {"PYTHONPATH": SOURCE_SRC})
+
+
+def _run_platform(argv: list[str]) -> int:
+    """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
+    return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
+                {"PYTHONPATH": PLATFORM_SRC})
 
 
 def partition_path(ingestion_date: str, warehouse: str) -> str:
@@ -104,8 +142,7 @@ def already_landed(ds: str, warehouse: str, **_) -> bool:
     Checar o `_SUCCESS` LOCAL aqui seria um erro: pularia o `land` de uma particao
     extraida a mao e nunca aterrissada.
     """
-    code = _run([PLATFORM_PY, "-m", "retail_platform", "verify-landing",
-                 partition_path(ds, warehouse)], cwd=REPO)
+    code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code == EXIT_OK:
         print("particao ja aterrissada e verificada no destino: nada a fazer.")
         return False
@@ -128,12 +165,7 @@ def extract(ds: str, warehouse: str, **_) -> None:
         print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
         return
 
-    code = _run(
-        ["python3", "-m", "mercadona_catalog_source", "extract",
-         "--out", DATA_ROOT, "--wh", warehouse, "--date", ds],
-        cwd=REPO,
-        env_extra={"PYTHONPATH": SOURCE_SRC},
-    )
+    code = _run_source(["extract", "--out", DATA_ROOT, "--wh", warehouse, "--date", ds])
     if code == EXIT_FATAL:
         # Particao inutilizavel ou uso invalido. Retry nao ajuda: o insumo nao muda.
         raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
@@ -147,33 +179,27 @@ def extract(ds: str, warehouse: str, **_) -> None:
 
 def validate(ds: str, warehouse: str, **_) -> None:
     """Gate. Exit 1 reprova sem retry: reler os mesmos bytes daria o mesmo resultado."""
-    code = _run(
-        ["python3", "-m", "mercadona_catalog_source", "validate",
-         partition_path(ds, warehouse), "--strict"],
-        cwd=REPO,
-        env_extra={"PYTHONPATH": SOURCE_SRC},
-    )
+    code = _run_source(["validate", partition_path(ds, warehouse), "--strict"])
     if code != EXIT_OK:
         raise RuntimeError(f"validate reprovou a particao (exit {code})")
 
 
 def land(ds: str, warehouse: str, **_) -> None:
-    code = _run([PLATFORM_PY, "-m", "retail_platform", "land",
-                 partition_path(ds, warehouse)], cwd=REPO)
+    code = _run_platform(["land", partition_path(ds, warehouse)])
     if code != EXIT_OK:
         raise RuntimeError(f"land falhou (exit {code})")
 
 
 def verify_landing(ds: str, warehouse: str, **_) -> None:
-    code = _run([PLATFORM_PY, "-m", "retail_platform", "verify-landing",
-                 partition_path(ds, warehouse)], cwd=REPO)
+    code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code != EXIT_OK:
         raise RuntimeError(f"verify-landing reprovou o destino (exit {code})")
 
 
 def silver(**_) -> None:
     code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
-                 "--profiles-dir", f"{REPO}/platform/dbt"], cwd=REPO)
+                 "--profiles-dir", f"{REPO}/platform/dbt"],
+                {"PYTHONPATH": PLATFORM_SRC})
     if code != EXIT_OK:
         raise RuntimeError(f"dbt build falhou (exit {code})")
 

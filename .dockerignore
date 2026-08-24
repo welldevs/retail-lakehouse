@@ -1,0 +1,15 @@
+# O Dockerfile.airflow NAO copia codigo — o repositorio e montado em runtime. Este
+# arquivo existe para o contexto de build nao carregar o que nao serve: sem ele, os
+# snapshots e os venvs vao para o daemon a cada build.
+.git
+data
+venv
+platform/.venv
+orchestration/.venv
+platform/dbt/target
+platform/dbt/logs
+platform/dbt/retail.duckdb
+**/__pycache__
+**/*.egg-info
+**/*.pyc
+.env

@@ -26,12 +26,18 @@ Python 3.12, Docker com Compose v2. `make venv` cria o ambiente da plataforma.
 ## Uso
 
 ```bash
-make up            # sobe o MinIO e cria os buckets
+make up            # sobe o MinIO e cria os buckets (só o plano de dados)
 make venv          # cria platform/.venv e instala a plataforma
 make daily         # extract -> validate -> land -> verify-landing -> silver
 make test          # 145 testes da Source + 19 da plataforma, ambos sem rede
 make status        # containers e contagem de objetos nos buckets
+
+make airflow       # Postgres + scheduler + webserver em :8080 (admin/admin)
+make query         # consulta o Silver
 ```
+
+`make up` sobe **apenas** o MinIO: o Airflow custa ~2 GB de RAM e não é necessário para
+iterar num modelo dbt ou rodar `make daily` à mão.
 
 `make daily` é **idempotente**: uma partição já completa não é reextraída (é imutável), e
 objetos já aterrissados com o checksum esperado são pulados, não reenviados.
@@ -166,18 +172,45 @@ gravaria os preços de hoje sob a chave daquela data — dado silenciosamente er
 08-17 a 08-23 estão perdidos de forma irrecuperável. Ver
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+**O container roda com o seu UID, não com o do Airflow.** A Source grava os arquivos com
+modo `600` (consequência de `tempfile.mkstemp()` na escrita atômica), então um container
+rodando como o usuário `airflow` (50000) padrão da imagem **não consegue ler a partição**.
+`AIRFLOW_UID` no `.env` resolve — gere com `id -u`. Não há fallback por grupo.
+
 **Uma extração por dia, por armazém.** A partição é imutável e o `robots.txt` do host
 declara `Disallow: /api`. O pool `mercadona_api` com 1 slot serializa as requisições porque
 o throttle da Source é por processo — dois `extract` concorrentes dobram a taxa real.
 
-**Airflow.** O DAG está em
-[orchestration/airflow/dags/](orchestration/airflow/dags/mercadona_catalog_daily.py) e não
-sobe no compose. Para exercitá-lo:
+**Airflow.** `make airflow` sobe o stack completo — Postgres para o metadata, scheduler
+com **LocalExecutor** e webserver em `:8080` (`admin`/`admin`).
 
 ```bash
-export AIRFLOW_HOME=/tmp/airflow RETAIL_REPO_ROOT=$PWD
-export AIRFLOW__CORE__DAGS_FOLDER=$PWD/orchestration/airflow/dags
-orchestration/.venv/bin/airflow db migrate
-orchestration/.venv/bin/airflow pools set mercadona_api 1 "throttle por processo"
-orchestration/.venv/bin/airflow dags test mercadona_catalog_daily $(date -u +%F)
+make airflow           # builda a imagem e sobe o stack
+make airflow-trigger   # despausa e dispara o DAG de hoje
+make airflow-logs      # acompanha o scheduler
+make airflow-down      # derruba só o Airflow, mantendo o MinIO de pé
 ```
+
+O `LocalExecutor` é escolha deliberada, e não conveniência: é o único executor em que o
+pool `mercadona_api` de 1 slot significa algo. Com `SequentialExecutor` a serialização
+aconteceria por acidente, não pelo mecanismo — e o mecanismo é o que protege o throttle da
+fonte.
+
+### Duas runtimes na imagem, de propósito
+
+O Airflow e o `dbt-core` fixam versões incompatíveis de `jinja2`, `click` e `pydantic`.
+Em vez de brigar com isso, a imagem tem duas:
+
+| Runtime | O que roda | Por que cabe ali |
+|---|---|---|
+| `/usr/local/bin/python` | Airflow + **a Source** | A Source tem `dependencies = []`: não existe pacote de terceiros para conflitar |
+| `/opt/platform-venv` | `boto3`, `duckdb`, `dbt-duckdb` | Isolado dos pins do Airflow |
+
+**Nenhum código vai para a imagem.** O repositório é montado em `/opt/retail-lakehouse` e
+alcançado por `PYTHONPATH`, então editar um modelo dbt ou um módulo da plataforma não exige
+rebuild — só as dependências ficam na imagem.
+
+Dentro da rede do compose o endpoint do MinIO é `minio:9000`, não `localhost:9000`. O
+compose sobrescreve `S3_ENDPOINT` para os serviços do Airflow, e isso funciona porque
+`config.load_dotenv()` **não** sobrepõe variável já presente no ambiente — o `.env` é
+default de desenvolvimento, não autoridade.

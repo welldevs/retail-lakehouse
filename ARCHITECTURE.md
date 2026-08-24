@@ -97,6 +97,28 @@ short-circuit. Exit 0 → nada a fazer; exit 1 → aterrissada mas divergente, s
 local ali seria um erro — pularia o `land` de uma partição extraída à mão e nunca
 aterrissada.
 
+### 4. A Source grava com modo 600, e isso define o UID do container
+
+`canonical.py` faz escrita atômica com `tempfile.mkstemp()`, que cria o arquivo com modo
+**0600**, e `os.replace` preserva esse modo. Medido: **153 dos 155 arquivos** de uma
+partição são `-rw-------` (só `_run.log`, escrito com `open()` comum, é 664).
+
+A consequência é operacional e não tem meio-termo: **qualquer consumidor precisa rodar com
+o UID do dono dos arquivos.** Não existe fallback por grupo. Por isso o container do
+Airflow roda como `${AIRFLOW_UID}` e não como o `airflow` (50000) padrão da imagem.
+
+Duas armadilhas conhecidas nesse caminho, ambas encontradas em execução:
+
+- **O compose não lê o `.env` da raiz por conta própria.** O project dir é `infra/`, então
+  `${AIRFLOW_UID}` caía no default 50000 e o container não conseguia ler a partição. O
+  `Makefile` passa `--env-file .env` explicitamente.
+- **Sobrescrever `entrypoint` num serviço do Airflow quebra o usuário.** O `/entrypoint`
+  da imagem é quem cria a entrada em `/etc/passwd` para o UID escolhido; sem ela o Airflow
+  morre em `getpass.getuser()`. Use `command`, nunca `entrypoint`.
+
+Alterar o modo na Source resolveria de forma mais direta, mas ela está FROZEN — então o
+UID é que se ajusta.
+
 ## Verificação em vez de confiança
 
 Padrão herdado do `validate.py` da Source, que recalcula em vez de aceitar valores
