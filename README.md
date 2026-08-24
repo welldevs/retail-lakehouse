@@ -26,6 +26,8 @@ Python 3.12, Docker com Compose v2. `make venv` cria o ambiente da plataforma.
 ## Uso
 
 ```bash
+cp .env.example .env && make secrets   # chaves aleatórias; o compose recusa subir sem elas
+
 make up            # sobe o MinIO e cria os buckets (só o plano de dados)
 make venv          # cria platform/.venv e instala a plataforma
 make daily         # extract -> validate -> land -> verify-landing -> silver
@@ -155,8 +157,14 @@ as views sem configurar nada.
 > # 1. fechar a conexão no cliente, ou abri-la em modo somente-leitura
 > # 2. escrever o estado em outro lugar:
 > make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb
-> # 3. make query já abre read_only, então coexiste com outros leitores
 > ```
+>
+> **`make query` não é afetado:** ele monta as views em memória diretamente sobre o parquet
+> e não abre o arquivo. Um *writer* bloqueia leitores também, então depender do arquivo
+> para consultar seria depender de ninguém ter esquecido uma janela aberta.
+>
+> O DAG também não é afetado: o `DUCKDB_PATH` do orquestrador vive dentro do container,
+> não no repositório montado.
 >
 > Isto não põe dado em risco: o arquivo só guarda views — o dado é o parquet no object
 > storage — e `make clean-duckdb` o recria.
@@ -170,11 +178,11 @@ make silver        # dbt build: 4 modelos + 36 testes (40 nós)
 
 Números conhecidos, que servem de critério de aceitação:
 
-| | 2026-08-15 | 2026-08-16 | 2026-08-24 |
-|---|---|---|---|
-| linhas | 4.600 | 4.599 | 4.581 |
-| produtos únicos | 4.329 | 4.328 | 4.311 |
-| objetos no RAW | 155 | 155 | 155 |
+| | `mad1` 08-15 | `mad1` 08-16 | `mad1` 08-24 | `bcn1` 08-24 |
+|---|---|---|---|---|
+| linhas | 4.600 | 4.599 | 4.581 | 4.587 |
+| produtos únicos | 4.329 | 4.328 | 4.311 | 4.320 |
+| objetos no RAW | 155 | 155 | 155 | 155 |
 
 | Janela | Preços alterados | Ids fora | Ids dentro | Nome já existia |
 |---|---|---|---|---|
@@ -195,6 +203,10 @@ gravaria os preços de hoje sob a chave daquela data — dado silenciosamente er
 modo `600` (consequência de `tempfile.mkstemp()` na escrita atômica), então um container
 rodando como o usuário `airflow` (50000) padrão da imagem **não consegue ler a partição**.
 `AIRFLOW_UID` no `.env` resolve — gere com `id -u`. Não há fallback por grupo.
+
+**Dois armazéns.** O DAG cobre `mad1` e `bcn1`. Medido em `2026-08-24`: dos 4.040 produtos
+comuns aos dois, **124 (3,1%) têm preço diferente**, até ±24% — `wh` altera sortimento
+**e** preço, ao contrário do que uma medição anterior de uma única categoria sugeria.
 
 **Uma extração por dia, por armazém.** A partição é imutável e o `robots.txt` do host
 declara `Disallow: /api`. O pool `mercadona_api` com 1 slot serializa as requisições porque

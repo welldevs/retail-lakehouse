@@ -70,10 +70,12 @@ from silver_product_price group by 1, 2 order by 1
 
 
 def _cmd_query(args) -> int:
-    from .query import connect
+    from .query import connect, connect_lakehouse
 
     config = from_env()
-    connection = connect(config, database=args.database)
+    # Padrao: views em memoria sobre o parquet, sem tocar o .duckdb. Ver connect_lakehouse.
+    connection = (connect(config, database=args.database) if args.database
+                  else connect_lakehouse(config))
     sql = args.sql or DEFAULT_QUERY
     result = connection.execute(sql)
     columns = [d[0] for d in result.description]
@@ -126,7 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
         "sql", nargs="?", default=None, help="SQL a executar (padrao: resumo por particao)"
     )
     query_parser.add_argument(
-        "--database", default="platform/dbt/retail.duckdb", help="arquivo .duckdb"
+        "--database", default=None,
+        help="consulta um arquivo .duckdb em vez das views em memoria sobre o parquet",
     )
     query_parser.set_defaults(handler=_cmd_query)
 

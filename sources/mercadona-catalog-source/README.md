@@ -305,10 +305,18 @@ Verificadas contra a API, não presumidas:
   mesmas 152 requisições sequenciais a 1,5 s tiveram 0 falhas, em execuções repetidas.
   **Comportamento além de 152 requisições por execução não foi medido**, e não se
   distinguiu WAF de rate limit de borda — observou-se apenas o status.
-- **`wh` altera o sortimento.** Na amostra medida — categoria 112, `mad1` vs `bcn1` — os 35
-  produtos comuns têm preço idêntico, e a diferença está em quais produtos existem (1
-  exclusivo em `mad1`, 3 em `bcn1`). É observação de **1 categoria e 2 armazéns**, não
-  propriedade demonstrada da fonte. `pmi1` responde `404`.
+- **`wh` altera sortimento E preço.** Medido no catálogo inteiro, `mad1` vs `bcn1` em
+  `2026-08-24`: 4.311 produtos em `mad1`, 4.320 em `bcn1`, **4.040 em comum** — ou seja
+  271 exclusivos de um e 280 do outro. Dos 4.040 comuns, **124 (3,1%) têm preço
+  diferente**, com variação de até ±24%, concentrada em perecíveis (`Sandía` 4,82 → 3,86;
+  `Solomillo de cerdo` 3,90 → 4,84) e refrigerantes.
+
+  Uma medição anterior deste arquivo, restrita à **categoria 112** (35 produtos comuns),
+  não encontrou nenhuma diferença de preço e concluía que `wh` variava só o sortimento.
+  **Essa conclusão estava errada** — era artefato do tamanho da amostra. Registrado aqui
+  porque um consumidor que trate preço como independente do armazém erra em 3% das linhas.
+
+  `pmi1` responde `404`.
 - **`robots.txt` de `tienda.mercadona.es` declara `Disallow: /api`**, e o cliente envia um
   **User-Agent de navegador Chrome**, não um identificador de robô
   ([http_client.py](src/mercadona_catalog_source/http_client.py)). Usar esta rota como

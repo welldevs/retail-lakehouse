@@ -155,9 +155,18 @@ A fronteira não é a pasta. É imposta por:
 3. **Zero dependência tem retorno prático:** a Source roda no próprio interpretador do
    worker do Airflow via `PYTHONPATH`, sem conflitar com as dependências pinadas dele.
 
-## Dívida técnica conhecida
+## Dívida técnica
 
-Registrada em vez de esquecida. Nada aqui bloqueia o uso da plataforma hoje.
+Resolvida em 2026-08-24, exceto o CI.
+
+| Item | Situação |
+|---|---|
+| Cobertura de teste | **Fechada.** 19 → 44 testes, com duplo de S3 em memória |
+| Caminho de extração em container | **Fechado.** `bcn1` extraído, validado, aterrissado e transformado dentro do container |
+| Ambientes redundantes | **Removidos.** 265 MB (`venv/` quebrado e `orchestration/.venv`) |
+| Credenciais de desenvolvimento | **Endurecidas.** Portas em loopback, chaves aleatórias, compose recusa subir sem elas |
+| Divergência de `data/` | **Contida.** O padrão `data/` do `.gitignore` casa em qualquer nível |
+| **CI** | **Em aberto**, deliberadamente adiado para quando o repositório subir |
 
 ### Cobertura de teste
 
@@ -173,49 +182,52 @@ Fechado com um duplo de cliente S3 em memória (`platform/tests/fake_s3.py`), no
 duplo de HTTP que a Source já usa. O duplo **valida o `ChecksumSHA256` declarado**, como o
 servidor real faz: um erro na conversão hex→base64 falharia em teste, não em produção.
 
-As verificações que antes eram manuais agora são reexecutáveis, e foram confirmadas
-não-vazias por mutação: desligar a comparação de sha256 em `verify.py` faz
+Confirmado não-vazio por mutação: desligar a comparação de sha256 em `verify.py` faz
 `test_catches_a_tampered_object` falhar.
 
-**O que a suíte ainda não cobre:** o caminho `dbt` (os 36 testes de dados exigem object
-storage de pé) e o DAG (nenhum teste importa o módulo do Airflow).
+**O que ainda não é coberto:** o caminho `dbt` (os 36 testes de dados exigem object storage
+de pé) e o DAG (nenhum teste importa o módulo do Airflow). Os dois foram verificados
+manualmente, em execução real.
 
-### Caminho de extração não exercitado em container
+### Endurecimento do stack local
 
-Todas as execuções do DAG até agora curto-circuitaram em `skip_if_landed`, porque a
-partição do dia já estava aterrissada. `extract → validate → land` foi verificado no host,
-mas **não dentro do container**. A diferença que importa: o modo `600` dos arquivos e o
-`AIRFLOW_UID`. Só será exercitado numa partição nova.
+- **Portas em `127.0.0.1`** por padrão (`BIND_ADDR`). Antes escutavam em `0.0.0.0` com
+  `minioadmin/minioadmin` e `admin/admin` — qualquer máquina da rede alcançava o console do
+  MinIO e a UI do Airflow.
+- **`AIRFLOW_SECRET_KEY` e `AIRFLOW_FERNET_KEY` aleatórias**, geradas por `make secrets` no
+  `.env` (modo 600, fora do versionamento). O compose usa interpolação `:?` e **recusa
+  subir sem elas**, de modo que não existe caminho em que um valor de exemplo vire a chave
+  real por esquecimento.
+- **`DUCKDB_PATH` do orquestrador vive dentro do container**, não no repositório montado. O
+  DuckDB é single-writer: com o arquivo compartilhado, uma janela de DBeaver esquecida no
+  host derrubaria a tarefa `silver` do DAG.
 
 ### Sem CI
 
 Nenhum `.github/workflows`. A fronteira depende de alguém rodar `make test` — e o alvo
 `source-test` existe exatamente para ser um job que não instala nada. Dois jobs
 (Source sem dependência, plataforma com venv) tornariam a fronteira verificada a cada push
-em vez de por disciplina.
+em vez de por disciplina. Adiado para quando o repositório subir.
 
-### Ambientes redundantes em disco
+## Dois defeitos de orquestração que só apareceram com dois armazéns
 
-| Caminho | Tamanho | Situação |
-|---|---|---|
-| `venv/` | 21 MB | **Quebrado.** Ficou apontando para o `src/` antigo depois do move; o console script dá traceback. Recriável com `make -C sources/mercadona-catalog-source venv` |
-| `orchestration/.venv` | 245 MB | **Redundante** desde que o Airflow passou a rodar em container. Só serve para `airflow dags test` no host |
-| `platform/.venv` | 384 MB | Em uso |
+Ambos invisíveis com um único armazém, e ambos silenciosos: o DAG terminava `success`
+enquanto deixava de transformar dado recém-aterrissado.
 
-Os dois primeiros estão no `.gitignore` e podem ser removidos sem perda.
+1. **`trigger_rule` padrão do `silver`.** `all_success` faz a tarefa compartilhada ser
+   pulada quando *qualquer* upstream é pulado. Com o `mad1` curto-circuitando por já estar
+   aterrissado, o `silver` era pulado mesmo com o `bcn1` tendo acabado de aterrissar.
+   Corrigido para `NONE_FAILED_MIN_ONE_SUCCESS`.
 
-### Credenciais de desenvolvimento no `.env.example`
+2. **`ignore_downstream_trigger_rules` do `ShortCircuitOperator`.** O padrão é `True`, e
+   com ele o short-circuit pula **todo** o downstream **ignorando a `trigger_rule` de cada
+   tarefa** — inclusive a que acabara de ser corrigida. O sintoma foi exatamente o mesmo, o
+   que torna o segundo defeito fácil de confundir com a correção do primeiro ter falhado.
+   Com `False`, o gate pula apenas o próprio ramo e o `silver` volta a decidir pela própria
+   regra.
 
-`minioadmin/minioadmin`, `admin/admin` na UI do Airflow e
-`AIRFLOW_SECRET_KEY=dev-only-not-a-secret`. Aceitável para um stack local e sinalizado como
-tal no arquivo, mas nada disso pode sobreviver a uma exposição de rede.
-
-### Divergência possível de `data/`
-
-O `Makefile` da raiz escreve em `<raiz>/data/source`. O `Makefile` da Source tem
-`ROOT ?= data/source` relativo ao próprio diretório, então um `make extract` rodado de
-dentro de `sources/mercadona-catalog-source/` cria uma segunda árvore de partições que a
-plataforma não consome. Documentado no README da Source; não impedido por código.
+Verificado no cenário misto: `mad1` curto-circuita, `bcn1` percorre
+`extract → validate → land → verify`, e o `silver` **roda**.
 
 ## Fora de escopo
 

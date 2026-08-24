@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 
+from airflow.utils.trigger_rule import TriggerRule
+
 try:  # Airflow 3.x
     from airflow.providers.standard.operators.python import (
         PythonOperator,
@@ -46,7 +48,7 @@ SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
-WAREHOUSES = ["mad1"]
+WAREHOUSES = ["mad1", "bcn1"]
 
 # UM slot. O throttle da Source e POR PROCESSO
 # (http_client.py: 1/delay req/s medido do inicio da requisicao anterior), entao dois
@@ -234,6 +236,14 @@ with DAG(
             task_id=f"skip_if_landed_{warehouse}",
             python_callable=already_landed,
             op_kwargs={"warehouse": warehouse},
+            # PADRAO E True, e com mais de um armazem isso esta ERRADO: o short-circuit
+            # pula TODO o downstream ignorando a trigger_rule de cada tarefa — inclusive a
+            # do `silver`, que e compartilhado. Resultado observado: bcn1 aterrissava com
+            # sucesso e o `silver` era pulado mesmo assim, porque mad1 curto-circuitou.
+            #
+            # Com False, o gate pula apenas o SEU ramo, e a cascata normal de skip cuida
+            # do resto. O `silver` volta a decidir pela propria trigger_rule.
+            ignore_downstream_trigger_rules=False,
         )
 
         do_extract = PythonOperator(
@@ -273,6 +283,16 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
+        # A regra PADRAO (all_success) esta ERRADA aqui, e o erro so aparece com mais de um
+        # armazem: o short-circuit de um deles marca seu verify_landing como `skipped`, e
+        # com all_success isso arrasta o `silver` junto — o dado recem-aterrissado do OUTRO
+        # armazem nunca seria transformado.
+        #
+        # none_failed_min_one_success da o comportamento certo nos tres casos:
+        #   todos curto-circuitaram  -> nada novo, silver `skipped` (correto, e barato);
+        #   ao menos um aterrissou   -> silver RODA;
+        #   algum falhou             -> silver nao roda sobre um RAW suspeito.
+        trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 
     # O Silver le do object storage, entao depende do verify de TODOS os armazens.

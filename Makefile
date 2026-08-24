@@ -26,7 +26,7 @@ WH            ?= mad1
 DATE          ?= $(shell date -u +%F)
 PARTITION      = $(DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
 
-.PHONY: help up down logs status venv test source-test platform-test \
+.PHONY: help up down logs status venv secrets test source-test platform-test \
         extract validate land verify-landing silver daily query duckdb-secret \
         airflow airflow-down airflow-logs airflow-trigger clean-duckdb
 
@@ -60,6 +60,7 @@ help:
 	@echo "  platform-test   testes da plataforma, sem rede"
 	@echo ""
 	@echo "  venv            cria platform/.venv e instala a plataforma"
+	@echo "  secrets         gera AIRFLOW_SECRET_KEY e AIRFLOW_FERNET_KEY no .env"
 
 # ---- infra -----------------------------------------------------------------
 # So o plano de dados. O Airflow e ~2 GB de RAM e nao e necessario para iterar num
@@ -172,6 +173,11 @@ venv:
 	$(PLATFORM_PY) -m pip install --quiet --upgrade pip
 	$(PLATFORM_PY) -m pip install --quiet -e platform/
 	@$(PLATFORM_PY) -c "import boto3, duckdb; print('plataforma pronta')"
+
+# Chaves aleatorias no .env (que esta no .gitignore). O compose recusa subir sem elas,
+# entao nao existe caminho em que um valor de exemplo vire a chave real por esquecimento.
+secrets:
+	@$(PYTHON) scripts/gen-secrets.py
 
 clean-duckdb:
 	rm -f platform/dbt/retail.duckdb
