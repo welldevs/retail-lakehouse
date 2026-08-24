@@ -1,0 +1,23 @@
+name: retail_lakehouse
+version: "0.1.0"
+config-version: 2
+profile: retail_lakehouse
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Prefixo do RAW aterrissado. Sobrescrevivel para apontar para outro bucket.
+  raw_prefix: "s3://retail-raw/mercadona_catalog_api"
+  # A fonte NAO declara moeda (CONTRACT.md 4.6). O Silver nao inventa: esta var existe
+  # para o Gold, e e PREMISSA do consumidor, nao dado da fonte.
+  currency: "EUR"
+
+models:
+  retail_lakehouse:
+    silver:
+      # Saida em parquet no object storage. Cada modelo declara seu proprio `location`
+      # e particionamento: o grao difere entre eles.
+      +materialized: external
+      +format: parquet

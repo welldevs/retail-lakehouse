@@ -1,0 +1,20 @@
+# Profile local. As credenciais vem do ambiente (.env na raiz), nunca do arquivo.
+#
+# s3_endpoint no DuckDB e host:porta SEM esquema, e o MinIO exige url_style=path
+# (o estilo virtual-host exigiria DNS por bucket).
+retail_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'retail.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+        - json
+      settings:
+        s3_endpoint: "{{ env_var('S3_ENDPOINT_HOST', 'localhost:9000') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD') }}"
+        s3_use_ssl: false
+        s3_url_style: "path"

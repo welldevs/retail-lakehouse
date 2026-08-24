@@ -1,0 +1,59 @@
+# Infra local da plataforma. Apenas o object storage sobe em container: DuckDB e dbt
+# rodam no venv da plataforma (platform/.venv), para iterar num modelo sem rebuild.
+#
+# O MinIO e o unico servico com estado. O container `mc` cria os buckets e sai: o host
+# nao tem o binario `mc`, e depender de uma instalacao local para preparar o bucket
+# tornaria `make up` nao reproduzivel.
+
+name: retail-lakehouse
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: retail-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # `mc` vem embutido na imagem do server (verificado); `mc ready` e a checagem
+      # oficial e cobre disco+quorum, nao apenas o processo estar de pe.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  # Cria os buckets e sai. `versioning` no bucket RAW: uma particao aterrissada nunca
+  # e sobrescrita em silencio, espelhando a imutabilidade que a Source garante em disco.
+  mc:
+    image: minio/mc:latest
+    container_name: retail-mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      RAW_BUCKET: ${RAW_BUCKET:-retail-raw}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-retail-lakehouse}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$RAW_BUCKET"
+        mc mb --ignore-existing "local/$$LAKEHOUSE_BUCKET"
+        mc version enable "local/$$RAW_BUCKET"
+        echo "buckets prontos:"
+        mc ls local
+
+volumes:
+  minio-data:

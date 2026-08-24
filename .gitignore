@@ -16,9 +16,17 @@ venv/
 # passou a ser o object storage (s3://retail-raw/...); data/ e scratch da extracao.
 data/
 
-# Venv da plataforma (o da Source, venv/, ja esta acima).
+# Venvs: da plataforma e do Airflow. O da Source (venv/) ja esta acima.
 platform/.venv/
+orchestration/.venv/
+
+# Artefatos do dbt. O dado real vive no object storage; o .duckdb e so estado local.
+platform/dbt/target/
+platform/dbt/logs/
+platform/dbt/retail.duckdb
+platform/dbt/package-lock.yml
 
 # Credenciais locais do MinIO / plataforma.
 .env
 
+platform/dbt/.user.yml
