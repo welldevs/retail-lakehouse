@@ -114,6 +114,28 @@ composta.
 `name_seen_before` marca os ids novos cujo `display_name` já existia na partição anterior
 (6 casos medidos) como fila de revisão, em vez de tratá-los em silêncio como produto novo.
 
+## Consultar o Silver
+
+O dado real é o **parquet no object storage**. O arquivo `platform/dbt/retail.duckdb`
+guarda apenas **quatro views** apontando para ele — não contém dado, está fora do
+versionamento, e `make clean-duckdb` o apaga sem perda.
+
+Por isso abrir o arquivo com um cliente DuckDB qualquer **falha** com `NoSuchBucket`: a
+sessão nova não conhece o endpoint nem a credencial, e o DuckDB tenta a AWS de verdade.
+Duas saídas:
+
+```bash
+make query                                    # resumo por partição
+make query SQL="select * from silver_price_change where name_seen_before"
+
+make duckdb-secret                            # grava o secret uma vez...
+duckdb platform/dbt/retail.duckdb             # ...e daí qualquer cliente funciona
+```
+
+`make duckdb-secret` grava um secret do DuckDB em `~/.duckdb/stored_secrets` a partir do
+`.env`. Depois disso, qualquer cliente — CLI, DBeaver, notebook — abre o arquivo e consulta
+as views sem configurar nada.
+
 ## Verificação
 
 ```bash

@@ -24,7 +24,7 @@ DATE          ?= $(shell date -u +%F)
 PARTITION      = $(DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
 
 .PHONY: help up down logs status venv test source-test platform-test \
-        extract validate land verify-landing silver daily clean-duckdb
+        extract validate land verify-landing silver daily query duckdb-secret clean-duckdb
 
 help:
 	@echo "infra"
@@ -39,6 +39,10 @@ help:
 	@echo "  verify-landing  rele do object storage e reconfere"
 	@echo "  silver          dbt build (modelos + testes)"
 	@echo "  daily           os cinco acima, em ordem"
+	@echo ""
+	@echo "consulta"
+	@echo "  query           consulta o Silver.  make query SQL=\"select ...\""
+	@echo "  duckdb-secret   grava o secret para abrir o .duckdb em qualquer cliente"
 	@echo ""
 	@echo "testes"
 	@echo "  test            source-test + platform-test"
@@ -94,6 +98,18 @@ silver:
 daily: extract validate land verify-landing silver
 	@echo ""
 	@echo "daily OK para ingestion_date=$(DATE) wh=$(WH)"
+
+# ---- consulta ---------------------------------------------------------------
+# O retail.duckdb guarda apenas VIEWs sobre o parquet do object storage — nao contem
+# dado. Por isso abri-lo com um cliente qualquer falha com NoSuchBucket: a sessao nova
+# nao sabe o endpoint. Este alvo abre com tudo configurado; `duckdb-secret` resolve de
+# vez, para qualquer cliente.
+SQL ?=
+query:
+	@$(PLATFORM_PY) -m retail_platform query $(if $(SQL),"$(SQL)",)
+
+duckdb-secret:
+	@$(PLATFORM_PY) -m retail_platform duckdb-secret
 
 # ---- testes ----------------------------------------------------------------
 test: source-test platform-test

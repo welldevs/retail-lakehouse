@@ -1,7 +1,9 @@
 """Interface de linha de comando da plataforma.
 
-    retail-platform land          <particao>
+    retail-platform land           <particao>
     retail-platform verify-landing <particao>
+    retail-platform query          [sql]
+    retail-platform duckdb-secret
 
 Codigos de saida, no mesmo espirito do CONTRACT.md secao 7 da Source, para que o
 orquestrador decida por codigo e nao por parsing de log:
@@ -60,6 +62,45 @@ def _cmd_verify(args) -> int:
     return EXIT_OK
 
 
+DEFAULT_QUERY = """
+select ingestion_date, warehouse, count(*) as linhas,
+       count(distinct source_product_id) as produtos
+from silver_product_price group by 1, 2 order by 1
+"""
+
+
+def _cmd_query(args) -> int:
+    from .query import connect
+
+    config = from_env()
+    connection = connect(config, database=args.database)
+    sql = args.sql or DEFAULT_QUERY
+    result = connection.execute(sql)
+    columns = [d[0] for d in result.description]
+    rows = result.fetchall()
+    widths = [
+        max(len(columns[i]), *(len(str(r[i])) for r in rows)) if rows else len(columns[i])
+        for i in range(len(columns))
+    ]
+    print("  ".join(name.ljust(widths[i]) for i, name in enumerate(columns)))
+    print("  ".join("-" * w for w in widths))
+    for row in rows:
+        print("  ".join(str(value).ljust(widths[i]) for i, value in enumerate(row)))
+    print(f"\n{len(rows)} linha(s)")
+    return EXIT_OK
+
+
+def _cmd_duckdb_secret(args) -> int:
+    from .query import SECRET_NAME, create_persistent_secret
+
+    storage = create_persistent_secret(from_env())
+    print(f"secret '{SECRET_NAME}' gravado ({storage}).")
+    print("Agora qualquer cliente DuckDB abre o arquivo sem configurar nada:")
+    print("    duckdb platform/dbt/retail.duckdb")
+    print("    select count(*) from silver_product_price;")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="retail-platform",
@@ -77,6 +118,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("partition", help="caminho da particao em disco")
     verify_parser.set_defaults(handler=_cmd_verify)
+
+    query_parser = subparsers.add_parser(
+        "query", help="consulta o Silver (conexao ja configurada para o object storage)"
+    )
+    query_parser.add_argument(
+        "sql", nargs="?", default=None, help="SQL a executar (padrao: resumo por particao)"
+    )
+    query_parser.add_argument(
+        "--database", default="platform/dbt/retail.duckdb", help="arquivo .duckdb"
+    )
+    query_parser.set_defaults(handler=_cmd_query)
+
+    secret_parser = subparsers.add_parser(
+        "duckdb-secret",
+        help="grava um secret do DuckDB para que qualquer cliente abra o .duckdb",
+    )
+    secret_parser.set_defaults(handler=_cmd_duckdb_secret)
 
     return parser
 
