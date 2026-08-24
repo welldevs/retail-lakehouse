@@ -14,7 +14,11 @@ retail_lakehouse:
         - json
       settings:
         s3_endpoint: "{{ env_var('S3_ENDPOINT_HOST', 'localhost:9000') }}"
-        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER') }}"
-        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD') }}"
+        # Com default: sem ele o dbt aborta com "Env var required but not provided",
+        # que nao diz qual variavel nem onde defini-la. O valor de desenvolvimento do
+        # .env.example e o mesmo, entao o default nao esconde configuracao errada — so
+        # torna o erro legivel quando o .env nao foi criado.
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'minioadmin') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'minioadmin') }}"
         s3_use_ssl: false
         s3_url_style: "path"

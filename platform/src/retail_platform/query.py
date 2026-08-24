@@ -24,9 +24,15 @@ DEFAULT_DB = "platform/dbt/retail.duckdb"
 
 
 def _endpoint_host(endpoint: str) -> str:
-    """O DuckDB quer host:porta SEM esquema; o boto3 quer a URL completa."""
-    parsed = urlparse(endpoint)
-    return parsed.netloc or parsed.path or endpoint
+    """O DuckDB quer host:porta SEM esquema; o boto3 quer a URL completa.
+
+    O teste de ausencia de "://" nao e defensivismo: urlparse("minio:9000") interpreta
+    `minio` como ESQUEMA e `9000` como caminho, devolvendo "9000". Um S3_ENDPOINT escrito
+    sem esquema — forma perfeitamente razoavel — chegaria ao DuckDB so com a porta.
+    """
+    if "://" not in endpoint:
+        return endpoint
+    return urlparse(endpoint).netloc or endpoint
 
 
 def _apply_s3_settings(connection, config) -> None:

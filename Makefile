@@ -124,7 +124,17 @@ land:
 verify-landing:
 	$(PLATFORM_PY) -m retail_platform verify-landing $(PARTITION)
 
+# O DuckDB e single-writer. Um cliente com o arquivo aberto em leitura-escrita (DBeaver
+# faz isso por padrao) faz o dbt abortar com 20 linhas de traceback para um problema que
+# se resolve fechando uma conexao. A guarda troca isso por uma linha acionavel.
+DUCKDB_PATH   ?= platform/dbt/retail.duckdb
 silver:
+	@$(PLATFORM_PY) -c "import duckdb; duckdb.connect('$(DUCKDB_PATH)').close()" 2>/dev/null || { \
+	  echo "ERRO: outro processo tem $(DUCKDB_PATH) aberto em escrita."; \
+	  echo "      O DuckDB e single-writer. Feche a conexao (DBeaver, notebook, CLI) e"; \
+	  echo "      tente de novo, ou use: make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb"; \
+	  echo "      O arquivo so guarda views: nada se perde ao recria-lo."; \
+	  exit 2; }
 	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt
 
 daily: extract validate land verify-landing silver

@@ -29,7 +29,7 @@ Python 3.12, Docker com Compose v2. `make venv` cria o ambiente da plataforma.
 make up            # sobe o MinIO e cria os buckets (só o plano de dados)
 make venv          # cria platform/.venv e instala a plataforma
 make daily         # extract -> validate -> land -> verify-landing -> silver
-make test          # 145 testes da Source + 19 da plataforma, ambos sem rede
+make test          # 145 testes da Source + 44 da plataforma, ambos sem rede
 make status        # containers e contagem de objetos nos buckets
 
 make airflow       # Postgres + scheduler + webserver em :8080 (admin/admin)
@@ -56,18 +56,23 @@ make verify-landing DATE=2026-08-16
 ├── ARCHITECTURE.md                     # ADR: o que não entrou, e o gatilho de cada um
 ├── Makefile                            # ponto de entrada da plataforma
 ├── sources/mercadona-catalog-source/   # a Source, FROZEN, dependencies = []
+├── .env.example                        # copie para .env; credenciais só de desenvolvimento
 ├── platform/
 │   ├── pyproject.toml                  # boto3, duckdb, dbt-core, dbt-duckdb
 │   ├── src/retail_platform/
+│   │   ├── config.py                   # endpoint e credenciais, do ambiente
 │   │   ├── manifest.py                 # o contrato do consumidor, em código
 │   │   ├── land.py                     # partição -> object storage, verificado
 │   │   ├── verify.py                   # releitura e reconferência independentes
-│   │   └── cli.py                      # land / verify-landing
+│   │   ├── query.py                    # conexão configurada + secret do DuckDB
+│   │   └── cli.py                      # land / verify-landing / query / duckdb-secret
 │   ├── dbt/models/silver/              # 4 modelos
 │   ├── dbt/tests/                      # 7 testes singulares
-│   └── tests/                          # 19 testes, sem rede
+│   └── tests/                          # 44 testes, sem rede (duplo de S3 em memória)
 ├── orchestration/airflow/dags/         # o DAG diário
-├── infra/docker-compose.yml            # MinIO + criação de buckets
+├── infra/
+│   ├── docker-compose.yml              # MinIO + mc + Postgres + scheduler + webserver
+│   └── Dockerfile.airflow              # imagem do orquestrador: duas runtimes
 └── data/                               # scratch da extração, fora do versionamento
 ```
 
@@ -142,11 +147,25 @@ duckdb platform/dbt/retail.duckdb             # ...e daí qualquer cliente funci
 `.env`. Depois disso, qualquer cliente — CLI, DBeaver, notebook — abre o arquivo e consulta
 as views sem configurar nada.
 
+> **O DuckDB é single-writer.** Um cliente com o arquivo aberto em leitura-escrita (o
+> DBeaver faz isso por padrão) **bloqueia o `make silver`**. O alvo detecta isso e falha com
+> uma mensagem acionável em vez de um traceback. Três saídas:
+>
+> ```bash
+> # 1. fechar a conexão no cliente, ou abri-la em modo somente-leitura
+> # 2. escrever o estado em outro lugar:
+> make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb
+> # 3. make query já abre read_only, então coexiste com outros leitores
+> ```
+>
+> Isto não põe dado em risco: o arquivo só guarda views — o dado é o parquet no object
+> storage — e `make clean-duckdb` o recria.
+
 ## Verificação
 
 ```bash
-make test          # 164 testes sem rede (145 Source + 19 plataforma)
-make silver        # dbt build: 4 modelos + 40 testes
+make test          # 189 testes sem rede (145 Source + 44 plataforma)
+make silver        # dbt build: 4 modelos + 36 testes (40 nós)
 ```
 
 Números conhecidos, que servem de critério de aceitação:

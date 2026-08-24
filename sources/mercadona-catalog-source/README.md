@@ -19,6 +19,24 @@ com o consumidor está em [CONTRACT.md](CONTRACT.md).
 Python 3.12+ e nada mais. Somente biblioteca padrão. `dependencies = []` no
 [pyproject.toml](pyproject.toml) — não há o que instalar.
 
+## Localização
+
+Esta Source vive em `sources/mercadona-catalog-source/` de um monorepo, ao lado da camada
+de plataforma que a consome. Ela **permanece independente**: `pyproject.toml` próprio,
+`dependencies = []`, suíte própria, e nada fora daqui é importado.
+
+Comandos com `make` neste diretório continuam funcionando isolados, e é assim que a
+fronteira é verificada. Mas no dia a dia use o **Makefile da raiz**, que aponta `--out`
+para o `data/` compartilhado do monorepo:
+
+```bash
+make -C ../..  extract validate      # da raiz: escreve em <raiz>/data/source
+make test                            # daqui: suíte da Source, sem rede
+```
+
+Rodar `make extract` **daqui** cria um `data/source/` dentro deste diretório, separado do
+`data/` da raiz. Útil para teste isolado, mas não é a partição que a plataforma consome.
+
 ## Uso
 
 ```bash
@@ -87,23 +105,24 @@ make install               # cria venv/, instala ferramentas de build e o pacote
 │   ├── extract.py                   # as duas etapas de extração
 │   └── validate.py                  # validação independente
 ├── tests/                           # 145 testes, stdlib unittest, sem rede
-├── venv/                            # ambiente de build; ignorado pelo git
-└── data/source/
-    └── ingestion_date=2026-08-15/
-        └── wh=mad1/
-            ├── categories/categories.json
-            ├── catalog/category_id=<id>.json     (151 arquivos)
-            ├── _manifest.json
-            ├── _SUCCESS
-            └── _run.log
+└── venv/                            # ambiente de build, criado por `make venv`; ignorado
 ```
 
-Dois arquivos na raiz **não pertencem a esta Source** e foram deixados intocados:
-`documents.txt` e `insert_planilhanfdespesa.sql`, de outro contexto de trabalho. Movê-los
-ou removê-los é decisão do dono do workspace.
+Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
+`<raiz>/data/source/ingestion_date=…/wh=…/`, dois níveis acima, com esta forma:
 
-O diretório ainda **não é um repositório git**, então o `.gitignore` está inerte — as
-regras só passam a valer depois de um `git init`.
+```
+data/source/ingestion_date=2026-08-24/
+└── wh=mad1/
+    ├── categories/categories.json
+    ├── catalog/category_id=<id>.json     (151 arquivos)
+    ├── _manifest.json
+    ├── _SUCCESS
+    └── _run.log
+```
+
+O `.gitignore` fica na raiz do monorepo e cobre `venv/`, `data/` e os temporários da
+escrita atômica.
 
 ## Forma dos arquivos
 
@@ -143,27 +162,32 @@ níveis.
 
 ## Execução registrada
 
-Ambiente: Python 3.12.7, Linux. Duas partições em disco, ambas `wh=mad1`, ambas validadas.
+Ambiente: Python 3.12.7, Linux. Três partições em disco, todas `wh=mad1`, todas validadas.
 
-| Métrica | `2026-08-15` | `2026-08-16` |
-|---|---|---|
-| `run_id` | `20260815T143445Z_mad1` | `20260816T214655Z_mad1` |
-| Requisições HTTP | 152 (1 árvore + 151 categorias) | 152 |
-| Retries / Falhas | 0 / 0 | 0 / 0 |
-| Duração | 227,3 s | 227,0 s |
-| Categorias nível 1 / nível 2 | 26 / 151 | 26 / 151 |
-| Arquivos de catálogo | 151 | 151 |
-| Linhas de produto | 4.600 | 4.599 |
-| Produtos únicos | 4.329 | 4.328 |
-| Volume | 8.291.070 bytes em 152 arquivos declarados | 8.289.262 bytes |
-| `schema_fingerprint` | `37a3d95d…` | `37a3d95d…` (igual) |
-| `complete` | `true`, com `_SUCCESS` | `true`, com `_SUCCESS` |
+| Métrica | `2026-08-15` | `2026-08-16` | `2026-08-24` |
+|---|---|---|---|
+| `run_id` | `20260815T143445Z_mad1` | `20260816T214655Z_mad1` | `20260824T140006Z_mad1` |
+| Requisições HTTP | 152 (1 árvore + 151 categorias) | 152 | 152 |
+| Retries / Falhas | 0 / 0 | 0 / 0 | 0 / 0 |
+| Duração | 227,3 s | 227,0 s | 227,8 s |
+| Categorias nível 1 / nível 2 | 26 / 151 | 26 / 151 | 26 / 151 |
+| Arquivos de catálogo | 151 | 151 | 151 |
+| Linhas de produto | 4.600 | 4.599 | 4.581 |
+| Produtos únicos | 4.329 | 4.328 | 4.311 |
+| Volume | 8.291.070 bytes | 8.289.262 bytes | 8.261.218 bytes |
+| `schema_fingerprint` | `37a3d95d…` | `37a3d95d…` | `37a3d95d…` (igual nas três) |
+| `complete` | `true`, com `_SUCCESS` | `true`, com `_SUCCESS` | `true`, com `_SUCCESS` |
 
-Ambas em `manifest_version: 2`. A partição de `2026-08-15` foi gravada antes da introdução
-de `anomalies[]` e não tem o campo — leia como lista vazia, conforme
-[CONTRACT.md § 1](CONTRACT.md).
+Todas em `manifest_version: 2`, todas com 152 arquivos declarados. A partição de
+`2026-08-15` foi gravada antes da introdução de `anomalies[]` e não tem o campo — leia como
+lista vazia, conforme [CONTRACT.md § 1](CONTRACT.md).
 
-**Validação** (`--strict`, ambas): 152/152 arquivos conferidos por checksum, 0 órfãos,
+**Há um vão de 8 dias** entre `2026-08-16` e `2026-08-24`. Os dias `08-17` a `08-23` **não
+existem e não podem ser recuperados**: a API serve apenas o preço de hoje, e a Source não
+tem como reconstruir o passado. É a razão pela qual a extração precisa ser agendada, e não
+disparada à mão.
+
+**Validação** (`--strict`, todas): 152/152 arquivos conferidos por checksum, 0 órfãos,
 0 anomalias, cobertura 151/151 categorias, schema igual, totais reconferidos, 0 produtos
 sem nome, 0 sem preço, 0 sem categoria — 100,00% de completude. Saída `OK`, código 0.
 
@@ -172,9 +196,11 @@ sem nome, 0 sem preço, 0 sem categoria — 100,00% de completude. Saída `OK`, 
 **Imutabilidade**: reexecutar `extract` sobre uma partição completa retorna código 2 com
 `particao ja esta completa e e imutavel`.
 
-### Variação observada entre as duas partições
+### Variação observada entre partições
 
-Primeira evidência de mudança temporal na fonte, medida sobre os snapshots — não inferida:
+Mudança temporal na fonte, medida sobre os snapshots — não inferida.
+
+**Janela de 1 dia**, `2026-08-15` → `2026-08-16`:
 
 - **17 preços alterados**, quase todos hortifruti: `Coliflor` 3.50 → 3.63, `Patata`
   0.42 → 0.44, `Mango` 1.50 → 1.46, `Piña` 3.72 → 3.66, `Melocotón amarillo` 0.57 → 0.60.
@@ -185,7 +211,21 @@ Primeira evidência de mudança temporal na fonte, medida sobre os snapshots —
   retirado e outro lançado.
 - `schema_fingerprint` idêntico: a forma da resposta não mudou entre os dois dias.
 
-A Source **não interpreta** isso: ela entrega os dois snapshots. Qualquer leitura de
+**Janela de 8 dias**, `2026-08-16` → `2026-08-24` — a mesma fonte, medida num intervalo
+maior, muda muito mais:
+
+- **152 preços alterados** entre os 4.295 ids presentes nos dois snapshots.
+- **33 ids saíram**, **16 entraram**. Destes 16, **5 têm `display_name` que já existia** em
+  `08-16` — ou seja, a fonte reemitiu itens sob outra chave, sem sinalizar. Ver
+  [CONTRACT.md § 4.5](CONTRACT.md): `source_product_id` não é identidade de negócio.
+- `schema_fingerprint` idêntico também aqui.
+
+**`price_decreased` é falso em 100% das linhas nas três partições**, apesar dos 152 preços
+alterados. O campo que a fonte oferece para sinalizar variação não sinaliza nada: a única
+forma de detectar mudança de preço é o **diff de snapshots**. Fato da fonte, registrado
+aqui; a Source não o interpreta.
+
+A Source **não interpreta** isso: ela entrega os snapshots. Qualquer leitura de
 histórico, SCD ou variação de preço é da camada seguinte.
 
 ### Repetição de linhas
@@ -203,12 +243,27 @@ Semântica da fonte, preservada deliberadamente. A resolução é da camada post
 
 ### Campos de preço observados
 
-Presentes em 4.600/4.600 registros: `unit_price`, `reference_price`, `reference_format`,
-`bulk_price`, `previous_unit_price`, `price_decreased`, `tax_percentage`.
+Presentes em 100% dos registros das três partições: `unit_price`, `reference_price`,
+`reference_format`, `bulk_price`, `previous_unit_price`, `price_decreased`,
+`tax_percentage`.
 
-Preenchimento: `unit_price` é string em 100%; `tax_percentage` não-nulo em 100%;
-`previous_unit_price` não-nulo em **205 linhas (4,5%)**; `price_decreased` verdadeiro em
-**0 linhas**. Observação factual do snapshot — a interpretação é da camada posterior.
+Preenchimento medido:
+
+| | `2026-08-15` | `2026-08-16` | `2026-08-24` |
+|---|---|---|---|
+| `unit_price` string, não-nulo | 100% | 100% | 100% |
+| `tax_percentage` não-nulo | 100% | 100% | 100% |
+| `previous_unit_price` não-nulo | 205 (4,5%) | 211 (4,6%) | 194 (4,2%) |
+| `price_decreased` verdadeiro | **0** | **0** | **0** |
+
+Duas observações factuais que o consumidor precisa saber, ambas medidas e nenhuma
+interpretada aqui:
+
+1. **`previous_unit_price` vem com espaços à esquerda** — `"       18.75"` — em **100% dos
+   não-nulos** (205/205, 211/211, 194/194). Aparar antes de converter é obrigação do
+   consumidor; motores diferentes toleram o padding de formas diferentes.
+2. **`iva` é nulo em 100% das linhas** enquanto `tax_percentage` está preenchido. O campo
+   útil é o segundo.
 
 ## Comportamento operacional
 
@@ -324,8 +379,16 @@ A imagem **não precisa instalar nenhum pacote de terceiros**. Dois modos, ambos
 
 Verificado: um venv limpo, com apenas `requirements-build.txt` instalado, constrói e instala
 o pacote com `--no-build-isolation` (sem buscar dependência de build na rede) e o console
-script responde. O `Dockerfile` ainda não existe — quando quiser, eu escrevo, e o modo sem
-instalação permite um estágio final `distroless`/`slim` sem `pip`.
+script responde.
+
+**Não existe `Dockerfile` para esta Source, e por ora não é necessário.** O monorepo tem
+`infra/Dockerfile.airflow`, que é a imagem do *orquestrador*: nela a Source roda no próprio
+interpretador do Airflow, via `PYTHONPATH`, **sem instalar nada** — exatamente o "modo sem
+instalação" da tabela acima. É o retorno prático de `dependencies = []`: zero dependência
+significa que ela cabe em qualquer imagem sem negociar versão com ninguém.
+
+Uma imagem dedicada só passa a valer se a Source for executada fora do orquestrador; nesse
+caso o modo sem instalação permite um estágio final `distroless`/`slim` sem `pip`.
 
 Pontos que o container vai precisar respeitar: `data/` deve ser volume, não camada da
 imagem (o snapshot é artefato, não código); o processo precisa de saída de rede para
@@ -345,6 +408,11 @@ fingerprint, partição sem nenhum produto, e ausência de dependência de terce
 ## Nota sobre o diretório raiz
 
 O diretório do workspace ainda se chama `Spark`, o que induz a interpretação de que há
-Apache Spark aqui — não há. O rename do diretório é ação do dono do workspace (afeta a
-sessão da IDE) e não foi executado; nada no código, no pacote ou nos dados depende dele.
-Sugestão: `mercadona-catalog-source`.
+Apache Spark aqui — não há, e o [ARCHITECTURE.md](../../ARCHITECTURE.md) registra sob que
+condição passaria a haver.
+
+A sugestão anterior deste arquivo era renomear para `mercadona-catalog-source`. **Ela ficou
+obsoleta**: esse nome agora pertence a este subdiretório, e a raiz abriga a plataforma
+inteira. Um nome adequado para a raiz seria `retail-lakehouse`. O rename é ação do dono do
+workspace (afeta a sessão da IDE) e não foi executado; nada no código, no pacote ou nos
+dados depende dele.

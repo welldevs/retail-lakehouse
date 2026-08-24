@@ -14,7 +14,7 @@ Data: 2026-08-24. Todos os números abaixo foram medidos nas três partições e
 | Linhas por partição | ~4.600 (4.329 produtos únicos) |
 | Crescimento | ~3 GB/ano se rodar todo dia |
 | Duração de uma extração | 227 s (152 requisições a 1,5 s) |
-| Silver completo (3 partições, 4 modelos, 40 testes) | ~6 s |
+| Silver completo (3 partições, 4 modelos, 36 testes) | ~6 s |
 
 Nenhuma tecnologia distribuída é justificada por este volume. O que segue não é recusa —
 é a condição em que cada uma passa a valer.
@@ -54,7 +54,7 @@ sem reescrita. É isso que torna as trocas abaixo configuração, e não projeto
 | **Snowflake** | SQL governado para terceiros | ~3 GB/ano e um único consumidor. | Alguém além do autor consultar os dados. | `dbt-snowflake` + `COPY INTO`. **Atrito a registrar:** o Snowflake não alcança um MinIO local — exigiria S3 real ou stage gerenciado. |
 | **Airflow** | Retry, exit codes, pools, SLA, histórico de execução | — | **Adotado.** Pesado para um job diário de 4 min, e assumido com essa consciência: o valor está no contrato operacional (o pool de 1 slot e o tratamento de exit code não têm equivalente em cron). | — |
 
-## Três restrições medidas que moldaram o desenho
+## Quatro restrições medidas que moldaram o desenho
 
 Não são preferências. São comportamento observado, e cada uma está imposta em código.
 
@@ -81,9 +81,14 @@ dentro do **processo**. Dois `extract` concorrentes dobram a taxa real contra o 
 Medido: 152 requisições em 9 s produziram ~20% de `403` e bloqueio intermitente por
 minutos; sequencial a 1,5 s deu 0 falhas em execuções repetidas.
 
-Com vários armazéns, o pool do Airflow com **1 slot** é a única coisa preservando a taxa
-segura. Não é enfeite de configuração. 7 armazéns × 152 requisições × 1,5 s ≈ 27 min
-sequenciais, o que cabe folgado numa janela diária.
+Com mais de um armazém, o pool do Airflow com **1 slot** é a única coisa preservando a taxa
+segura. Não é enfeite de configuração.
+
+O DAG hoje cobre **um** armazém (`WAREHOUSES = ["mad1"]`), então o pool ainda não está sob
+pressão real — ele existe antes de ser necessário, de propósito, porque acrescentar um
+armazém é uma linha e o dano de esquecê-lo é um bloqueio da fonte. Dimensionamento se
+vários entrarem: 7 armazéns × 152 requisições × 1,5 s ≈ 27 min sequenciais, o que cabe
+folgado numa janela diária.
 
 ### 3. Reexecutar `extract` numa partição completa retorna exit 2
 
@@ -129,7 +134,7 @@ gravados. Repetido em cada fronteira:
 | disco → RAW | sha256 do arquivo local conferido **antes** do PUT; `ChecksumSHA256` validado no servidor |
 | RAW | `verify-landing` baixa todo objeto e recalcula sha256, tamanho e inventário |
 | RAW → Silver | teste dbt reconcilia a contagem derivada contra `totals` do manifesto |
-| Silver | 40 testes, incluindo unicidade do grão composto e linhagem redundante |
+| Silver | 36 testes (7 singulares + 29 do schema), incluindo unicidade do grão composto e linhagem redundante |
 
 Cada verificação foi provada capaz de **falhar**: adulterar um byte no destino reprova o
 `verify-landing` (exit 1); remover um objeto de catálogo reprova o teste de reconciliação.
@@ -149,6 +154,68 @@ A fronteira não é a pasta. É imposta por:
    continua sem dependência de terceiros. É a fronteira verificada, não afirmada.
 3. **Zero dependência tem retorno prático:** a Source roda no próprio interpretador do
    worker do Airflow via `PYTHONPATH`, sem conflitar com as dependências pinadas dele.
+
+## Dívida técnica conhecida
+
+Registrada em vez de esquecida. Nada aqui bloqueia o uso da plataforma hoje.
+
+### Cobertura de teste
+
+| Módulo | Testes | Situação |
+|---|---|---|
+| `manifest.py` | 17 | Obrigações do contrato e recusas |
+| `land.py` | 10 | Upload, idempotência, auto-correção, abortar antes de `_SUCCESS` |
+| `verify.py` | 7 | Adulteração, objeto ausente, órfão, manifesto divergente |
+| `config.py` | 8 | Precedência de credencial e o `.env` não sobrepor o ambiente |
+| `query.py` | 2 | Conversão de endpoint com e sem esquema |
+
+Fechado com um duplo de cliente S3 em memória (`platform/tests/fake_s3.py`), no espírito do
+duplo de HTTP que a Source já usa. O duplo **valida o `ChecksumSHA256` declarado**, como o
+servidor real faz: um erro na conversão hex→base64 falharia em teste, não em produção.
+
+As verificações que antes eram manuais agora são reexecutáveis, e foram confirmadas
+não-vazias por mutação: desligar a comparação de sha256 em `verify.py` faz
+`test_catches_a_tampered_object` falhar.
+
+**O que a suíte ainda não cobre:** o caminho `dbt` (os 36 testes de dados exigem object
+storage de pé) e o DAG (nenhum teste importa o módulo do Airflow).
+
+### Caminho de extração não exercitado em container
+
+Todas as execuções do DAG até agora curto-circuitaram em `skip_if_landed`, porque a
+partição do dia já estava aterrissada. `extract → validate → land` foi verificado no host,
+mas **não dentro do container**. A diferença que importa: o modo `600` dos arquivos e o
+`AIRFLOW_UID`. Só será exercitado numa partição nova.
+
+### Sem CI
+
+Nenhum `.github/workflows`. A fronteira depende de alguém rodar `make test` — e o alvo
+`source-test` existe exatamente para ser um job que não instala nada. Dois jobs
+(Source sem dependência, plataforma com venv) tornariam a fronteira verificada a cada push
+em vez de por disciplina.
+
+### Ambientes redundantes em disco
+
+| Caminho | Tamanho | Situação |
+|---|---|---|
+| `venv/` | 21 MB | **Quebrado.** Ficou apontando para o `src/` antigo depois do move; o console script dá traceback. Recriável com `make -C sources/mercadona-catalog-source venv` |
+| `orchestration/.venv` | 245 MB | **Redundante** desde que o Airflow passou a rodar em container. Só serve para `airflow dags test` no host |
+| `platform/.venv` | 384 MB | Em uso |
+
+Os dois primeiros estão no `.gitignore` e podem ser removidos sem perda.
+
+### Credenciais de desenvolvimento no `.env.example`
+
+`minioadmin/minioadmin`, `admin/admin` na UI do Airflow e
+`AIRFLOW_SECRET_KEY=dev-only-not-a-secret`. Aceitável para um stack local e sinalizado como
+tal no arquivo, mas nada disso pode sobreviver a uma exposição de rede.
+
+### Divergência possível de `data/`
+
+O `Makefile` da raiz escreve em `<raiz>/data/source`. O `Makefile` da Source tem
+`ROOT ?= data/source` relativo ao próprio diretório, então um `make extract` rodado de
+dentro de `sources/mercadona-catalog-source/` cria uma segunda árvore de partições que a
+plataforma não consome. Documentado no README da Source; não impedido por código.
 
 ## Fora de escopo
 
