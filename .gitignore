@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Temporarios da escrita atomica: nunca devem sobreviver a uma execucao.
+.tmp-*.json
+
+# Configuracao local de maquina.
+.claude/settings.local.json
+
+# Os snapshots em data/ sao artefato de execucao, nao codigo-fonte. A verdade do RAW
+# passou a ser o object storage (s3://retail-raw/...); data/ e scratch da extracao.
+data/
+
+# Venv da plataforma (o da Source, venv/, ja esta acima).
+platform/.venv/
+
+# Credenciais locais do MinIO / plataforma.
+.env
+
