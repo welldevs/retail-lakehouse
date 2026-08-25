@@ -4,6 +4,7 @@
     retail-platform verify-landing <particao>
     retail-platform query          [sql]
     retail-platform duckdb-secret
+    retail-platform has-data       <prefixo-da-source>
 
 Codigos de saida, no mesmo espirito do CONTRACT.md secao 7 da Source, para que o
 orquestrador decida por codigo e nao por parsing de log:
@@ -92,6 +93,23 @@ def _cmd_query(args) -> int:
     return EXIT_OK
 
 
+def _cmd_has_data(args) -> int:
+    """Existe ao menos um objeto aterrissado sob <raw_bucket>/<prefixo>/?
+
+    Existe para o Makefile decidir, ANTES de chamar `dbt build`, se exclui do build o
+    modelo Silver de uma source que ainda nao aterrissou nada — sem isso, `dbt build`
+    do projeto inteiro falharia so por causa de uma source recem-adicionada, mesmo
+    quando as demais tem dado normalmente. Generico: qualquer source pode ser
+    consultada pelo prefixo, nao so uma em especial.
+    """
+    config = from_env()
+    prefix = args.prefix.rstrip("/") + "/"
+    response = config.client().list_objects_v2(
+        Bucket=config.raw_bucket, Prefix=prefix, MaxKeys=1
+    )
+    return EXIT_OK if response.get("KeyCount", 0) > 0 else EXIT_FAILED
+
+
 def _cmd_duckdb_secret(args) -> int:
     from .query import SECRET_NAME, create_persistent_secret
 
@@ -138,6 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="grava um secret do DuckDB para que qualquer cliente abra o .duckdb",
     )
     secret_parser.set_defaults(handler=_cmd_duckdb_secret)
+
+    has_data_parser = subparsers.add_parser(
+        "has-data",
+        help="codigo 0 se existe algum objeto aterrissado sob o prefixo, 1 se nao",
+    )
+    has_data_parser.add_argument("prefix", help="prefixo da source, ex.: ine_population_api")
+    has_data_parser.set_defaults(handler=_cmd_has_data)
 
     return parser
 

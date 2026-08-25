@@ -8,7 +8,7 @@ VENV        ?= venv
 VENV_PY      = $(VENV)/bin/python
 export PYTHONPATH = src
 
-ROOT        ?= data/source
+ROOT        ?= data/mercadona
 WH          ?= mad1
 DATE        ?= $(shell date -u +%F)
 PARTITION    = $(ROOT)/ingestion_date=$(DATE)/wh=$(WH)

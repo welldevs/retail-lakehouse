@@ -76,3 +76,48 @@ def build_partition(root: str, ingestion_date="2026-08-24", warehouse="mad1", *,
             handle.write(manifest["run_id"] + "\n")
 
     return partition
+
+
+def build_single_axis_partition(root: str, ingestion_date="2026-08-24", *,
+                                source_name="ine_population_api", manifest_version=1,
+                                complete=True, failures=None, extra_manifest=None,
+                                write_success=None, table_ids=(31304,)):
+    """Cria uma particao sintetica SEM segundo eixo (formato de uma source como o INE,
+    que devolve todas as provincias num unico payload por table_id)."""
+    partition = os.path.join(root, f"ingestion_date={ingestion_date}")
+    tail = f"ingestion_date={ingestion_date}"
+    files = []
+
+    for tid in table_ids:
+        payload = {"table_id": tid, "series": [{"COD": "DPOP1", "Nombre": "Total. Madrid. Ambos sexos. Población. Número.",
+                   "Data": [{"Anyo": 2025, "Valor": 6779888}]}]}
+        sha, size = write_canonical(
+            os.path.join(partition, "tables", f"table_id={tid}.json"), payload)
+        files.append({"path": f"{tail}/tables/table_id={tid}.json", "sha256": sha,
+                      "bytes": size, "records": 1, "stage": "tables"})
+
+    manifest = {
+        "manifest_version": manifest_version,
+        "run_id": f"{ingestion_date.replace('-', '')}T000000Z",
+        "complete": complete,
+        "source": {"name": source_name, "lang": ""},
+        "partition": {"ingestion_date": ingestion_date},
+        "totals": {"series": len(table_ids)},
+        "schema_fingerprint": {"sha256": "deadbeef"},
+        "files": files,
+        "failures": failures or [],
+        "anomalies": [],
+    }
+    if extra_manifest:
+        manifest.update(extra_manifest)
+    write_canonical(os.path.join(partition, "_manifest.json"), manifest)
+
+    with open(os.path.join(partition, "_run.log"), "w", encoding="utf-8") as handle:
+        handle.write("log\n")
+
+    should_write = complete if write_success is None else write_success
+    if should_write:
+        with open(os.path.join(partition, "_SUCCESS"), "w", encoding="utf-8") as handle:
+            handle.write(manifest["run_id"] + "\n")
+
+    return partition

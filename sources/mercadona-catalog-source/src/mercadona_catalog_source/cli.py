@@ -19,7 +19,7 @@ from . import __version__
 from . import extract as extract_module
 from . import validate as validate_module
 
-DEFAULT_ROOT = "data/source"
+DEFAULT_ROOT = "data/mercadona"
 DEFAULT_WAREHOUSE = "mad1"
 DEFAULT_LANG = "es"
 DEFAULT_DELAY = 1.5
@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "validate", help="valida uma particao ja extraida"
     )
     validate_parser.add_argument(
-        "partition", help="caminho da particao, ex.: data/source/ingestion_date=2026-08-15/wh=mad1"
+        "partition", help="caminho da particao, ex.: data/mercadona/ingestion_date=2026-08-15/wh=mad1"
     )
     validate_parser.add_argument(
         "--strict", action="store_true", help="tambem falha quando ha registro incompleto"

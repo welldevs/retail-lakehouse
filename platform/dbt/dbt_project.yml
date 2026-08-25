@@ -10,6 +10,11 @@ clean-targets: ["target", "dbt_packages"]
 vars:
   # Prefixo do RAW aterrissado. Sobrescrevivel para apontar para outro bucket.
   raw_prefix: "s3://retail-raw/mercadona_catalog_api"
+  # Segunda source, mesmo bucket RAW, prefixo proprio — land.py deriva o prefixo do
+  # source_name do manifesto, entao nao foi preciso nenhum bucket novo para isto.
+  ine_raw_prefix: "s3://retail-raw/ine_population_api"
+  # Terceira source: Callejero do INE (sem API, intake de arquivos baixados manualmente).
+  callejero_raw_prefix: "s3://retail-raw/ine_callejero"
   # A fonte NAO declara moeda (CONTRACT.md 4.6). O Silver nao inventa: esta var existe
   # para o Gold, e e PREMISSA do consumidor, nao dado da fonte.
   currency: "EUR"
@@ -21,3 +26,15 @@ models:
       # e particionamento: o grao difere entre eles.
       +materialized: external
       +format: parquet
+
+seeds:
+  retail_lakehouse:
+    warehouse_province_map_seed:
+      # Sem isto, a inferencia de tipo do dbt-duckdb le "08"/"079" como inteiro e come o
+      # zero a esquerda (08 -> 8) — os codigos do INE nao sao numeros, sao identificadores.
+      +column_types:
+        wh: varchar
+        province_code: varchar
+        province_name: varchar
+        municipio_code: varchar
+        municipio_name: varchar

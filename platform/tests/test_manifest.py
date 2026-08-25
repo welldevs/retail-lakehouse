@@ -13,7 +13,7 @@ import unittest
 from retail_platform import manifest as manifest_module
 from retail_platform.manifest import ManifestError, read
 
-from .support import build_partition, write_canonical
+from .support import build_partition, build_single_axis_partition, write_canonical
 
 
 class TemporaryRoot(unittest.TestCase):
@@ -140,6 +140,47 @@ class TestRefusals(TemporaryRoot):
         partition = build_partition(self.root)
         self._patch_manifest(partition, lambda m: m.pop("files"))
         with self.assertRaisesRegex(ManifestError, "sem a lista 'files'"):
+            read(partition)
+
+
+class TestSingleAxisPartition(TemporaryRoot):
+    """Formato de uma source sem segundo eixo, como o INE: so ingestion_date=..., sem
+    wh=... nem qualquer outro eixo. Duas formas de particao sao suportadas hoje; nao ha
+    um terceiro caso a generalizar."""
+
+    def test_reads_a_partition_without_a_second_axis(self):
+        partition = build_single_axis_partition(self.root)
+        result = read(partition)
+        self.assertEqual(result.ingestion_date, "2026-08-24")
+        self.assertIsNone(result.axis_name)
+        self.assertIsNone(result.axis_value)
+        self.assertIsNone(result.warehouse)
+        self.assertEqual(result.source_name, "ine_population_api")
+
+    def test_prefix_suffix_has_no_second_segment(self):
+        partition = build_single_axis_partition(self.root, ingestion_date="2026-09-01")
+        self.assertEqual(read(partition).prefix_suffix, "ingestion_date=2026-09-01")
+
+    def test_resolves_paths_against_the_snapshot_root(self):
+        """Mesma obrigacao 4.1 da Mercadona, com um nivel a menos: a raiz do snapshot
+        fica um diretorio acima da particao, nao dois."""
+        partition = build_single_axis_partition(self.root)
+        for entry in read(partition).files:
+            self.assertTrue(
+                os.path.exists(entry.local_path),
+                f"caminho nao resolvido para a raiz do snapshot: {entry.local_path}",
+            )
+
+    def test_partition_moved_on_disk_is_refused(self):
+        partition = build_single_axis_partition(self.root, ingestion_date="2026-08-24")
+        renamed = partition.replace("ingestion_date=2026-08-24", "ingestion_date=2026-08-25")
+        os.rename(partition, renamed)
+        with self.assertRaisesRegex(ManifestError, "nao corresponde ao manifesto"):
+            read(renamed)
+
+    def test_unregistered_source_name_is_refused(self):
+        partition = build_single_axis_partition(self.root, source_name="algo_desconhecido")
+        with self.assertRaisesRegex(ManifestError, "desconhecida desta plataforma"):
             read(partition)
 
 

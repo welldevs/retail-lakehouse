@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ine-callejero-source"
+version = "1.0.0"
+description = "Source do Callejero do INE: geografia oficial (secoes, nucleos, ruas) incorporada de arquivos baixados manualmente"
+readme = "README.md"
+requires-python = ">=3.12"
+# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao.
+dependencies = []
+
+[project.scripts]
+ine-callejero-source = "ine_callejero_source.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

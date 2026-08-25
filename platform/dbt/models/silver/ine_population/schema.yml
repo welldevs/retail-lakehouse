@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: silver_ine_population_series
+    description: >
+      Serie de populacao por provincia do INE (Tempus3, table_id 31304), projetada sem
+      interpretacao alem de separar territorio/idade/sexo, que a fonte concatena em
+      "Nombre". GRAO: (ingestion_date, table_id, series_code, year, fk_periodo) — cada
+      serie tem 2 pontos por ano (fk_periodo 26 e 27), nao 1. Sem teste de reconciliacao
+      de manifesto (paralelo a assert_silver_reconciles_with_manifest): a extracao desta
+      source e um punhado de GETs deterministicos, nao um scrape sujeito a falha parcial
+      sob rate-limit como a Mercadona — desproporcional agora.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: table_id
+        description: Extraido do nome do arquivo (tables/table_id=<id>.json), nao de particao hive.
+        tests: [not_null]
+      - name: series_code
+        description: "'COD' da fonte. Estavel dentro de um table_id."
+        tests: [not_null]
+      - name: series_name
+        tests: [not_null]
+      - name: province_name
+        description: >
+          Territorio identificado em series_name por VOCABULARIO (lista fechada de 52
+          provincias, ou o valor literal "Total Nacional" para a agregacao pais inteiro)
+          — nao por posicao fixa dentro de series_name, que varia (ver comentario do
+          modelo). "Total Nacional" nao e uma provincia real: um join futuro por nome de
+          provincia o ignora sozinho, sem precisar de filtro explicito.
+        tests: [not_null]
+      - name: age_label
+        description: >
+          Faixa etaria identificada em series_name por eliminacao (o segmento que nao e
+          province_name nem sex_label). "Total" significa todas as idades agregadas.
+        tests: [not_null]
+      - name: sex_label
+        description: "Um de 'Ambos sexos', 'Hombres', 'Mujeres', identificado em series_name por vocabulario."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Ambos sexos", "Hombres", "Mujeres"]
+      - name: year
+        tests: [not_null]
+      - name: fk_periodo
+        description: >
+          Codigo de periodo da fonte. Medido: 27 = referencia 30/06, 26 = referencia
+          31/12 — o INE publica duas estimativas de populacao por ano. Parte do grao:
+          sem ele, (series_code, year) se repete.
+        tests: [not_null]
+      - name: reference_date
+        description: "Data de referencia do ponto, derivada de 'Fecha' (epoch ms) da fonte."
+        tests: [not_null]
+      - name: fk_tipo_dato
+        description: >
+          Codigo de tipo de dado da fonte (ex.: definitivo vs. provisorio). Exposto tal
+          como a fonte declara — o significado exato de cada valor nao esta documentado
+          na API publica, entao nao e decodificado aqui.
+      - name: population_value
+        description: "'Valor' da fonte. Pode ser nulo — CONTRACT.md da source nao garante ponto preenchido."

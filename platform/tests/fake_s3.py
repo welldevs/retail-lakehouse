@@ -80,6 +80,10 @@ class FakeS3Client:
         assert name == "list_objects_v2", name
         return FakePaginator(self.store)
 
+    def list_objects_v2(self, Bucket, Prefix="", MaxKeys=1000):
+        keys = [key for (bucket, key) in self.store if bucket == Bucket and key.startswith(Prefix)]
+        return {"KeyCount": min(len(keys), MaxKeys)}
+
     # ---- utilitarios de teste ----------------------------------------------
     def corrupt(self, bucket: str, key: str) -> None:
         """Adultera bytes ja armazenados, simulando manipulacao em repouso.

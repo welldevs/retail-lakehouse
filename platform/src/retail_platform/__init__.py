@@ -6,12 +6,17 @@ nunca importando o pacote da Source. Ver CONTRACT.md secao 4, "Obrigacoes do con
 
 __version__ = "0.1.0"
 
-# Nome da source, conforme _manifest.json -> source.name. Primeiro segmento do prefixo
-# no object storage, para que uma segunda source aterrisse ao lado sem reorganizar nada.
+# Nome da source original desta plataforma. Mantido por compatibilidade (comparacoes em
+# teste, docs); land.py deriva o prefixo de partition.source_name, nao desta constante.
 SOURCE_NAME = "mercadona_catalog_api"
 
-# Versao de manifesto que esta plataforma sabe ler. CONTRACT.md secao 8: recusar versao
-# diferente e melhor do que interpretar por adivinhacao.
-SUPPORTED_MANIFEST_VERSION = 2
+# Versao de manifesto que esta plataforma sabe ler, por source. CONTRACT.md secao 8:
+# recusar versao diferente e melhor do que interpretar por adivinhacao. Cada source tem
+# seu proprio contador de versao — sao contratos independentes.
+SUPPORTED_MANIFEST_VERSIONS = {
+    "mercadona_catalog_api": 2,
+    "ine_population_api": 1,
+    "ine_callejero": 1,
+}
 
-__all__ = ["SOURCE_NAME", "SUPPORTED_MANIFEST_VERSION", "__version__"]
+__all__ = ["SOURCE_NAME", "SUPPORTED_MANIFEST_VERSIONS", "__version__"]

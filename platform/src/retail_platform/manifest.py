@@ -20,7 +20,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from . import SUPPORTED_MANIFEST_VERSION
+from . import SUPPORTED_MANIFEST_VERSIONS
 
 MANIFEST_NAME = "_manifest.json"
 SUCCESS_NAME = "_SUCCESS"
@@ -60,7 +60,12 @@ class Partition:
     path: str
     root: str
     ingestion_date: str
-    warehouse: str
+    # Segundo eixo de particao, alem de ingestion_date. Duas formas conhecidas hoje: com
+    # eixo (Mercadona: axis_name="wh") e sem eixo nenhum (INE: os dois None, a fonte
+    # devolve todas as provincias num unico payload). Nao ha um terceiro caso a
+    # generalizar por enquanto.
+    axis_name: str | None
+    axis_value: str | None
     run_id: str
     complete: bool
     source_name: str
@@ -71,9 +76,18 @@ class Partition:
     anomalies: list = field(default_factory=list)
 
     @property
+    def warehouse(self) -> str | None:
+        """Compatibilidade com consumidores da Mercadona. None para uma source sem esse
+        eixo (ex.: INE) — use axis_name/axis_value para o caso geral."""
+        return self.axis_value if self.axis_name == "wh" else None
+
+    @property
     def prefix_suffix(self) -> str:
         """Sufixo hive da particao, como aparece em files[].path e na chave do objeto."""
-        return f"ingestion_date={self.ingestion_date}/wh={self.warehouse}"
+        suffix = f"ingestion_date={self.ingestion_date}"
+        if self.axis_name is not None:
+            suffix += f"/{self.axis_name}={self.axis_value}"
+        return suffix
 
     def undeclared_paths(self) -> list[tuple[str, str]]:
         """(caminho local, nome) dos arquivos previstos e nao declarados que existem."""
@@ -104,11 +118,18 @@ def read(partition_path: str) -> Partition:
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifesto nao e um objeto JSON: {manifest_file}")
 
-    version = manifest.get("manifest_version")
-    if version != SUPPORTED_MANIFEST_VERSION:
+    source_name = (manifest.get("source") or {}).get("name", "")
+    if source_name not in SUPPORTED_MANIFEST_VERSIONS:
         raise ManifestError(
-            f"manifest_version {version!r} nao suportada "
-            f"(esta plataforma le {SUPPORTED_MANIFEST_VERSION})"
+            f"source.name {source_name!r} desconhecida desta plataforma "
+            f"(esperado um de {sorted(SUPPORTED_MANIFEST_VERSIONS)})"
+        )
+    expected_version = SUPPORTED_MANIFEST_VERSIONS[source_name]
+    version = manifest.get("manifest_version")
+    if version != expected_version:
+        raise ManifestError(
+            f"manifest_version {version!r} nao suportada para {source_name!r} "
+            f"(esta plataforma le {expected_version})"
         )
 
     entries = manifest.get("files")
@@ -138,17 +159,28 @@ def read(partition_path: str) -> Partition:
     partition_block = manifest.get("partition") or {}
     ingestion_date = partition_block.get("ingestion_date")
     warehouse = partition_block.get("warehouse")
-    if not ingestion_date or not warehouse:
-        raise ManifestError("manifesto sem partition.ingestion_date ou partition.warehouse")
+    if not ingestion_date:
+        raise ManifestError("manifesto sem partition.ingestion_date")
 
-    # Obrigacao 4.1: files[].path comeca na RAIZ do snapshot, nao na particao. Subir dois
-    # niveis e o que o contrato manda fazer.
-    root = os.path.abspath(os.path.join(partition_path, "..", ".."))
+    # axis_name e sempre "wh" quando ha um armazem declarado: e o unico eixo conhecido
+    # hoje alem de ingestion_date. Sem ele (ex.: INE), a particao tem so ingestion_date.
+    axis_name = "wh" if warehouse else None
+    axis_value = warehouse
+
+    # Obrigacao 4.1: files[].path comeca na RAIZ do snapshot, nao na particao. Sobe um
+    # nivel por eixo de particao presente, alem do proprio ingestion_date.
+    levels_up = 2 if axis_name is not None else 1
+    root = os.path.abspath(os.path.join(partition_path, *([".."] * levels_up)))
 
     # O caminho em disco e o manifesto tem de concordar. Divergencia significa particao
-    # movida ou renomeada, e o armazem so existe no caminho e no manifesto (obrigacao
-    # 4.3): aceitar a divergencia perderia a identidade de forma irrecuperavel.
-    expected_tail = os.path.join(f"ingestion_date={ingestion_date}", f"wh={warehouse}")
+    # movida ou renomeada, e o eixo so existe no caminho e no manifesto (obrigacao 4.3):
+    # aceitar a divergencia perderia a identidade de forma irrecuperavel.
+    if axis_name is not None:
+        expected_tail = os.path.join(
+            f"ingestion_date={ingestion_date}", f"{axis_name}={axis_value}"
+        )
+    else:
+        expected_tail = f"ingestion_date={ingestion_date}"
     if not os.path.abspath(partition_path).endswith(expected_tail):
         raise ManifestError(
             f"caminho da particao ({partition_path}) nao corresponde ao manifesto "
@@ -178,10 +210,11 @@ def read(partition_path: str) -> Partition:
         path=os.path.abspath(partition_path),
         root=root,
         ingestion_date=ingestion_date,
-        warehouse=warehouse,
+        axis_name=axis_name,
+        axis_value=axis_value,
         run_id=manifest.get("run_id", ""),
         complete=complete,
-        source_name=(manifest.get("source") or {}).get("name", ""),
+        source_name=source_name,
         lang=(manifest.get("source") or {}).get("lang", ""),
         files=files,
         totals=manifest.get("totals") or {},

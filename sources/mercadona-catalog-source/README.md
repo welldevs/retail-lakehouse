@@ -30,11 +30,11 @@ fronteira é verificada. Mas no dia a dia use o **Makefile da raiz**, que aponta
 para o `data/` compartilhado do monorepo:
 
 ```bash
-make -C ../..  extract validate      # da raiz: escreve em <raiz>/data/source
+make -C ../..  extract validate      # da raiz: escreve em <raiz>/data/mercadona
 make test                            # daqui: suíte da Source, sem rede
 ```
 
-Rodar `make extract` **daqui** cria um `data/source/` dentro deste diretório, separado do
+Rodar `make extract` **daqui** cria um `data/mercadona/` dentro deste diretório, separado do
 `data/` da raiz. Útil para teste isolado, mas não é a partição que a plataforma consome.
 
 ## Uso
@@ -49,9 +49,9 @@ make check                 # test + validate
 Sem `make`, com `PYTHONPATH=src`:
 
 ```bash
-PYTHONPATH=src python3 -m mercadona_catalog_source extract  --out data/source
+PYTHONPATH=src python3 -m mercadona_catalog_source extract  --out data/mercadona
 PYTHONPATH=src python3 -m mercadona_catalog_source validate \
-    "data/source/ingestion_date=$(date -u +%F)/wh=mad1" --strict
+    "data/mercadona/ingestion_date=$(date -u +%F)/wh=mad1" --strict
 PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```
 
@@ -61,14 +61,14 @@ mesmos subcomandos, sem precisar de `PYTHONPATH`:
 ```bash
 make install               # cria venv/, instala ferramentas de build e o pacote (-e .)
 ./venv/bin/mercadona-catalog-source --version
-./venv/bin/mercadona-catalog-source validate "data/source/ingestion_date=$(date -u +%F)/wh=mad1" --strict
+./venv/bin/mercadona-catalog-source validate "data/mercadona/ingestion_date=$(date -u +%F)/wh=mad1" --strict
 ```
 
 ### `extract`
 
 | Flag | Padrão | Efeito |
 |---|---|---|
-| `--out` | `data/source` | diretório raiz do snapshot |
+| `--out` | `data/mercadona` | diretório raiz do snapshot |
 | `--wh` | `mad1` | armazém. Validado como token `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; a existência do código só é conhecida na resposta da API. Valores que respondem `200`: `mad1`, `mad2`, `bcn1`, `vlc1`, `svq1`, `alc1`, `zgz1` |
 | `--lang` | `es` | idioma da API. **Fixo por partição**: reabrir com outro idioma é recusado com código 2, salvo `--overwrite`, que reescreve a partição inteira |
 | `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
@@ -109,10 +109,10 @@ make install               # cria venv/, instala ferramentas de build e o pacote
 ```
 
 Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
-`<raiz>/data/source/ingestion_date=…/wh=…/`, dois níveis acima, com esta forma:
+`<raiz>/data/mercadona/ingestion_date=…/wh=…/`, dois níveis acima, com esta forma:
 
 ```
-data/source/ingestion_date=2026-08-24/
+data/mercadona/ingestion_date=2026-08-24/
 └── wh=mad1/
     ├── categories/categories.json
     ├── catalog/category_id=<id>.json     (151 arquivos)

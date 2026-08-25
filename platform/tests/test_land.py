@@ -11,7 +11,7 @@ from retail_platform import SOURCE_NAME
 from retail_platform.land import _b64_of_hex, object_key
 from retail_platform.manifest import read
 
-from .support import build_partition
+from .support import build_partition, build_single_axis_partition
 
 
 class TestChecksumEncoding(unittest.TestCase):
@@ -37,6 +37,18 @@ class TestObjectKey(unittest.TestCase):
         self.assertEqual(
             key,
             f"{SOURCE_NAME}/ingestion_date=2026-08-16/wh=mad1/catalog/category_id=112.json",
+        )
+
+    def test_key_for_a_source_without_a_second_axis_has_no_extra_segment(self):
+        """object_key usa partition.source_name, nao uma constante fixa: uma segunda
+        source aterrissa com seu proprio prefixo, sem eixo nenhum quando nao ha um."""
+        with tempfile.TemporaryDirectory() as root:
+            partition = build_single_axis_partition(root, ingestion_date="2026-09-01")
+            entry = next(e for e in read(partition).files if e.stage == "tables")
+            key = object_key(read(partition), entry.path)
+        self.assertEqual(
+            key,
+            "ine_population_api/ingestion_date=2026-09-01/tables/table_id=31304.json",
         )
 
 

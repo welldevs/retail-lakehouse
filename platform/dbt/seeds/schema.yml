@@ -1,0 +1,34 @@
+version: 2
+
+seeds:
+  - name: warehouse_province_map_seed
+    description: >
+      Mapa wh -> provincia/municipio, com codigos oficiais do INE. Derivado do
+      Callejero do INE (sem API, baixado manualmente do site, semestral) — ver
+      scripts/derive_warehouse_province_map.py para a derivacao/reconferencia (cruza
+      UP contra SECC; os arquivos brutos do Callejero nao ficam no repo, so o
+      resultado, aqui). province_name usa a MESMA grafia de
+      silver_ine_population_series.province_name (ex. "Valencia/València"), para join
+      direto sem normalizacao de texto.
+
+      Nome com sufixo _seed de proposito: existe tambem um MODELO chamado
+      warehouse_province_map (models/silver/warehouse_province_map.sql) que e so um
+      "select *" deste seed, materializado no object storage — e esse modelo, nao este
+      seed, que aparece em `retail_platform query` (ver comentario do modelo).
+    columns:
+      - name: wh
+        description: Codigo do armazem, como aparece em silver_product_price.warehouse.
+        tests: [not_null, unique]
+      - name: province_code
+        description: Codigo de provincia do INE (2 digitos, com zero a esquerda).
+        tests: [not_null]
+      - name: province_name
+        description: >
+          Grafia identica a silver_ine_population_series.province_name — join direto
+          sem normalizar texto.
+        tests: [not_null]
+      - name: municipio_code
+        description: Codigo de municipio do INE (3 digitos, com zero a esquerda).
+        tests: [not_null]
+      - name: municipio_name
+        tests: [not_null]

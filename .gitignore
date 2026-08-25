@@ -16,6 +16,11 @@ venv/
 # passou a ser o object storage (s3://retail-raw/...); data/ e scratch da extracao.
 data/
 
+# Callejero do INE baixado manualmente (sem API) para derivar warehouse_province_map —
+# arquivo grande de referencia, nao codigo-fonte. A verdade passa a ser o seed CSV em
+# platform/dbt/seeds/, versionado; ver scripts/derive_warehouse_province_map.py.
+temp/
+
 # Venvs: da plataforma e do Airflow. O da Source (venv/) ja esta acima.
 platform/.venv/
 orchestration/.venv/

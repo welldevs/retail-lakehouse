@@ -1,0 +1,11 @@
+# Dependencias de RUNTIME do INE Population Source.
+#
+# Deliberadamente vazio: o pacote usa apenas a biblioteca padrao do Python 3.12 (a API
+# Tempus3 do INE e JSON puro sobre HTTPS, sem necessidade de um cliente de terceiros).
+# Isso e verificado automaticamente por tests/test_dependencies.py, que percorre a AST de
+# todos os modulos e falha se aparecer qualquer import fora da stdlib.
+#
+# Consequencia para o container: a imagem nao precisa instalar nenhum pacote de terceiros.
+#
+# Se um dia uma dependencia de runtime for necessaria, ela entra AQUI e tambem em
+# [project.dependencies] no pyproject.toml. Os dois nao podem divergir.

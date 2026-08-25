@@ -1,0 +1,114 @@
+version: 2
+
+models:
+  - name: raw_manifest
+    description: >
+      O _manifest.json da Source como fonte modelada. Existe para que a reconciliacao
+      entre o que a Source declarou e o que o Silver produziu seja um TESTE, e nao um
+      script solto. Ver tests/assert_silver_reconciles_with_manifest.sql.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: warehouse
+        tests: [not_null]
+      - name: run_id
+        tests: [not_null, unique]
+      - name: complete
+        description: A plataforma so consome particao completa; falso aqui e erro de ingestao.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true]
+                quote: false
+      - name: failure_count
+        description: Garantia 16 do contrato — falha registrada reprova a particao.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0]
+                quote: false
+      - name: declared_product_rows
+        tests: [not_null]
+      - name: schema_fingerprint
+        tests: [not_null]
+
+  - name: silver_category
+    description: "Arvore de categorias achatada: nivel 1 (26) > nivel 2 (151), por particao."
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: warehouse
+        tests: [not_null]
+      - name: category_id
+        description: Id de nivel 2. Unico dentro da particao.
+        tests: [not_null]
+      - name: category_name
+        tests: [not_null]
+      - name: parent_category_id
+        description: Nivel 1. Nao e acessivel na API (404/410); existe so nesta arvore.
+        tests: [not_null]
+      - name: parent_category_name
+        tests: [not_null]
+
+  - name: silver_product_price
+    description: >
+      Projecao fiel e tipada de cada snapshot. GRAO:
+      (ingestion_date, warehouse, category_id, subgroup_id, source_product_id).
+      NAO e source_product_id — CONTRACT.md 4.8: o produto repete entre categorias e
+      subgrupos, ~270 linhas por particao. A unicidade do grao esta em
+      tests/assert_product_price_grain_is_unique.sql.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: warehouse
+        tests: [not_null]
+      - name: category_id
+        tests: [not_null]
+      - name: subgroup_id
+        tests: [not_null]
+      - name: source_product_id
+        description: >
+          CHAVE DA FONTE (CONTRACT.md 4.5), nao identidade de negocio. String, nao
+          inteiro. Consistente dentro do snapshot; sem garantia entre snapshots.
+        tests: [not_null]
+      - name: display_name
+        description: NAO identifica o produto — nomes repetem entre formatos, com precos diferentes.
+        tests: [not_null]
+      - name: unit_price
+        description: DECIMAL(10,2). Vem string da fonte; converter para float perderia precisao.
+        tests: [not_null]
+      - name: tax_percentage
+        description: O campo preenchido. `iva` e nulo em 100% das linhas e nao foi projetado.
+        tests: [not_null]
+      - name: price_decreased
+        description: >
+          Preservado por fidelidade, mas FALSO em 100% das linhas nas tres particoes
+          enquanto 152 precos mudaram. Nao serve para detectar variacao — e por isso que
+          silver_price_change existe.
+
+  - name: silver_price_change
+    description: >
+      O unico modelo que cruza datas. Compara cada particao com a ANTERIOR EXISTENTE
+      (lag sobre a sequencia de particoes, nao aritmetica de data), o que o mantem
+      correto no vao de 8 dias entre 08-16 e 08-24.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: previous_ingestion_date
+        description: Nunca nulo — a primeira particao de cada armazem e excluida por nao ter anterior.
+        tests: [not_null]
+      - name: source_product_id
+        tests: [not_null]
+      - name: change_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['entrou', 'saiu', 'preco_alterado', 'estavel']
+      - name: name_seen_before
+        description: >
+          ARMADILHA DE IDENTIDADE DE NEGOCIO. Id novo cujo display_name ja existia na
+          particao anterior. A fonte nao diz se e o mesmo item rechaveado ou um item
+          retirado e outro lancado; estes casos sao fila de revisao, nao "produto novo".
+        tests: [not_null]

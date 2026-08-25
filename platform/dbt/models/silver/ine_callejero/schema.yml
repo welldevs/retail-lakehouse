@@ -1,0 +1,123 @@
+version: 2
+
+models:
+  - name: silver_callejero_sections
+    description: >
+      Secoes censitarias do INE (arquivo SECC do Callejero), projetadas sem
+      interpretacao alem de decompor o codigo. GRAO: (ingestion_date, section_code).
+      Layout medido, nao documentado oficialmente — ver CONTRACT.md da source
+      (sources/ine-callejero-source), secao 2.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: source_dataset
+        tests: [not_null]
+      - name: source_file
+        description: Nome original do arquivo do INE (ex. SECC.P28.D260630.G260702) — proveniencia.
+        tests: [not_null]
+      - name: section_code
+        description: Codigo de 10 digitos, provincia+municipio+distrito+secao concatenados.
+        tests: [not_null, unique]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: district_code
+        tests: [not_null]
+      - name: section_number
+        tests: [not_null]
+
+  - name: silver_callejero_population_units
+    description: >
+      Unidades populacionais/nucleos do INE (arquivo UP do Callejero). GRAO:
+      (ingestion_date, unit_code). is_municipality_aggregate=true e a linha do
+      MUNICIPIO inteiro, nao de um nucleo especifico dentro dele.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: source_dataset
+        tests: [not_null]
+      - name: source_file
+        tests: [not_null]
+      - name: unit_code
+        description: Codigo de 12 digitos, provincia+municipio+sufixo de entidade.
+        tests: [not_null, unique]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: entity_suffix
+        tests: [not_null]
+      - name: is_municipality_aggregate
+        tests: [not_null]
+      - name: reference_date
+        description: Data de referencia do Callejero (do proprio arquivo, nao ingestion_date).
+        tests: [not_null]
+      - name: municipality_name
+        tests: [not_null]
+      - name: population_unit_name
+        description: >
+          Nome do nucleo/entidade dentro do municipio (ex. "*DISEMINADO*" para
+          populacao dispersa). O mais proximo de "bairro" que o Callejero oferece —
+          nao e uma divisao administrativa oficial de bairro.
+        tests: [not_null]
+
+  - name: silver_callejero_streets
+    description: >
+      Ruas do INE (arquivo VIAS do Callejero). GRAO: (ingestion_date, street_code).
+      Validado contra enderecos reais (Alcala/Madrid, Gran Via em 3 municipios) — ver
+      CONTRACT.md da source.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: source_dataset
+        tests: [not_null]
+      - name: source_file
+        tests: [not_null]
+      - name: street_code
+        tests: [not_null, unique]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: street_id
+        tests: [not_null]
+      - name: reference_date
+        tests: [not_null]
+      - name: street_type
+        description: "Abreviatura do tipo de logradouro (CALLE, PLAZA, CMNO, PRAJE, ...)."
+        tests: [not_null]
+      - name: street_name_short
+        tests: [not_null]
+      - name: street_name_full
+        tests: [not_null]
+      - name: street_name_alt
+        tests: [not_null]
+
+  - name: silver_callejero_pseudo_addresses
+    description: >
+      Pseudovias do INE (arquivo PSEU do Callejero): pontos enderecaveis fora de rua
+      convencional (caixas de correio, estacionamentos, conjuntos de edificios). GRAO:
+      (ingestion_date, pseudo_address_code). Nao e auxiliar de silver_callejero_streets
+      — identidades e codigos proprios, sem correspondencia 1:1 com rua.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: source_dataset
+        tests: [not_null]
+      - name: source_file
+        tests: [not_null]
+      - name: pseudo_address_code
+        tests: [not_null, unique]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: pseudo_address_id
+        tests: [not_null]
+      - name: reference_date
+        tests: [not_null]
+      - name: name_short
+        tests: [not_null]
+      - name: name_full
+        tests: [not_null]

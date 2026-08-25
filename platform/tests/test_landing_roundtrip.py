@@ -17,7 +17,7 @@ from retail_platform.land import LandingError, land
 from retail_platform.verify import verify
 
 from .fake_s3 import FakeConfig, FakeS3Client
-from .support import build_partition
+from .support import build_partition, build_single_axis_partition
 
 
 class LandingCase(unittest.TestCase):
@@ -158,6 +158,42 @@ class TestVerify(LandingCase):
         gets_before = self.client.gets
         verify(self.config, self.partition)
         self.assertGreaterEqual(self.client.gets - gets_before, 6)
+
+
+class TestLandSecondSourceWithoutAxis(unittest.TestCase):
+    """A landing generica com uma segunda source (INE), sem eixo alem de ingestion_date,
+    aterrissando ao lado da Mercadona no mesmo bucket sem nenhum codigo especifico."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.addCleanup(self._tmp.cleanup)
+        self.client = FakeS3Client()
+        self.config = FakeConfig(self.client)
+        self.partition = build_single_axis_partition(self.root, ingestion_date="2026-09-01")
+        self.prefix = "ine_population_api/ingestion_date=2026-09-01"
+
+    def test_lands_under_its_own_prefix_alongside_mercadona(self):
+        result = land(self.config, self.partition)
+        # 1 declarado (tables/table_id=31304.json) + _manifest.json + _run.log + _SUCCESS
+        self.assertEqual(result.uploaded, 4)
+        self.assertEqual(
+            self.client.keys(self.config.raw_bucket),
+            {
+                f"{self.prefix}/tables/table_id=31304.json",
+                f"{self.prefix}/_manifest.json",
+                f"{self.prefix}/_run.log",
+                f"{self.prefix}/_SUCCESS",
+            },
+        )
+
+    def test_verify_passes_on_a_partition_just_landed(self):
+        land(self.config, self.partition)
+        errors, summary = verify(self.config, self.partition)
+        self.assertEqual(errors, [])
+        self.assertEqual(summary["declared"], 1)
+        self.assertEqual(summary["checked"], 4)
+        self.assertEqual(summary["orphans"], 0)
 
 
 if __name__ == "__main__":

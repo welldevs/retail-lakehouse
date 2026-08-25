@@ -84,11 +84,69 @@ minutos; sequencial a 1,5 s deu 0 falhas em execuções repetidas.
 Com mais de um armazém, o pool do Airflow com **1 slot** é a única coisa preservando a taxa
 segura. Não é enfeite de configuração.
 
-O DAG hoje cobre **um** armazém (`WAREHOUSES = ["mad1"]`), então o pool ainda não está sob
-pressão real — ele existe antes de ser necessário, de propósito, porque acrescentar um
-armazém é uma linha e o dano de esquecê-lo é um bloqueio da fonte. Dimensionamento se
-vários entrarem: 7 armazéns × 152 requisições × 1,5 s ≈ 27 min sequenciais, o que cabe
-folgado numa janela diária.
+O DAG cobre **quatro** armazéns (`WAREHOUSES = ["mad1", "bcn1", "vlc1", "svq1"]`), então o
+pool está sob pressão real: são 4 × 152 ≈ 608 requisições, ~15 min sequenciais. Ele existia
+antes de ser necessário, de propósito. Teto conhecido: os 7 armazéns que servem catálogo
+dariam ≈ 27 min, o que ainda cabe folgado numa janela diária.
+
+### 2.1. Quais armazéns, e por quê esses
+
+A fonte serve **7 armazéns** — `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1` — mais
+`vlc2` e `pmi1`, que o servidor reconhece mas que não têm catálogo. Medido em `2026-08-24`.
+
+A escolha dos quatro é por **divergência de sortimento**, não por tamanho de mercado, porque
+sortimento e preço se comportam em níveis diferentes:
+
+- **Sortimento é propriedade da cidade.** Os três armazéns de Madrid têm conjuntos de produto
+  **idênticos** entre si (0 exclusivos); `bcn1` difere de `mad1` em 12,0% (551 produtos).
+- **Preço varia dentro da mesma cidade.** Medido nas categorias de perecíveis, `mad3` diverge
+  de `mad1` em 18,4% dos preços, contra 26,4% de Madrid↔Barcelona **nas mesmas categorias** —
+  ou seja, 70% da magnitude entre cidades acontece dentro de uma só. Esses dois números são
+  comparáveis entre si por serem do mesmo recorte; não são comparáveis com os da matriz
+  abaixo, que é de catálogo inteiro.
+
+Logo um segundo armazém da mesma cidade paga 152 requisições para agregar um eixo só. Entre
+cidades, os dois variam.
+
+Matriz par a par, **calculada sobre o catálogo inteiro a partir do Silver** em `2026-08-24`
+(reproduzível com uma query sobre `silver_product_price`):
+
+| par | sortimento | preço |
+|---|---|---|
+| bcn1 / svq1 | 13,8% | 3,3% |
+| svq1 / vlc1 | 13,6% | 2,8% |
+| mad1 / svq1 | 13,0% | 2,3% |
+| mad1 / vlc1 | 12,4% | 2,3% |
+| bcn1 / mad1 | 12,0% | 3,1% |
+| bcn1 / vlc1 | 10,0% | 3,1% |
+
+`svq1` aparece nos **três pares mais divergentes**, e sua menor divergência ao resto do
+conjunto é 13,0% — a maior mínima disponível. É o que justifica tê-lo escolhido.
+
+**`alc1` foi descartado** por duplicar `vlc1` — mesma comunidade autônoma, 170 km. Ressalva
+honesta sobre esse número: `alc1` **não foi extraído**, então ele não está nesta matriz. A
+comparação vem de uma sondagem em 2 categorias, onde `vlc1/alc1` deu 34,4% contra 52,3% de
+`vlc1/svq1`. Aquela sondagem tinha **viés de seleção** — as categorias foram escolhidas por
+concentrarem exclusivos entre `mad1` e `bcn1`, o que inflou esse par especificamente (deu
+78,6% lá contra 12,0% aqui). O viés não atinge o par `alc1` vs `svq1`, medido nas mesmas
+categorias sem ser critério de seleção, então a **ordenação** entre os dois se sustenta; as
+magnitudes daquela sondagem, não. `alc1` segue como o candidato óbvio se um quinto entrar, e
+medi-lo direito exigiria extraí-lo.
+
+### 2.2. Dois fatos da fonte que mudam como se opera isto
+
+**`wh` inválido não falha.** A fonte não recusa código desconhecido: devolve `200` caindo em
+`vlc1`, que é o seu default. Medido — `zzz9`, `mad9` e a requisição *sem `wh` nenhum* devolvem
+conteúdo idêntico. A consequência operacional é que um erro de digitação em `WAREHOUSES` não
+produz erro nenhum: produz uma partição rotulada `wh=<erro>` **contendo dados de Valência**,
+internamente consistente e portanto invisível para todo teste a jusante. Um código reconhecido
+porém sem catálogo se distingue por `/categories/?wh=X` responder `content-length: 52` (árvore
+vazia) em vez da árvore cheia.
+
+**A árvore de categorias é byte-idêntica nos 7 armazéns.** É estrutura nacional, não regional.
+Cada armazém gasta 1 requisição numa árvore já conhecida, e `silver_category` carrega 151
+linhas redundantes por armazém. Inofensivo no volume atual, e registrado aqui como desperdício
+conhecido em vez de descoberto depois.
 
 ### 3. Reexecutar `extract` numa partição completa retorna exit 2
 
@@ -154,6 +212,106 @@ A fronteira não é a pasta. É imposta por:
    continua sem dependência de terceiros. É a fronteira verificada, não afirmada.
 3. **Zero dependência tem retorno prático:** a Source roda no próprio interpretador do
    worker do Airflow via `PYTHONPATH`, sem conflitar com as dependências pinadas dele.
+
+## Segunda source: população do INE
+
+[sources/ine-population-source/](sources/ine-population-source/) foi adicionada em
+2026-08-25, junto de três mudanças na plataforma que a fronteira Source ↔ plataforma
+acima não previa, porque só existia uma source quando foi escrita.
+
+**`platform/…/manifest.py` generalizado para um segundo eixo opcional.** Antes, `Partition`
+exigia `warehouse` e computava a raiz do snapshot subindo exatamente dois níveis fixos —
+`SOURCE_NAME` era uma constante única em `__init__.py`, e `land.py` a usava direto em vez
+de `partition.source_name` (que já existia no dataclass, populado do manifesto, mas nunca
+usado para esse fim — resíduo de um comentário que já prometia isso sem o código cumprir).
+Uma source sem eixo de armazém, como o INE, quebrava em
+`"manifesto sem partition.ingestion_date ou partition.warehouse"`. Generalizado para
+`axis_name`/`axis_value` (`None` quando não há eixo) e `SUPPORTED_MANIFEST_VERSIONS` como
+dicionário por `source_name`, mantendo a propriedade `warehouse` como compatibilidade para
+não tocar em `raw_manifest.sql` nem nos testes da Mercadona. Land e verify passaram a
+derivar o prefixo de `partition.source_name` — a mudança que torna real a promessa do
+comentário original ("para que uma segunda source aterrisse ao lado sem reorganizar
+nada").
+
+**`dbt build` compila o projeto inteiro, então uma source vazia derrubava as demais.**
+Medido: `read_json` do DuckDB levanta erro fatal sobre um glob sem nenhum arquivo
+correspondente — o estado normal de uma source recém-adicionada antes do primeiro land, ou
+de um clone novo do repositório. Sem tratamento, isso quebraria `make daily` da Mercadona
+inteiro só por causa do modelo do INE, mesmo em quem nunca tocou nele. A tentativa óbvia —
+fazer o SQL do modelo fingir uma relação vazia com `WHERE false` — não resolve: o próprio
+`external` materialization do dbt-duckdb, ao lidar com uma relação vazia, grava uma linha
+sentinela (todas as colunas `NULL`) num arquivo `__HIVE_DEFAULT_PARTITION__` para preservar
+o schema do parquet, e só filtra essa linha na *view* daquela mesma execução — o arquivo
+físico persiste, e a primeira execução seguinte com dado real lê o `location` inteiro de
+volta, incluindo a linha fantasma. A correção ficou fora do SQL: `retail-platform has-data
+<prefixo>` (novo subcomando, genérico — qualquer source) confere se existe algum objeto
+aterrissado, e `make silver` passa `--exclude` para o modelo de uma source sem dado ainda,
+em vez de fazer o modelo mentir sobre ter uma partição vazia.
+
+**Sources irmãs, não uma abstração "multi-source".** Quando um segundo dataset do INE
+entrar (cogitado: o Callejero do Censo Eleitoral, ver histórico do projeto), o padrão é
+outro pacote irmão completo em `sources/`, não uma camada compartilhada dentro do pacote
+do INE atual. Os dois datasets são estruturalmente distintos (API JSON pequena e instantânea
+vs. ZIP semestral de arquivos ASCII de largura fixa por província) — forçar uma interface
+comum agora encaixaria mal nos dois, e cada pacote mantém `dependencies = []` de forma
+independente e verificável por AST. Extrair um helper compartilhado só valeria a pena
+depois de existirem dois casos concretos para comparar, não antes.
+
+## Terceira source: Callejero do INE
+
+[sources/ine-callejero-source/](sources/ine-callejero-source/), adicionada em
+2026-08-25, confirma a previsão da seção anterior: pacote irmão completo, não uma
+extensão do pacote de população. **Zero mudança estrutural na plataforma** foi
+necessária além de registrar o nome em `SUPPORTED_MANIFEST_VERSIONS` — `land.py`,
+`verify.py` e `manifest.py`, generalizados na fase anterior, funcionaram sem tocar
+código, incluindo a partição de eixo único (`ingestion_date` só, sem warehouse nem
+província como eixo formal).
+
+**Sem API — a primeira source deste tipo.** O Callejero só é publicado para download
+manual, semestral. Isso quebrou uma suposição implícita das duas sources anteriores (que
+"extract" busca dado por rede): aqui `extract` incorpora arquivos que um humano já
+baixou, sem nenhuma requisição HTTP. O verbo foi mantido por uniformidade de CLI, com o
+significado documentado explicitamente no `CONTRACT.md` da source — trocar o verbo
+quebraria a simetria do Makefile/DAG sem ganho real.
+
+**Layout de arquivo não documentado — medido, não presumido, com um gotcha de
+ferramental no meio do caminho.** O download não trouxe "Diseño de Registro" nenhum.
+Encoding real é ISO-8859-1 (Latin-1), confirmado com `file`; um `grep` direto nos
+arquivos brutos (antes de descobrir isso) retornava vazio mesmo com o texto lá —
+descoberto depois que o `grep` deste ambiente é um wrapper de `ugrep -I`, que **ignora
+arquivos que parecem binário**, e um arquivo Latin-1 com bytes altos (acentos) dispara
+essa heurística. A correção foi checar com `grep -a` ou converter com `iconv` antes.
+O mesmo encoding, ao ler os arquivos de volta no DuckDB via `read_csv`, precisou do nome
+exato `'latin-1'` (com hífen) — `'latin1'` é rejeitado com uma lista de ~700 encodings
+suportados, nenhum deles com esse nome exato. Nenhuma das duas pegadinhas seria pega sem
+testar contra o arquivo real.
+
+**Layout de coluna por arquivo** (offsets de byte, sem delimitador — lido no DuckDB via
+`read_csv(..., delim=E'\x01', hive_partitioning=1, filename=true)`, um delimitador que
+nunca aparece no dado, para trazer a linha inteira como uma coluna): `SECC` é só um
+código de 10 dígitos; `VIAS`/`PSEU` têm código + nome em 2-3 formas redundantes (larguras
+diferentes, mesmo texto); `UP` é o mais complexo — 604 caracteres, com o nome do
+MUNICÍPIO numa posição (`[94:314]`) e o nome do NÚCLEO/entidade dentro dele noutra
+(`[459:529]`), confirmado comparando conteúdo real (`"ABRERA"` repetido para várias
+entidades, cada uma com um nome de núcleo diferente — `"CAN VILALBA"`, `"SANT MIQUEL"`,
+`"*DISEMINADO*"`), não assumido por semelhança de posição com os outros arquivos. Ver
+`CONTRACT.md § 2` da source para a tabela completa.
+
+**`TRAM` fica de fora, por decisão, não por lacuna.** Os downloads trazem 5 arquivos por
+província; só 4 são incorporados. `TRAM` (trechos de rua com faixa de numeração, o mais
+pesado — 14-28 MB por província — e o único que provavelmente dá granularidade de
+número de porta) nunca foi inspecionado. Entra numa rodada futura só se a simulação de
+Orders demonstrar necessidade dessa granularidade — decisão registrada, não uma omissão
+silenciosa.
+
+**`warehouse_province_map` não é gerado por esta source.** O seed
+(`platform/dbt/seeds/warehouse_province_map_seed.csv`) foi derivado do Callejero
+manualmente durante o desenvolvimento (`scripts/derive_warehouse_province_map.py`,
+cruzando o nome do município em `UP` contra a existência de seções em `SECC`), e existe
+independente da source em si. A source do Callejero não sabe que warehouses existem —
+produz `province_code`/`municipality_code` como o INE os publica, sem nenhuma referência
+a `mad1`/`bcn1`/`svq1`/`vlc1`. O vínculo é uma decisão desta plataforma, não uma
+propriedade do INE, e só entra via `JOIN` no Silver/Gold.
 
 ## Dívida técnica
 

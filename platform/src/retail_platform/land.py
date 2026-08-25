@@ -23,7 +23,6 @@ import hashlib
 import os
 from dataclasses import dataclass, field
 
-from . import SOURCE_NAME
 from .manifest import Partition, SUCCESS_NAME, read
 
 
@@ -37,10 +36,11 @@ def _b64_of_hex(sha256_hex: str) -> str:
 
 
 def object_key(partition: Partition, relative_path: str) -> str:
-    """Chave do objeto. O prefixo comeca pelo nome da source, e o layout hive da Source
-    (ingestion_date=.../wh=...) e preservado para que o DuckDB o leia com
-    hive_partitioning=1 e ganhe ingestion_date/wh como colunas sem parsing manual."""
-    return f"{SOURCE_NAME}/{relative_path}"
+    """Chave do objeto. O prefixo comeca pelo nome declarado em partition.source_name (o
+    proprio manifesto, nao uma constante fixa), para que uma segunda source aterrisse ao
+    lado sem reorganizar nada. O layout hive da Source (ingestion_date=.../wh=... ou so
+    ingestion_date=...) e preservado para que o DuckDB o leia com hive_partitioning=1."""
+    return f"{partition.source_name}/{relative_path}"
 
 
 @dataclass

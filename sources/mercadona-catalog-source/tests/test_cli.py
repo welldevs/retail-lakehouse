@@ -20,7 +20,7 @@ def run_main(argv):
 class ParserTest(unittest.TestCase):
     def test_defaults_de_extract(self):
         args = cli.build_parser().parse_args(["extract"])
-        self.assertEqual(args.out, "data/source")
+        self.assertEqual(args.out, "data/mercadona")
         self.assertEqual(args.wh, "mad1")
         self.assertEqual(args.lang, "es")
         self.assertIsNone(args.date)

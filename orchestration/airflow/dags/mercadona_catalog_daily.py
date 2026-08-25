@@ -30,7 +30,7 @@ except ImportError:  # Airflow 2.x
 
 # Raiz do repositorio, montada no container ou o proprio checkout no host.
 REPO = os.environ.get("RETAIL_REPO_ROOT", "/opt/retail-lakehouse")
-DATA_ROOT = f"{REPO}/data/source"
+DATA_ROOT = f"{REPO}/data/mercadona"
 
 # Nenhum codigo e importado deste DAG: tudo e invocado por subprocesso, com PYTHONPATH
 # apontando para o repositorio montado. Assim editar um modulo nao exige rebuild da
@@ -48,7 +48,17 @@ SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
-WAREHOUSES = ["mad1", "bcn1"]
+# Quatro cidades, escolhidas por DIVERGENCIA DE SORTIMENTO medida contra a fonte, nao por
+# tamanho de mercado. Os armazens de uma mesma cidade (mad1/mad2/mad3) tem conjuntos de
+# produto IDENTICOS e divergem so em preco, entao o segundo Madrid pagaria 152 requisicoes
+# para agregar um eixo. Entre cidades, os dois eixos variam. Descartado `alc1`: duplica
+# `vlc1` (34,4% de divergencia, a menor da matriz — mesma comunidade autonoma), enquanto
+# `svq1` entra com 52,3%. Ver ARCHITECTURE.md.
+#
+# CUIDADO AO EDITAR: `wh` invalido NAO falha. A fonte devolve 200 caindo em `vlc1`, entao
+# um erro de digitacao aqui produz uma particao rotulada `wh=<erro>` contendo dados de
+# Valencia — errada e internamente consistente, que nenhum teste a jusante pega.
+WAREHOUSES = ["mad1", "bcn1", "vlc1", "svq1"]
 
 # UM slot. O throttle da Source e POR PROCESSO
 # (http_client.py: 1/delay req/s medido do inicio da requisicao anterior), entao dois

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ine-population-source"
+version = "1.0.0"
+description = "Source de populacao do INE (Tempus3): habitantes por provincia em snapshots particionados"
+readme = "README.md"
+requires-python = ">=3.12"
+# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao.
+dependencies = []
+
+[project.scripts]
+ine-population-source = "ine_population_source.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
