@@ -21,6 +21,17 @@
 -- diretorio, nunca em nome de arquivo. Medido: sem filename=true, a coluna nao aparece.
 -- Por isso ele e extraido do caminho do arquivo com regexp, nao do particionamento hive.
 --
+-- O glob abaixo mira table_id=31304.json ESPECIFICAMENTE, nao table_id=*.json: desde que
+-- table_id=29005 (populacao por MUNICIPIO, ver silver_ine_population_by_municipality)
+-- passou a aterrissar na mesma particao, um glob generico misturaria as duas tabelas
+-- neste classificador — que so sabe o vocabulario de 31304. Colisao real, medida: "Sevilla"
+-- e ao mesmo tempo o nome de uma provincia (lista abaixo) E o nome do municipio capital
+-- dessa provincia — uma serie de 29005 tipo "Sevilla. Total. Total habitantes. Personas."
+-- casaria com province_name="Sevilla" por vocabulario, viraria uma linha fantasma nesta
+-- serie de PROVINCIA com sex_label/age_label errados (o classificador nao reconhece
+-- "Total habitantes"/"Personas" como sexo ou idade). Cada table_id com sua propria
+-- projecao, cada uma so le o proprio arquivo — sem glob compartilhado entre as duas.
+--
 -- Provincia, idade e sexo vem concatenados como TEXTO dentro de "Nombre", nao como
 -- colunas separadas nem codigos: "<Idade>. <Territorio>. <Sexo>. Población. Número.",
 -- ex.: "Total. Albacete. Ambos sexos. Población. Número.". MEDIDO CONTRA O PAYLOAD REAL:
@@ -86,7 +97,7 @@ raw_series as (
         "Nombre"                                                as series_name,
         "Data"                                                  as data_points
     from read_json(
-        '{{ var("ine_raw_prefix") }}/ingestion_date=*/tables/table_id=*.json',
+        '{{ var("ine_raw_prefix") }}/ingestion_date=*/tables/table_id=31304.json',
         hive_partitioning = 1,
         union_by_name = true,
         filename = true

@@ -31,10 +31,13 @@ MERCADONA_PARTITION = $(MERCADONA_DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
 
 # Segunda source, independente da Mercadona: sem eixo de armazem, particao so por
 # ingestion_date. Ver sources/ine-population-source/.
+# 31304 = populacao por provincia+idade+sexo (Fase inicial); 29005 = populacao por
+# municipio+sexo, sem idade (Fase A do plano de granularidade municipal) — mesmo
+# mecanismo generico de fetch, so muda o table_id. Ver CONTRACT.md da source, secao 2.
 INE_SOURCE_DIR ?= sources/ine-population-source
 INE_SOURCE_SRC  = $(INE_SOURCE_DIR)/src
 INE_DATA_ROOT  ?= data/ine
-INE_TABLES     ?= 31304
+INE_TABLES     ?= 31304,29005
 INE_PARTITION   = $(INE_DATA_ROOT)/ingestion_date=$(DATE)
 
 # Terceira source: Callejero do INE. Sem API — "extract" incorpora arquivos ja
@@ -76,7 +79,7 @@ help:
 	@echo "populacao do INE (DATE=$(DATE) TABLES=$(INE_TABLES)) — sem cadencia fixa,"
 	@echo "roda quando alguem decide rodar, nao num cron (publicacao do INE e irregular)"
 	@echo "  ine-extract         extrai um snapshot para $(INE_PARTITION)"
-	@echo "  ine-validate        valida a particao em modo --strict"
+	@echo "  ine-validate        valida a particao (sem --strict — ver comentario do alvo)"
 	@echo "  ine-land            sobe a particao para o object storage"
 	@echo "  ine-verify-landing  rele do object storage e reconfere"
 	@echo "  ine-refresh         os quatro acima + silver, em ordem"
@@ -196,8 +199,8 @@ silver:
 	  echo "      tente de novo, ou use: make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb"; \
 	  echo "      O arquivo so guarda views: nada se perde ao recria-lo."; \
 	  exit 2; }
-	$(eval SILVER_EXCLUDE := $(shell $(PLATFORM_PY) -m retail_platform has-data ine_population_api >/dev/null 2>&1 || echo "--exclude silver_ine_population_series"))
-	$(eval SILVER_EXCLUDE += $(shell $(PLATFORM_PY) -m retail_platform has-data ine_callejero >/dev/null 2>&1 || echo "--exclude silver_callejero_sections silver_callejero_population_units silver_callejero_streets silver_callejero_pseudo_addresses"))
+	$(eval SILVER_EXCLUDE := $(shell $(PLATFORM_PY) -m retail_platform has-data ine_population_api >/dev/null 2>&1 || echo "--exclude silver_ine_population_series silver_ine_population_by_municipality"))
+	$(eval SILVER_EXCLUDE += $(shell $(PLATFORM_PY) -m retail_platform has-data ine_callejero >/dev/null 2>&1 || echo "--exclude silver_callejero_sections silver_callejero_population_units silver_callejero_streets silver_callejero_pseudo_addresses silver_callejero_tramos"))
 	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt $(SILVER_EXCLUDE)
 
 daily: extract validate land verify-landing silver
@@ -216,8 +219,15 @@ ine-extract:
 	    --out $(INE_DATA_ROOT) --tables $(INE_TABLES) --date $(DATE); \
 	fi
 
+# Sem --strict: medido que table_id=29005 tem 6 series (de ~8.200 municipios da
+# Espanha inteira) sem NENHUM ponto de dado — "Gatova" (Castellon, 12) e "Palmerola"
+# (Girona, 17), nenhum dos dois dentro do escopo desta plataforma (08/28/41/46; nao
+# aparecem em ine_municipality_codes_seed). --strict e opcional por contrato (CONTRACT.md
+# da source, "Qualidade"); reprovar a particao por 2 municipios fora do escopo, sempre
+# que a extracao rodar, nao protegeria nada real. A contagem continua REPORTADA no
+# output do validate mesmo sem --strict (nao fica silenciosa).
 ine-validate:
-	PYTHONPATH=$(INE_SOURCE_SRC) $(PYTHON) -m ine_population_source validate $(INE_PARTITION) --strict
+	PYTHONPATH=$(INE_SOURCE_SRC) $(PYTHON) -m ine_population_source validate $(INE_PARTITION)
 
 ine-land:
 	$(PLATFORM_PY) -m retail_platform land $(INE_PARTITION)

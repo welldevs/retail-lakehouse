@@ -1,7 +1,7 @@
 """INE Callejero Source.
 
 Source de geografia oficial do INE: incorpora os arquivos do Callejero (SECC, UP, VIAS,
-PSEU) — sem API, baixados manualmente do site do INE e colocados num diretorio local.
+PSEU, TRAM) — sem API, baixados manualmente do site do INE e colocados num diretorio local.
 Produz snapshots particionados, reproduziveis e validaveis, com os mesmos bytes dos
 arquivos originais.
 

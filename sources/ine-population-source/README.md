@@ -1,8 +1,11 @@
 # INE Population Source
 
-Source de dados de população. Extrai **séries de população por província** da API
-pública Tempus3 do INE (`https://servicios.ine.es/wstempus/js`) e produz snapshots
-particionados, reproduzíveis e validáveis.
+Source de dados de população. Extrai **séries de população** da API pública Tempus3 do
+INE (`https://servicios.ine.es/wstempus/js`) e produz snapshots particionados,
+reproduzíveis e validáveis. Mecanismo genérico por `table_id` (ver "Uso" abaixo) — hoje
+alimenta série por **província** (`table_id=31304`) e por **município**
+(`table_id=29005`), configurado fora desta Source (ver `--tables` e o Makefile da
+plataforma).
 
 Este repositório é uma **Source**, não uma plataforma de transformação. O contrato
 completo com o consumidor está em [CONTRACT.md](CONTRACT.md).
@@ -73,7 +76,7 @@ make install               # cria venv/, instala ferramentas de build e o pacote
 | Flag | Padrão | Efeito |
 |---|---|---|
 | `--out` | `data/ine` | diretório raiz do snapshot |
-| `--tables` | `31304` | `table_id`(s) do INE Tempus3, separados por vírgula. `31304` é o único cujo formato de `Nombre` foi confirmado — ver [CONTRACT.md § 2](CONTRACT.md) |
+| `--tables` | `31304` | `table_id`(s) do INE Tempus3, separados por vírgula. `31304` (província+idade+sexo) e `29005` (município+sexo) são os confirmados — ver [CONTRACT.md § 2](CONTRACT.md). A plataforma (Makefile da raiz) passa `31304,29005` por padrão |
 | `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
 | `--delay` | `0.5` | intervalo mínimo entre requisições, em segundos. Boa prática de cliente HTTP, não resposta a bloqueio medido — ver "Restrições da fonte" |
 | `--timeout` | `30.0` | timeout de cada requisição |
@@ -116,6 +119,7 @@ Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
 ```
 data/ine/ingestion_date=2026-08-25/
 ├── tables/table_id=31304.json
+├── tables/table_id=29005.json
 ├── _manifest.json
 ├── _SUCCESS
 └── _run.log
@@ -193,11 +197,12 @@ entre execuções, mas cujo arquivo permanece em disco).
   de fan-out concorrente que motivasse medir isso ainda — uma execução é sequencial por
   natureza. Se um dia isso mudar (ex.: muitos `table_id` em paralelo), meça antes de
   presumir que o throttle atual basta.
-- **Só `table_id: 31304` foi confirmado.** Consultei `GRUPOS_TABLA/31304` (dimensões:
-  `Sexo`, `Edad`, `Provincias`) e `DATOS_TABLA/31304` (formato de `Nombre`) diretamente na
-  API antes de fixar este contrato. Outros `table_id` do INE (ex.: 9688–9691) podem ser
-  passados via `--tables`, mas o formato de `Nombre` para eles não foi verificado — pode
-  divergir do documentado em [CONTRACT.md § 2](CONTRACT.md).
+- **`table_id: 31304` e `table_id: 29005` foram confirmados.** Consultei
+  `GRUPOS_TABLA/31304` (dimensões: `Sexo`, `Edad`, `Provincias`) e `DATOS_TABLA/31304` e
+  `DATOS_TABLA/29005` (formato de `Nombre` de cada um) diretamente na API antes de fixar
+  este contrato. Outros `table_id` do INE podem ser passados via `--tables`, mas o
+  formato de `Nombre` para eles não foi verificado — pode divergir do documentado em
+  [CONTRACT.md § 2](CONTRACT.md).
 - **Cadência de publicação é irregular.** O INE atualiza Cifras de População de forma não
   fixa — historicamente da ordem de 1-2 vezes ao ano, às vezes com meses entre uma
   publicação e outra. Isto molda a orquestração desta Source na plataforma (sem cron
@@ -253,10 +258,12 @@ recusa de travessia de caminho, imutabilidade, retomada, arquivo truncado/vazio/
 mudança de forma da fonte, detecção de órfãos, coerência de `_SUCCESS`, adulteração de
 totais e de fingerprint, e ausência de dependência de terceiros.
 
-**Validação contra a API real** ainda não foi registrada neste README com números —
-diferente da Mercadona Catalog Source, que tem execuções reais documentadas. A tabela
-`GRUPOS_TABLA/31304` e uma amostra de `DATOS_TABLA/31304` foram consultadas para fixar o
-contrato (ver [CONTRACT.md § 2](CONTRACT.md)), mas uma extração `make extract` completa
-contra a rede real, seguida de `make validate --strict`, ainda não foi executada e
-registrada aqui. Faça isso antes de depender desta Source em produção, e atualize esta
-seção com o resultado — mesmo padrão de honestidade que o resto deste monorepo.
+**Validação contra a API real** aconteceu (2026-08-26, `--tables 31304,29005`): 40.791
+séries, 2.253.624 pontos, ~402 MB pousados no MinIO — números completos e o incidente de
+rede (retry por payload grande corrompido em trânsito) em
+[CONTRACT.md § 2](CONTRACT.md). `validate` rodou **sem `--strict`**: essa mesma execução
+achou 6 séries de `29005` sem nenhum ponto de dado, em 2 municípios fora do escopo da
+plataforma que consome esta Source — decisão registrada em CONTRACT.md e no comentário do
+alvo `ine-validate` do Makefile raiz. O `Makefile` desta pasta (`make validate`, alvo
+`check`) continua chamando `--strict`, porque seu `TABLES` default (`31304` sozinho) nunca
+produziu série vazia nos testes feitos até aqui.

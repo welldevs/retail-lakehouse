@@ -69,7 +69,7 @@ make install               # cria venv/, instala ferramentas de build e o pacote
 | Flag | Padrão | Efeito |
 |---|---|---|
 | `--out` | `data/mercadona` | diretório raiz do snapshot |
-| `--wh` | `mad1` | armazém. Validado como token `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; a existência do código só é conhecida na resposta da API. Valores que respondem `200`: `mad1`, `mad2`, `bcn1`, `vlc1`, `svq1`, `alc1`, `zgz1` |
+| `--wh` | `mad1` | armazém. Validado como token `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; a existência do código só é conhecida na resposta da API — e essa resposta não distingue: **qualquer** código, inclusive um erro de digitação (`zzz9`, `mad9`, ou nenhum `--wh`), devolve `200` caindo no conteúdo de `vlc1` (medido, ver [ARCHITECTURE.md § "Dois fatos da fonte que mudam como se opera isto"](../../ARCHITECTURE.md)). Os 7 armazéns que de fato servem catálogo (medido em `2026-08-24`): `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1` — mais `vlc2`/`pmi1`, reconhecidos pelo servidor mas com árvore de categorias vazia (`200`, não `404`) |
 | `--lang` | `es` | idioma da API. **Fixo por partição**: reabrir com outro idioma é recusado com código 2, salvo `--overwrite`, que reescreve a partição inteira |
 | `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
 | `--delay` | `1.5` | intervalo mínimo entre requisições, em segundos |
@@ -316,7 +316,8 @@ Verificadas contra a API, não presumidas:
   **Essa conclusão estava errada** — era artefato do tamanho da amostra. Registrado aqui
   porque um consumidor que trate preço como independente do armazém erra em 3% das linhas.
 
-  `pmi1` responde `404`.
+  `pmi1` é reconhecido pelo servidor mas devolve árvore de categorias vazia (`200`,
+  `content-length: 52`) — não `404` (ver [ARCHITECTURE.md § 2.2](../../ARCHITECTURE.md)).
 - **`robots.txt` de `tienda.mercadona.es` declara `Disallow: /api`**, e o cliente envia um
   **User-Agent de navegador Chrome**, não um identificador de robô
   ([http_client.py](src/mercadona_catalog_source/http_client.py)). Usar esta rota como

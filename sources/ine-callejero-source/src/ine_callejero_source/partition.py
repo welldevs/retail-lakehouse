@@ -5,7 +5,7 @@ Uma particao e a unidade de entrega da Source:
     <root>/ingestion_date=YYYY-MM-DD/
       provinces/
         province=<codigo>/
-          <nome ORIGINAL do arquivo baixado>   (um por dataset: SECC, UP, VIAS, PSEU)
+          <nome ORIGINAL do arquivo baixado>   (um por dataset: SECC, UP, VIAS, PSEU, TRAM)
 
 Sem segundo eixo de particao: o artefato representa um intake do dataset oficial
 inteiro, nao um recorte por warehouse nem por provincia. "provinces/province=<codigo>/"
@@ -37,9 +37,11 @@ RUN_LOG_NAME = "_run.log"
 PROVINCES_DIR = "provinces"
 
 # Datasets que esta Source incorpora. Os downloads do Callejero trazem 5 arquivos por
-# provincia (SECC, UP, VIAS, TRAM, PSEU); TRAM fica de fora desta versao (CONTRACT.md
-# secao 2) — nao e "esquecido", e fora de escopo deliberado.
-DATASETS = ("SECC", "UP", "VIAS", "PSEU")
+# provincia (SECC, UP, VIAS, TRAM, PSEU) e todos os 5 sao incorporados (CONTRACT.md
+# secao 2) — TRAM entrou depois de SECC/UP/VIAS/PSEU porque e o unico dos 5 que liga
+# rua, secao censitaria, entidade/nucleo e codigo postal (CPOS) num so registro; os
+# outros 4 nao carregam CEP.
+DATASETS = ("SECC", "UP", "VIAS", "PSEU", "TRAM")
 
 # As 4 provincias dos warehouses (mad1=28, bcn1=08, svq1=41, vlc1=46). Default da CLI,
 # igual em espirito ao INE_TABLES da source de populacao — configuravel, nao fixo no
@@ -52,7 +54,7 @@ ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Nome de arquivo do Callejero tal como o INE distribui, ex.: "VIAS.P28.D260630.G260702".
 # Usado tanto para reconhecer arquivos de entrada em --in quanto arquivos ja landados.
 INPUT_FILE = re.compile(
-    r"^(?P<dataset>SECC|UP|VIAS|PSEU)\.P(?P<province>\d{2})\.D(?P<date>\d{6})\.G(?P<gen>\d{6})$"
+    r"^(?P<dataset>SECC|UP|VIAS|PSEU|TRAM)\.P(?P<province>\d{2})\.D(?P<date>\d{6})\.G(?P<gen>\d{6})$"
 )
 
 

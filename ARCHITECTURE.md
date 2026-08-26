@@ -257,6 +257,78 @@ comum agora encaixaria mal nos dois, e cada pacote mantém `dependencies = []` d
 independente e verificável por AST. Extrair um helper compartilhado só valeria a pena
 depois de existirem dois casos concretos para comparar, não antes.
 
+## Extensão: população por município (Fase A)
+
+Adicionada em 2026-08-26, sobre `ine-population-source` já existente (não uma quarta
+source) — o mecanismo de fetch já era genérico por `table_id` desde o dia 1 (ver seção
+anterior), então acrescentar `table_id=29005` (população por **município**, INE) ao lado
+de `31304` (população por **província**) foi extensão de configuração, confirmada por
+auditoria de código antes de implementar: `http_client.py`/`extract.py`/`partition.py`
+não conhecem nenhum `table_id` específico.
+
+**Motivação, não estética.** `31304` sozinho é inadequado para densidade: medido que
+"Valencia/València" nessa tabela é a **província inteira** (2,6 milhões de habitantes,
+266 municípios), não a cidade — distribuir esse número entre ruas seria dado fabricado.
+`29005` dá o número real por município, cruzável com `warehouse_service_area` (Callejero)
+para densidade de verdade.
+
+**Colisão real entre as duas tabelas, medida antes de acontecer em produção:** "Sevilla"
+é ao mesmo tempo nome de província (lista fechada de 52 em `silver_ine_population_series`)
+E nome do município capital dessa província. Um glob genérico (`table_id=*.json`) sobre
+as duas tabelas juntas faria o classificador de `31304` (por vocabulário) capturar
+"Sevilla. Total. Total habitantes. Personas." (de `29005`) como se fosse uma linha de
+província, com sexo/idade errados. Corrigido restringindo cada modelo Silver ao seu
+próprio `table_id`, glob literal, sem wildcard compartilhado — nenhuma abstração "um
+modelo lê todas as tabelas de população", porque as duas tabelas têm vocabulário de
+`Nombre` incompatível (ver CONTRACT.md da source, § 2).
+
+**Nome de município não é chave seciável de fora do escopo desta plataforma.** `29005`
+não traz código, só o nome por extenso. Medido contra o payload completo de
+`VALORES_VARIABLE/19` (variável "Municipios" da mesma API Tempus3): 18 dos ~8.200
+municípios da Espanha compartilham nome com outro município em provincia diferente (ex.
+"Arroyomolinos" existe em Madrid [28015] e Cáceres [10023]) — um join por nome
+Espanha-inteira seria ambíguo para esses casos. Nenhuma colisão acontece **dentro** das 4
+províncias desta plataforma (verificado antes de escrever `ine_municipality_codes_seed`),
+então escopar o seed a 08/28/41/46 (mesmo raciocínio de `warehouse_service_area`)
+resolve isso estruturalmente, não por sorte.
+
+**Testado e descartado: reaproveitar o Callejero já landado para o código, em vez de uma
+chamada nova a `VALORES_VARIABLE/19`.** `silver_callejero_population_units` já tem
+`(province_code, municipality_code, municipality_name)` — parecia redundante buscar outra
+fonte. Descartado depois de consultar os dois ao vivo: a grafia diverge estruturalmente,
+não é só maiúscula/minúscula — o Callejero grava o nome todo em CAIXA ALTA e move o
+artigo definido para sufixo entre parênteses (`"AMETLLA DEL VALLÈS (L')"`), enquanto o
+Tempus3 (tanto `29005` quanto `VALORES_VARIABLE/19`) usa o nome natural com o artigo como
+prefixo (`"L'Ametlla del Vallès"`). Um join direto entre as duas grafias erraria
+silenciosamente. `VALORES_VARIABLE/19` foi escolhido por estar na MESMA família de
+endpoint que `29005` — confirmado 0 divergências de grafia numa amostra de 1.501 nomes.
+
+**Faixa etária por município ficou de fora, deliberadamente.** Existe uma família de
+dezenas de `table_id` do INE com município+idade (confirmado que pelo menos um,
+`33956`, é populado — mas só para a província de Zamora, sugerindo um `table_id` por
+província, não descoberto para as 4 províncias desta plataforma). Perseguir isso agora
+seria proporcional a criar outra integração inteira sem necessidade comprovada ainda.
+Decisão: manter `31304` (única fonte de estrutura etária, nível província) e `29005`
+(único fonte de densidade real, nível município) como **complementares**, não tentar
+substituir um pelo outro — se a simulação de clientes sintéticos precisar de pirâmide
+etária por município no futuro, essa família de tabelas é o próximo lugar a investigar,
+não antes.
+
+**A extração de produção real (2026-08-26) confirmou dois problemas que só apareceram
+rodando de verdade, não em amostra.** (1) O payload sem filtro de `31304` é grande o
+bastante (~264 MB no formato canônico) pra corromper em trânsito antes de terminar — a
+primeira tentativa falhou com `JSONDecodeError` no byte 154.057.166 depois de ~33 min; o
+retry automático do `Fetcher` (já existia, tratando corpo JSON inválido como erro
+retentável) resolveu na 2ª tentativa. Total pousado: ~402 MB, 40.791 séries, 2.253.624
+pontos — ver CONTRACT.md da source para os números completos. (2) `validate --strict`
+reprovou a partição por 6 séries de `29005` sem nenhum ponto de dado — 2 municípios
+(`Gatova`/Castellón, `Palmerola`/Girona) fora das 4 províncias desta plataforma. Como
+`--strict` é uma checagem opcional por contrato (não integridade), e reprovar toda
+extração por município fora de escopo não protegeria nada real, `--strict` foi removido de
+`make ine-validate` e do DAG — mas não do Makefile interno da própria source (que continua
+buscando só `31304` por padrão, onde essa checagem nunca falhou). A contagem de séries sem
+valor continua reportada no output do `validate`, só deixou de ser fatal.
+
 ## Terceira source: Callejero do INE
 
 [sources/ine-callejero-source/](sources/ine-callejero-source/), adicionada em
@@ -297,12 +369,35 @@ entidades, cada uma com um nome de núcleo diferente — `"CAN VILALBA"`, `"SANT
 `"*DISEMINADO*"`), não assumido por semelhança de posição com os outros arquivos. Ver
 `CONTRACT.md § 2` da source para a tabela completa.
 
-**`TRAM` fica de fora, por decisão, não por lacuna.** Os downloads trazem 5 arquivos por
-província; só 4 são incorporados. `TRAM` (trechos de rua com faixa de numeração, o mais
-pesado — 14-28 MB por província — e o único que provavelmente dá granularidade de
-número de porta) nunca foi inspecionado. Entra numa rodada futura só se a simulação de
-Orders demonstrar necessidade dessa granularidade — decisão registrada, não uma omissão
-silenciosa.
+**`TRAM` foi incorporado numa segunda rodada, depois de ficar deliberadamente de fora na
+primeira.** A decisão original era não inspecionar `TRAM` (o mais pesado dos 5 — 14-28 MB
+por província) até a simulação de Orders precisar de granularidade de número de porta.
+Reabriu quando ficou claro que nenhum dos outros 4 arquivos tem código postal (CEP) nem
+"bairro" com significado real fora de Valencia — e a página oficial do INE sobre o
+Callejero confirma explicitamente que é `TRAM` quem carrega "el distrito postal de cada
+tramo".
+
+**Decodificado por medição, confirmado contra doc oficial — não presumido nos dois
+sentidos.** Layout novo (273 chars) inspecionado do zero: código de seção em `[0:10]`
+(mesmo formato de `SECC`), sufixo de entidade/núcleo em `[13:20]` (mesmo formato de
+`UP`), id de via em `[20:25]` (mesmo formato de `VIAS`) OU id de pseudovia em `[25:30]`
+(mesmo formato de `PSEU`) — mutuamente exclusivos, confirmado sem exceção em 305 mil
+linhas reais das 4 províncias. O bloco intermediário (`[42:58]`, 16 chars) resistiu a
+uma primeira leitura por regex ingênua (`\S+` colava campos adjacentes sem espaço).
+Achamos o PDF oficial ["Diseños de registro de los ficheros de intercambio de
+información INE-Ayuntamientos"](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)
+(IDA-Padrón, 2015) via busca — descreve o formato de *intercâmbio* de variações
+INE↔Ayuntamentos, não o snapshot que baixamos, mas nomeia os campos do "Tramero" na
+mesma ordem: `CUN CVIA CPSVIA MANZ CPOS TINUM EIN CEIN ESN CESN`. Usando essa ordem pra
+recortar os bytes, bateu: `CPOS` (código postal, 5 dígitos) sempre com o prefixo
+correto da província em 304.905/304.952 linhas (99,985% — as 47 exceções só em
+Barcelona), `TINUM` nunca fora de `{0,1,2}`, e a faixa `EIN`/`ESN` sempre respeitando a
+paridade que `TINUM` declara (par/ímpar) — zero exceções nas quatro. Validado também
+contra geografia real: Valencia cidade tem 30 CEPs distintos (46001-46026 + exceções),
+e pedanias específicas batem com o CEP real da área (Pinedo/El Saler → 46012, zona sul
+da cidade). O resto do registro (parte de `[58:273]`) continua não decodificado —
+inclui um campo repetido no fim que espelha `CPOS`+`TINUM`+`EIN`+`ESN` já capturados no
+início; nada além disso é extraído ou afirmado no Silver.
 
 **`warehouse_province_map` não é gerado por esta source.** O seed
 (`platform/dbt/seeds/warehouse_province_map_seed.csv`) foi derivado do Callejero
@@ -312,6 +407,30 @@ independente da source em si. A source do Callejero não sabe que warehouses exi
 produz `province_code`/`municipality_code` como o INE os publica, sem nenhuma referência
 a `mad1`/`bcn1`/`svq1`/`vlc1`. O vínculo é uma decisão desta plataforma, não uma
 propriedade do INE, e só entra via `JOIN` no Silver/Gold.
+
+**`warehouse_service_area` — mesmo mecanismo, pergunta diferente.** `município = wh`
+(1:1) não é o mesmo que "área que o warehouse atende" (N municípios vizinhos). Consultar
+só `warehouse_province_map` faz um município real e adjacente (ex. Albal, vizinho de
+Valencia, mas administrativamente independente — prefeitura, CEP e código de município
+próprios) parecer "não existir" na geografia do warehouse, quando na verdade só estava
+fora do escopo da consulta. A fonte da lista não podia ser inventada nem estimada por
+proximidade (o Callejero não tem coordenada nem adjacência) — usamos a "Área Urbana
+Funcional" do INE (AUF, ex-LUZ): metodologia oficial única para o país inteiro (um
+município entra na AUF de uma cidade se ≥15% da população empregada comuta pra lá por
+trabalho), baixada como Excel de `ine.es` e parseada com `zipfile`+`xml.etree` da stdlib
+(um `.xlsx` é só um zip de XML — nenhuma dependência nova precisou entrar). Cada um dos
+370 municípios resultantes foi cross-validado contra o Callejero real antes de entrar no
+seed (`scripts/derive_warehouse_service_area.py`): confirmado que existe pelo menos uma
+seção `SECC` com aquele prefixo de província+município, e o nome usado é o do `UP` real
+(não o texto do Excel do INE), pra bater exatamente com
+`silver_callejero_population_units.municipality_name`. **Limitação aceita
+conscientemente**: a AUF oficial de Madrid tem 166 municípios, mas 38 caem em Ávila,
+Guadalajara ou Toledo — províncias que esta plataforma nunca baixou do Callejero (só
+08/28/41/46). Barcelona tem o mesmo problema em menor escala (2 de 135, em Tarragona).
+Sevilla (46/46) e Valencia (63/63) não têm essa lacuna — a AUF de ambas cabe inteira nas
+provincias já landadas. Decisão explícita do usuário: usar o que já está baixado agora,
+em vez de estender a source do Callejero pra mais 4 províncias só pelos municípios de
+fronteira.
 
 ## Dívida técnica
 

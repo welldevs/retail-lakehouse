@@ -1,0 +1,867 @@
+province_code,municipality_code,municipality_name
+08,001,Abrera
+08,002,Aguilar de Segarra
+08,003,Alella
+08,004,Alpens
+08,005,"Ametlla del Vallès, L'"
+08,006,Arenys de Mar
+08,007,Arenys de Munt
+08,008,Argençola
+08,009,Argentona
+08,010,Artés
+08,011,Avià
+08,012,Avinyó
+08,013,Avinyonet del Penedès
+08,014,Aiguafreda
+08,015,Badalona
+08,016,Bagà
+08,017,Balenyà
+08,018,Balsareny
+08,019,Barcelona
+08,020,Begues
+08,021,Bellprat
+08,022,Berga
+08,023,Bigues i Riells del Fai
+08,024,Borredà
+08,025,"Bruc, El"
+08,026,"Brull, El"
+08,027,"Cabanyes, Les"
+08,028,Cabrera d'Anoia
+08,029,Cabrera de Mar
+08,030,Cabrils
+08,031,Calaf
+08,032,Caldes d'Estrac
+08,033,Caldes de Montbui
+08,034,Calders
+08,035,Calella
+08,036,Calonge de Segarra
+08,037,Calldetenes
+08,038,Callús
+08,039,Campins
+08,040,Canet de Mar
+08,041,Canovelles
+08,042,Cànoves i Samalús
+08,043,Canyelles
+08,044,Capellades
+08,045,Capolat
+08,046,Cardedeu
+08,047,Cardona
+08,048,Carme
+08,049,Casserres
+08,050,Castellar del Riu
+08,051,Castellar del Vallès
+08,052,Castellar de n'Hug
+08,053,Castellbell i el Vilar
+08,054,Castellbisbal
+08,055,Castellcir
+08,056,Castelldefels
+08,057,Castell de l'Areny
+08,058,Castellet i la Gornal
+08,059,Castellfollit del Boix
+08,060,Castellfollit de Riubregós
+08,061,Castellgalí
+08,062,Castellnou de Bages
+08,063,Castellolí
+08,064,Castellterçol
+08,065,Castellví de la Marca
+08,066,Castellví de Rosanes
+08,067,Centelles
+08,068,Cervelló
+08,069,Collbató
+08,070,Collsuspina
+08,071,Copons
+08,072,Corbera de Llobregat
+08,073,Cornellà de Llobregat
+08,074,Cubelles
+08,075,Dosrius
+08,076,Esparreguera
+08,077,Esplugues de Llobregat
+08,078,"Espunyola, L'"
+08,079,"Estany, L'"
+08,080,Fígols
+08,081,Fogars de Montclús
+08,082,Fogars de la Selva
+08,083,Folgueroles
+08,084,Fonollosa
+08,085,Font-rubí
+08,086,"Franqueses del Vallès, Les"
+08,087,Gallifa
+08,088,"Garriga, La"
+08,089,Gavà
+08,090,Gaià
+08,091,Gelida
+08,092,Gironella
+08,093,Gisclareny
+08,094,"Granada, La"
+08,095,Granera
+08,096,Granollers
+08,097,Gualba
+08,098,Sant Salvador de Guardiola
+08,099,Guardiola de Berguedà
+08,100,Gurb
+08,101,"Hospitalet de Llobregat, L'"
+08,102,Igualada
+08,103,Jorba
+08,104,"Llacuna, La"
+08,105,"Llagosta, La"
+08,106,Llinars del Vallès
+08,107,Lliçà d'Amunt
+08,108,Lliçà de Vall
+08,109,Lluçà
+08,110,Malgrat de Mar
+08,111,Malla
+08,112,Manlleu
+08,113,Manresa
+08,114,Martorell
+08,115,Martorelles
+08,116,"Masies de Roda, Les"
+08,117,"Masies de Voltregà, Les"
+08,118,"Masnou, El"
+08,119,Masquefa
+08,120,Matadepera
+08,121,Mataró
+08,122,Mediona
+08,123,Molins de Rei
+08,124,Mollet del Vallès
+08,125,Montcada i Reixac
+08,126,Montgat
+08,127,Monistrol de Montserrat
+08,128,Monistrol de Calders
+08,129,Muntanyola
+08,130,Montclar
+08,131,Montesquiu
+08,132,Montmajor
+08,133,Montmaneu
+08,134,Figaró-Montmany
+08,135,Montmeló
+08,136,Montornès del Vallès
+08,137,Montseny
+08,138,Moià
+08,139,Mura
+08,140,Navarcles
+08,141,Navàs
+08,142,"Nou de Berguedà, La"
+08,143,Òdena
+08,144,Olvan
+08,145,Olèrdola
+08,146,Olesa de Bonesvalls
+08,147,Olesa de Montserrat
+08,148,Olivella
+08,149,Olost
+08,150,Orís
+08,151,Oristà
+08,152,Orpí
+08,153,Òrrius
+08,154,Pacs del Penedès
+08,155,Palafolls
+08,156,Palau-solità i Plegamans
+08,157,Pallejà
+08,158,"Papiol, El"
+08,159,Parets del Vallès
+08,160,Perafita
+08,161,Piera
+08,162,"Hostalets de Pierola, Els"
+08,163,Pineda de Mar
+08,164,"Pla del Penedès, El"
+08,165,"Pobla de Claramunt, La"
+08,166,"Pobla de Lillet, La"
+08,167,Polinyà
+08,168,Pontons
+08,169,"Prat de Llobregat, El"
+08,170,"Prats de Rei, Els"
+08,171,Prats de Lluçanès
+08,172,Premià de Mar
+08,174,Puigdàlber
+08,175,Puig-reig
+08,176,Pujalt
+08,177,"Quar, La"
+08,178,Rajadell
+08,179,Rellinars
+08,180,Ripollet
+08,181,"Roca del Vallès, La"
+08,182,"Pont de Vilomara i Rocafort, El"
+08,183,Roda de Ter
+08,184,Rubí
+08,185,Rubió
+08,187,Sabadell
+08,188,Sagàs
+08,189,Sant Pere Sallavinera
+08,190,Saldes
+08,191,Sallent
+08,192,Santpedor
+08,193,Sant Iscle de Vallalta
+08,194,Sant Adrià de Besòs
+08,195,Sant Agustí de Lluçanès
+08,196,Sant Andreu de la Barca
+08,197,Sant Andreu de Llavaneres
+08,198,Sant Antoni de Vilamajor
+08,199,Sant Bartomeu del Grau
+08,200,Sant Boi de Llobregat
+08,201,Sant Boi de Lluçanès
+08,202,Sant Celoni
+08,203,Sant Cebrià de Vallalta
+08,204,Sant Climent de Llobregat
+08,205,Sant Cugat del Vallès
+08,206,Sant Cugat Sesgarrigues
+08,207,Sant Esteve de Palautordera
+08,208,Sant Esteve Sesrovires
+08,209,Sant Fost de Campsentelles
+08,210,Sant Feliu de Codines
+08,211,Sant Feliu de Llobregat
+08,212,Sant Feliu Sasserra
+08,213,Sant Fruitós de Bages
+08,214,Vilassar de Dalt
+08,215,Sant Hipòlit de Voltregà
+08,216,Sant Jaume de Frontanyà
+08,217,Sant Joan Despí
+08,218,Sant Joan de Vilatorrada
+08,219,Vilassar de Mar
+08,220,Sant Julià de Vilatorta
+08,221,Sant Just Desvern
+08,222,Sant Llorenç d'Hortons
+08,223,Sant Llorenç Savall
+08,224,Sant Martí de Centelles
+08,225,Sant Martí d'Albars
+08,226,Sant Martí de Tous
+08,227,Sant Martí Sarroca
+08,228,Sant Martí Sesgueioles
+08,229,Sant Mateu de Bages
+08,230,Premià de Dalt
+08,231,Sant Pere de Ribes
+08,232,Sant Pere de Riudebitlles
+08,233,Sant Pere de Torelló
+08,234,Sant Pere de Vilamajor
+08,235,Sant Pol de Mar
+08,236,Sant Quintí de Mediona
+08,237,Sant Quirze de Besora
+08,238,Sant Quirze del Vallès
+08,239,Sant Quirze Safaja
+08,240,Sant Sadurní d'Anoia
+08,241,Sant Sadurní d'Osormort
+08,242,Marganell
+08,243,Santa Cecília de Voltregà
+08,244,Santa Coloma de Cervelló
+08,245,Santa Coloma de Gramenet
+08,246,Santa Eugènia de Berga
+08,247,Santa Eulàlia de Riuprimer
+08,248,Santa Eulàlia de Ronçana
+08,249,Santa Fe del Penedès
+08,250,Santa Margarida de Montbui
+08,251,Santa Margarida i els Monjos
+08,252,Barberà del Vallès
+08,253,Santa Maria de Besora
+08,254,"Esquirol, L'"
+08,255,Santa Maria de Merlès
+08,256,Santa Maria de Martorelles
+08,257,Santa Maria de Miralles
+08,258,Santa Maria d'Oló
+08,259,Santa Maria de Palautordera
+08,260,Santa Perpètua de Mogoda
+08,261,Santa Susanna
+08,262,Sant Vicenç de Castellet
+08,263,Sant Vicenç dels Horts
+08,264,Sant Vicenç de Montalt
+08,265,Sant Vicenç de Torelló
+08,266,Cerdanyola del Vallès
+08,267,Sentmenat
+08,268,Cercs
+08,269,Seva
+08,270,Sitges
+08,271,Sobremunt
+08,272,Sora
+08,273,Subirats
+08,274,Súria
+08,275,Tavèrnoles
+08,276,Tagamanent
+08,277,Talamanca
+08,278,Taradell
+08,279,Terrassa
+08,280,Tavertet
+08,281,Teià
+08,282,Tiana
+08,283,Tona
+08,284,Tordera
+08,285,Torelló
+08,286,"Torre de Claramunt, La"
+08,287,Torrelavit
+08,288,Torrelles de Foix
+08,289,Torrelles de Llobregat
+08,290,Ullastrell
+08,291,Vacarisses
+08,292,Vallbona d'Anoia
+08,293,Vallcebre
+08,294,Vallgorguina
+08,295,Vallirana
+08,296,Vallromanes
+08,297,Veciana
+08,298,Vic
+08,299,Vilada
+08,300,Viladecavalls
+08,301,Viladecans
+08,302,Vilanova del Camí
+08,303,Vilanova de Sau
+08,304,Vilobí del Penedès
+08,305,Vilafranca del Penedès
+08,306,Vilalba Sasserra
+08,307,Vilanova i la Geltrú
+08,308,Viver i Serrateix
+08,901,Rupit i Pruit
+08,902,Vilanova del Vallès
+08,903,Sant Julià de Cerdanyola
+08,904,Badia del Vallès
+08,905,"Palma de Cervelló, La"
+08,999,Población en municipios desaparecidos de Barcelona
+28,001,"Acebeda, La"
+28,002,Ajalvir
+28,003,Alameda del Valle
+28,004,"Álamo, El"
+28,005,Alcalá de Henares
+28,006,Alcobendas
+28,007,Alcorcón
+28,008,Aldea del Fresno
+28,009,Algete
+28,010,Alpedrete
+28,011,Ambite
+28,012,Anchuelo
+28,013,Aranjuez
+28,014,Arganda del Rey
+28,015,Arroyomolinos
+28,016,"Atazar, El"
+28,017,Batres
+28,018,Becerril de la Sierra
+28,019,Belmonte de Tajo
+28,020,Berzosa del Lozoya
+28,021,"Berrueco, El"
+28,022,Boadilla del Monte
+28,023,"Boalo, El"
+28,024,Braojos
+28,025,Brea de Tajo
+28,026,Brunete
+28,027,Buitrago del Lozoya
+28,028,Bustarviejo
+28,029,Cabanillas de la Sierra
+28,030,"Cabrera, La"
+28,031,Cadalso de los Vidrios
+28,032,Camarma de Esteruelas
+28,033,Campo Real
+28,034,Canencia
+28,035,Carabaña
+28,036,Casarrubuelos
+28,037,Cenicientos
+28,038,Cercedilla
+28,039,Cervera de Buitrago
+28,040,Ciempozuelos
+28,041,Cobeña
+28,042,Colmenar del Arroyo
+28,043,Colmenar de Oreja
+28,044,Colmenarejo
+28,045,Colmenar Viejo
+28,046,Collado Mediano
+28,047,Collado Villalba
+28,048,Corpa
+28,049,Coslada
+28,050,Cubas de la Sagra
+28,051,Chapinería
+28,052,Chinchón
+28,053,Daganzo de Arriba
+28,054,"Escorial, El"
+28,055,Estremera
+28,056,Fresnedillas de la Oliva
+28,057,Fresno de Torote
+28,058,Fuenlabrada
+28,059,Fuente el Saz de Jarama
+28,060,Fuentidueña de Tajo
+28,061,Galapagar
+28,062,Garganta de los Montes
+28,063,Gargantilla del Lozoya y Pinilla de Buitrago
+28,064,Gascones
+28,065,Getafe
+28,066,Griñón
+28,067,Guadalix de la Sierra
+28,068,Guadarrama
+28,069,"Hiruela, La"
+28,070,Horcajo de la Sierra-Aoslos
+28,071,Horcajuelo de la Sierra
+28,072,Hoyo de Manzanares
+28,073,Humanes de Madrid
+28,074,Leganés
+28,075,Loeches
+28,076,Lozoya
+28,078,Madarcos
+28,079,Madrid
+28,080,Majadahonda
+28,082,Manzanares el Real
+28,083,Meco
+28,084,Mejorada del Campo
+28,085,Miraflores de la Sierra
+28,086,"Molar, El"
+28,087,"Molinos, Los"
+28,088,Montejo de la Sierra
+28,089,Moraleja de Enmedio
+28,090,Moralzarzal
+28,091,Morata de Tajuña
+28,092,Móstoles
+28,093,Navacerrada
+28,094,Navalafuente
+28,095,Navalagamella
+28,096,Navalcarnero
+28,097,Navarredonda y San Mamés
+28,099,Navas del Rey
+28,100,Nuevo Baztán
+28,101,Olmeda de las Fuentes
+28,102,Orusco de Tajuña
+28,104,Paracuellos de Jarama
+28,106,Parla
+28,107,Patones
+28,108,Pedrezuela
+28,109,Pelayos de la Presa
+28,110,Perales de Tajuña
+28,111,Pezuela de las Torres
+28,112,Pinilla del Valle
+28,113,Pinto
+28,114,Piñuécar-Gandullas
+28,115,Pozuelo de Alarcón
+28,116,Pozuelo del Rey
+28,117,Prádena del Rincón
+28,118,Puebla de la Sierra
+28,119,Quijorna
+28,120,Rascafría
+28,121,Redueña
+28,122,Ribatejada
+28,123,Rivas-Vaciamadrid
+28,124,Robledillo de la Jara
+28,125,Robledo de Chavela
+28,126,Robregordo
+28,127,"Rozas de Madrid, Las"
+28,128,Rozas de Puerto Real
+28,129,San Agustín del Guadalix
+28,130,San Fernando de Henares
+28,131,San Lorenzo de El Escorial
+28,132,San Martín de la Vega
+28,133,San Martín de Valdeiglesias
+28,134,San Sebastián de los Reyes
+28,135,Santa María de la Alameda
+28,136,Santorcaz
+28,137,"Santos de la Humosa, Los"
+28,138,"Serna del Monte, La"
+28,140,Serranillos del Valle
+28,141,Sevilla la Nueva
+28,143,Somosierra
+28,144,Soto del Real
+28,145,Talamanca de Jarama
+28,146,Tielmes
+28,147,Titulcia
+28,148,Torrejón de Ardoz
+28,149,Torrejón de la Calzada
+28,150,Torrejón de Velasco
+28,151,Torrelaguna
+28,152,Torrelodones
+28,153,Torremocha de Jarama
+28,154,Torres de la Alameda
+28,155,Valdaracete
+28,156,Valdeavero
+28,157,Valdelaguna
+28,158,Valdemanco
+28,159,Valdemaqueda
+28,160,Valdemorillo
+28,161,Valdemoro
+28,162,Valdeolmos-Alalpardo
+28,163,Valdepiélagos
+28,164,Valdetorres de Jarama
+28,165,Valdilecha
+28,166,Valverde de Alcalá
+28,167,Velilla de San Antonio
+28,168,"Vellón, El"
+28,169,Venturada
+28,170,Villaconejos
+28,171,Villa del Prado
+28,172,Villalbilla
+28,173,Villamanrique de Tajo
+28,174,Villamanta
+28,175,Villamantilla
+28,176,Villanueva de la Cañada
+28,177,Villanueva del Pardillo
+28,178,Villanueva de Perales
+28,179,Villar del Olmo
+28,180,Villarejo de Salvanés
+28,181,Villaviciosa de Odón
+28,182,Villavieja del Lozoya
+28,183,Zarzalejo
+28,901,Lozoyuela-Navas-Sieteiglesias
+28,902,Puentes Viejas
+28,903,Tres Cantos
+28,999,Población en municipios desaparecidos de Madrid
+41,001,Aguadulce
+41,002,Alanís
+41,003,Albaida del Aljarafe
+41,004,Alcalá de Guadaíra
+41,005,Alcalá del Río
+41,006,Alcolea del Río
+41,007,"Algaba, La"
+41,008,Algámitas
+41,009,Almadén de la Plata
+41,010,Almensilla
+41,011,Arahal
+41,012,Aznalcázar
+41,013,Aznalcóllar
+41,014,Badolatosa
+41,015,Benacazón
+41,016,Bollullos de la Mitación
+41,017,Bormujos
+41,018,Brenes
+41,019,Burguillos
+41,020,"Cabezas de San Juan, Las"
+41,021,Camas
+41,022,"Campana, La"
+41,023,Cantillana
+41,024,Carmona
+41,025,Carrión de los Céspedes
+41,026,Casariche
+41,027,Castilblanco de los Arroyos
+41,028,Castilleja de Guzmán
+41,029,Castilleja de la Cuesta
+41,030,Castilleja del Campo
+41,031,"Castillo de las Guardas, El"
+41,032,Cazalla de la Sierra
+41,033,Constantina
+41,034,Coria del Río
+41,035,Coripe
+41,036,"Coronil, El"
+41,037,"Corrales, Los"
+41,038,Dos Hermanas
+41,039,Écija
+41,040,Espartinas
+41,041,Estepa
+41,042,Fuentes de Andalucía
+41,043,"Garrobo, El"
+41,044,Gelves
+41,045,Gerena
+41,046,Gilena
+41,047,Gines
+41,048,Guadalcanal
+41,049,Guillena
+41,050,Herrera
+41,051,Huévar del Aljarafe
+41,052,Lantejuela
+41,053,Lebrija
+41,054,Lora de Estepa
+41,055,Lora del Río
+41,056,"Luisiana, La"
+41,057,"Madroño, El"
+41,058,Mairena del Alcor
+41,059,Mairena del Aljarafe
+41,060,Marchena
+41,061,Marinaleda
+41,062,Martín de la Jara
+41,063,"Molares, Los"
+41,064,Montellano
+41,065,Morón de la Frontera
+41,066,"Navas de la Concepción, Las"
+41,067,Olivares
+41,068,Osuna
+41,069,"Palacios y Villafranca, Los"
+41,070,Palomares del Río
+41,071,Paradas
+41,072,Pedrera
+41,073,"Pedroso, El"
+41,074,Peñaflor
+41,075,Pilas
+41,076,Pruna
+41,077,"Puebla de Cazalla, La"
+41,078,"Puebla de los Infantes, La"
+41,079,"Puebla del Río, La"
+41,080,"Real de la Jara, El"
+41,081,"Rinconada, La"
+41,082,"Roda de Andalucía, La"
+41,083,"Ronquillo, El"
+41,084,"Rubio, El"
+41,085,Salteras
+41,086,San Juan de Aznalfarache
+41,087,Sanlúcar la Mayor
+41,088,San Nicolás del Puerto
+41,089,Santiponce
+41,090,"Saucejo, El"
+41,091,Sevilla
+41,092,Tocina
+41,093,Tomares
+41,094,Umbrete
+41,095,Utrera
+41,096,Valencina de la Concepción
+41,097,Villamanrique de la Condesa
+41,098,Villanueva del Ariscal
+41,099,Villanueva del Río y Minas
+41,100,Villanueva de San Juan
+41,101,Villaverde del Río
+41,102,"Viso del Alcor, El"
+41,901,Cañada Rosal
+41,902,Isla Mayor
+41,903,"Cuervo de Sevilla, El"
+41,904,"Palmar de Troya, El"
+41,999,Población en municipios desaparecidos de Sevilla
+46,001,Ademuz
+46,002,Ador
+46,003,Atzeneta d'Albaida
+46,004,Agullent
+46,005,Alaquàs
+46,006,Albaida
+46,007,Albal
+46,008,Albalat de la Ribera
+46,009,Albalat dels Sorells
+46,010,Albalat dels Tarongers
+46,011,Alberic
+46,012,Alborache
+46,013,Alboraia/Alboraya
+46,014,Albuixech
+46,015,Alcàsser
+46,016,Alcàntera de Xúquer
+46,017,Alzira
+46,018,Alcublas
+46,019,"Alcúdia, l'"
+46,020,"Alcúdia de Crespins, l'"
+46,021,Aldaia
+46,022,Alfafar
+46,023,Alfauir
+46,024,Alfara de la Baronia
+46,025,Alfara del Patriarca
+46,026,Alfarb
+46,027,Alfarrasí
+46,028,Algar de Palància
+46,029,Algemesí
+46,030,Algímia d'Alfara
+46,031,Alginet
+46,032,Almàssera
+46,033,Almiserà
+46,034,Almoines
+46,035,Almussafes
+46,036,Alpuente
+46,037,"Alqueria de la Comtessa, l'"
+46,038,Andilla
+46,039,Anna
+46,040,Antella
+46,041,Aras de los Olmos
+46,042,Aielo de Malferit
+46,043,Aielo de Rugat
+46,044,Ayora
+46,045,Barxeta
+46,046,Barx
+46,047,Bèlgida
+46,048,Bellreguard
+46,049,Bellús
+46,050,Benagéber
+46,051,Benaguasil
+46,052,Benavites
+46,053,Beneixida
+46,054,Benetússer
+46,055,Beniarjó
+46,056,Beniatjar
+46,057,Benicolet
+46,058,Benifairó de les Valls
+46,059,Benifairó de la Valldigna
+46,060,Benifaió
+46,061,Beniflá
+46,062,Benigànim
+46,063,Benimodo
+46,064,Benimuslem
+46,065,Beniparrell
+46,066,Benirredrà
+46,067,Benissanó
+46,068,Benissoda
+46,069,Benissuera
+46,070,Bétera
+46,071,Bicorp
+46,072,Bocairent
+46,073,Bolbaite
+46,074,Bonrepòs i Mirambell
+46,075,Bufali
+46,076,Bugarra
+46,077,Buñol
+46,078,Burjassot
+46,079,Calles
+46,080,Camporrobles
+46,081,Canals
+46,082,Canet d'En Berenguer
+46,083,Carcaixent
+46,084,Càrcer
+46,085,Carlet
+46,086,Carrícola
+46,087,Casas Altas
+46,088,Casas Bajas
+46,089,Casinos
+46,090,Castelló de Rugat
+46,091,Castellonet de la Conquesta
+46,092,Castielfabib
+46,093,Catadau
+46,094,Catarroja
+46,095,Caudete de las Fuentes
+46,096,Cerdà
+46,097,Cofrentes
+46,098,Corbera
+46,099,Cortes de Pallás
+46,100,Cotes
+46,101,Quart de les Valls
+46,102,Quart de Poblet
+46,103,Quartell
+46,104,Quatretonda
+46,105,Cullera
+46,106,Chelva
+46,107,Chella
+46,108,Chera
+46,109,Cheste
+46,110,Xirivella
+46,111,Chiva
+46,112,Chulilla
+46,113,Daimús
+46,114,Domeño
+46,115,Dos Aguas
+46,116,"Eliana, l'"
+46,117,Emperador
+46,118,Enguera
+46,119,"Énova, l'"
+46,120,Estivella
+46,121,Estubeny
+46,122,Faura
+46,123,Favara
+46,124,Fontanars dels Alforins
+46,125,Fortaleny
+46,126,Foios
+46,127,"Font d'en Carròs, la"
+46,128,"Font de la Figuera, la"
+46,129,Fuenterrobles
+46,130,Gavarda
+46,131,Gandia
+46,132,"Genovés, el"
+46,133,Gestalgar
+46,134,Gilet
+46,135,Godella
+46,136,Godelleta
+46,137,"Granja de la Costera, la"
+46,138,Guadasséquies
+46,139,Guadassuar
+46,140,Guardamar de la Safor
+46,141,Higueruelas
+46,142,Jalance
+46,143,Xeraco
+46,144,Jarafuel
+46,145,Xàtiva
+46,146,Xeresa
+46,147,Llíria
+46,148,Loriguilla
+46,149,Losa del Obispo
+46,150,Llutxent
+46,151,Llocnou d'En Fenollet
+46,152,Llocnou de la Corona
+46,153,Llocnou de Sant Jeroni
+46,154,Llanera de Ranes
+46,155,Llaurí
+46,156,Llombai
+46,157,"Llosa de Ranes, la"
+46,158,Macastre
+46,159,Manises
+46,160,Manuel
+46,161,Marines
+46,162,Massalavés
+46,163,Massalfassar
+46,164,Massamagrell
+46,165,Massanassa
+46,166,Meliana
+46,167,Millares
+46,168,Miramar
+46,169,Mislata
+46,170,Moixent/Mogente
+46,171,Montcada/Moncada
+46,172,Montserrat
+46,173,Montaverner
+46,174,Montesa
+46,175,Montitxelvo/Montichelvo
+46,176,Montroi/Montroy
+46,177,Museros
+46,178,Nàquera/Náquera
+46,179,Navarrés
+46,180,Novetlè
+46,181,Oliva
+46,182,Olocau
+46,183,"Olleria, l'"
+46,184,Ontinyent
+46,185,Otos
+46,186,Paiporta
+46,187,Palma de Gandía
+46,188,Palmera
+46,189,"Palomar, el"
+46,190,Paterna
+46,191,Pedralba
+46,192,Petrés
+46,193,Picanya
+46,194,Picassent
+46,195,Piles
+46,196,Pinet
+46,197,Polinyà de Xúquer
+46,198,Potries
+46,199,"Pobla de Farnals, la"
+46,200,"Pobla del Duc, la"
+46,201,Puebla de San Miguel
+46,202,"Pobla de Vallbona, la"
+46,203,"Pobla Llarga, la"
+46,204,"Puig de Santa Maria, el"
+46,205,Puçol
+46,206,Quesa
+46,207,Rafelbunyol
+46,208,Rafelcofer
+46,209,Rafelguaraf
+46,210,Ráfol de Salem
+46,211,"Real de Gandia, el"
+46,212,Real
+46,213,Requena
+46,214,Riba-roja de Túria
+46,215,Riola
+46,216,Rocafort
+46,217,Rotglà i Corberà
+46,218,Ròtova
+46,219,Rugat
+46,220,Sagunt/Sagunto
+46,221,Salem
+46,222,Sant Joanet
+46,223,Sedaví
+46,224,Segart
+46,225,Sellent
+46,226,Sempere
+46,227,Senyera
+46,228,Serra
+46,229,Siete Aguas
+46,230,Silla
+46,231,Simat de la Valldigna
+46,232,Sinarcas
+46,233,Sollana
+46,234,Sot de Chera
+46,235,Sueca
+46,236,Sumacàrcer
+46,237,Tavernes Blanques
+46,238,Tavernes de la Valldigna
+46,239,Teresa de Cofrentes
+46,240,Terrateig
+46,241,Titaguas
+46,242,Torrebaja
+46,243,Torrella
+46,244,Torrent
+46,245,Torres Torres
+46,246,Tous
+46,247,Tuéjar
+46,248,Turís
+46,249,Utiel
+46,250,València
+46,251,Vallada
+46,252,Vallanca
+46,253,Vallés
+46,254,Venta del Moro
+46,255,Vilallonga/Villalonga
+46,256,Vilamarxant
+46,257,Castelló
+46,258,Villar del Arzobispo
+46,259,Villargordo del Cabriel
+46,260,Vinalesa
+46,261,Yátova
+46,262,"Yesa, La"
+46,263,Zarra
+46,902,Gátova
+46,903,San Antonio de Benagéber
+46,904,Benicull de Xúquer
+46,999,Población en municipios desaparecidos de Valencia/València

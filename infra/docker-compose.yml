@@ -34,6 +34,9 @@ x-airflow-common: &airflow-common
     RETAIL_SOURCE_PYTHON: python3
     RETAIL_PLATFORM_PYTHON: /opt/platform-venv/bin/python
     RETAIL_DBT: /opt/platform-venv/bin/dbt
+    # Mesma lista do INE_TABLES do Makefile raiz — sem isto o DAG cairia no default do
+    # proprio arquivo (so 31304) e divergiria silenciosamente de `make ine-refresh`.
+    RETAIL_INE_TABLES: "31304,29005"
 
     # DENTRO DA REDE DO COMPOSE O ENDPOINT E `minio`, NAO `localhost`. Estas variaveis
     # sobrescrevem o .env montado — config.load_dotenv() nao sobrepoe o que ja esta no

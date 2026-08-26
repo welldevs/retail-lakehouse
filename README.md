@@ -1,9 +1,10 @@
 # Retail Lakehouse — Mercadona + INE
 
 Plataforma de dados sobre a **Mercadona Catalog Source** (catálogo de retail), a **INE
-Population Source** (população por província) e a **INE Callejero Source** (geografia
-oficial — seções censitárias, ruas, núcleos populacionais): preserva o snapshot RAW em
-object storage e produz o Silver tipado em parquet, orquestrado por Airflow.
+Population Source** (população por província e por município) e a **INE Callejero
+Source** (geografia oficial — seções censitárias, ruas, núcleos populacionais): preserva
+o snapshot RAW em object storage e produz o Silver tipado em parquet, orquestrado por
+Airflow.
 
 Cada Source é um componente **congelado e independente** — a da Mercadona em
 [sources/mercadona-catalog-source/](sources/mercadona-catalog-source/), a de população
@@ -47,18 +48,21 @@ make query         # consulta o Silver
 ```
 
 `make up` sobe **apenas** o MinIO: o Airflow custa ~2 GB de RAM e não é necessário para
-iterar num modelo dbt ou rodar `make daily`/`make ine-refresh` à mão.
+iterar num modelo dbt ou rodar `make daily`/`make ine-refresh`/`make callejero-refresh` à
+mão.
 
-`make daily` e `make ine-refresh` são **idempotentes**: uma partição já completa não é
-reextraída (é imutável), e objetos já aterrissados com o checksum esperado são pulados,
-não reenviados.
+`make daily`, `make ine-refresh` e `make callejero-refresh` são **idempotentes**: uma
+partição já completa não é reextraída (é imutável, mesma guarda `_SUCCESS` nas três), e
+objetos já aterrissados com o checksum esperado são pulados, não reenviados.
 
-Alvos individuais aceitam `DATE=` e `WH=` (Mercadona) ou `DATE=` e `TABLES=` (INE):
+Alvos individuais aceitam `DATE=` e `WH=` (Mercadona), `DATE=` e `TABLES=` (INE população),
+ou `DATE=`, `CALLEJERO_IN=` e `CALLEJERO_PROVINCES=` (INE Callejero):
 
 ```bash
 make land DATE=2026-08-16 WH=mad1
 make verify-landing DATE=2026-08-16
 make ine-land DATE=2026-08-16
+make callejero-land DATE=2026-08-16 CALLEJERO_IN=temp CALLEJERO_PROVINCES=08,28,41,46
 ```
 
 ## Estrutura
@@ -82,11 +86,14 @@ make ine-land DATE=2026-08-16
 │   │   ├── query.py                    # conexão configurada + secret do DuckDB
 │   │   └── cli.py                      # land / verify-landing / query / duckdb-secret / has-data
 │   ├── dbt/seeds/
-│   │   └── warehouse_province_map_seed.csv  # wh -> província/município, códigos oficiais do INE
+│   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
+│   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
+│   │   └── ine_municipality_codes_seed.csv  # nome (Tempus3) -> código de município, 08/28/41/46
 │   ├── dbt/models/silver/
 │   │   ├── warehouse_province_map.sql   # passagem do seed para o object storage
+│   │   ├── warehouse_service_area.sql   # idem, para a área de atendimento
 │   │   ├── mercadona/                   # 4 modelos, grão por wh
-│   │   ├── ine_population/              # série de população por província
+│   │   ├── ine_population/              # série de população por província E por município
 │   │   └── ine_callejero/               # seções, núcleos, ruas — geografia oficial
 │   ├── dbt/tests/                      # testes singulares
 │   └── tests/                          # sem rede (duplo de S3 em memória)
@@ -155,9 +162,16 @@ composta.
 ## Segunda source: população do INE
 
 [sources/ine-population-source/](sources/ine-population-source/) extrai séries de
-população por província da API pública Tempus3 do INE — pensado para eventualmente cruzar
-com os dados de retail por armazém (mad1/bcn1/vlc1/svq1 = Madrid/Barcelona/Valência/
-Sevilha), embora esse cruzamento (Gold) ainda não exista.
+população da API pública Tempus3 do INE — hoje **duas granularidades**, mesmo mecanismo
+genérico de fetch (só muda o `table_id`, configurado fora da Source): **por província**
+(`31304`, com idade+sexo) e **por município** (`29005`, só sexo, sem idade — extensão
+adicionada para dar densidade real por município, já que "Valencia" em `31304` é a
+província inteira, 2,6 milhões de habitantes, não a cidade). Pensado para eventualmente
+cruzar com os dados de retail por armazém (mad1/bcn1/vlc1/svq1 =
+Madrid/Barcelona/Valência/Sevilha), embora esse cruzamento (Gold) ainda não exista. Ver
+[ARCHITECTURE.md § "Extensão: população por município (Fase A)"](ARCHITECTURE.md) para o porquê
+de estender esta Source em vez de criar uma quarta, e por que faixa etária por município
+ficou de fora desta rodada.
 
 Pacote irmão da Mercadona Catalog Source, não uma extensão dela — mesmo padrão (frozen,
 `dependencies = []`, contrato físico próprio), estruturalmente independente porque as duas
@@ -171,19 +185,21 @@ um cron fixo daria uma garantia de frescor que a fonte não tem. Dispare com
 `make ine-trigger` (Airflow) ou `make ine-refresh` (direto, sem orquestrador).
 
 Aterrissa nos **mesmos buckets** `retail-raw`/`retail-lakehouse`, com seu próprio prefixo
-(`ine_population_api/`) — nenhum bucket novo foi necessário. O modelo Silver
-(`silver_ine_population_series`) fica de fora do `dbt build` automaticamente enquanto essa
-source não tiver aterrissado nada (`make silver` confere com `retail-platform has-data`
-antes de decidir), para que um clone novo do repositório — ou o dia a dia de quem só opera
-a Mercadona — não quebre por causa de uma source que ainda não rodou.
+(`ine_population_api/`) — nenhum bucket novo foi necessário. Os modelos Silver
+(`silver_ine_population_series` e `silver_ine_population_by_municipality`) ficam de fora
+do `dbt build` automaticamente enquanto essa source não tiver aterrissado nada (`make
+silver` confere com `retail-platform has-data` antes de decidir), para que um clone novo
+do repositório — ou o dia a dia de quem só opera a Mercadona — não quebre por causa de
+uma source que ainda não rodou.
 
 ## Terceira source: Callejero do INE
 
 [sources/ine-callejero-source/](sources/ine-callejero-source/) incorpora **geografia
-oficial do INE** — seções censitárias, unidades populacionais (núcleos) e ruas — para os
-municípios dos 4 warehouses. Junto com `warehouse_province_map` (seed, abaixo), é o que
-permite ir de `warehouse → província → município` (já existia) até
-`warehouse → município → distrito/seção → rua`.
+oficial do INE** — seções censitárias, unidades populacionais (núcleos), ruas, pseudovias
+e tramos de via com **código postal** — para os municípios dos 4 warehouses. Junto com
+`warehouse_province_map` (seed, abaixo), é o que permite ir de
+`warehouse → província → município` (já existia) até
+`warehouse → município → distrito/seção → rua → CEP`.
 
 **Sem API.** Diferente das outras duas sources, o Callejero só é distribuído pelo INE
 para download manual, semestral. `extract` não faz nenhuma requisição de rede — incorpora
@@ -195,14 +211,16 @@ eixo de warehouse nem de província). Ver
 cada arquivo, medido contra os dados reais, já que o INE não anexa documentação de layout
 ao download.
 
-**`TRAM` fica de fora.** Os downloads trazem 5 arquivos por província; só `SECC`, `UP`,
-`VIAS` e `PSEU` são incorporados. `TRAM` (trechos de rua com faixa de numeração — o mais
-pesado e menos necessário até aqui) pode entrar numa rodada futura se a granularidade de
-número de porta vier a ser necessária.
+**Os 5 arquivos do download são incorporados**, inclusive `TRAM` (tramos de via) — a
+única das 5 tabelas que carrega **código postal**, ligando num só registro seção
+censitária + entidade/núcleo + via ou pseudovia + CEP + faixa de numeração. É o que
+fecha `warehouse → município → rua → CEP` e, onde o núcleo do INE tiver granularidade
+(só em Valencia, entre os 4 warehouses — Madrid/Barcelona/Sevilla capital são uma
+entidade única sem subdivisão), também `→ bairro/pedania`.
 
 Dispare com `make callejero-trigger` (Airflow) ou `make callejero-refresh` (direto), com
 os arquivos já baixados em `CALLEJERO_IN` (default: `temp/` na raiz). Mesma lógica de
-`has-data` das outras sources: os 4 modelos `silver_callejero_*` ficam de fora do
+`has-data` das outras sources: os 5 modelos `silver_callejero_*` ficam de fora do
 `dbt build` até que algo tenha sido aterrissado.
 
 **`warehouse_province_map`** (`platform/dbt/seeds/warehouse_province_map_seed.csv`) é o
@@ -212,6 +230,20 @@ Callejero durante o desenvolvimento (ver
 não gerado por esta source em tempo de execução. A source do Callejero **não sabe que
 warehouses existem** — produz geografia pura do INE; a união com `warehouse_province_map`
 acontece via `JOIN` no Silver/Gold, nunca dentro da source.
+
+**`warehouse_service_area`** (`platform/dbt/seeds/warehouse_service_area_seed.csv`)
+responde uma pergunta diferente: não "onde o armazém fica" (1 município), mas "quais
+municípios vizinhos fazem parte da mesma região funcional" — ex. Albal, Alaquàs, Mislata
+para `vlc1`. Fonte: [Áreas Urbanas Funcionais do
+INE](https://www.ine.es/ss/Satellite?L=es_ES&c=INESeccion_C&p=1254735110672&pagename=ProductosYServicios/PYSLayout&param1=PYSDetalleFichaSeccionUA&param3=1259944561392&cid=1259947044694)
+(AUF, metodologia oficial única — ≥15% da população empregada comuta pra cidade-núcleo),
+não uma lista inventada. Derivado e cross-validado município a município contra o
+Callejero real (cada código confirmado contra `SECC`, cada nome vindo do `UP`) em
+[scripts/derive_warehouse_service_area.py](scripts/derive_warehouse_service_area.py).
+**Limitação conhecida**: a AUF oficial de Madrid tem 38 municípios fora das províncias
+já baixadas (Ávila/Guadalajara/Toledo) e a de Barcelona tem 2 (Tarragona) — ficam de
+fora da área derivada aqui, porque não há Callejero landado pra cruzar. Sevilla e
+Valencia estão 100% contidas na própria província, sem essa lacuna.
 
 ## Consultar o Silver
 
@@ -258,8 +290,8 @@ as views sem configurar nada.
 ## Verificação
 
 ```bash
-make test          # 189 testes sem rede (145 Source + 44 plataforma)
-make silver        # dbt build: 4 modelos + 36 testes (40 nós)
+make test          # 432 testes sem rede (145 Mercadona + 136 INE população + 95 Callejero + 56 plataforma)
+make silver        # dbt build: 13 modelos + 146 testes
 ```
 
 Números conhecidos, que servem de critério de aceitação:

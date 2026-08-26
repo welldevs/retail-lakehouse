@@ -113,7 +113,10 @@ def extract(ds: str, **_) -> None:
 
 
 def validate(ds: str, **_) -> None:
-    code = _run_source(["validate", partition_path(ds), "--strict"])
+    # Sem --strict: table_id=29005 tem municipios fora do escopo desta plataforma (ex.
+    # Gatova/Castellon, Palmerola/Girona) sem nenhum ponto de dado publicado — legitimo,
+    # nao um problema de extracao. Ver comentario do alvo ine-validate no Makefile.
+    code = _run_source(["validate", partition_path(ds)])
     if code != EXIT_OK:
         raise RuntimeError(f"validate reprovou a particao (exit {code})")
 
@@ -131,12 +134,15 @@ def verify_landing(ds: str, **_) -> None:
 
 
 def silver(**_) -> None:
-    # Mesma invocacao da Mercadona: `dbt build` cobre o projeto inteiro, entao o modelo
-    # silver_ine_population_series e pego automaticamente, sem alvo dedicado. Faz o mesmo
-    # `retail-platform has-data` do Makefile antes de excluir o modelo do build quando
-    # nada foi aterrissado ainda — ver Makefile, alvo `silver`.
+    # Mesma invocacao da Mercadona: `dbt build` cobre o projeto inteiro, entao os modelos
+    # silver_ine_population_series e silver_ine_population_by_municipality sao pegos
+    # automaticamente, sem alvo dedicado. Faz o mesmo `retail-platform has-data` do
+    # Makefile antes de excluir os modelos do build quando nada foi aterrissado ainda —
+    # ver Makefile, alvo `silver`.
     has_data = _run_platform(["has-data", "ine_population_api"]) == EXIT_OK
-    exclude = [] if has_data else ["--exclude", "silver_ine_population_series"]
+    exclude = [] if has_data else [
+        "--exclude", "silver_ine_population_series", "silver_ine_population_by_municipality",
+    ]
     code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
                  "--profiles-dir", f"{REPO}/platform/dbt", *exclude],
                 {"PYTHONPATH": PLATFORM_SRC})
@@ -146,7 +152,7 @@ def silver(**_) -> None:
 
 with DAG(
     dag_id="ine_population_on_demand",
-    description="RAW no object storage e Silver a partir da populacao por provincia do INE",
+    description="RAW no object storage e Silver a partir da populacao do INE (provincia e municipio)",
     schedule=None,
     start_date=datetime(2026, 8, 25),
     catchup=False,

@@ -35,16 +35,13 @@ class InputFileNameTest(unittest.TestCase):
             ("VIAS.P28.D260630.G260702", {"dataset": "VIAS", "province": "28"}),
             ("UP.P41.D260630.G260702", {"dataset": "UP", "province": "41"}),
             ("PSEU.P46.D260630.G260702", {"dataset": "PSEU", "province": "46"}),
+            ("TRAM.P28.D260630.G260702", {"dataset": "TRAM", "province": "28"}),
         ]:
             with self.subTest(name=name):
                 match = part.INPUT_FILE.match(name)
                 self.assertIsNotNone(match)
                 self.assertEqual(match.group("dataset"), expected["dataset"])
                 self.assertEqual(match.group("province"), expected["province"])
-
-    def test_tram_nao_bate_no_padrao_de_entrada(self):
-        # TRAM esta fora de escopo (CONTRACT.md secao 2): nem candidato a match.
-        self.assertIsNone(part.INPUT_FILE.match("TRAM.P28.D260630.G260702"))
 
     def test_rejeita_nomes_fora_do_padrao(self):
         for name in ("SECC.txt", "secc.p28.d260630.g260702", "SECC.P280.D260630.G260702", "../../etc"):

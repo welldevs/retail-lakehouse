@@ -32,3 +32,29 @@ seeds:
         tests: [not_null]
       - name: municipio_name
         tests: [not_null]
+
+  - name: ine_municipality_codes_seed
+    description: >
+      Codigo INE (provincia+municipio) de cada municipio dentro do escopo desta
+      plataforma (08/28/41/46), derivado ao vivo de VALORES_VARIABLE/19 da API Tempus3
+      do INE — ver scripts/derive_municipality_codes.py para a derivacao e o porque
+      (DATOS_TABLA/29005, populacao por municipio, so tem o NOME do municipio em
+      "Nombre", nunca o codigo). municipality_name usa a grafia do Tempus3 (mesma de
+      silver_ine_population_by_municipality.municipality_name), DIFERENTE da grafia do
+      Callejero (maiuscula, artigo como sufixo) — nao e o mesmo texto de
+      silver_callejero_population_units.municipality_name, join por nome entre os dois
+      quebraria.
+    columns:
+      - name: province_code
+        description: Codigo de provincia do INE (2 digitos, com zero a esquerda).
+        tests: [not_null]
+      - name: municipality_code
+        description: Codigo de municipio do INE (3 digitos, com zero a esquerda).
+        tests: [not_null]
+      - name: municipality_name
+        description: >
+          Nome do municipio na grafia Tempus3. Chave segura de join SOMENTE dentro
+          deste seed (escopado a 08/28/41/46) — confirmado que nenhum dos 866 nomes se
+          repete dentro desse escopo, embora 18 nomes se repitam na Espanha inteira
+          entre provincias diferentes (ex. "Arroyomolinos" em Madrid e Caceres).
+        tests: [not_null, unique]

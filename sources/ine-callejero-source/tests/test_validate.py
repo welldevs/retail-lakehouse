@@ -45,7 +45,7 @@ class ValidPartitionTest(unittest.TestCase):
 
     def test_relata_cobertura(self):
         _, output = run_validate(self.partition)
-        self.assertIn("cobertura ........ 4/4", output)
+        self.assertIn("cobertura ........ 5/5", output)
 
 
 class IntegrityFailureTest(unittest.TestCase):
@@ -176,7 +176,7 @@ class TotalsAndCoverageTest(unittest.TestCase):
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("combinacao(oes) configurada(s) sem arquivo", output)
-        self.assertIn("cobertura ........ 3/4", output)
+        self.assertIn("cobertura ........ 4/5", output)
 
     def test_falha_registrada_no_manifesto_reprova(self):
         manifest = part.read_manifest(self.partition)
@@ -265,7 +265,7 @@ class CoverageMissingProvinceTest(unittest.TestCase):
         write_json(part.manifest_path(partition), manifest)
         code, output = run_validate(partition)
         self.assertEqual(code, 1)
-        self.assertIn("cobertura ........ 4/8", output)
+        self.assertIn("cobertura ........ 5/10", output)
 
 
 if __name__ == "__main__":

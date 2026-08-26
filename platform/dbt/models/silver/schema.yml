@@ -13,3 +13,22 @@ models:
     columns:
       - name: wh
         tests: [not_null, unique]
+
+  - name: warehouse_service_area
+    description: >
+      Passagem do seed warehouse_service_area_seed para o object storage — mesmo
+      mecanismo de warehouse_province_map. GRAO: (wh, province_code,
+      municipality_code). Municipios da Area Urbana Funcional (INE) de cada warehouse,
+      dentro das provincias ja landadas pelo Callejero (08/28/41/46) — municipios de
+      fronteira de Madrid/Barcelona ficam fora, ver scripts/derive_warehouse_service_area.py.
+    columns:
+      - name: wh
+        tests: [not_null]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: municipality_name
+        tests: [not_null]
+      - name: is_home_municipality
+        tests: [not_null]

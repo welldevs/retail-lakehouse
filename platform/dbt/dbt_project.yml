@@ -38,3 +38,15 @@ seeds:
         province_name: varchar
         municipio_code: varchar
         municipio_name: varchar
+    warehouse_service_area_seed:
+      +column_types:
+        wh: varchar
+        province_code: varchar
+        municipality_code: varchar
+        municipality_name: varchar
+        is_home_municipality: boolean
+    ine_municipality_codes_seed:
+      +column_types:
+        province_code: varchar
+        municipality_code: varchar
+        municipality_name: varchar

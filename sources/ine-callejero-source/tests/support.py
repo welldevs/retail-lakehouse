@@ -2,9 +2,9 @@
 
 Nenhum teste toca rede nem os 110 MB de arquivos reais (fora do repositorio, so em
 temp/ localmente). As larguras usadas aqui sao as MEDIDAS contra os arquivos reais (ver
-CONTRACT.md secao 2): SECC=10 chars, VIAS=132, PSEU=127, UP=604 — o suficiente para
-exercitar intake/validate (que operam por linha e por nome de arquivo, nao por campo
-semantico) com dados estruturalmente equivalentes aos de producao.
+CONTRACT.md secao 2): SECC=10 chars, VIAS=132, PSEU=127, UP=604, TRAM=273 — o suficiente
+para exercitar intake/validate (que operam por linha e por nome de arquivo, nao por
+campo semantico) com dados estruturalmente equivalentes aos de producao.
 """
 
 from __future__ import annotations
@@ -48,11 +48,60 @@ def up_line(province: str, municipio: str, suffix: str, municipio_name: str) -> 
     return _pad(code + "   20260630" + " " * 71 + municipio_name, 604) + "\r\n"
 
 
+def tram_line(
+    province: str,
+    municipio: str,
+    *,
+    distrito: str = "01",
+    seccion: str = "001",
+    entity_suffix: str = "0000000",
+    via_id: str = "00000",
+    pseudovia_id: str = "00000",
+    cpos: str | None = None,
+    tinum: str = "1",
+    ein: str = "0001",
+    esn: str = "0001",
+    date: str = "20260630",
+) -> str:
+    """Linha de TRAM (tramo): secao + entidade/nucleo + via/pseudovia + CEP + faixa.
+
+    Offsets MEDIDOS contra os 4 arquivos reais e confirmados contra o Diseno de
+    Registro oficial do INE (CONTRACT.md secao 2): [0:10] secao (provincia+municipio+
+    distrito+seccao, igual a SECC) · [13:20] CUN (entity_suffix, igual a UP) · [20:25]
+    CVIA (via_id, igual a VIAS quando != 00000) · [25:30] CPSVIA (pseudovia_id, igual a
+    PSEU quando != 00000 — mutuamente exclusivo com CVIA) · [30:42] MANZ (manzana,
+    normalmente em branco) · [42:47] CPOS (codigo postal) · [47:48] TINUM (0=sem
+    numeracao,1=impar,2=par) · [48:52] EIN + [52:53] CEIN (extremo inferior de
+    numeracao + qualificador) · [53:57] ESN + [57:58] CESN (extremo superior +
+    qualificador) · [61:69] data de referencia. O resto do registro (ate 273 chars) nao
+    foi decodificado ainda — fica em branco aqui, igual so campos redundantes do UP.
+    """
+    cpos = cpos if cpos is not None else f"{province}000"[:5].ljust(5, "0")
+    head = (
+        f"{province}{municipio}{distrito}{seccion}"
+        + "   "
+        + entity_suffix
+        + via_id
+        + pseudovia_id
+        + _pad("", 12)
+        + cpos
+        + tinum
+        + ein
+        + " "
+        + esn
+        + " "
+    )
+    assert len(head) == 58, f"tram_line: head deveria ter 58 chars, tem {len(head)}"
+    body = head + "   " + date
+    return _pad(body, 273) + "\r\n"
+
+
 DEFAULT_LINES = {
     "SECC": lambda province, municipio: [secc_line(province, municipio)],
     "UP": lambda province, municipio: [up_line(province, municipio, "0000000", "MUNICIPIO TESTE")],
     "VIAS": lambda province, municipio: [vias_line(province, municipio, "00001", "RUA TESTE")],
     "PSEU": lambda province, municipio: [pseu_line(province, municipio, "00001", "PSEUDOVIA TESTE")],
+    "TRAM": lambda province, municipio: [tram_line(province, municipio, via_id="00001")],
 }
 
 
@@ -86,8 +135,7 @@ def write_callejero_file(
 def build_input_dir(
     root: str,
     provinces: tuple[str, ...] = ("28",),
-    datasets: tuple[str, ...] = ("SECC", "UP", "VIAS", "PSEU"),
-    include_tram: bool = False,
+    datasets: tuple[str, ...] = ("SECC", "UP", "VIAS", "PSEU", "TRAM"),
 ) -> str:
     """Monta um diretorio --in de amostra: um arquivo por (provincia, dataset)."""
     in_dir = os.path.join(root, "in")
@@ -95,8 +143,6 @@ def build_input_dir(
         subdir = f"call_p{province}_726/call_p{province}_072026"
         for dataset in datasets:
             write_callejero_file(in_dir, dataset, province, subdir=subdir)
-        if include_tram:
-            write_callejero_file(in_dir, "TRAM", province, subdir=subdir, lines=["linha de tram\r\n"])
     return in_dir
 
 

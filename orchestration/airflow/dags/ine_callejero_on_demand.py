@@ -54,6 +54,7 @@ SILVER_MODELS = [
     "silver_callejero_population_units",
     "silver_callejero_streets",
     "silver_callejero_pseudo_addresses",
+    "silver_callejero_tramos",
 ]
 
 # Codigos de saida do CONTRACT.md secao 7 da source (mesmos valores das outras duas
@@ -149,7 +150,7 @@ def verify_landing(ds: str, **_) -> None:
 
 def silver(**_) -> None:
     # Mesma invocacao das outras duas sources: `dbt build` cobre o projeto inteiro, entao
-    # os 4 modelos silver_callejero_* sao pegos automaticamente, sem alvo dedicado. Faz o
+    # os 5 modelos silver_callejero_* sao pegos automaticamente, sem alvo dedicado. Faz o
     # mesmo `retail-platform has-data` do Makefile antes de excluir os modelos do build
     # quando nada foi aterrissado ainda — ver Makefile, alvo `silver`.
     has_data = _run_platform(["has-data", "ine_callejero"]) == EXIT_OK

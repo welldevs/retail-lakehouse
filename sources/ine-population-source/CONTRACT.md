@@ -73,6 +73,59 @@ numérico: `Nombre` concatena idade, território e sexo separados por `". "` —
 O Silver (`silver_ine_population_series`) já implementa a extração por vocabulário e o
 grão com `fk_periodo`.
 
+**`table_id` 29005** ("Cifras oficiales del padrón por municipio") também confirmado,
+consultando `DATOS_TABLA/29005` diretamente na API. Dimensão diferente de 31304: só
+**município + sexo**, sem idade. **O município vem como texto, sem código** — nem sequer
+código de província, ao contrário do que se poderia supor por analogia com 31304.
+
+**Medido contra uma amostra grande do payload real** (4.509 séries completas de um
+payload maior que a rede truncou durante a investigação — ver histórico do projeto):
+
+- **A ordem dos segmentos É fixa aqui**, ao contrário de 31304: 100% da amostra segue
+  `"<Município>. <Sexo>. Total habitantes. Personas."` — 4 segmentos sempre, município e
+  sexo podem ser extraídos por posição, não por vocabulário.
+- **Vocabulário de sexo é diferente do de 31304**: `"Total"` / `"Hombres"` /
+  `"Mujeres"`, não `"Ambos sexos"` / `"Hombres"` / `"Mujeres"`.
+- **`Secreto: true` não apareceu na amostra** (0 ocorrências) — mas a amostra não cobre
+  os ~8.200 municípios inteiros da Espanha, então isso não está provado para o dataset
+  completo. Não há exemplo observado do que a fonte coloca em `Valor` quando
+  `Secreto: true` — o consumidor não deve presumir que vira `0` ou `null`.
+- **Payload sem filtro é grande** (série histórica desde 1996, ~8.200 municípios × 3
+  séries de sexo × ~30 anos): truncou no meio da própria investigação desta extensão sob
+  a rede daquele ambiente, apesar de `HTTP 200`. O `Fetcher` desta Source já trata corpo
+  JSON inválido como erro retryable (`http_client.py`), então uma resposta truncada é
+  reexecutada com backoff — mas o `--timeout` default (30s) é curto para um payload deste
+  tamanho; quem rodar `--tables 29005` num link lento deve considerar `--timeout` maior.
+- **Não há código de município no payload** — mesma limitação de 31304 com província,
+  só que mais séria aqui porque nome de município não é chave segura nacionalmente (nomes
+  duplicados entre províncias diferentes). Resolver o código é responsabilidade do
+  consumidor (ver `scripts/derive_municipality_codes.py` na raiz do projeto, fora desta
+  Source).
+
+O Silver (`silver_ine_population_by_municipality`) implementa a extração por posição e
+o cruzamento de código.
+
+**Medido contra o payload real e completo** (extração de produção, 40.791 séries, 2.253.624
+pontos): 6 séries de `table_id=29005` — 2 municípios (`"Gatova"`, província de Castellón,
+e `"Palmerola"`, província de Girona), 3 séries cada (Total/Hombres/Mujeres) — não têm
+**nenhum** ponto de dado (`Data: []`), não só `Valor` nulo. Nenhum dos dois municípios cai
+dentro do escopo desta plataforma (08/28/41/46). A plataforma (Makefile raiz, DAG) roda
+`validate` **sem `--strict`** por causa disso — reprovar toda extração por 2 municípios
+fora de escopo não protegeria nada real; a contagem de séries sem valor continua
+reportada no output do `validate` de qualquer forma, só deixou de ser fatal.
+
+**Essa mesma extração de produção mediu o payload grande de `table_id=31304` sendo
+genuinamente frágil em trânsito.** A primeira tentativa (rede da máquina que rodou esta
+extensão, 2026-08-26) baixou ~264 MB e falhou perto do fim —
+`JSONDecodeError: Expecting ':' delimiter` no byte 154.057.166 — depois de ~33 min. O
+retry automático do `Fetcher` (`http_client.py`, já tratava corpo JSON inválido como erro
+retentável antes desta extensão) refez a busca e fechou íntegro na 2ª tentativa (`retry
+1/3`, backoff 5s). Total pousado no MinIO: `table_id=31304` (276.503.711 bytes) +
+`table_id=29005` (125.350.984 bytes) ≈ 402 MB em 2 arquivos de tabela, 5 objetos no total
+com manifesto/log/`_SUCCESS`. Registrado aqui porque o `--timeout` default (30 s, ver README § "extract") é curto demais
+pra um payload deste tamanho nessa rede — quem repetir esta
+extração num link lento deve considerar `--timeout` maior, não só mais `--max-retries`.
+
 **O JSON é o contrato físico.** Não há schema relacional: a estrutura da resposta da API
 é preservada como recebida.
 
@@ -148,11 +201,17 @@ filtrar por sexo/idade, cruzar com outra fonte) é da camada posterior.
   Mercadona, onde 403 intermitente sob concorrência foi medido e documentado. Esta Source
   não tem fan-out concorrente (uma execução busca um punhado de `table_id`,
   sequencialmente), então não há cenário local que exigiria medir isso ainda.
-- `table_id: 31304` é o único confirmado nesta versão do contrato. Outras tabelas do INE
-  (ex.: 9688–9691, com outras dimensões) podem ser passadas via `--tables`, mas a forma de
+- `table_id: 31304` (província+idade+sexo) e `table_id: 29005` (município+sexo, sem
+  idade) são os confirmados nesta versão do contrato — ver §2 para o formato medido de
+  cada um. Outras tabelas do INE podem ser passadas via `--tables`, mas a forma de
   `Nombre` para elas não foi verificada.
-- Nenhum endpoint conhecido desta fonte expõe dado abaixo do nível de província (ex.:
-  município) na tabela usada aqui.
+- Dado abaixo do nível de município (ex.: seção censitária) não foi localizado nesta
+  API (`DATOS_TABLA`/Tempus3) durante a investigação que levou a `table_id: 29005` —
+  o que existe (Censo/SDC21) parece ser uma API estruturalmente diferente, não
+  verificada, fora do escopo desta Source por ora.
+- Dado de município com idade (não só sexo) existe no INE, mas fragmentado numa família
+  de dezenas de `table_id` — um por província — não mapeados para as 4 províncias desta
+  plataforma; não perseguido nesta versão do contrato (ver ARCHITECTURE.md).
 
 ## 7. Códigos de saída
 

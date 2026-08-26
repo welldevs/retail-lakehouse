@@ -59,3 +59,60 @@ models:
           na API publica, entao nao e decodificado aqui.
       - name: population_value
         description: "'Valor' da fonte. Pode ser nulo — CONTRACT.md da source nao garante ponto preenchido."
+
+  - name: silver_ine_population_by_municipality
+    description: >
+      Serie de populacao por municipio do INE (Tempus3, table_id 29005), projetada sem
+      interpretacao alem de separar municipio/sexo (que a fonte concatena em "Nombre")
+      e resolver o codigo do municipio via ine_municipality_codes_seed. GRAO:
+      (ingestion_date, series_code, year, fk_periodo). Escopado as 4 provincias desta
+      plataforma (08/28/41/46) por INNER JOIN com o seed — ver comentario do modelo.
+      Sem idade: esta tabela so tem sexo. Faixa etaria continua so em
+      silver_ine_population_series (nivel de provincia) — ver ARCHITECTURE.md para a
+      decisao de nao perseguir uma tabela municipio+idade nesta fase.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: series_code
+        description: "'COD' da fonte. Estavel dentro do table_id."
+        tests: [not_null]
+      - name: series_name
+        tests: [not_null]
+      - name: province_code
+        description: Resolvido via ine_municipality_codes_seed — nao vem da fonte.
+        tests: [not_null]
+      - name: municipality_code
+        description: Resolvido via ine_municipality_codes_seed — nao vem da fonte.
+        tests: [not_null]
+      - name: municipality_name
+        description: >
+          Segmento 1 de series_name, grafia Tempus3 — NAO bate com a grafia do
+          Callejero (ver ine_municipality_codes_seed).
+        tests: [not_null]
+      - name: sex_label
+        description: >
+          Segmento 2 de series_name. Vocabulario da fonte: 'Total'/'Hombres'/'Mujeres'
+          — diferente de 'Ambos sexos' usado em silver_ine_population_series (fonte
+          distinta, nao normalizado entre as duas).
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Total", "Hombres", "Mujeres"]
+      - name: year
+        tests: [not_null]
+      - name: fk_periodo
+        description: "Codigo de periodo da fonte. Unico valor medido nesta tabela: 28."
+        tests: [not_null]
+      - name: reference_date
+        description: "Data de referencia do ponto, derivada de 'Fecha' (epoch ms) da fonte."
+        tests: [not_null]
+      - name: is_secret
+        description: >
+          'Secreto' da fonte, exposto sem transformacao. Nao observado como true em
+          nenhum ponto da amostra medida (nao e uma amostra exaustiva dos ~8.200
+          municipios) — se aparecer true, o consumidor deve tratar population_value com
+          cautela; este modelo nao decide isso por ele.
+        tests: [not_null]
+      - name: population_value
+        description: "'Valor' da fonte, sem transformacao."

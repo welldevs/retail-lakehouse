@@ -36,7 +36,7 @@ def _provinces_type(value: str) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ine_callejero_source",
-        description="Source do Callejero do INE: geografia oficial (secoes, nucleos, ruas) por provincia.",
+        description="Source do Callejero do INE: geografia oficial (secoes, nucleos, ruas, tramos com CEP) por provincia.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -36,7 +36,7 @@ class IntakeHappyPathTest(unittest.TestCase):
         self.assertEqual(manifest["manifest_version"], 1)
         self.assertEqual(manifest["source"]["name"], "ine_callejero")
         self.assertEqual(manifest["partition"], {"ingestion_date": "2026-01-01"})
-        self.assertEqual(manifest["totals"]["files_landed"], 4)  # SECC+UP+VIAS+PSEU
+        self.assertEqual(manifest["totals"]["files_landed"], 5)  # SECC+UP+VIAS+PSEU+TRAM
         self.assertEqual(manifest["failures"], [])
         self.assertEqual(manifest["history"], [])
 
@@ -61,21 +61,21 @@ class IntakeHappyPathTest(unittest.TestCase):
         )
         self.assertEqual(read_bytes(original), read_bytes(landed))
 
-    def test_tram_presente_em_in_nunca_e_landado(self):
-        in_dir = build_input_dir(self.root, provinces=("41",), include_tram=True)
+    def test_tram_e_landado_como_os_demais(self):
+        in_dir = build_input_dir(self.root, provinces=("41",))
         code, _ = run_intake(self.root, in_dir, provinces=["41"])
         self.assertEqual(code, 0)
         province_dir = os.path.join(self.partition, "provinces", "province=41")
         landed_names = os.listdir(province_dir)
-        self.assertEqual(len(landed_names), 4)  # nao 5
-        self.assertFalse(any(name.startswith("TRAM") for name in landed_names))
+        self.assertEqual(len(landed_names), 5)
+        self.assertTrue(any(name.startswith("TRAM") for name in landed_names))
 
     def test_multiplas_provincias(self):
         in_dir = build_input_dir(self.root, provinces=("08", "28", "41", "46"))
         code, _ = run_intake(self.root, in_dir, provinces=["08", "28", "41", "46"])
         self.assertEqual(code, 0)
         manifest = part.read_manifest(self.partition)
-        self.assertEqual(manifest["totals"]["files_landed"], 16)  # 4 provincias x 4 datasets
+        self.assertEqual(manifest["totals"]["files_landed"], 20)  # 4 provincias x 5 datasets
 
 
 class ArgumentGuardTest(unittest.TestCase):
@@ -105,8 +105,8 @@ class MissingFileTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
         self.in_dir = os.path.join(self.root, "in")
-        # so 3 dos 4 datasets: falta PSEU
-        for dataset in ("SECC", "UP", "VIAS"):
+        # so 4 dos 5 datasets: falta PSEU
+        for dataset in ("SECC", "UP", "VIAS", "TRAM"):
             write_callejero_file(self.in_dir, dataset, "28", subdir="call_p28_726/call_p28_072026")
 
     def test_falha_parcial_devolve_1_e_nao_marca_success(self):
@@ -125,7 +125,7 @@ class MissingFileTest(unittest.TestCase):
         self.assertEqual(code, 0)
         manifest = part.read_manifest(self.partition)
         self.assertTrue(manifest["complete"])
-        self.assertEqual(manifest["totals"]["files_landed"], 4)
+        self.assertEqual(manifest["totals"]["files_landed"], 5)
 
     def test_historico_preserva_a_execucao_anterior(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
@@ -143,7 +143,7 @@ class ResumeAndImmutabilityTest(unittest.TestCase):
         self.in_dir = build_input_dir(self.root, provinces=("28",))
 
     def test_reexecucao_de_particao_incompleta_reaproveita_o_que_ja_landou(self):
-        # so 3 dos 4 datasets em --in: primeira execucao fica incompleta (resumivel).
+        # so 3 dos 5 datasets em --in: primeira execucao fica incompleta (resumivel).
         from tests.support import write_callejero_file
 
         parcial_in = os.path.join(self.root, "in-parcial")
@@ -151,7 +151,7 @@ class ResumeAndImmutabilityTest(unittest.TestCase):
             write_callejero_file(parcial_in, dataset, "28", subdir="call_p28_726/call_p28_072026")
         run_intake(self.root, parcial_in, provinces=["28"])
 
-        code, _ = run_intake(self.root, self.in_dir, provinces=["28"])  # in_dir tem os 4
+        code, _ = run_intake(self.root, self.in_dir, provinces=["28"])  # in_dir tem os 5
         self.assertEqual(code, 0)
         manifest = part.read_manifest(self.partition)
         por_dataset = {f["dataset"]: f["reused"] for f in manifest["files"]}
@@ -184,7 +184,7 @@ class TamperedLandedFileTest(unittest.TestCase):
         self.in_dir = os.path.join(self.root, "in")
         from tests.support import write_callejero_file
 
-        # so 3 dos 4 datasets: particao fica incompleta, resumivel sem --overwrite.
+        # so 3 dos 5 datasets: particao fica incompleta, resumivel sem --overwrite.
         for dataset in ("SECC", "UP", "VIAS"):
             write_callejero_file(self.in_dir, dataset, "28", subdir="call_p28_726/call_p28_072026")
         run_intake(self.root, self.in_dir, provinces=["28"])

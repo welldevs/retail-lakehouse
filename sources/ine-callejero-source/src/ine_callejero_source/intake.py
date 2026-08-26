@@ -67,11 +67,10 @@ def discover_input_files(in_dir: str) -> dict[tuple[str, str], str]:
     """Mapeia (dataset, provincia) -> caminho absoluto, varrendo --in recursivamente.
 
     So reconhece arquivos cujo nome bate com o padrao oficial do Callejero
-    (partition.INPUT_FILE, que so lista SECC/UP/VIAS/PSEU). TRAM existe nos downloads
-    mas nunca vira candidato aqui — nao e "nao configurado", e fora de escopo (CONTRACT.md
-    secao 2). Se houver mais de um arquivo pro mesmo (dataset, provincia) em --in, o
-    ultimo encontrado numa varredura ordenada (os.walk + sorted) vence — deterministico
-    entre execucoes, nao "o que o sistema de arquivos devolver primeiro".
+    (partition.INPUT_FILE, que lista SECC/UP/VIAS/PSEU/TRAM). Se houver mais de um
+    arquivo pro mesmo (dataset, provincia) em --in, o ultimo encontrado numa varredura
+    ordenada (os.walk + sorted) vence — deterministico entre execucoes, nao "o que o
+    sistema de arquivos devolver primeiro".
     """
     found: dict[tuple[str, str], str] = {}
     for base, _dirs, names in os.walk(in_dir):
@@ -157,7 +156,7 @@ def run(args) -> int:
             f"datasets {list(DATASETS)} | in {args.in_dir}"
         )
         available = discover_input_files(args.in_dir)
-        log(f"{len(available)} arquivo(s) reconhecidos em --in (TRAM nunca e candidato)")
+        log(f"{len(available)} arquivo(s) reconhecidos em --in")
 
         files: list[dict] = []
         failures: list[dict] = []

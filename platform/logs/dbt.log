@@ -1,0 +1,16 @@
+[0m14:16:25.575086 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x754674df4800>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x754675e81d00>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x754674df4770>]}
+
+
+============================== 14:16:25.578626 | b954ad9c-c95f-4bbc-a924-35d095ee8d59 ==============================
+[0m14:16:25.578626 [info ] [MainThread]: Running with dbt=1.12.3
+[0m14:16:25.579123 [debug] [MainThread]: running dbt with arguments {'cache_selected_only': 'False', 'introspect': 'True', 'use_experimental_parser': 'False', 'hints_enabled': 'True', 'version_check': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'log_format': 'default', 'indirect_selection': 'eager', 'use_colors': 'True', 'debug': 'False', 'quiet': 'False', 'partial_parse': 'True', 'fail_fast': 'False', 'warn_error': 'None', 'maximum_seed_size_mib': '1', 'write_json': 'True', 'profiles_dir': '/home/welton/.dbt', 'target_path': 'None', 'send_anonymous_usage_stats': 'True', 'empty': 'None', 'no_print': 'None', 'static_parser': 'True', 'printer_width': '80', 'log_cache_events': 'False', 'invocation_command': 'dbt list --resource-type model', 'log_path': 'logs'}
+[0m14:16:25.579651 [error] [MainThread]: [[31mERROR[0m]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /home/welton/Documents/WeltonFerreira/Spark/platform/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m14:16:25.580747 [debug] [MainThread]: Resource report: {"command_name": "list", "command_success": false, "command_wall_clock_time": 0.07484331, "process_in_blocks": "55344", "process_kernel_time": 0.143223, "process_mem_max_rss": "108224", "process_out_blocks": "8", "process_user_time": 1.375143}
+[0m14:16:25.581214 [debug] [MainThread]: Command `dbt list` failed at 14:16:25.581129 after 0.08 seconds
+[0m14:16:25.581577 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7546799dc3b0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x754674de65d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x754674df4620>]}
+[0m14:16:25.581964 [debug] [MainThread]: Flushing usage events
+[0m14:16:25.643371 [debug] [MainThread]: An error was encountered while trying to flush usage events

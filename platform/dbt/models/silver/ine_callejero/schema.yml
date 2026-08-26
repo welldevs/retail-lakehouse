@@ -57,9 +57,16 @@ models:
         tests: [not_null]
       - name: population_unit_name
         description: >
-          Nome do nucleo/entidade dentro do municipio (ex. "*DISEMINADO*" para
-          populacao dispersa). O mais proximo de "bairro" que o Callejero oferece —
-          nao e uma divisao administrativa oficial de bairro.
+          Nome do nucleo/entidade dentro do municipio: pedania/aldeia historicamente
+          anexada (ex. Valencia tem 16 nomeadas — BENIFARAIG, PINEDO, EL SALER...) ou
+          "*DISEMINADO*" para populacao dispersa fora de qualquer nucleo. NAO e bairro
+          administrativo (tipo Chamberi/Retiro em Madrid) — esse conceito pertence a
+          prefeitura de cada cidade, nao ao nomenclator do INE, e nao esta em nenhum dos
+          4 arquivos desta source. Medido: Madrid, Barcelona e Sevilla capital sao UMA
+          entidade unica sem subdivisao no UP (so retornam o proprio nome do municipio);
+          Valencia e a unica dos 4 warehouses com pedanias nomeadas, por ter anexado
+          varios nucleos historicamente (L'Horta). Vazio quando a linha e so o registro
+          "container" do nucleo (sufixo terminado em 00, sem *DISEMINADO*/nome proprio).
         tests: [not_null]
 
   - name: silver_callejero_streets
@@ -120,4 +127,75 @@ models:
       - name: name_short
         tests: [not_null]
       - name: name_full
+        tests: [not_null]
+
+  - name: silver_callejero_tramos
+    description: >
+      Tramos de via do INE (arquivo TRAM do Callejero): a unica das 4 tabelas que liga
+      secao + entidade/nucleo + via/pseudovia + CODIGO POSTAL + faixa de numeracao num
+      so registro. GRAO composto (sem coluna unica de id do tramo nos bytes) — ver
+      assert_callejero_tramos_grain_is_unique.sql. street_code/pseudo_address_code sao
+      reconstruidos para JOIN com silver_callejero_streets/pseudo_addresses; unit_code
+      para JOIN com silver_callejero_population_units. "00000" em street_id/
+      pseudo_address_id significa "nao se aplica" (sao mutuamente exclusivos).
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: source_dataset
+        tests: [not_null]
+      - name: source_file
+        tests: [not_null]
+      - name: section_code
+        description: Codigo de secao censitaria (mesmo formato de silver_callejero_sections.section_code).
+        tests: [not_null]
+      - name: province_code
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: district_code
+        tests: [not_null]
+      - name: section_number
+        tests: [not_null]
+      - name: entity_suffix
+        tests: [not_null]
+      - name: unit_code
+        description: >
+          provincia+municipio+entity_suffix — chave de JOIN com
+          silver_callejero_population_units.unit_code.
+        tests: [not_null]
+      - name: street_id
+        description: '"00000" quando o tramo pertence a uma pseudovia, nao a uma via.'
+        tests: [not_null]
+      - name: street_code
+        description: >
+          provincia+municipio+street_id — chave de JOIN com
+          silver_callejero_streets.street_code (so bate quando street_id != "00000").
+        tests: [not_null]
+      - name: pseudo_address_id
+        description: '"00000" quando o tramo pertence a uma via, nao a uma pseudovia.'
+        tests: [not_null]
+      - name: pseudo_address_code
+        description: >
+          provincia+municipio+pseudo_address_id — chave de JOIN com
+          silver_callejero_pseudo_addresses.pseudo_address_code (so bate quando
+          pseudo_address_id != "00000").
+        tests: [not_null]
+      - name: postal_code
+        description: >
+          CEP (CPOS no layout oficial). Unico dos 4 datasets do Callejero com codigo
+          postal. Validado: sempre com o prefixo correto da provincia em 305.361/305.408
+          linhas reais (99,985%); as poucas excecoes ocorrem so em Barcelona.
+        tests: [not_null]
+      - name: numbering_type
+        description: '"0"=sem numeracao, "1"=impar, "2"=par (TINUM no layout oficial).'
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["0", "1", "2"]
+      - name: number_from
+        tests: [not_null]
+      - name: number_to
+        tests: [not_null]
+      - name: reference_date
         tests: [not_null]
