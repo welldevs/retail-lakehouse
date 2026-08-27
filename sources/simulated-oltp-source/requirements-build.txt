@@ -1,0 +1,8 @@
+# Ferramentas de BUILD/EMPACOTAMENTO. Nao sao dependencias de runtime.
+#
+# Necessarias apenas para `pip install -e .` / `pip install .` / construir a wheel.
+# Um container que rode a Source via PYTHONPATH=src nao precisa de nada disto.
+
+packaging
+setuptools
+wheel

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simulated-oltp-source"
+version = "1.0.0"
+description = "Source de OLTP simulado: clientes sinteticos com endereco real do Callejero e demografia real do INE"
+readme = "README.md"
+requires-python = ">=3.12"
+# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao. A referencia
+# geografica/demografica chega como JSON plano, nunca por conexao ao Lakehouse.
+dependencies = []
+
+[project.scripts]
+simulated-oltp-source = "simulated_oltp_source.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
