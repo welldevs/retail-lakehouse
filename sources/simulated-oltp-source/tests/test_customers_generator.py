@@ -42,6 +42,27 @@ class ReprodutibilidadeTest(GeneratorTestCase):
         for antes, depois in zip(de_2026, de_2030):
             self.assertEqual(depois["birth_year"] - antes["birth_year"], 4)
 
+    def test_aumentar_count_e_aditivo_nao_reembaralha(self):
+        """CRESCER A BASE E APPEND-ONLY: os primeiros M clientes de uma geracao de N sao
+        exatamente os M clientes de uma geracao de M.
+
+        Vale porque o laco e `for index in range(count)` sobre uma UNICA random.Random(seed)
+        consumida em ordem fixa, e nada antes do laco depende de count. E a propriedade que
+        permite recarregar a base com mais clientes sem invalidar os que ja existem — sem
+        isso, cada aumento de --count trocaria as pessoas por tras de todos os customer_id.
+
+        Condicoes: mesma seed, mesma referencia e mesma ingestion_date. Trocar a data
+        preserva a IDADE amostrada e desloca birth_year (ver test_nao_depende_do_relogio);
+        trocar a referencia remapeia os sorteios para outros candidatos.
+        """
+        grande = self.gen(count=200, seed=4242)
+        for menor in (1, 7, 50, 199):
+            self.assertEqual(
+                self.gen(count=menor, seed=4242),
+                grande[:menor],
+                f"geracao de {menor} divergiu do prefixo de 200",
+            )
+
     def test_a_ordem_dos_candidatos_define_o_candidate_index(self):
         """O indice tem de apontar para a linha certa da referencia, nao para outra."""
         for customer in self.gen():

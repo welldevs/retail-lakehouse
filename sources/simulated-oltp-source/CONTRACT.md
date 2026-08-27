@@ -182,8 +182,11 @@ construção.
 - **Não fala com o Lakehouse.** Sem `duckdb`, sem `boto3`, sem dbt, sem importar nada da
   plataforma. A referência chega como JSON plano.
 - **Não busca rede.** Nenhum socket, em nenhum passo.
-- **Não fornece identidade persistente de cliente.** Não há merge entre dias, nem
-  modelo Silver: isso é Fase 2, junto com Orders.
+- **Não fornece identidade persistente de cliente.** Não há merge entre dias, e esta Source
+  não produz modelo Silver — quem versiona a identidade é o consumidor. Desde a Fase 2 isso
+  existe do lado da plataforma (`silver_customer` e a dimensão SCD2 `DIM_CUSTOMER`), e
+  continua sendo responsabilidade dele, não desta Source. A garantia aqui é a mesma de
+  sempre: `customer_id` é chave da partição.
 - **Não gera Orders, estoque nem entrega.** Fase 1 é estritamente Customers.
 - **Não normaliza vocabulário da fonte.** `numbering_type` e `sex_label` carregam os
   rótulos do INE verbatim.
