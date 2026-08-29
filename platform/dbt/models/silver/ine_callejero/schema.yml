@@ -10,6 +10,13 @@ models:
     columns:
       - name: ingestion_date
         tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+        tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
@@ -34,6 +41,13 @@ models:
       MUNICIPIO inteiro, nao de um nucleo especifico dentro dele.
     columns:
       - name: ingestion_date
+        tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
@@ -77,6 +91,13 @@ models:
     columns:
       - name: ingestion_date
         tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+        tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
@@ -110,6 +131,13 @@ models:
     columns:
       - name: ingestion_date
         tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+        tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
@@ -140,6 +168,13 @@ models:
       pseudo_address_id significa "nao se aplica" (sao mutuamente exclusivos).
     columns:
       - name: ingestion_date
+        tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]

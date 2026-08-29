@@ -16,6 +16,27 @@ dependencies = [
     "duckdb>=1.1",
     "dbt-core>=1.8",
     "dbt-duckdb>=1.8",
+    # Segundo target do dbt. O SQL do Silver continua rodando em duckdb; a arvore
+    # models/warehouse/ roda aqui. Os dois nunca se cruzam numa execucao — adaptadores
+    # diferentes nao compartilham `ref()` — e o guard `+enabled` por target no
+    # dbt_project.yml e o que impede rodar a arvore errada no motor errado.
+    "dbt-snowflake>=1.8",
+    # Transporte do recorte (PUT em stage interno + COPY INTO). A credencial vem sempre
+    # de ~/.snowflake/config.toml pelo nome da conexao; nada de segredo no repo.
+    "snowflake-connector-python>=3.12",
+    # O OLTP de pedidos e seu outbox. Fica NA PLATAFORMA, nunca na Source: uma Source com
+    # dependencia de banco deixaria de ser FROZEN, e `make source-test` reprova isso por AST.
+    "psycopg[binary]>=3.2",
+    # Transporte dos eventos. Tambem so na plataforma: a Source produz o log e nao sabe que
+    # existe broker — `make source-test` reprova por AST se um dia souber.
+    "confluent-kafka>=2.5",
+    # Projecao viva em Iceberg, com catalogo SQL no proprio Postgres do OLTP.
+    #
+    # SEM O EXTRA `s3fs`, DE PROPOSITO: ele arrasta um `aiobotocore` que fixa um botocore
+    # antigo e conflita com o boto3 que a plataforma ja usa para o RAW — medido, o pip
+    # aceita instalar e o `boto3` quebra depois. O `PyArrowFileIO` faz o mesmo trabalho com
+    # o pyarrow que o pyiceberg ja traz, e e o que o catalogo declara em `py-io-impl`.
+    "pyiceberg[sql-postgres,pyarrow]>=0.9",
 ]
 
 [project.scripts]

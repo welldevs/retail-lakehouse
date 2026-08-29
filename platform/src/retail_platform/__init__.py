@@ -17,6 +17,8 @@ SUPPORTED_MANIFEST_VERSIONS = {
     "mercadona_catalog_api": 2,
     "ine_population_api": 1,
     "ine_callejero": 1,
+    "simulated_oltp": 1,
+    "simulated_orders": 1,
 }
 
 __all__ = ["SOURCE_NAME", "SUPPORTED_MANIFEST_VERSIONS", "__version__"]

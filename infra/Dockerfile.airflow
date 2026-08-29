@@ -19,16 +19,36 @@ FROM apache/airflow:2.10.5-python3.12
 
 USER root
 
+# A LISTA DE DEPENDENCIAS VIVE NUM LUGAR SO: platform/pyproject.toml.
+#
+# Antes ela estava duplicada aqui, e a duplicacao fez o que duplicacao faz. A Fase 2
+# acrescentou `dbt-snowflake` e `snowflake-connector-python` ao pyproject; esta imagem
+# continuou com a lista da Fase 1; a DAG `warehouse_load` falhou em `load_stage` com
+# "snowflake-connector-python nao esta instalado neste venv" — e falhou em RUNTIME, dias
+# depois, em vez de no build. Ler o pyproject elimina a classe inteira do problema.
+#
+# Copiar o pyproject nao viola "nenhum codigo vai para a imagem": e METADADO de
+# dependencia, e o codigo continua chegando por mount.
+COPY platform/pyproject.toml /tmp/platform-pyproject.toml
+
 # O venv da plataforma vive em /opt, fora do HOME do usuario airflow, e fica legivel para
 # todos: o scheduler e o worker rodam como `airflow` e apenas o executam.
+#
+# A CONFERENCIA FINAL E PARTE DO BUILD e importa os DOIS adaptadores do dbt mais o
+# conector. Se uma dependencia sumir da imagem, o build quebra aqui — nao a DAG, dias
+# depois, com o dado parado no meio do caminho.
 RUN python -m venv /opt/platform-venv \
- && /opt/platform-venv/bin/pip install --no-cache-dir --quiet \
-      "boto3>=1.34" \
-      "duckdb>=1.1" \
-      "dbt-core>=1.8" \
-      "dbt-duckdb>=1.8" \
+ && /opt/platform-venv/bin/python -c "\
+import tomllib, subprocess; \
+deps = tomllib.load(open('/tmp/platform-pyproject.toml', 'rb'))['project']['dependencies']; \
+print('instalando:', ', '.join(deps)); \
+subprocess.check_call(['/opt/platform-venv/bin/pip', 'install', '--no-cache-dir', '--quiet', *deps])" \
  && chmod -R a+rX /opt/platform-venv \
- && /opt/platform-venv/bin/python -c "import boto3, duckdb; print('platform venv OK')"
+ && /opt/platform-venv/bin/python -c "\
+import boto3, confluent_kafka, duckdb, psycopg, pyiceberg, snowflake.connector; \
+from dbt.adapters.duckdb import DuckDBAdapter; \
+from dbt.adapters.snowflake import SnowflakeAdapter; \
+print('platform venv OK: boto3, duckdb, psycopg, confluent-kafka, pyiceberg, dbt-duckdb, dbt-snowflake, snowflake-connector')"
 
 USER airflow
 

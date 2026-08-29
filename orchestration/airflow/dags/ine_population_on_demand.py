@@ -47,6 +47,15 @@ DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
 TABLES = os.environ.get("RETAIL_INE_TABLES", "31304")
 
+# O default da Source e 30s por requisicao, dimensionado para uma chamada de API comum.
+# Estas tabelas nao sao comuns: MEDIDO em disco, 31304 devolve 264 MB e 29005 outros
+# 125 MB num unico GET. Com 30s a extracao estola sem completar; com 240s ela passa, e
+# ainda assim ja foi observada uma resposta truncar no meio (JSON corrompido por volta do
+# byte 154.000.000), que so o retry resolveu. Mesmos valores do Makefile da raiz — os dois
+# caminhos (manual e orquestrado) tem de se comportar igual.
+TIMEOUT = os.environ.get("RETAIL_INE_TIMEOUT", "240")
+MAX_RETRIES = os.environ.get("RETAIL_INE_MAX_RETRIES", "3")
+
 # Codigos de saida do CONTRACT.md secao 7 da source (mesmos valores da Mercadona, sources
 # diferentes e independentes — nao ha acoplamento em comparti-los aqui).
 EXIT_OK = 0
@@ -103,7 +112,10 @@ def extract(ds: str, **_) -> None:
         print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
         return
 
-    code = _run_source(["extract", "--out", DATA_ROOT, "--tables", TABLES, "--date", ds])
+    code = _run_source([
+        "extract", "--out", DATA_ROOT, "--tables", TABLES, "--date", ds,
+        "--timeout", TIMEOUT, "--max-retries", MAX_RETRIES,
+    ])
     if code == EXIT_FATAL:
         raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
     if code == EXIT_PARTIAL:

@@ -1,0 +1,172 @@
+version: 2
+
+models:
+  - name: mart_price_evolution
+    description: >
+      GRAO (snapshot_date, wh, source_product_id) — por dia OBSERVADO, nunca por dia de
+      calendario. Como o preco de cada produto se moveu em cada armazem.
+    columns:
+      - name: snapshot_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: source_product_id
+        tests: [not_null]
+      - name: unit_price
+        tests: [not_null]
+      - name: days_since_previous_snapshot
+        description: >
+          Nulo na primeira observacao de cada produto. Onde nao e nulo, e a distancia real
+          ate a observacao anterior — comparar variacoes sem olhar esta coluna mistura uma
+          mudanca de 8 dias com uma de 1.
+      - name: identity_review_needed
+        description: "Id novo com nome que ja existia. A decisao e de quem consulta."
+        tests: [not_null]
+
+  - name: mart_assortment_daily
+    description: >
+      GRAO (snapshot_date, wh, category_id) — quanto de catalogo cada armazem tem por
+      categoria, a que preco, e quanto disso e exclusivo dele.
+    columns:
+      - name: snapshot_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: category_id
+        tests: [not_null]
+      - name: products
+        tests: [not_null]
+      - name: products_in_all_warehouses
+        description: >
+          Denominador honesto de qualquer comparacao entre armazens: comparar preco medio
+          de catalogos diferentes mede diferenca de catalogo, nao de preco. Calculado por
+          DIA, porque o catalogo muda.
+        tests: [not_null]
+
+  - name: mart_customer_base
+    description: >
+      GRAO (customer_id) — a base VIGENTE. A PESSOA e sintetica, o ENDERECO e real, e a
+      populacao do municipio da o contexto sem o qual "3 clientes em Ajalvir" nao diz nada.
+    columns:
+      - name: customer_id
+        tests: [not_null, unique]
+      - name: wh
+        tests: [not_null]
+      - name: municipality_name
+        tests: [not_null]
+      - name: postal_code
+        tests: [not_null]
+      - name: age_band
+        tests: [not_null]
+
+  - name: mart_market_coverage
+    description: >
+      GRAO (wh, province_code, municipality_code) — TODOS os 370 municipios da AUF,
+      inclusive os que ainda nao receberam nenhum cliente. E o LEFT JOIN que faz este mart
+      valer: partir dos clientes mostraria 100% de cobertura por construcao, sempre.
+    columns:
+      - name: wh
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: municipality_population
+        description: "Do INE, observado. Denominador de customers_per_10k_inhabitants."
+      - name: customers
+        description: "Sintetico. Zero e um valor legitimo e informativo aqui."
+        tests: [not_null]
+      - name: customers_per_10k_inhabitants
+        description: >
+          Numerador sintetico sobre denominador observado. Serve para comparar a DENSIDADE
+          DA SIMULACAO entre municipios — nunca como estimativa de penetracao de mercado.
+      - name: has_no_customers
+        tests: [not_null]
+
+  - name: mart_order_funnel
+    description: >
+      GRAO (order_date, wh) — 16 linhas. O funil se apoia em MARCO ALCANCADO, nunca em
+      order_status, e a diferenca e medida: contar order_status = 'DELIVERED' da 5.985
+      entregas, contar delivered_at is not null da 6.046. Sao os 61 pedidos devolvidos,
+      que tambem foram entregues. Marco e monotonico; status nao e. As colunas de SAIDA
+      (cancelados, devolvidos) nao somam com as etapas — elas vivem num bloco proprio.
+    columns:
+      - name: order_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: orders_placed
+        tests: [not_null]
+      - name: orders_delivered
+        description: "Por marco, nao por status. Ver assert_order_funnel_totals_match_fact_order."
+        tests: [not_null]
+      - name: delivery_rate
+        tests: [not_null]
+      - name: currency
+        tests: [not_null]
+
+  - name: mart_fulfillment_sla
+    description: >
+      GRAO (order_date, wh) — 16 linhas. p50/p90 por etapa, sobre os pedidos que
+      ALCANCARAM cada marco (percentile_cont ignora nulo, e nulo aqui significa "a etapa
+      nao aconteceu"). ACHADO REGISTRADO EM VEZ DE CORRIGIDO: sla_minutes_picking = 90 e
+      inalcancavel por construcao — basket_lines_max (40) x minutes_per_line_picked (2)
+      da teto de 80, e o maximo medido e exatamente 80,00. Zero violacoes, e nao porque a
+      operacao seja boa. Por isso sla_minutes, max_picking_minutes e orders_breaching_sla
+      viajam lado a lado: quem le ve 90, ve 80 e ve 0, e entende o zero.
+    columns:
+      - name: order_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: sla_minutes
+        description: >
+          Vem de FACT_ORDER_PREMISE, nao de uma constante deste modelo. Se a premissa
+          sumir do seed, esta coluna vira nula e ESTE not_null reprova — que e a unica
+          razao de a CTE usar max(case when...) em vez de um where que esvaziaria o mart.
+        tests: [not_null]
+      - name: orders_breaching_sla
+        tests: [not_null]
+      - name: max_picking_minutes
+        description: "Medido 80 na janela. Lido junto de sla_minutes, explica o zero."
+      - name: orders_placed
+        tests: [not_null]
+      - name: slot_adherence_rate
+        description: >
+          8% na janela, e o desvio e para CEDO. Medido nas 6.046 entregas: 5.166 chegam
+          ANTES de a janela abrir, 471 dentro, 409 depois — mediana de 4,6h ate a entrega
+          contra 12,8h ate o inicio da janela. E aritmetica das premissas
+          (slot_lead_hours 2-24h contra ~4,6h de ciclo), declaradas separadamente e nunca
+          conciliadas. Registrado, nao corrigido: mexer no seed para a taxa melhorar seria
+          ajustar a entrada ate a saida agradar.
+        tests: [not_null]
+      - name: orders_delivered_before_slot
+        description: >
+          Chegar cedo e chegar tarde sao problemas OPOSTOS. Colapsar os dois em "fora da
+          janela" apagaria qual deles esta acontecendo — aqui sao 5.166 contra 409.
+        tests: [not_null]
+      - name: orders_delivered_after_slot
+        tests: [not_null]
+
+  - name: mart_basket_daily
+    description: >
+      GRAO (order_date, wh, category_id). Lado da DEMANDA, no mesmo eixo que
+      MART_ASSORTMENT_DAILY tem o lado da oferta — os dois podem ser postos lado a lado
+      sem reagregacao. ATENCAO: orders_touching_category NAO e aditivo entre categorias
+      (um pedido com leite e pao conta uma vez em cada); linhas, unidades e valor sao.
+      Quem quiser pedidos por dia usa MART_ORDER_FUNNEL, que tem o grao certo.
+    columns:
+      - name: order_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: category_id
+        tests: [not_null]
+      - name: orders_touching_category
+        description: "NAO SOMA entre categorias. O nome diz isso de proposito."
+        tests: [not_null]
+      - name: lines_placed
+        tests: [not_null]
+      - name: revenue_fulfilled
+        description: "O que foi ENTREGUE. revenue_placed guarda o que foi pedido, ao lado."
+        tests: [not_null]
+      - name: currency
+        tests: [not_null]

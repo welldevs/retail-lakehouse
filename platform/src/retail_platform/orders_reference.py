@@ -1,0 +1,609 @@
+"""Exporta, do Silver, as referencias planas que a Source de Orders simulados consome.
+
+POR QUE ESTE MODULO EXISTE, E POR QUE ELE FICA NA PLATAFORMA
+------------------------------------------------------------
+Mesmo mecanismo de `oltp_reference.py`, um nivel adiante na cadeia. `simulated-orders-source`
+precisa de cliente, produto e preco REAIS para que o pedido seja a unica coisa inventada —
+mas toda Source deste repo e FROZEN (`dependencies = []`, verificado por AST) e
+`duckdb`/`boto3` sao dependencias exclusivas da plataforma por design. A PLATAFORMA consulta
+o Silver e escreve quatro JSON planos; o `extract` da Source os le com `json` da stdlib.
+Nenhum lado importa o codigo do outro.
+
+A REGRA DE OURO, APLICADA A ORDERS
+-----------------------------------
+O pedido e inventado; quem compra, o que se compra, quanto custa e onde mora nao. Cliente
+vem de `silver_customer`, produto e preco vem de `silver_product_price` do MESMO armazem na
+MESMA data. Nada aqui fabrica produto, preco ou cliente.
+
+DE ONDE VEM CADA COISA (e o que foi medido antes de escrever isto)
+------------------------------------------------------------------
+  * `silver_product_price` tem MAIS LINHAS que produtos distintos por particao (ex.: 4.581
+    linhas para 4.311 produtos em mad1/2026-08-24): um produto aparece em mais de uma
+    categoria, e isso e semantica da fonte, nao defeito. O dedup por
+    `(warehouse, ingestion_date, source_product_id)` e SEGURO porque o preco e identico
+    entre as aparicoes — garantia que ja tem teste proprio no repo
+    (`assert_price_is_consistent_across_appearances`). A categoria escolhida e a menor
+    `(category_id, subgroup_id)`: e uma regra de DESEMPATE deterministica, nao de negocio.
+  * `unit_price` viaja como STRING, nunca float. E a obrigacao 4.4 do contrato da Mercadona
+    ("converter para float perde precisao decimal em moeda"), e o gerador faz a aritmetica
+    com `decimal.Decimal`, que e stdlib e portanto nao quebra a fronteira FROZEN.
+  * A ESCOLHA DO PRODUTO E UNIFORME, de proposito, e isso nao e "cesta realista". Nenhuma
+    fonte deste repo mede venda, giro ou cesta. Ponderar produto inventaria uma distribuicao
+    que ninguem mediu — a mesma proibicao que a Fase 1 aplicou a escolha do tramo. A
+    consequencia declarada: o mix por categoria espelha o TAMANHO do sortimento, e isso e
+    consequencia de uma premissa, nao afirmacao sobre o mercado.
+  * A JANELA E DERIVADA, NUNCA PRESUMIDA. Para cada `(wh, order_date)` o preco vem do maior
+    snapshot de catalogo daquele armazem em data <= order_date. Igual: `price_source =
+    'observed'`. Anterior: `'carried_forward'`, explicito. Medido no disco em 2026-08-28: os
+    4 armazens tem catalogo de 08-24 a 08-27; mad1 tem tambem 08-15/08-16, com buraco de
+    08-17 a 08-23. Um varejista vende todo dia; a fonte so foi observada em alguns.
+  * NENHUM PEDIDO ANTES DE O CLIENTE EXISTIR. `first_ingestion_date` por cliente e exportado
+    para que o gerador possa recusar. A base e append-only (crescer preserva os primeiros N
+    byte a byte), entao um cliente presente numa data esta presente em todas as posteriores.
+  * As PREMISSAS sao lidas do CSV do seed, e nao do Lakehouse, pelo mesmo motivo ja medido em
+    `oltp_reference.py`: seeds do dbt nao tem `location =` e nunca viram parquet sob
+    `silver/`, que e tudo que `connect_lakehouse()` enxerga.
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import os
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+
+DEFAULT_SEEDS_DIR = os.path.join("platform", "dbt", "seeds")
+PROVINCE_MAP_SEED = "warehouse_province_map_seed.csv"
+PREMISES_SEED = "order_premises_seed.csv"
+
+CUSTOMERS_FILE = "customers.json"
+CATALOG_FILE = "catalog.json"
+CALENDAR_FILE = "calendar.json"
+PREMISES_FILE = "premises.json"
+
+PRICE_OBSERVED = "observed"
+PRICE_CARRIED_FORWARD = "carried_forward"
+
+# Rotulo unico permitido na tabela de premissas. Nao existe premissa `observed` nem `proxy`
+# aqui: nenhuma fonte deste repo mede cesta, cadencia ou disponibilidade. Um rotulo
+# diferente e erro de export, nao aviso.
+PREMISE_LABEL = "synthetic"
+
+# Chaves que o gerador exige. Um seed truncado ou renomeado tem de reprovar o export, nunca
+# produzir pedidos com um default escondido no gerador.
+REQUIRED_PREMISES = (
+    "daily_order_rate",
+    "basket_lines_min",
+    "basket_lines_mode",
+    "basket_lines_max",
+    "quantity_max",
+    "substitution_rate",
+    "removal_rate",
+    "payment_failure_rate",
+    "cancellation_rate",
+    "delivery_failure_rate",
+    "return_rate",
+    "order_hour_min",
+    "order_hour_max",
+    "slot_hours",
+    "slot_lead_hours_min",
+    "slot_lead_hours_max",
+    "minutes_to_payment_min",
+    "minutes_to_payment_max",
+    "minutes_to_cancel_min",
+    "minutes_to_cancel_max",
+    "minutes_to_picking_min",
+    "minutes_to_picking_max",
+    "minutes_per_line_picked",
+    "minutes_to_dispatch_min",
+    "minutes_to_dispatch_max",
+    "minutes_to_delivered_min",
+    "minutes_to_delivered_max",
+    "minutes_to_return_min",
+    "minutes_to_return_max",
+    "sla_minutes_picking",
+)
+
+
+class OrdersReferenceError(Exception):
+    """O Silver nao tem o que este export precisa, ou a cobertura regrediu."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sql_literal(value: str) -> str:
+    """Literal SQL. Uma aspa simples quebraria a query em silencio: melhor recusar."""
+    if "'" in value:
+        raise OrdersReferenceError(f"valor com aspa simples nao suportado em SQL: {value}")
+    return f"'{value}'"
+
+
+def _seed(seeds_dir: str, name: str) -> str:
+    path = os.path.join(seeds_dir, name)
+    if not os.path.exists(path):
+        raise OrdersReferenceError(
+            f"seed nao encontrado: {path}. Rode a partir da raiz do repo, ou passe "
+            f"--seeds-dir apontando para o diretorio de seeds do dbt."
+        )
+    return path
+
+
+def _rows(connection, sql: str) -> list[dict]:
+    """Executa e devolve linhas como dicionarios, na ordem que o SQL determinou."""
+    result = connection.execute(sql)
+    columns = [d[0] for d in result.description]
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
+def _write_json(path: str, payload, indent: int | None) -> int:
+    """Grava JSON atomicamente (temporario no mesmo diretorio + os.replace)."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    blob = (
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=indent) + "\n"
+    ).encode("utf-8")
+    handle, temp_path = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(blob)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+    return len(blob)
+
+
+def _parse_date(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError) as exc:
+        raise OrdersReferenceError(f"data invalida: {value!r}. Formato esperado YYYY-MM-DD.") from exc
+
+
+def _date_range(window_from: str, window_to: str) -> list[str]:
+    start, end = _parse_date(window_from), _parse_date(window_to)
+    if end < start:
+        raise OrdersReferenceError(f"janela invertida: --from {window_from} > --to {window_to}")
+    days = (end - start).days + 1
+    return [(start + timedelta(days=offset)).isoformat() for offset in range(days)]
+
+
+def _warehouses(seeds_dir: str) -> list[str]:
+    """Armazens em escopo. Vem do seed, nao do que por acaso tem catalogo.
+
+    O vinculo warehouse->provincia e decisao DESTA plataforma, nao propriedade do INE nem da
+    Mercadona — ja registrado no ARCHITECTURE.md. Derivar a lista do dado disponivel faria um
+    armazem sem catalogo desaparecer em silencio em vez de reprovar.
+    """
+    path = _seed(seeds_dir, PROVINCE_MAP_SEED)
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        raise OrdersReferenceError(f"{path}: seed vazio")
+    if "wh" not in rows[0]:
+        raise OrdersReferenceError(f"{path}: seed sem a coluna 'wh'")
+    return sorted({row["wh"] for row in rows})
+
+
+# --------------------------------------------------------------------------------
+# 1. Premissas declaradas
+# --------------------------------------------------------------------------------
+
+def _build_premises(seeds_dir: str) -> dict:
+    """Le a tabela de premissas do CSV e a rotula com o proprio sha256.
+
+    O digest viaja ate o manifesto da particao. Sem ele, trocar uma taxa e regerar produziria
+    pedidos diferentes sob a mesma seed sem deixar rastro — a mesma classe de problema que a
+    Fase 1 resolveu guardando a seed de cada execucao em `history`.
+    """
+    path = _seed(seeds_dir, PREMISES_SEED)
+    with open(path, "rb") as handle:
+        blob = handle.read()
+    digest = hashlib.sha256(blob).hexdigest()
+
+    rows = list(csv.DictReader(blob.decode("utf-8").splitlines()))
+    if not rows:
+        raise OrdersReferenceError(f"{path}: seed de premissas vazio")
+
+    values: dict[str, str] = {}
+    for position, row in enumerate(rows):
+        key = (row.get("premise_key") or "").strip()
+        if not key:
+            raise OrdersReferenceError(f"{path}: linha {position} sem premise_key")
+        if key in values:
+            raise OrdersReferenceError(f"{path}: premise_key duplicada: {key!r}")
+        label = (row.get("label") or "").strip()
+        if label != PREMISE_LABEL:
+            raise OrdersReferenceError(
+                f"{path}: premissa {key!r} rotulada {label!r}. O unico rotulo aceito e "
+                f"{PREMISE_LABEL!r}: nenhuma fonte deste repo mede cesta, cadencia ou "
+                f"disponibilidade, entao chamar qualquer uma destas de 'observed' ou 'proxy' "
+                f"prometeria um dado que nao existe."
+            )
+        try:
+            float(row.get("value"))
+        except (TypeError, ValueError) as exc:
+            raise OrdersReferenceError(
+                f"{path}: premissa {key!r} com valor nao numerico: {row.get('value')!r}"
+            ) from exc
+        values[key] = str(row["value"]).strip()
+
+    missing = sorted(set(REQUIRED_PREMISES) - set(values))
+    if missing:
+        raise OrdersReferenceError(
+            f"{path}: premissa(s) obrigatoria(s) ausente(s): {missing}. O gerador nao tem "
+            f"default para nenhuma delas, de proposito."
+        )
+
+    return {
+        "generated_at_utc": _utc_now(),
+        "seed_path": os.path.normpath(path),
+        "seed_sha256": digest,
+        "label": PREMISE_LABEL,
+        "note": (
+            "Toda linha desta tabela e SINTETICA e declarada. Nenhuma fonte ingerida por esta "
+            "plataforma mede venda, cesta, cadencia de compra ou disponibilidade de produto. "
+            "Estes numeros nao sao proxy de nada observado: sao parametros de simulacao, e "
+            "mudar qualquer um deles muda os pedidos gerados sob a mesma seed."
+        ),
+        "values": values,
+        "rows": [
+            {
+                "premise_key": row["premise_key"].strip(),
+                "value": str(row["value"]).strip(),
+                "unit": (row.get("unit") or "").strip(),
+                "label": (row.get("label") or "").strip(),
+                "rationale": (row.get("rationale") or "").strip(),
+            }
+            for row in rows
+        ],
+    }
+
+
+# --------------------------------------------------------------------------------
+# 2. Calendario de preco: qual snapshot sustenta cada (wh, dia)
+# --------------------------------------------------------------------------------
+
+def _calendar_sql(warehouses: list[str], days: list[str]) -> str:
+    wh_values = ", ".join(f"({_sql_literal(w)})" for w in warehouses)
+    day_values = ", ".join(f"(date {_sql_literal(d)})" for d in days)
+    return f"""
+    with wh_list(wh) as (values {wh_values}),
+    dias(order_date) as (values {day_values}),
+    catalog_dates as (
+        select distinct warehouse as wh, ingestion_date
+        from silver_product_price
+    ),
+    grid as (
+        select w.wh, d.order_date from wh_list w cross join dias d
+    )
+    select
+        g.wh,
+        cast(g.order_date as varchar) as order_date,
+        cast((
+            select max(c.ingestion_date) from catalog_dates c
+            where c.wh = g.wh and c.ingestion_date <= g.order_date
+        ) as varchar) as price_as_of
+    from grid g
+    order by g.wh, g.order_date
+    """
+
+
+def _build_calendar(connection, warehouses: list[str], days: list[str]) -> dict:
+    rows = _rows(connection, _calendar_sql(warehouses, days))
+
+    sem_preco = [(r["wh"], r["order_date"]) for r in rows if r["price_as_of"] is None]
+    if sem_preco:
+        raise OrdersReferenceError(
+            f"{len(sem_preco)} par(es) (armazem, dia) sem NENHUM snapshot de catalogo em data "
+            f"anterior ou igual: {sem_preco[:10]}. Um pedido nesse dia teria de inventar "
+            f"preco. Estreite a janela com --from, ou extraia o catalogo daquele armazem."
+        )
+
+    for row in rows:
+        row["price_source"] = (
+            PRICE_OBSERVED if row["price_as_of"] == row["order_date"] else PRICE_CARRIED_FORWARD
+        )
+
+    carried = sum(1 for r in rows if r["price_source"] == PRICE_CARRIED_FORWARD)
+    return {
+        "generated_at_utc": _utc_now(),
+        "window_from": days[0],
+        "window_to": days[-1],
+        "warehouses": warehouses,
+        "catalog_ingestion_dates": sorted({r["price_as_of"] for r in rows}),
+        "carried_forward_rows": carried,
+        "note": (
+            "price_as_of e o maior snapshot de catalogo daquele armazem em data <= order_date. "
+            "price_source='observed' quando as duas datas coincidem; 'carried_forward' quando o "
+            "dia nao foi observado. Um varejista vende todo dia; a fonte so foi observada em "
+            "alguns, e essa diferenca fica explicita em vez de dissolvida."
+        ),
+        "rows": rows,
+    }
+
+
+# --------------------------------------------------------------------------------
+# 3. Catalogo: produto e preco reais, por armazem e por snapshot
+# --------------------------------------------------------------------------------
+
+def _catalog_sql(price_dates: list[str]) -> str:
+    dates_in = ", ".join(f"date {_sql_literal(d)}" for d in price_dates)
+    return f"""
+    with scoped as (
+        select
+            warehouse                          as wh,
+            ingestion_date,
+            source_product_id,
+            display_name,
+            category_id,
+            category_name,
+            subgroup_id,
+            subgroup_name,
+            unit_price,
+            tax_percentage,
+            -- Dedup de GRAO, nao regra de negocio: um produto aparece em mais de uma
+            -- categoria (semantica da fonte). O preco e identico entre as aparicoes, e isso
+            -- ja tem teste proprio no repo. Escolher a menor (category_id, subgroup_id) e
+            -- desempate deterministico.
+            row_number() over (
+                partition by warehouse, ingestion_date, source_product_id
+                order by category_id, subgroup_id
+            ) as rn
+        from silver_product_price
+        where ingestion_date in ({dates_in})
+          and unit_price is not null
+          and unit_price > 0
+    )
+    select
+        wh,
+        cast(ingestion_date as varchar) as price_as_of,
+        source_product_id,
+        display_name,
+        category_id,
+        category_name,
+        subgroup_id,
+        subgroup_name,
+        -- String, nunca float: obrigacao 4.4 do contrato da Mercadona. O gerador faz a
+        -- aritmetica com decimal.Decimal, que e stdlib.
+        cast(unit_price as varchar)     as unit_price,
+        cast(tax_percentage as varchar) as tax_percentage
+    from scoped
+    where rn = 1
+    order by wh, ingestion_date, category_id, subgroup_id, source_product_id
+    """
+
+
+def _build_catalog(connection, price_dates: list[str]) -> dict:
+    rows = _rows(connection, _catalog_sql(price_dates))
+    if not rows:
+        raise OrdersReferenceError(
+            f"nenhuma linha de catalogo para as datas {price_dates}. "
+            f"`silver_product_price` foi construido?"
+        )
+    return {
+        "generated_at_utc": _utc_now(),
+        "catalog_ingestion_dates": sorted(price_dates),
+        "dedup_rule": (
+            "uma linha por (wh, price_as_of, source_product_id); entre aparicoes do mesmo "
+            "produto em varias categorias fica a de menor (category_id, subgroup_id)"
+        ),
+        "price_note": (
+            "unit_price e string, nao numero. Converter para float perde precisao decimal em "
+            "moeda (obrigacao 4.4 do contrato da Mercadona). A fonte NAO declara moeda: a var "
+            "`currency` do projeto dbt e premissa do consumidor e e o Gold que a materializa."
+        ),
+        "rows": rows,
+    }
+
+
+# --------------------------------------------------------------------------------
+# 4. Clientes: quem pode pedir, de qual armazem, a partir de quando
+# --------------------------------------------------------------------------------
+
+_CUSTOMERS_SQL = """
+with versions as (
+    select
+        customer_id, wh, province_code, municipality_code, postal_code, ingestion_date,
+        row_number() over (partition by customer_id order by ingestion_date desc) as rn
+    from silver_customer
+),
+first_seen as (
+    select customer_id, min(ingestion_date) as first_ingestion_date
+    from silver_customer
+    group by 1
+)
+select
+    v.customer_id,
+    v.wh,
+    v.province_code,
+    v.municipality_code,
+    v.postal_code,
+    cast(f.first_ingestion_date as varchar) as first_ingestion_date
+from versions v
+join first_seen f on v.customer_id = f.customer_id
+where v.rn = 1
+order by v.wh, v.customer_id
+"""
+
+# Um cliente que aparece com dois armazens quebraria a restricao central ("cliente de W so
+# pede de W") sem que nenhum teste a jusante percebesse: o pedido seria coerente com uma das
+# duas linhas. Reconferido aqui, e o export RECUSA em vez de escolher.
+_CUSTOMER_WAREHOUSE_DRIFT_SQL = """
+select customer_id, count(distinct wh) as warehouses
+from silver_customer
+group by 1
+having count(distinct wh) > 1
+order by 1
+limit 10
+"""
+
+
+def _build_customers(connection, warehouses: list[str]) -> dict:
+    drift = _rows(connection, _CUSTOMER_WAREHOUSE_DRIFT_SQL)
+    if drift:
+        raise OrdersReferenceError(
+            f"cliente(s) com mais de um armazem em silver_customer: {drift}. A restricao "
+            f"'um cliente de W so pede de W' deixaria de ser verificavel."
+        )
+
+    rows = _rows(connection, _CUSTOMERS_SQL)
+    if not rows:
+        raise OrdersReferenceError(
+            "silver_customer esta vazio. Rode `make oltp-refresh-all` antes deste export."
+        )
+
+    dates = _rows(
+        connection,
+        "select distinct cast(ingestion_date as varchar) as d from silver_customer order by 1",
+    )
+    return {
+        "generated_at_utc": _utc_now(),
+        "customer_ingestion_dates": [row["d"] for row in dates],
+        "roster_ingestion_date": dates[-1]["d"],
+        "warehouses": warehouses,
+        "note": (
+            "Cada linha e a versao MAIS RECENTE do cliente; first_ingestion_date e a primeira "
+            "geracao em que ele apareceu. A base e append-only (crescer preserva os primeiros "
+            "N byte a byte), entao um cliente presente numa data esta presente em todas as "
+            "posteriores. O gerador resolve a versao vigente na data do pedido e RECUSA gerar "
+            "pedido anterior a first_ingestion_date."
+        ),
+        "rows": rows,
+    }
+
+
+# --------------------------------------------------------------------------------
+# Coerencia entre os quatro arquivos
+# --------------------------------------------------------------------------------
+
+def _assert_coverage(customers: dict, catalog: dict, calendar: dict, premises: dict) -> None:
+    """Cobertura verificada em tempo de execucao, nunca presumida como permanente."""
+    warehouses = set(calendar["warehouses"])
+
+    com_cliente = {row["wh"] for row in customers["rows"]}
+    sem_cliente = sorted(warehouses - com_cliente)
+    if sem_cliente:
+        raise OrdersReferenceError(
+            f"armazem(ns) em escopo sem nenhum cliente: {sem_cliente}. Pedido sem cliente nao "
+            f"e pedido."
+        )
+    fora_de_escopo = sorted(com_cliente - warehouses)
+    if fora_de_escopo:
+        raise OrdersReferenceError(
+            f"cliente(s) em armazem fora do seed de escopo: {fora_de_escopo}"
+        )
+
+    # Todo par (wh, price_as_of) que o calendario aponta precisa existir no catalogo.
+    catalogo_por_par: dict[tuple, int] = {}
+    for row in catalog["rows"]:
+        key = (row["wh"], row["price_as_of"])
+        catalogo_por_par[key] = catalogo_por_par.get(key, 0) + 1
+
+    exigidos = {(row["wh"], row["price_as_of"]) for row in calendar["rows"]}
+    ausentes = sorted(exigidos - set(catalogo_por_par))
+    if ausentes:
+        raise OrdersReferenceError(
+            f"{len(ausentes)} par(es) (armazem, price_as_of) apontados pelo calendario e "
+            f"ausentes do catalogo: {ausentes[:10]}"
+        )
+
+    # Uma cesta e sorteada SEM REPOSICAO: se o catalogo de um par tiver menos produtos que a
+    # maior cesta possivel, o gerador nao teria como montar a cesta e o defeito apareceria
+    # como um pedido menor, nao como erro.
+    maior_cesta = int(float(premises["values"]["basket_lines_max"]))
+    magros = sorted(
+        (par, total) for par, total in catalogo_por_par.items() if total < maior_cesta
+    )
+    if magros:
+        raise OrdersReferenceError(
+            f"par(es) (armazem, price_as_of) com menos de basket_lines_max={maior_cesta} "
+            f"produtos: {magros[:10]}"
+        )
+
+
+def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
+    """Monta os quatro payloads a partir de uma conexao DuckDB ja aberta.
+
+    Separado de `export` para que a suite exercite as queries contra fixtures DuckDB reais,
+    sem object storage e sem rede.
+    """
+    days = _date_range(window_from, window_to)
+    warehouses = _warehouses(seeds_dir)
+
+    premises = _build_premises(seeds_dir)
+    calendar = _build_calendar(connection, warehouses, days)
+    price_dates = sorted({row["price_as_of"] for row in calendar["rows"]})
+    catalog = _build_catalog(connection, price_dates)
+    customers = _build_customers(connection, warehouses)
+
+    _assert_coverage(customers, catalog, calendar, premises)
+    return {
+        "customers": customers,
+        "catalog": catalog,
+        "calendar": calendar,
+        "premises": premises,
+    }
+
+
+def write(payloads: dict, out_dir: str) -> dict:
+    """Grava os quatro arquivos. Devolve o tamanho de cada um.
+
+    `catalog.json` sai compacto pelo mesmo motivo de `address_candidates.json`: e insumo
+    intermediario de dezenas de milhares de linhas, nao particao pousada e hash-verificada.
+    """
+    return {
+        CUSTOMERS_FILE: _write_json(
+            os.path.join(out_dir, CUSTOMERS_FILE), payloads["customers"], indent=None
+        ),
+        CATALOG_FILE: _write_json(
+            os.path.join(out_dir, CATALOG_FILE), payloads["catalog"], indent=None
+        ),
+        CALENDAR_FILE: _write_json(
+            os.path.join(out_dir, CALENDAR_FILE), payloads["calendar"], indent=2
+        ),
+        PREMISES_FILE: _write_json(
+            os.path.join(out_dir, PREMISES_FILE), payloads["premises"], indent=2
+        ),
+    }
+
+
+def export(
+    config,
+    out_dir: str,
+    window_from: str,
+    window_to: str,
+    seeds_dir: str = DEFAULT_SEEDS_DIR,
+) -> dict:
+    """Escreve os quatro arquivos de referencia em out_dir. Devolve um resumo."""
+    from .query import connect_lakehouse
+
+    connection = connect_lakehouse(config)
+    try:
+        payloads = build(connection, window_from, window_to, seeds_dir)
+    finally:
+        connection.close()
+
+    written = write(payloads, out_dir)
+    calendar = payloads["calendar"]
+    return {
+        "out_dir": out_dir,
+        "window_from": calendar["window_from"],
+        "window_to": calendar["window_to"],
+        "warehouses": calendar["warehouses"],
+        "days": len({row["order_date"] for row in calendar["rows"]}),
+        "customers": len(payloads["customers"]["rows"]),
+        "customer_ingestion_dates": payloads["customers"]["customer_ingestion_dates"],
+        "catalog_rows": len(payloads["catalog"]["rows"]),
+        "catalog_ingestion_dates": calendar["catalog_ingestion_dates"],
+        "carried_forward_rows": calendar["carried_forward_rows"],
+        "premises_sha256": payloads["premises"]["seed_sha256"],
+        "bytes": written,
+    }

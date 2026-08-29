@@ -1,0 +1,9 @@
+# Sem dependencias de runtime.
+#
+# Esta Source usa apenas a biblioteca padrao. Nao ha nada a instalar para executa-la:
+# PYTHONPATH=src basta. O arquivo existe, e vazio, porque a promessa e verificada por
+# teste (tests/test_dependencies.py) e nao apenas afirmada em prosa.
+#
+# Em particular: esta Source NAO importa duckdb, boto3, confluent-kafka, psycopg, pyiceberg,
+# dbt nem qualquer parte da plataforma. O broker e o OLTP existem UM NIVEL ADIANTE, do lado
+# da plataforma; aqui so se escreve um log canonico em disco. Ver CONTRACT.md secao 5.

@@ -37,12 +37,22 @@ x-airflow-common: &airflow-common
     # Mesma lista do INE_TABLES do Makefile raiz — sem isto o DAG cairia no default do
     # proprio arquivo (so 31304) e divergiria silenciosamente de `make ine-refresh`.
     RETAIL_INE_TABLES: "31304,29005"
+    # Idem para o timeout: 31304 devolve 264 MB e 29005 outros 125 MB num unico GET, e o
+    # default generico da Source (30s) estola nesse volume. Mesmos valores do Makefile.
+    RETAIL_INE_TIMEOUT: "240"
+    RETAIL_INE_MAX_RETRIES: "3"
 
     # DENTRO DA REDE DO COMPOSE O ENDPOINT E `minio`, NAO `localhost`. Estas variaveis
     # sobrescrevem o .env montado — config.load_dotenv() nao sobrepoe o que ja esta no
     # ambiente, exatamente para que este caso funcione.
     S3_ENDPOINT: http://minio:9000
     S3_ENDPOINT_HOST: minio:9000
+    # Mesmo motivo, para o OLTP de pedidos: dentro da rede o host e `oltp-postgres`, e o
+    # servico so existe sob o profile `stream`. Uma DAG que dependa dele falha na conexao
+    # com mensagem acionavel — nao com timeout — quando `make stream-up` nao rodou.
+    OLTP_DSN: postgresql://oltp:oltp@oltp-postgres:5432/oltp
+    PROJECTION_DSN: postgresql://oltp:oltp@oltp-postgres:5432/projection
+    KAFKA_BOOTSTRAP: kafka:19092
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     RAW_BUCKET: ${RAW_BUCKET:-retail-raw}
@@ -53,10 +63,39 @@ x-airflow-common: &airflow-common
     # parquet no object storage — entao viver na camada efemera do container e correto.
     DUCKDB_PATH: /opt/airflow/retail.duckdb
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+
+    # Onde o conector do Snowflake procura config.toml. Apontado para o MESMO caminho do
+    # host (ver o mount abaixo), e nao para /home/airflow/.snowflake, para que
+    # `private_key_file` do config.toml e `SNOWFLAKE_PRIVATE_KEY_PATH` do .env.snowflake
+    # resolvam identicos dentro e fora do container — nenhum caminho precisa ser reescrito
+    # em lugar nenhum.
+    SNOWFLAKE_HOME: ${HOME}/.snowflake
+
+  # A identidade da conta Snowflake, se o arquivo existir. `required: false` e o que mantem
+  # a metade Lakehouse independente: sem conta Snowflake, `make up` e as DAGs das quatro
+  # sources sobem igual — so `warehouse_load` e que nao teria como autenticar.
+  #
+  # Por que env_file e nao `environment:`: no bloco de mapa, uma variavel ausente vira
+  # PRESENTE E VAZIA no container, e `env_var('SNOWFLAKE_ACCOUNT')` sem default devolve o
+  # vazio em vez de abortar — o dbt morreria com "'account' is a required property" em vez
+  # de dizer qual variavel falta. E a mesma armadilha documentada no Makefile.
+  env_file:
+    - path: ../.env.snowflake
+      required: false
+
   volumes:
     # Repositorio montado read-write: o DAG escreve os snapshots em data/.
     - ../:/opt/retail-lakehouse
     - airflow-logs:/opt/airflow/logs
+    # A CHAVE PRIVADA, SO LEITURA, NO MESMO CAMINHO DO HOST. A autenticacao e por par de
+    # chaves — o unico metodo que serve para uma DAG, que nao tem como abrir navegador nem
+    # digitar senha. Sem este mount, `load_stage` e `build_gold_and_mart` nao tem como
+    # autenticar, por mais dependencia que a imagem tenha.
+    #
+    # `:ro` e deliberado: o orquestrador le a chave e nunca a reescreve. O container roda
+    # com AIRFLOW_UID (o uid do host), que e o dono do arquivo modo 600 — nenhuma
+    # permissao precisa ser afrouxada para isto funcionar.
+    - ${HOME}/.snowflake:${HOME}/.snowflake:ro
   depends_on:
     postgres:
       condition: service_healthy
@@ -127,6 +166,122 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  # O OLTP DE PEDIDOS. Banco SEPARADO do metadado do Airflow, e nao por organizacao:
+  #
+  #   - e um componente MODELADO da simulacao, nao infraestrutura do orquestrador. Reiniciar
+  #     o OLTP para exercitar uma falha nao pode significar reiniciar o cerebro do Airflow;
+  #   - precisa de `wal_level=logical` proprio, que exige restart e afeta o servidor inteiro;
+  #   - o outbox e o unico dado desta plataforma que NAO e derivavel de outro lugar em
+  #     segundos, entao ele merece um volume com nome proprio e um ciclo de vida proprio.
+  #
+  # `profiles: [stream]` mantem a promessa do README: `make up` sobe so o plano de dados.
+  # Este servico so existe depois de `make stream-up`.
+  oltp-postgres:
+    image: postgres:16-alpine
+    container_name: retail-oltp-postgres
+    profiles: ["stream"]
+    environment:
+      POSTGRES_USER: oltp
+      POSTGRES_PASSWORD: oltp
+      POSTGRES_DB: oltp
+    # `wal_level=logical` nao e usado pelo outbox — o poller le a tabela, nao o WAL. Esta
+    # aqui porque e a UNICA configuracao que exige restart do servidor: deixa-la ligada
+    # desde o inicio e o que permite plugar Debezium (Marco 4b) sem derrubar o banco e sem
+    # perder o que ja estiver no outbox. Custo: alguns bytes a mais por escrita no WAL.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${OLTP_PORT:-5433}:5432"
+    volumes:
+      - oltp-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "oltp", "-d", "oltp"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # O BROKER. KRaft, sem ZooKeeper: um processo, nao dois.
+  #
+  # DUAS LISTENERS DE PROPOSITO. A plataforma roda NO HOST (o venv da plataforma), e o
+  # Airflow roda DENTRO da rede do compose. Um `advertised.listeners` unico serviria a um
+  # dos dois e quebraria o outro em silencio — o cliente conecta no bootstrap, recebe o
+  # endereco anunciado e vai falar com ele. E a mesma armadilha do S3_ENDPOINT: `localhost`
+  # de fora, nome de servico de dentro.
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: retail-kafka
+    profiles: ["stream"]
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      # Broker unico: todo fator de replicacao tem de ser 1, ou os topicos internos nunca
+      # ficam prontos e o primeiro `subscribe` trava sem erro visivel.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      CLUSTER_ID: retail-lakehouse-kraft-01
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+
+  # Cria o topico e sai. Mesmo precedente do servico `mc`: o host nao tem as ferramentas do
+  # Kafka, e depender de uma instalacao local tornaria `make stream-up` nao reproduzivel.
+  #
+  # `auto.create.topics.enable=false` no broker e o que da sentido a este servico: um topico
+  # criado por acidente na primeira producao nasceria com 1 particao e a garantia de ordem
+  # viraria global POR ACASO — e uma garantia acidental e a que quebra quando o volume cresce.
+  #
+  # QUATRO PARTICOES, e nao uma. Com uma particao a ordem seria global sem ninguem pedir, e a
+  # afirmacao "a ordem e por chave" nunca seria exercida. Quatro e o menor numero que torna a
+  # afirmacao OBSERVAVEL — e a chave e `order_id`, nao `wh`, para que os pedidos de um mesmo
+  # armazem se espalhem e o paralelismo seja real.
+  kafka-init:
+    image: apache/kafka:3.8.1
+    container_name: retail-kafka-init
+    profiles: ["stream"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+          --create --if-not-exists --topic retail.orders.events.v1 \
+          --partitions 4 --replication-factor 1 \
+          --config compression.type=zstd \
+          --config retention.ms=604800000 \
+          --config min.insync.replicas=1
+        echo "topicos:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --describe \
+          --topic retail.orders.events.v1
+    restart: "no"
 
   # Migra o schema, cria o usuario da UI e — o que importa para a arquitetura — cria o
   # POOL de 1 slot. Sem ele o LocalExecutor rodaria varios `extract` em paralelo e
@@ -200,4 +355,6 @@ services:
 volumes:
   minio-data:
   postgres-data:
+  oltp-data:
+  kafka-data:
   airflow-logs:

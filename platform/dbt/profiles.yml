@@ -22,3 +22,40 @@ retail_lakehouse:
         s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'minioadmin') }}"
         s3_use_ssl: false
         s3_url_style: "path"
+
+    # SEGUNDO TARGET, mesmo projeto. A arvore models/silver/ so existe quando
+    # target.type == 'duckdb' e models/warehouse/ so quando == 'snowflake' (guard em
+    # dbt_project.yml), entao `dbt build --target snowflake` nunca tenta rodar um
+    # read_json sobre s3:// dentro do Snowflake.
+    #
+    # A fronteira entre as duas arvores e FISICA, nao logica: um modelo do warehouse le
+    # `source()` sobre as tabelas STAGE que o COPY INTO carregou, nunca `ref()` de um
+    # modelo Silver. Adaptadores diferentes nao se cruzam numa execucao — a mesma
+    # disciplina que separa Source de plataforma, um nivel acima.
+    #
+    # AUTENTICACAO POR PAR DE CHAVES, nao senha: e o metodo que o Snowflake recomenda
+    # para acesso programatico e o unico que serve para uma DAG. A chave privada mora
+    # fora do repo (~/.snowflake/keys/), com modo 600; aqui viaja so o CAMINHO.
+    snowflake:
+      type: snowflake
+      # SEM DEFAULT, de proposito — ao contrario do MinIO acima. `minioadmin` e uma
+      # convencao local que o .env.example repete, entao o default nao esconde nada. Uma
+      # CONTA Snowflake nao tem equivalente: qualquer valor cravado aqui e a conta de uma
+      # pessoa especifica, e quem clonasse o repo sem configurar nada nao receberia
+      # "configure a conta" — receberia uma tentativa de conexao contra a conta alheia,
+      # falhando com "Object does not exist" bem longe da causa. Ausente, o dbt aborta
+      # dizendo o nome da variavel. Ver .env.snowflake.example.
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      # RETAIL_TRANSFORMER, nao ACCOUNTADMIN: o dbt LE o STAGE e ESCREVE GOLD e MART, e e
+      # exatamente isso que o papel concede. Rodar a transformacao como administrador
+      # tornaria os tres papeis decorativos — eles existiriam, estariam verificados, e
+      # nenhuma execucao real passaria por eles.
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'RETAIL_TRANSFORMER') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', env_var('HOME') ~ '/.snowflake/keys/spark_retail_rsa.p8') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'RETAIL') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      # O schema DEFAULT do dbt e GOLD; MART sobrescreve pelo `+schema` do projeto.
+      schema: GOLD
+      threads: 4
+      client_session_keep_alive: false

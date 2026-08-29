@@ -36,4 +36,13 @@ platform/dbt/package-lock.yml
 # Credenciais locais do MinIO / plataforma.
 .env
 
+# Conexao do Snowflake. A verdade e ~/.snowflake/config.toml, fora do repo; este arquivo
+# so existe como rascunho local e nunca deve ser commitado.
+.env.snowflake
+
 platform/dbt/.user.yml
+
+# Caderno de conferencia pessoal ("livro do professor"): perguntas e respostas sobre o
+# projeto, para consulta de quem o construiu. Nao e documentacao do repositorio — o que
+# um terceiro precisa saber esta em README.md e ARCHITECTURE.md.
+FAQ.md

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simulated-orders-source"
+version = "1.0.0"
+description = "Source de pedidos simulados: log de eventos com cliente, produto e preco reais"
+readme = "README.md"
+requires-python = ">=3.12"
+# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao. Cliente, catalogo,
+# calendario de preco e premissas chegam como JSON plano, nunca por conexao ao Lakehouse.
+# O broker e o OLTP existem UM NIVEL ADIANTE, do lado da plataforma.
+dependencies = []
+
+[project.scripts]
+simulated-orders-source = "simulated_orders_source.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

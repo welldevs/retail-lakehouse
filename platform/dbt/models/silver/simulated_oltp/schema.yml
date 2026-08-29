@@ -1,0 +1,164 @@
+version: 2
+
+models:
+  - name: silver_customer
+    description: >
+      Clientes sinteticos ancorados em geografia REAL do Callejero. O cliente e inventado;
+      o lugar onde ele mora nao. Grao (ingestion_date, customer_id) — os mesmos ids
+      convivem em datas diferentes, porque cada regeracao da base cria uma
+      ingestion_date nova.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente. O historico de todas as geracoes e
+          preservado de proposito — e o que permite ver a base crescer — entao sem o
+          filtro somam-se clientes de geracoes diferentes. `where is_latest_ingestion` le
+          a base atual.
+        tests: [not_null]
+      - name: wh
+        description: >
+          Armazem, no vocabulario da propria fonte. Preservado em vez de renomeado para
+          `warehouse`: e assim que warehouse_service_area e warehouse_province_map o
+          chamam, e sao com eles que este modelo se junta.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [mad1, bcn1, svq1, vlc1]
+      - name: partition_wh
+        description: >
+          O eixo `wh=` do caminho, extraido do filename. Existe so para ser reconciliado
+          com `wh` — os dois tem o mesmo nome no read_json e o DuckDB os deduplica, entao
+          sem esta coluna uma particao pousada sob o diretorio errado nao teria com o que
+          ser comparada. Ver tests/assert_customer_partition_axis_matches_record.sql.
+        tests: [not_null]
+      - name: customer_id
+        description: >
+          cust_<wh>_<indice de 6 digitos>. Unico dentro de uma ingestion_date (o wh esta
+          embutido no id), NAO entre datas. Nao e identidade persistente: e chave da
+          particao — CONTRACT.md secao 3, garantia 3.
+        tests: [not_null]
+      - name: province_code
+        tests: [not_null]
+      - name: province_name
+        tests: [not_null]
+      - name: municipality_code
+        tests: [not_null]
+      - name: municipality_name
+        description: >
+          Grafia do INE 29005 (`Bruc, El`), NAO a do Callejero (`BRUC (EL)`). Medido: as
+          duas divergem em 370 de 370 municipios. O que se compara entre as duas fontes e
+          sempre o CODIGO, nunca o nome.
+        tests: [not_null]
+      - name: candidate_index
+        description: >
+          Auditoria, nao chave estrangeira: aponta a linha exata de address_candidates.json
+          do export identificado em silver_oltp_manifest.reference_path. Esse arquivo e
+          insumo efemero do gerador e nao e pousado no RAW.
+        tests: [not_null]
+      - name: street_name
+        tests: [not_null]
+      - name: postal_code
+        description: CEP real do tramo (campo CPOS do Callejero). Nunca inventado.
+        tests: [not_null]
+      - name: numbering_type
+        description: >
+          Verbatim do Callejero (campo TINUM). "0" = a via nao tem esquema de numeracao,
+          "1" = impares, "2" = pares. Carregado ate o cliente para que a regra de numeracao
+          seja auditavel olhando so este modelo.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["0", "1", "2"]
+      - name: house_number
+        description: >
+          Numero dentro da faixa real do tramo, respeitando a paridade — ou NULL quando
+          nao existe numero. NULL nunca e puro aqui: esta sempre qualificado pelo
+          numbering_type ao lado. Ver
+          tests/assert_customer_house_number_matches_numbering_type.sql.
+      - name: first_name
+        tests: [not_null]
+      - name: last_name
+        tests: [not_null]
+      - name: sex_label
+        description: >
+          Rotulo EXATO da tabela 29005 do INE, de onde veio a proporcao — por isso
+          "Hombres"/"Mujeres" e nao "M"/"F". O agregado "Total" da fonte nunca e amostrado.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [Hombres, Mujeres]
+      - name: birth_year
+        description: >
+          Derivado: year(ingestion_date) menos a idade amostrada. Regerar a base em outra
+          data desloca este campo e preserva a idade — ver age_at_ingestion.
+        tests: [not_null]
+      - name: age_at_ingestion
+        description: >
+          A idade que o gerador realmente sorteou, recuperada exatamente (nao aproximada).
+          E o atributo demografico estavel entre geracoes. Distribuicao PROVINCIAL usada
+          como proxy: nao existe faixa etaria por municipio nas tabelas ingeridas por esta
+          plataforma.
+        tests: [not_null]
+
+  - name: silver_oltp_manifest
+    description: >
+      O _manifest.json da source de OLTP como fonte modelada. Alem da reconciliacao que
+      raw_manifest.sql faz para a Mercadona, carrega a LINHAGEM DOS INSUMOS: de qual
+      Callejero e de qual populacao estes clientes foram derivados. Esta e a unica source
+      derivada do repo, entao essa pergunta so tem resposta aqui.
+    columns:
+      - name: ingestion_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: run_id
+        tests: [not_null, unique]
+      - name: complete
+        description: A plataforma so consome particao completa; falso aqui e erro de ingestao.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true]
+                quote: false
+      - name: source_warehouse
+        description: >
+          O wh que a Source gravou no manifesto. Reconciliado contra o eixo hive da
+          particao pelo teste de coerencia, mesmo padrao de raw_manifest.
+        tests: [not_null]
+      - name: failure_count
+        description: Falha registrada reprova a particao.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0]
+                quote: false
+      - name: seed
+        description: >
+          A seed que reproduz esta particao. Junto de reference_path e ingestion_date, sao
+          as tres condicoes da garantia de reprodutibilidade.
+        tests: [not_null]
+      - name: declared_customer_rows
+        tests: [not_null]
+      - name: callejero_ingestion_date
+        description: Linhagem — de qual extracao do Callejero vieram os enderecos.
+        tests: [not_null]
+      - name: population_ingestion_date
+        description: Linhagem — de qual extracao da tabela 29005 veio o peso municipal.
+        tests: [not_null]
+      - name: population_series_ingestion_date
+        description: Linhagem — de qual extracao da tabela 31304 veio a piramide etaria.
+        tests: [not_null]
+      - name: previous_runs
+        description: >
+          Quantas execucoes anteriores esta particao acumulou via --overwrite. Cada uma
+          guarda sua seed e seu count, para que uma regeracao com outra seed nao troque as
+          pessoas por tras dos mesmos ids sem deixar rastro.
+        tests: [not_null]
+      - name: schema_fingerprint
+        tests: [not_null]

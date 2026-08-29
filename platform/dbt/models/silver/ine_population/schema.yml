@@ -13,6 +13,13 @@ models:
     columns:
       - name: ingestion_date
         tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+        tests: [not_null]
       - name: table_id
         description: Extraido do nome do arquivo (tables/table_id=<id>.json), nao de particao hive.
         tests: [not_null]
@@ -67,11 +74,23 @@ models:
       e resolver o codigo do municipio via ine_municipality_codes_seed. GRAO:
       (ingestion_date, series_code, year, fk_periodo). Escopado as 4 provincias desta
       plataforma (08/28/41/46) por INNER JOIN com o seed — ver comentario do modelo.
+      O nome do municipio NAO e chave segura: o lado RAW e nacional e tem homonimos em
+      outras provincias com "Nombre" identico. Series de nome ambiguo sao desambiguadas
+      pelo codigo oficial do INE em ine_ambiguous_series_seed; o invariante "uma serie
+      por (municipio, sexo, ano)" e garantido por
+      assert_ine_population_by_municipality_has_one_series_per_municipality.
       Sem idade: esta tabela so tem sexo. Faixa etaria continua so em
       silver_ine_population_series (nivel de provincia) — ver ARCHITECTURE.md para a
       decisao de nao perseguir uma tabela municipio+idade nesta fase.
     columns:
       - name: ingestion_date
+        tests: [not_null]
+      - name: is_latest_ingestion
+        description: >
+          true na ingestion_date mais recente deste modelo. O historico de todas as
+          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
+          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
+          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
         tests: [not_null]
       - name: series_code
         description: "'COD' da fonte. Estavel dentro do table_id."

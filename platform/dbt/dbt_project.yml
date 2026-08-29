@@ -15,6 +15,18 @@ vars:
   ine_raw_prefix: "s3://retail-raw/ine_population_api"
   # Terceira source: Callejero do INE (sem API, intake de arquivos baixados manualmente).
   callejero_raw_prefix: "s3://retail-raw/ine_callejero"
+  # Quarta source, a primeira DERIVADA: consome o Silver que as outras tres produziram e
+  # devolve uma RAW nova. Mesmo bucket, prefixo proprio — land.py deriva o prefixo do
+  # source_name do manifesto, entao nada estrutural mudou para acomoda-la.
+  oltp_raw_prefix: "s3://retail-raw/simulated_oltp"
+  # Quinta source, a segunda DERIVADA, e a primeira que entrega um LOG e nao uma fotografia.
+  # Mesmo bucket, prefixo proprio, mesma razao das anteriores.
+  orders_raw_prefix: "s3://retail-raw/simulated_orders"
+  # Onde esta o metadado CORRENTE da tabela Iceberg da projecao viva. Vazio por padrao: o
+  # modelo `silver_live_order_state` so entra no build quando `make silver` consegue resolver
+  # o caminho no catalogo, e ai passa o valor por --vars. Cravar um caminho aqui envelheceria
+  # a cada commit da tabela; adivinhar varrendo o storage e o que o DuckDB chama de inseguro.
+  live_order_state_metadata: ""
   # A fonte NAO declara moeda (CONTRACT.md 4.6). O Silver nao inventa: esta var existe
   # para o Gold, e e PREMISSA do consumidor, nao dado da fonte.
   currency: "EUR"
@@ -26,9 +38,43 @@ models:
       # e particionamento: o grao difere entre eles.
       +materialized: external
       +format: parquet
+      # GUARD POR MOTOR. Sem ele, `dbt build --target snowflake` tentaria rodar um
+      # read_json sobre s3:// dentro do Snowflake e falharia com um erro de sintaxe que
+      # nao diz o que aconteceu. Com ele, cada arvore so existe no motor que a entende, e
+      # `dbt build` sem --select faz a coisa certa nos dois targets.
+      +enabled: "{{ target.type == 'duckdb' }}"
+
+    warehouse:
+      # O modelo dimensional. Vive so no Snowflake — nao ha espelho em DuckDB, porque
+      # espelhar significaria duas materializacoes da mesma verdade. A portabilidade que
+      # importa e a do SQL do dbt, nao uma segunda copia (ARCHITECTURE.md:44).
+      +enabled: "{{ target.type == 'snowflake' }}"
+      +materialized: table
+      gold:
+        +schema: GOLD
+      mart:
+        +schema: MART
+
+# MESMO GUARD, PARA OS TESTES SINGULARES. Sem isto o build quebra nos DOIS sentidos, e o
+# erro nao diz por que: os testes de tests/*.sql fazem ref() de modelos Silver (desligados
+# no Snowflake) e os de tests/warehouse/*.sql fazem ref() de modelos do Gold (desligados no
+# DuckDB). O dbt compila TODO teste singular do projeto, independente do target — um ref()
+# para modelo desabilitado e erro de compilacao, nao um skip.
+data_tests:
+  retail_lakehouse:
+    +enabled: "{{ target.type == 'duckdb' }}"
+    warehouse:
+      +enabled: "{{ target.type == 'snowflake' }}"
 
 seeds:
   retail_lakehouse:
+    # SO NO DUCKDB. Os quatro seeds alimentam modelos do Silver (warehouse_service_area,
+    # warehouse_province_map) e o de-para de homonimo do INE — tudo do lado do lakehouse.
+    # A arvore do warehouse le exclusivamente `source()` sobre o STAGE e nao referencia
+    # seed nenhum. Sem este guard, `dbt build --target snowflake` carregava os quatro para
+    # dentro do Snowflake, onde ficavam sem funcao e sem quem os mantivesse em dia.
+    +enabled: "{{ target.type == 'duckdb' }}"
+
     warehouse_province_map_seed:
       # Sem isto, a inferencia de tipo do dbt-duckdb le "08"/"079" como inteiro e come o
       # zero a esquerda (08 -> 8) — os codigos do INE nao sao numeros, sao identificadores.
@@ -50,3 +96,23 @@ seeds:
         province_code: varchar
         municipality_code: varchar
         municipality_name: varchar
+    ine_ambiguous_series_seed:
+      +column_types:
+        series_code: varchar
+        municipality_name: varchar
+        sex_label: varchar
+        province_code: varchar
+        municipality_code: varchar
+
+    order_premises_seed:
+      # `value` DECIMAL e nao DOUBLE, apesar de nenhuma destas linhas ser dinheiro. O
+      # motivo e outro: a coluna mistura proporcoes (0.008) com contagens de minutos (90),
+      # e um DOUBLE faria `date_diff(...) > value` depender de arredondamento binario num
+      # limiar que existe justamente para ser comparado. DECIMAL compara exato e vira
+      # NUMBER(18,6) do outro lado da fronteira sem passar por FLOAT.
+      +column_types:
+        premise_key: varchar
+        value: decimal(18,6)
+        unit: varchar
+        label: varchar
+        rationale: varchar

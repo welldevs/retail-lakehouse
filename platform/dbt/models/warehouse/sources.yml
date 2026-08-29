@@ -1,0 +1,62 @@
+version: 2
+
+# A FRONTEIRA ENTRE OS DOIS MOTORES E FISICA, E ESTA E A DECLARACAO DELA.
+#
+# Nenhum modelo desta arvore pode `ref()` um modelo do Silver: adaptadores diferentes nao
+# se cruzam numa execucao do dbt. A ligacao e `source()` sobre as tabelas que o COPY INTO
+# carregou — exatamente o mesmo mecanismo que separa uma Source FROZEN da plataforma um
+# nivel acima, onde os dois lados so compartilham arquivos.
+#
+# Consequencia pratica a nao esquecer: acrescentar uma coluna a um modelo Silver NAO a faz
+# aparecer aqui. E preciso passar pelo recorte (SPECS em snowflake_export.py) e recarregar.
+# Isso e uma feature, nao um atrito: o que atravessa a fronteira e uma decisao explicita.
+
+sources:
+  - name: stage
+    database: RETAIL
+    schema: STAGE
+    description: >
+      Espelho 1:1 do recorte do Silver — ~146 mil linhas, 3,85% das 3.796.213 do Silver.
+      Sem regra de negocio: filtro de escopo geografico, filtro de ultima ingestao e
+      deduplicacao de grao, so. Full refresh a cada carga.
+    tables:
+      - name: STG_PRODUCT_PRICE
+        description: "Grao (ingestion_date, warehouse, source_product_id). A presenca da linha E o sortimento."
+      - name: STG_PRICE_CHANGE
+        description: "Transicao entre snapshots EXISTENTES. Carrega name_seen_before, insumo do SCD2."
+      - name: STG_POPULATION_MUNICIPALITY
+        description: "Grao (municipio, sexo, ano), 1996-2025. Sem o agregado 'Total' da fonte."
+      - name: STG_CATEGORY
+        description: "Arvore de 2 niveis, global — identica nos 4 armazens (medido)."
+      - name: STG_CUSTOMER
+        description: "Todas as ingestion_date: DIM_CUSTOMER e SCD2 e precisa do historico."
+      - name: STG_GEOGRAPHY
+        description: "Grao (provincia, municipio, CEP). 699 linhas destiladas de 304.952 tramos."
+      - name: STG_SERVICE_AREA
+        description: "A Area Urbana Funcional de cada armazem: 370 municipios."
+      - name: STG_WAREHOUSE
+        description: "Os 4 armazens e sua provincia-sede."
+      - name: STG_INGESTION_RUN
+        description: >
+          38 linhas que distinguem "nao houve preco" de "nao houve observacao". Sem elas
+          qualquer serie temporal interpola as lacunas em silencio. As tres sources com
+          eixo de armazem entram por `union all by name`; orders declara EVENTOS, e o
+          mapeamento para `declared_rows` respeita isso (44.456, nao 6.400).
+      - name: STG_ORDER
+        description: >
+          O fold, grao order_id — 6.400 linhas, 4 dias x 4 armazens. Sem filtro de ultima
+          ingestao: cada ingestion_date e um dia de operacao, nao uma reingestao.
+      - name: STG_ORDER_LINE
+        description: >
+          Grao (order_id, line_no) — 120.693 linhas. Carrega o produto PEDIDO e o produto
+          CUMPRIDO lado a lado; sem os dois a substituicao desapareceria.
+      - name: STG_ORDER_EVENT
+        description: >
+          O log inteiro, grao event_id — 44.456 linhas. Unica tabela do STAGE com corpo
+          semiestruturado (`payload_json`, VARCHAR): e a ORIGEM do fold, carregada para
+          que a auditoria nao precise voltar ao RAW.
+      - name: STG_ORDER_PREMISE
+        description: >
+          As 30 premissas declaradas que o gerador consumiu, todas rotuladas 'synthetic'.
+          Existem aqui para que MART_FULFILLMENT_SLA meca contra o MESMO limiar que
+          produziu as duracoes, em vez de contra uma copia do numero.

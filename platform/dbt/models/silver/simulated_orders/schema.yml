@@ -1,0 +1,320 @@
+version: 2
+
+models:
+  - name: silver_order_event
+    description: >
+      GRAO (event_id). Projecao fiel do log de eventos de pedido: envelope tipado, payload
+      preservado como JSON. Cada linha e um evento imutavel; o estado do pedido nao mora aqui,
+      e o fold, e ele mora em silver_order.
+
+      `ingestion_date` e a DATA DO PEDIDO, nao a do evento — todo evento de um pedido fica na
+      particao do dia em que ele foi colocado, mesmo atravessando a meia-noite. Medido na
+      janela de 2026-08-24 a 08-27: 4.567 de 44.456 eventos (10,3%) ocorrem depois da
+      meia-noite do dia do pedido. Por isso `event_date` existe ao lado, e `crosses_order_date`
+      marca o caso.
+
+      O payload atravessa como JSON e nao como STRUCT de proposito: deixar o DuckDB inferir
+      produz a uniao dos campos dos 12 tipos, e essa uniao depende do que a amostragem viu.
+      Um dia sem devolucao nao teria `returned_amount` e um modelo a jusante deixaria de
+      compilar por sorteio.
+    columns:
+      - name: event_id
+        description: sha256(order_id|sequence_no), truncado em 32. Deterministico por contrato.
+        tests: [not_null, unique]
+      - name: event_type
+        description: Um dos 12 tipos do vocabulario fechado do contrato.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - order_placed
+                  - order_payment_authorized
+                  - order_payment_failed
+                  - order_cancelled
+                  - order_picking_started
+                  - order_line_substituted
+                  - order_line_removed
+                  - order_picked
+                  - order_dispatched
+                  - order_delivered
+                  - order_delivery_failed
+                  - order_returned
+      - name: event_version
+        description: Versao do schema do payload. Uma versao nova exige leitura nova.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [1], quote: false}}
+      - name: order_id
+        description: Agregado do evento, e chave de particao do broker um nivel adiante.
+        tests: [not_null]
+      - name: sequence_no
+        description: Posicao no agregado, 1..N sem buracos. Unica ordem total dentro do pedido.
+        tests: [not_null]
+      - name: occurred_at
+        description: Instante do evento em UTC. Deriva da data da particao, nunca do relogio.
+        tests: [not_null]
+      - name: event_date
+        description: Dia em que o evento ocorreu. Pode ser posterior a ingestion_date.
+        tests: [not_null]
+      - name: crosses_order_date
+        description: Verdadeiro quando o evento ocorreu depois da meia-noite do dia do pedido.
+        tests: [not_null]
+      - name: ingestion_date
+        description: DIA DO PEDIDO. Nao e a data do evento — ver a descricao do modelo.
+        tests: [not_null]
+      - name: wh
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [mad1, bcn1, svq1, vlc1]}}
+      - name: partition_wh
+        description: Eixo hive da particao, extraido do filename para poder ser reconciliado.
+        tests: [not_null]
+      - name: producer
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [simulated_orders]}}
+      - name: payload
+        description: Payload do evento, verbatim. A forma depende de event_type.
+        tests: [not_null]
+
+  - name: silver_order
+    description: >
+      GRAO (order_id). O FOLD: estado e medidas de cada pedido, derivados do log. Nao existe
+      estado gravado no RAW — duas representacoes da mesma verdade divergem, entao o estado
+      mora aqui e e sempre reconstruivel.
+
+      O fold e NAO-TRIVIAL, e e isso que justifica o modelo de eventos: `net_amount` nao e
+      derivavel de `gross_amount_placed`, porque substituicao e remocao de linha alteram a
+      cesta depois da colocacao. Medido na janela: 108.194 linhas cumpridas sem alteracao,
+      4.670 substituidas (+10.318,99) e 2.321 removidas (-15.153,72).
+
+      `net_amount` e nulo para pedido que nunca chegou a separacao (recusa de pagamento,
+      cancelamento). Nulo aqui significa "nao houve separacao", nao "desconhecido".
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: ingestion_date
+        description: DIA DO PEDIDO.
+        tests: [not_null]
+      - name: wh
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [mad1, bcn1, svq1, vlc1]}}
+      - name: customer_id
+        description: Cliente do pedido. Sempre um cliente do proprio armazem.
+        tests: [not_null]
+      - name: customer_ingestion_date
+        description: Geracao de cliente vigente na data do pedido. Alimenta o SCD2 do Gold.
+        tests: [not_null]
+      - name: price_as_of
+        description: Snapshot de catalogo que sustenta o preco deste pedido.
+        tests: [not_null]
+      - name: price_source
+        description: >
+          `observed` quando price_as_of e o proprio dia; `carried_forward` quando o dia nao
+          teve snapshot daquele armazem e o ultimo preco conhecido foi carregado adiante.
+          Comparar receita entre dias sem olhar esta coluna compara vintages diferentes.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [observed, carried_forward]}}
+      - name: order_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [PLACED, CONFIRMED, PICKING, PICKED, IN_TRANSIT, DELIVERED,
+                   PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED]
+      - name: is_terminal
+        description: >
+          DELIVERED nao e terminal: uma devolucao ainda pode vir depois dele, e e por isso
+          que ele nao encerra o agregado.
+        tests: [not_null]
+      - name: placed_at
+        tests: [not_null]
+      - name: line_count_placed
+        tests: [not_null]
+      - name: gross_amount_placed
+        description: Soma das linhas COLOCADAS, antes de qualquer alteracao na separacao.
+        tests: [not_null]
+      - name: substituted_lines
+        tests: [not_null]
+      - name: removed_lines
+        tests: [not_null]
+      - name: event_count
+        tests: [not_null]
+      - name: lifecycle_minutes
+        description: Minutos entre a colocacao e o ultimo evento do pedido.
+        tests: [not_null]
+
+  - name: silver_order_line
+    description: >
+      GRAO (order_id, line_no). Estado final de cada linha, depois de substituicoes e
+      remocoes. `line_no` e a posicao na cesta colocada e nunca e reaproveitado.
+
+      A linha COLOCADA e a linha FINAL convivem: `source_product_id` e o que o cliente pediu,
+      `fulfilled_source_product_id` e o que ele recebeu. Guardar so o segundo apagaria a
+      substituicao, que e o fato que o modelo de eventos existe para registrar.
+
+      `line_amount` e zero para linha removida, de modo que a soma por pedido feche com
+      `silver_order.net_amount` sem nenhum filtro do consumidor.
+
+      ATENCAO AO MEDIR VALOR MEDIO. O `unit_price` da fonte cobre quatro ordens de grandeza:
+      marisco congelado e presunto iberico vendidos por peso chegam a 3.663,00 contra uma
+      mediana de 2,25. Medido: 9 das 4.670 substituicoes cairam acima de 100,00 e respondem
+      por 42% do valor substituido. Media aritmetica de valor de cesta e dominada por punhado
+      de linha — use mediana ou percentil, ou declare a cauda.
+    columns:
+      - name: order_id
+        tests: [not_null]
+      - name: line_no
+        tests: [not_null]
+      - name: line_status
+        description: >
+          Estado FINAL da linha. `fulfilled` exige que o pedido tenha chegado a separacao
+          (`order_picked`); `not_picked` e a linha de um pedido que morreu antes disso —
+          cancelado ou com pagamento recusado. `placed` e o pedido ainda em voo, que nao
+          ocorre nesta janela. Ate o Marco 4 os tres primeiros nao existiam e tudo que nao
+          fosse substituido ou removido virava `fulfilled`, afirmando separacao em 5.508
+          linhas de 298 pedidos que nunca foram separados.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [placed, fulfilled, substituted, removed, not_picked]
+      - name: source_product_id
+        description: O que o cliente PEDIU. Sempre um produto do catalogo daquele wh e data.
+        tests: [not_null]
+      - name: fulfilled_source_product_id
+        description: >
+          O que o cliente RECEBEU. Nulo quando a linha foi removida OU quando o pedido nunca
+          chegou a separacao — nulo aqui significa "nao existe", nao "desconhecido".
+      - name: quantity
+        tests: [not_null]
+      - name: unit_price
+        description: Preco unitario observado do produto pedido, naquele armazem e data.
+        tests: [not_null]
+      - name: line_amount
+        description: >
+          Contribuicao efetiva da linha. Zero para linha removida e para linha de pedido que
+          nunca foi separado. O valor PEDIDO continua em line_amount_placed, ao lado.
+        tests: [not_null]
+      - name: line_amount_placed
+        description: Contribuicao da linha como foi colocada, antes da separacao.
+        tests: [not_null]
+      - name: price_source
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [observed, carried_forward]}}
+      - name: wh
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [mad1, bcn1, svq1, vlc1]}}
+      - name: ingestion_date
+        tests: [not_null]
+      - name: removal_reason
+        description: >
+          `unavailable`, e nunca `out_of_stock`: nao existe fato de estoque nesta plataforma,
+          e nomear como se existisse prometeria um dado que ninguem mediu.
+        tests:
+          - accepted_values: {arguments: {values: [unavailable]}}
+
+  - name: silver_orders_manifest
+    description: >
+      GRAO (ingestion_date, wh). O manifesto como tabela. Irmao de raw_manifest e de
+      silver_oltp_manifest.
+
+      Aqui ele declara o FOLD — order_rows, net_amount_picked, substituted_lines — numeros que
+      so existem depois de dobrar o log. A Source os calculou em Python; o Silver os recalcula
+      em SQL. O teste que cruza os dois fecha manifesto -> RAW -> parquet por caminhos
+      independentes.
+    columns:
+      - name: run_id
+        tests: [not_null, unique]
+      - name: ingestion_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: source_warehouse
+        description: O armazem segundo o MANIFESTO, para ser comparado com o eixo da particao.
+        tests: [not_null]
+      - name: source_name
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [simulated_orders]}}
+      - name: complete
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [true], quote: false}}
+      - name: failure_count
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [0], quote: false}}
+      - name: seed
+        tests: [not_null]
+      - name: premises_sha256
+        description: >
+          Digest da tabela de premissas que gerou esta particao. Trocar uma taxa e regerar
+          mudaria os pedidos sob os mesmos order_id; sem este campo isso nao deixaria rastro.
+        tests: [not_null]
+      - name: price_source
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [observed, carried_forward]}}
+      - name: declared_event_rows
+        tests: [not_null]
+      - name: declared_order_rows
+        tests: [not_null]
+      - name: declared_line_rows
+        tests: [not_null]
+      - name: declared_substituted_lines
+        tests: [not_null]
+      - name: declared_removed_lines
+        tests: [not_null]
+      - name: declared_gross_amount_placed
+        tests: [not_null]
+      - name: schema_fingerprint
+        tests: [not_null]
+
+  - name: silver_live_order_state
+    description: >
+      A PROJECAO VIVA, lida da tabela Iceberg que dois processos escrevem: o consumidor em
+      streaming (`orders-project --sink iceberg`) e a reconstrucao em lote
+      (`orders-rebuild-projection`). Grao: order_id, o mesmo de silver_order.
+
+      Existe SOMENTE para que a reconciliacao entre os dois caminhos seja uma consulta e nao
+      um script solto. Nao acrescenta fato nenhum ao Lakehouse.
+
+      Fica fora do `dbt build` enquanto a tabela Iceberg nao existir, pela mesma guarda
+      `has-data` das outras sources. O caminho do metadado vem da var
+      `live_order_state_metadata`, resolvida no catalogo por `make silver`: o DuckDB recusa
+      adivinhar qual metadado e o corrente, e a recusa dele esta certa.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: order_status
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [PLACED, CONFIRMED, PICKING, PICKED, IN_TRANSIT, DELIVERED,
+                         PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED]
+      - name: last_sequence_no
+        description: >
+          Ultimo evento aplicado. E a guarda que torna a fusao entre os dois escritores
+          MONOTONICA: uma escrita que nao avanca esta coluna e descartada, senao um retry
+          poderia gravar um estado antigo por cima e a tabela regrediria sem nada reprovar.
+        tests: [not_null]
+      - name: written_by
+        description: >
+          PROVENIENCIA: qual dos dois escritores tocou a linha por ultimo. Sem ela, "os dois
+          escritores escreveram" seria afirmacao sobre log, e nao fato consultavel.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [stream, rebuild]}}
+      - name: net_amount
+        description: >
+          Nulo para pedido que nunca chegou a separacao — a mesma disciplina de silver_order
+          e do OLTP. Preencher com o valor colocado faria a coluna responder outra pergunta
+          com o mesmo nome.

@@ -54,6 +54,14 @@ with raw as (
 
 select
     ingestion_date,
+    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
+    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
+    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
+    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
+    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
+    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
+    -- acidente.
+    ingestion_date = max(ingestion_date) over () as is_latest_ingestion,
     'TRAM'                                                  as source_dataset,
     source_file,
     substr(line, 1, 10)                                     as section_code,
