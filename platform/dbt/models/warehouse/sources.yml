@@ -16,7 +16,7 @@ sources:
     database: RETAIL
     schema: STAGE
     description: >
-      Espelho 1:1 do recorte do Silver — ~146 mil linhas, 3,85% das 3.796.213 do Silver.
+      Espelho 1:1 do recorte do Silver — 406.855 linhas, 9,95% das 4.087.507 do Silver.
       Sem regra de negocio: filtro de escopo geografico, filtro de ultima ingestao e
       deduplicacao de grao, so. Full refresh a cada carga.
     tables:

@@ -40,8 +40,9 @@ o resultado da query — deriva-lo e o que mantem os dois em sincronia por const
 gerado pode ser inspecionado sem conexao nenhuma (`dump_ddl`), entao continua revisavel.
 
 STAGE E FULL REFRESH (`create or replace` + `COPY INTO`). Nao ha merge nem incremental
-aqui de proposito: sao ~130 mil linhas, e historico/versionamento sao responsabilidade das
-dimensoes SCD2 do GOLD, nao do espelho.
+aqui de proposito: sao ~407 mil linhas, e historico/versionamento sao responsabilidade das
+dimensoes SCD2 do GOLD, nao do espelho. Gatilho para revisar: a carga inteira deixar de
+caber numa janela em que refaze-la seja mais barato que raciocinar sobre estado parcial.
 """
 
 from __future__ import annotations

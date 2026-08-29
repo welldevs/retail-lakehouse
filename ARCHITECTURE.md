@@ -42,7 +42,7 @@ L2  Silver        parquet tipado + 1 modelo temporal          · DuckDB
                   s3://retail-lakehouse/silver/…                3.796.213 linhas · 44 MB
 ─────────────────── fronteira física: COPY INTO, nunca ref() ───────────────────
 L3  Stage         espelho 1:1 de um RECORTE do Silver         · Snowflake
-                  RETAIL.STAGE.STG_*                            ~5% do Silver
+                  RETAIL.STAGE.STG_*                            10% do Silver
 L4  Gold          DIM_* / FACT_* conformados, SCD2            · dbt-snowflake
 L5  Mart          MART_*, grão declarado por tabela           · dbt-snowflake
 ```
@@ -74,7 +74,7 @@ sem reescrita. É isso que torna as trocas abaixo configuração, e não projeto
 | **Iceberg** | Isolamento de snapshot entre escritores concorrentes, time travel, interop entre engines | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 6). O gatilho que disparou foi o literal — *"um segundo engine precisar escrever a mesma tabela"*: `live_order_state` é escrita pelo consumidor em streaming e pela reconstrução em lote, com o DuckDB lendo enquanto os dois escrevem. **Disparou por CONCORRÊNCIA, não por volume** — neste volume um parquet com `os.replace` atômico serviria. Precedido por `make spike-iceberg`, um experimento fechado que mediu catálogo, upsert, conflito, isolamento e leitura pelo DuckDB antes de a projeção existir. O gatilho antigo (`dim_product` SCD2 por `MERGE`) continua sem disparar: o SCD2 é derivado da história completa, não acumulado. |
 | **Kafka** | Transporte de eventos, replay, ponto de desacoplamento | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 5). O gatilho que disparou foi o literal — *"CDC de um OLTP"*: o evento nasce na transação que muda o pedido (Marco 4) e um consumidor stateful mantém um read model abaixo do lote. Ficou provada a **semântica de transporte**: at-least-once demonstrado reproduzindo a janela de duplicação, consumo idempotente sem conjunto que cresce, buraco recusado, replay sem efeito, 16 sha256 reproduzidos. **Não** ficou provado, e está escrito: que alguém precise da latência, e que o broker seja a origem — o log canônico continua nascendo em disco. |
 | **Spark** | Processamento acima de um nó | 8 MB por partição. A JVM sobe em mais tempo do que o job roda, e nenhum shuffle real é exercitado. | Partição que o DuckDB não segura em memória, ou join pesado entre múltiplas sources. | `dbt-spark` sobre os mesmos modelos. |
-| **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe ~5% do Silver, não o Silver inteiro. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
+| **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe 10% do Silver, não o Silver inteiro. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
 | **Airflow** | Retry, exit codes, pools, SLA, histórico de execução | — | **Adotado.** Pesado para um job diário de 4 min, e assumido com essa consciência: o valor está no contrato operacional (o pool de 1 slot e o tratamento de exit code não têm equivalente em cron). | — |
 
 ## Quatro restrições medidas que moldaram o desenho
@@ -610,10 +610,16 @@ de endereço do Callejero, que serve ao gerador de clientes, não ao analista. A
 **146.240 linhas, 3,85%**, e ficavam no S3 os outros 95%. Carregar o Silver inteiro seria
 pagar armazenamento por 27× o dado útil.
 
-Os dois lados crescem a cada ingestão e a razão oscila em torno de 5% — o número de
-qualquer momento sai de `make warehouse-evidence`, não deste parágrafo. O que **não** muda
-com o tempo é a estrutura da decisão: a maior massa do Silver é referência nacional que
-serve ao gerador, e o recorte é escopo geográfico + última ingestão + dedup de grão.
+**A razão NÃO é uma propriedade do pipeline, e dizer "oscila em torno de 5%" foi um erro
+de leitura que a Fase 3 desfez.** Medido em 2026-08-29, com Orders no destino: o Silver tem
+4.087.507 linhas e atravessam **406.855 — 9,95%**. A razão dobrou, e não porque o recorte
+tenha ficado mais frouxo: ela é função de **quanto de cada source cai dentro do escopo**. A
+população do INE é nacional e entrega 1,8%; os pedidos são gerados dentro das quatro AUFs
+por construção e entregam ~100%. Sem Orders, o recorte continua em 6,0%.
+
+O número de qualquer momento sai de `make warehouse-evidence`, não deste parágrafo. O que
+**não** muda com o tempo é a estrutura da decisão: o recorte é escopo geográfico + última
+ingestão + dedup de grão, e nenhuma regra de negócio.
 
 **O recorte é deliberadamente burro:** escopo geográfico, última ingestão, dedup de grão.
 Nenhuma regra de negócio — se aparecer um `case when` de domínio em `snowflake_export.py`,
@@ -699,8 +705,10 @@ dias com zero em `DIM_DATE` — que é exatamente o que o calendário completo e
 Orders, Order Items, Stock, Replenishment, Delivery, Events, Kafka, Spark, Iceberg,
 `BRIDGE_PRODUCT_CATEGORY`, `DIM_CENSUS_SECTION`, `DIM_ADDRESS`.
 
-**Orders, Order Items e Events entraram na Fase 3** — como Source, RAW e Silver. A árvore
-`models/warehouse/` deles ainda não; ver a seção da Fase 3.
+**Orders, Order Items e Events entraram na Fase 3** — como Source, RAW e Silver no Marco 3,
+e a árvore `models/warehouse/` no Marco 7. **Kafka e Iceberg também saíram desta lista**, nos
+Marcos 5 e 6, cada um com o gatilho que disparou escrito. Restam Stock, Replenishment,
+Delivery, Spark e as três dimensões — ver a seção da Fase 3.
 
 **Bloqueio real para `FACT_DELIVERY`:** rota e tempo de entrega exigem coordenada, e o
 Callejero não tem coordenada nem adjacência — já registrado neste documento. Sem
@@ -1502,7 +1510,7 @@ o motivo escrito abaixo.
 | **Árvore `models/warehouse/` sem teste offline** | **Em aberto**, e é consequência de uma escolha. Mitigada por `make warehouse-evidence` |
 | **Conta Snowflake é trial** | **Em aberto por natureza**, e o destino é trocável — verificado, não afirmado |
 | Aviso `CustomKeyInConfigDeprecation` do dbt | **Em aberto, cosmético.** Config do `dbt-duckdb`, sem forma suportada ainda |
-| **CI** | **Em aberto.** Cobriria a metade offline (655 testes + `make silver`), nunca a metade Snowflake |
+| **CI** | **Em aberto.** Cobriria a metade offline (919 testes + `make silver`), nunca a metade Snowflake |
 | Modelo Silver e DAG dos pedidos simulados | **Fechados** na Fase 3 (4 modelos, 8 testes singulares, `simulated_orders_events.py`) |
 | **Metade em streaming sem teste offline** | **Parcialmente fechada** nos Marcos 4, 5 e 6: `fake_pg.py` cobre a fronteira da transação, `fake_kafka.py` a ordem entre escrita e commit de offset, e `fake_iceberg.py` a fusão monotônica e o laço de retry — offline, em `make test`. Continua em aberto o que nenhum duplo cobre: que `rollback` desfaz, que o broker preserva ordem por chave, e que o Iceberg recusa commit de snapshot velho. Isso é `make orders-prove-atomicity`, `make orders-prove-stream` e `make orders-prove-projection` |
 | **Silver de pedidos afirmava separação que o log não declara** | **Fechada** no Marco 4, no dia em que foi achada: 5.508 linhas de 298 pedidos. Achada por dois folds independentes discordando, não por teste |
@@ -1611,7 +1619,7 @@ Snowflake ausentes, e `--target snowflake` falha nomeando a que falta.
 
 ### `models/warehouse/` sem teste offline — e por que a resposta não é um espelho DuckDB
 
-Um espelho em DuckDB dos 14 modelos teria **passado** nos dois erros que quebraram a
+Um espelho em DuckDB dos 21 modelos teria **passado** nos dois erros que quebraram a
 primeira execução real: `FILTER (WHERE ...)` e `WINDOW ... AS`, que o DuckDB aceita e o
 Snowflake não. Um teste que não reproduz o modo de falha não é teste — é uma segunda
 implementação para manter, e daria confiança falsa exatamente onde não há.
@@ -1694,10 +1702,10 @@ Confirmado não-vazio por mutação: desligar a comparação de sha256 em `verif
 
 **O que ainda não é coberto**, e a lista cresceu com a Fase 2:
 
-- **O caminho `dbt` do Silver** — os 196 testes de dados exigem object storage de pé.
-- **As DAGs** — nenhum teste importa o módulo do Airflow. As cinco compilam via `DagBag`
+- **O caminho `dbt` do Silver** — os 293 testes de dados exigem object storage de pé.
+- **As DAGs** — nenhum teste importa o módulo do Airflow. As seis compilam via `DagBag`
   no container, o que pega erro de import mas não comportamento.
-- **A árvore `models/warehouse/`** — os 14 modelos e 86 testes só rodam **contra o
+- **A árvore `models/warehouse/`** — os 21 modelos e 149 testes só rodam **contra o
   Snowflake**. Não há equivalente offline, e não é oversight: um espelho em DuckDB seria
   uma segunda materialização da mesma verdade, e foi justamente a diferença entre os dois
   motores (`FILTER`, `WINDOW`) que os quebrou na primeira execução — um espelho DuckDB teria
@@ -1732,8 +1740,8 @@ em vez de por disciplina. Adiado para quando o repositório subir.
 ### A conta Snowflake é um trial — **aberta, por natureza**
 
 Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
-com ele os 14 modelos e 86 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
-e as 632 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
+com ele os 21 modelos e 149 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
+e as 919 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
 fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
 `390913`, com o login autenticando e nenhum warehouse disponível.
 

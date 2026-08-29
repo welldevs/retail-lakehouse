@@ -37,16 +37,17 @@ L1  RAW        partição byte-idêntica no MinIO/S3, checksum conferido pós-PU
     │ model  dedup por (order_id, sequence_no); DOIS escritores no Iceberg,  │
     │        com fusão monotônica — o que não avança a sequência é descartado│
     └───────────────────────────────────────────────────────────────────────┘
-L2  Silver     parquet tipado + modelo de variação de preço      · DuckDB · 3,8 M linhas
+L2  Silver     parquet tipado + fold de pedidos + variação de preço · DuckDB · 4,1 M linhas
 ────────────── fronteira física: COPY INTO, nunca ref() ──────────────
-L3  Stage      espelho 1:1 de um RECORTE do Silver               · Snowflake · ~5% do Silver
+L3  Stage      espelho 1:1 de um RECORTE do Silver               · Snowflake · 407 k linhas
 L4  Gold       DIM_* / FACT_* conformados, SCD2 da história
 L5  Mart       MART_*, com o grão declarado em cada tabela
 ```
 
-O Snowflake **não** recebe o Silver inteiro: 81,5% dele é população nacional do INE com
-1,8% de conteúdo no escopo das 4 províncias. Ver
-[ARCHITECTURE.md § "Fase 2"](ARCHITECTURE.md).
+O Snowflake **não** recebe o Silver inteiro: atravessam 406.855 das 4.087.507 linhas
+(**9,95%**). A razão não é propriedade do pipeline — é função de quanto de cada source cai
+dentro do escopo. A população do INE é nacional e entrega 1,8%; os pedidos nascem dentro das
+quatro AUFs e entregam ~100%. Ver [ARCHITECTURE.md § "Fase 2"](ARCHITECTURE.md).
 
 ## Requisitos
 
@@ -122,6 +123,7 @@ não efeito colateral de pipeline.
 ├── .env.example                        # copie para .env; credenciais só de desenvolvimento
 ├── .env.snowflake.example              # copie para .env.snowflake; identidade da conta, sem segredo
 ├── docs/warehouse-evidence/            # a execução real no Snowflake, datada — gerada, não escrita
+├── docs/stream-evidence/               # OLTP, broker e projeção vivos, datado — gerado, não escrito
 ├── platform/
 │   ├── pyproject.toml                  # boto3, duckdb, dbt-core, dbt-duckdb, dbt-snowflake
 │   ├── src/retail_platform/
@@ -135,15 +137,17 @@ não efeito colateral de pipeline.
 │   │   ├── orders_oltp.py              # o OLTP de pedidos: estado + outbox NA MESMA transacao
 │   │   ├── orders_stream.py            # produtor, consumidor e read model; a semantica de entrega
 │   │   ├── orders_projection.py        # a projecao em Iceberg: dois escritores, fusao monotonica
-│   │   ├── snowflake_export.py         # o RECORTE: Silver -> parquet (~5%), sem regra de negócio
+│   │   ├── snowflake_export.py         # o RECORTE: Silver -> parquet (10%), sem regra de negócio
 │   │   ├── snowflake_load.py           # transporte: DDL, PUT em stage interno, COPY INTO, papéis
 │   │   ├── snowflake_evidence.py       # observa o destino e escreve a evidência datada
+│   │   ├── stream_evidence.py          # observa os TRÊS planos vivos; ausência é declarada
 │   │   └── cli.py                      # land / verify-landing / query / prune-local / has-data
 │   │                                   # / export-oltp-reference / export-orders-reference
 │   │                                   # / orders-oltp-ddl / orders-oltp-init
 │   │                                   # / orders-apply / orders-outbox
 │   │                                   # / export-snowflake / snowflake-ddl
 │   │                                   # / snowflake-bootstrap / load-snowflake / snowflake-evidence
+│   │                                   # / stream-evidence
 │   ├── dbt/seeds/
 │   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
 │   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
@@ -151,17 +155,19 @@ não efeito colateral de pipeline.
 │   │   ├── ine_municipality_codes_seed.csv  # nome (Tempus3) -> código de município, 08/28/41/46
 │   │   └── ine_ambiguous_series_seed.csv    # série -> código oficial, para nomes homônimos na Espanha
 │   ├── dbt/macros/                     # generate_schema_name: GOLD/MART absolutos, sem prefixo
-│   ├── dbt/models/silver/              # target dev (duckdb) — 20 modelos
+│   ├── dbt/models/silver/              # target dev (duckdb) — 21 modelos
 │   │   ├── warehouse_province_map.sql   # passagem do seed para o object storage
 │   │   ├── warehouse_service_area.sql   # idem, para a área de atendimento
+│   │   ├── order_premises.sql           # idem, para as premissas — atravessa até o warehouse
 │   │   ├── mercadona/                   # 4 modelos, grão por wh
 │   │   ├── ine_population/              # série de população por província E por município
 │   │   ├── ine_callejero/               # seções, núcleos, ruas — geografia oficial
-│   │   └── simulated_oltp/              # clientes sintéticos + manifesto com a linhagem
-│   ├── dbt/models/warehouse/           # target snowflake — 14 modelos, ligados por source()
-│   │   ├── sources.yml                  # as 9 tabelas STAGE: a fronteira, declarada
-│   │   ├── gold/                        # 6 DIM + 4 FACT, SCD2 derivado da história
-│   │   └── mart/                        # 4 marts, grão no cabeçalho de cada um
+│   │   ├── simulated_oltp/              # clientes sintéticos + manifesto com a linhagem
+│   │   └── simulated_orders/            # o fold do log: evento, pedido, linha, manifesto
+│   ├── dbt/models/warehouse/           # target snowflake — 21 modelos, ligados por source()
+│   │   ├── sources.yml                  # as 13 tabelas STAGE: a fronteira, declarada
+│   │   ├── gold/                        # 6 DIM + 8 FACT, SCD2 derivado da história
+│   │   └── mart/                        # 7 marts, grão no cabeçalho de cada um
 │   ├── dbt/tests/                      # testes singulares do Silver
 │   ├── dbt/tests/warehouse/            # idem do Gold/Mart (separados: ref() cruzado não compila)
 │   └── tests/                          # sem rede (duplos de S3 e de Postgres em memória)
@@ -171,17 +177,19 @@ não efeito colateral de pipeline.
 │       ├── fake_kafka.py                # diário COMPARTILHADO: a ordem entre escrever e
 │       │                                # commitar o offset é a semântica de entrega
 │       └── fake_iceberg.py              # conflito sob demanda: exercita a fusão monotônica
-├── orchestration/airflow/dags/         # 5 DAGs: 4 sources + warehouse_load
+├── orchestration/airflow/dags/         # 6 DAGs: 5 sources + warehouse_load
 │   ├── mercadona_catalog_daily.py      # cron diário
 │   ├── ine_population_on_demand.py     # sem cron — disparo manual
 │   ├── ine_callejero_on_demand.py      # sem cron — disparo manual, sem API
 │   ├── simulated_oltp_customers.py     # sem cron — a base muda quando alguém decide
+│   ├── simulated_orders_events.py      # sem cron — o streaming NÃO é tarefa de DAG
 │   └── warehouse_load.py               # a única que atravessa a fronteira entre dois motores
 ├── scripts/
 │   ├── prove_oltp_atomicity.py         # injeta falha no BANCO e prova que os dois lados caem
 │   ├── prove_stream_semantics.py       # reproduz a janela de duplicação e prova o replay
 │   ├── spike_iceberg_duckdb.py         # o experimento FECHADO, rodado antes do Marco 6
-│   └── prove_iceberg_projection.py     # concorrência, fusão monotônica, snapshot isolation
+│   ├── prove_iceberg_projection.py     # concorrência, fusão monotônica, snapshot isolation
+│   └── prove_warehouse_orders_tests.py # injeta o defeito que cada teste diz pegar, no dado real
 ├── infra/
 │   ├── docker-compose.yml              # MinIO + mc + Postgres + scheduler + webserver
 │   │                                   # + oltp-postgres e kafka (profile `stream`); o
