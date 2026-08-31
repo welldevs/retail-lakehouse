@@ -1510,7 +1510,7 @@ o motivo escrito abaixo.
 | **Árvore `models/warehouse/` sem teste offline** | **Em aberto**, e é consequência de uma escolha. Mitigada por `make warehouse-evidence` |
 | **Conta Snowflake é trial** | **Em aberto por natureza**, e o destino é trocável — verificado, não afirmado |
 | Aviso `CustomKeyInConfigDeprecation` do dbt | **Em aberto, cosmético.** Config do `dbt-duckdb`, sem forma suportada ainda |
-| **CI** | **Em aberto.** Cobriria a metade offline (947 testes + `make silver`), nunca a metade Snowflake |
+| **CI** | **Em aberto.** Cobriria a metade offline (992 testes + `make silver`), nunca a metade Snowflake |
 | Modelo Silver e DAG dos pedidos simulados | **Fechados** na Fase 3 (4 modelos, 8 testes singulares, `simulated_orders_events.py`) |
 | **Metade em streaming sem teste offline** | **Parcialmente fechada** nos Marcos 4, 5 e 6: `fake_pg.py` cobre a fronteira da transação, `fake_kafka.py` a ordem entre escrita e commit de offset, e `fake_iceberg.py` a fusão monotônica e o laço de retry — offline, em `make test`. Continua em aberto o que nenhum duplo cobre: que `rollback` desfaz, que o broker preserva ordem por chave, e que o Iceberg recusa commit de snapshot velho. Isso é `make orders-prove-atomicity`, `make orders-prove-stream` e `make orders-prove-projection` |
 | **Silver de pedidos afirmava separação que o log não declara** | **Fechada** no Marco 4, no dia em que foi achada: 5.508 linhas de 298 pedidos. Achada por dois folds independentes discordando, não por teste |
@@ -1744,7 +1744,7 @@ em vez de por disciplina. Adiado para quando o repositório subir.
 
 Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
 com ele os 21 modelos e 149 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
-e as 947 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
+e as 992 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
 fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
 `390913`, com o login autenticando e nenhum warehouse disponível.
 
@@ -1909,6 +1909,124 @@ enquanto deixava de transformar dado recém-aterrissado.
 
 Verificado no cenário misto: `mad1` curto-circuita, `bcn1` percorre
 `extract → validate → land → verify`, e o `silver` **roda**.
+
+## Calibração da demanda contra o MAPA 2025 (Fase 4)
+
+Até aqui o simulador de Orders escolhia produto **uniformemente sobre o catálogo**, e isso
+estava declarado como premissa: *"o mix por categoria espelha o TAMANHO do sortimento"*.
+Deixou de valer quando apareceu uma âncora observacional que não existia — o **Informe del
+Consumo Alimentario en España 2025** do MAPA, que mede volume, valor, preço médio e canal do
+consumo doméstico espanhol.
+
+### O achado que abriu a fase não era de demanda
+
+A investigação começou por um sintoma: "Marisco y pescado" tinha **3,38% das unidades e
+22,82% da receita**, com preço médio pago de **27,09 €** contra um catálogo cujo produto mais
+caro em mad1 custava **24,05 €**. Um preço médio acima do máximo do sortimento não pode vir de
+escolha de produto.
+
+O RAW resolveu. Quando `selling_method = 1` e `unit_size` é nulo, a API da Mercadona devolve
+`unit_price = reference_price × 99` — o preço do **teto do seletor de peso**, não de nada que
+um domicílio compre. O fator é exatamente `99,000` em **10 combinações produto×armazém**, e a
+porção realmente comprável está em `min_bunch_amount`, um campo **que estava no RAW desde a
+primeira partição e que o Silver descartava**.
+
+| faixa de preço | produtos | unidades | receita | % da receita |
+|---|---|---|---|---|
+| ≤ 30 € | 4.921 | 204.393 | 622.812,08 | 75,85 % |
+| 30–100 € | 6 | 203 | 8.818,30 | 1,07 % |
+| **> 100 €** | **12** | **275** | **189.491,55** | **23,08 %** |
+
+**12 produtos em 4.939 — 0,24% do sortimento — produziam 23% da receita**, e nenhum dos 947
+testes reprovava, porque o número continuava internamente consistente. É a mesma classe de
+defeito do carimbo de tempo em milissegundos do Marco 7: uma unidade de medida errada não
+quebra nenhum total.
+
+`unit_price` **permanece intacto** em `silver_product_price` — projeção fiel da fonte é
+invariante. O que entrou foram colunas derivadas ao lado: `purchasable_unit_price`,
+`price_basis`, `net_content_kg_l`, e os três campos de granel que o modelo jogava fora.
+
+### A resposta à pergunta que foi feita
+
+*"Produtos de preço elevado estão recebendo demanda excessiva porque aumentam o valor da
+Order?"* — **Não.** Preço não entra em nenhum sorteio, nem antes nem depois desta fase. O
+mecanismo era o oposto: a escolha era *indiferente* ao preço, e foi a indiferença, sobre um
+catálogo com 12 preços mal escalados, que concentrou a receita.
+
+### O que a calibração faz, e o que ela recusa fazer
+
+```
+grupo de demanda   P(g)  <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
+       |
+produto no grupo         <- UNIFORME (nenhuma fonte mede giro por SKU)
+       |
+quantidade / preço       <- inalterado / OBSERVADO
+       |
+valor do pedido          <- consequência, nunca objetivo
+```
+
+Preço não aparece em nenhuma seta que aponta para demanda. **Volume e valor divergem de
+propósito**: no MAPA, mariscos são 0,81% do volume e 2,88% do valor, e um simulador que os
+igualasse estaria errado.
+
+**A fronteira, que vale mais que a calibração.** O MAPA mede consumo doméstico do residente —
+não mede pedido de loja online, nem cesta, nem cadência. Por isso `daily_order_rate`,
+`basket_lines_*` e `quantity_max` **continuam `synthetic` e não receberam calibração nenhuma**.
+Transformar o benchmark em fonte para esses números seria transformá-lo numa falsa
+representação da realidade.
+
+### Três coisas que o informe não sustenta, registradas em vez de inventadas
+
+| Dado | Por que não | O que foi feito |
+|---|---|---|
+| **Sazonalidade mensal por categoria** | Os gráficos mensais são **imagens**: só os rótulos dos eixos saem no texto. Há cinco números mensais em prosa, todos do total. E a janela cobre apenas agosto. | Slot criado **neutro** nos 12 meses, aplicado à taxa de pedidos (nunca ao mix, onde um fator global se normalizaria). Um par de testes prova que o mecanismo funciona *e* que o perfil entregue está neutro. |
+| **E-commerce por categoria** | Só 18 dos 102 blocos trazem a linha de canal. | Inclinação **fina** nos 18, **grossa** (1,1% fresca / 2,8% resto sobre 2,2% total) nos demais. Cada grupo carrega `channel_basis` e o relatório reporta qual regra o produziu. |
+| **Não-alimentar (~30% das unidades)** | Fora do universo do informe. | Fatia mantida com premissa agregada declarada, **nunca somada** ao bloco calibrado. |
+
+Também registrado: a folha de rosto do PDF diz *"Informe del consumo alimentario en España
+2024"* enquanto o corpo inteiro reporta **2025**. É resíduo da edição anterior. Os números
+vêm do corpo, e a discrepância está no CONTRACT — não se ajusta a fonte, registra-se o achado.
+
+### O que mudou, medido na mesma janela
+
+| dimensão | ANTES | DEPOIS |
+|---|---:|---:|
+| unidades | 204.871 | 204.824 |
+| kg ou litro | 126.550 | 144.425 |
+| receita | 821.121,93 | 583.154,43 |
+| EUR/kg | 6,49 | 4,04 |
+
+| grupo, % do volume | ANTES | ALVO | DEPOIS |
+|---|---:|---:|---:|
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 11,44 | 0,43 | 0,43 |
+| FRUTAS_FRESCAS | 3,11 | 9,17 | 9,51 |
+| HORTALIZAS_FRESCAS | 2,16 | 6,02 | 5,62 |
+| PATATAS | 1,22 | 4,53 | 4,67 |
+
+Erro absoluto médio contra o alvo: **0,098 ponto**. **A queda de 29% na receita é a correção
+funcionando, não uma regressão** — 23% dela eram 12 produtos com preço de teto de API.
+
+### Uma decisão de desenho que só apareceu ao rodar
+
+A projeção Iceberg funde estado de forma **monotônica**, descartando linha com
+`last_sequence_no` menor — é assim que os dois escritores convivem. Essa fusão assume, sem
+dizer, que um `order_id` sempre se refere ao mesmo pedido. Trocar `demand_model_version` é a
+**quarta condição não-aditiva** do CONTRACT, e ali a premissa cai: o rebuild descartou **4.028
+linhas** como "mais velhas" e deixou a projeção com dois universos misturados.
+`orders-reconcile` pegou. `--reset` passou a existir por causa disso, é destrutivo de
+propósito e nunca acontece sozinho.
+
+### O que ficou verificável
+
+- `make demand-check-mapping` — as **444 trincas** do catálogo casam exatamente **uma** regra
+  do de-para; zero sem regra, zero ambíguas, zero regras mortas. Sem default silencioso.
+- A cobertura é conferida contra a **árvore de categorias**, não contra o recorte: o dedup do
+  catálogo esconde trincas que existem na fonte, e conferir contra ele mediria o desempate.
+  Três regras corretas pareceram mortas antes disso ser percebido.
+- `make demand-reality-check` gera `docs/demand-evidence/README.md` com ANTES · MAPA · ALVO ·
+  DEPOIS nas três dimensões, e **sai 1** se o pior desvio passar de um limiar largo e
+  declarado. O limiar não é nota de qualidade: existe para pegar calibração silenciosamente
+  inerte. Provado — o ANTES reprova com 11,007 pontos; o estado atual passa com 0,660.
 
 ## Fora de escopo
 

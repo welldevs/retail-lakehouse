@@ -55,6 +55,10 @@ select
     ped.product_sk,
     l.category_id,
     l.subgroup_id,
+    -- GRUPO DE DEMANDA carimbado no evento pela Source. Atravessa a fronteira porque e o
+    -- eixo em que a cesta foi CALIBRADA: agrupar por category_id no mart mede a arvore da
+    -- Mercadona, e agrupar por aqui mede a decisao de demanda.
+    l.demand_group,
 
     -- O QUE FOI ENTREGUE. Nulo quando a linha foi removida ou o pedido nunca chegou a
     -- separacao: nulo aqui significa "nao existe", nao "desconhecido".

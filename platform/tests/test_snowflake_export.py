@@ -50,7 +50,9 @@ create table silver_product_price (
     subgroup_id varchar, subgroup_name varchar, source_product_id varchar,
     display_name varchar, product_level1_category_id varchar,
     product_level1_category_name varchar,
-    unit_price decimal(10,2), bulk_price decimal(10,2), reference_price decimal(12,3),
+    unit_price decimal(10,2), purchasable_unit_price decimal(10,2), price_basis varchar,
+    net_content_kg_l decimal(12,4), min_bunch_amount double,
+    bulk_price decimal(10,2), reference_price decimal(12,3),
     reference_format varchar, previous_unit_price decimal(10,2), price_decreased boolean,
     tax_percentage decimal(6,3), is_pack boolean, pack_size bigint, unit_size double,
     size_format varchar, unit_name varchar, total_units bigint, selling_method bigint,
@@ -167,17 +169,19 @@ def popular(con):
             con.execute(f"""
                 insert into silver_product_price (ingestion_date, warehouse, category_id,
                     subgroup_id, source_product_id, display_name, product_level1_category_id,
-                    unit_price, bulk_price, reference_price, previous_unit_price,
+                    unit_price, purchasable_unit_price, price_basis, net_content_kg_l,
+                    min_bunch_amount, bulk_price, reference_price, previous_unit_price,
                     tax_percentage, is_pack, pack_size, unit_size, total_units,
                     selling_method, published, is_new_arrival)
                 values ('2026-08-26','{wh}',{cat},'s1','p1','Leite','1',
-                        {preco}, {preco}, 1.500, null, 4.000, false, 1, 1.0, 1, 0, true, false)
+                        {preco}, {preco}, 'unit', 1.0, 1.0,
+                        {preco}, 1.500, null, 4.000, false, 1, 1.0, 1, 0, true, false)
             """)
     con.execute("""
         insert into silver_product_price (ingestion_date, warehouse, category_id,
             subgroup_id, source_product_id, display_name, product_level1_category_id,
-            unit_price, tax_percentage, published)
-        values ('2026-08-26','wh1',10,'s1','p2','Pao','1', 0.90, 4.000, true)
+            unit_price, purchasable_unit_price, price_basis, tax_percentage, published)
+        values ('2026-08-26','wh1',10,'s1','p2','Pao','1', 0.90, 0.90, 'unit', 4.000, true)
     """)
 
     con.execute("""

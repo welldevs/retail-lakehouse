@@ -14,8 +14,9 @@ produziram e devolve uma RAW nova. A regra de ouro da Fase 1 vale igual, desloca
 
 > O **pedido** é inventado; quem compra, o que se compra, quanto custa e onde mora não.
 
-**Não há rede em nenhum passo.** `extract` aqui não faz nenhuma requisição: lê quatro
-arquivos JSON planos que a plataforma pré-computou do Silver com `retail-platform
+**Não há rede em nenhum passo.** `extract` aqui não faz nenhuma requisição: lê cinco
+arquivos JSON planos (`customers`, `catalog`, `calendar`, `premises`, `demand_profile`) que a
+plataforma pré-computou do Silver e dos seeds versionados com `retail-platform
 export-orders-reference`, e gera os eventos a partir deles. O verbo é mantido por uniformidade
 de interface — mesmo precedente do `extract --in <dir>` do `ine_callejero` e do `extract
 --reference` do `simulated_oltp`.
@@ -99,7 +100,15 @@ reprodutibilidade byte a byte do log.
 devolução ainda pode vir depois, e é por isso que ele não encerra o agregado.
 
 Cada linha de `lines[]` traz `line_no`, `source_product_id`, `category_id`, `subgroup_id`,
-`quantity` e `unit_price`.
+`demand_group`, `quantity` e `unit_price`.
+
+`demand_group` é o rótulo contra o qual a cesta foi calibrada (§2.6). Ele viaja **no evento**,
+e não é redescoberto por join a jusante: o que importa é o grupo que valia no momento do
+pedido, não o que o de-para diria hoje.
+
+`unit_price` é o preço da **porção comprável**, que difere do `unit_price` cru da API nas 10
+combinações produto×armazém vendidas a granel sem `unit_size` — ali a fonte devolve
+`reference_price × 99`, o teto do seletor de peso (obrigação 5 do contrato da Mercadona).
 
 ### 2.3 O fold é não-trivial, e isso é a razão de a Source existir
 
@@ -119,7 +128,14 @@ teste dbt invertido vigia exatamente isso do lado do consumidor.
 | Produto pedido | **observado** — existe no catálogo daquele armazém naquele dia |
 | Preço pago | **observado** — é o `unit_price` daquele `(armazém, data, produto)` |
 | Armazém e data | **observado** |
+| Grupo de demanda de cada linha | **calibrado contra benchmark** — ver 2.6 |
 | Cesta, cadência, horários, taxas de substituição/cancelamento/devolução | **sintético declarado** — ver 2.5 |
+
+Três naturezas, e a distinção entre a segunda e a terceira é nova nesta fase:
+**observado** vem de uma fonte que esta plataforma ingere; **benchmark** vem de uma fonte
+oficial externa que ela *não* ingere e usa apenas como referência de distribuição;
+**sintético** não tem âncora nenhuma. Um benchmark não é um dado nosso — chamá-lo assim seria
+transformá-lo numa falsa representação da realidade.
 
 ### 2.5 Premissas — todas sintéticas, todas declaradas
 
@@ -131,6 +147,51 @@ export), e seu `sha256` viaja até `config.premises_sha256` no manifesto.
 `daily_order_rate` é a única premissa **sem nenhuma âncora observacional**: é por isso que ela
 mora num seed que qualquer um edita e reconstrói, e não numa constante escondida no gerador.
 Não existe default para nenhuma premissa — uma chave ausente reprova a geração.
+
+### 2.6 Modelo de demanda — calibrado contra o MAPA 2025
+
+`demand_model_version` viaja em `config.demand_model_version` no manifesto. Versão em vigor:
+**`mapa_2025_v1`**.
+
+**A cadeia, com preço fora do caminho da demanda:**
+
+```
+grupo de demanda   P(g)  <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
+       |
+produto no grupo         <- UNIFORME (nenhuma fonte mede giro por SKU)
+       |
+quantidade               <- w(k)=1/2^(k-1), inalterado
+       |
+preço unitário           <- OBSERVADO (porção comprável da Mercadona)
+       |
+valor do pedido          <- consequência, nunca objetivo
+```
+
+Preço não aparece em nenhuma seta que aponta para demanda. Uma categoria cara pode ter volume
+baixo e receita alta — no MAPA, mariscos são **0,81% do volume e 2,88% do valor** —, e isso é
+resultado do modelo, não defeito.
+
+**O que o benchmark calibra:** a probabilidade de um grupo de demanda aparecer numa linha.
+**O que ele não calibra, e não pode:** `daily_order_rate`, `basket_lines_min/mode/max` e
+`quantity_max`. O MAPA mede consumo doméstico do residente — não mede pedido de loja online,
+nem cesta, nem cadência de compra. Essas continuam `synthetic` em `order_premises_seed.csv`.
+
+**A ponte entre alvo em kg e sorteio de linhas** é o tamanho médio *observado* da embalagem,
+jamais o preço: `P(g) ∝ alvo_volume_g / kg_médio_por_linha_g`. Um grupo cuja embalagem típica
+pesa 1 kg precisa de menos linhas que um cujo produto típico pesa 100 g para entregar o mesmo
+volume. Grupos com menos de 50% do sortimento convertível a kg/L (`reference_format` em `ud`,
+`dz`) **não** recebem alvo de volume — medido: `HUEVOS` converte 18% e cai no fallback
+declarado de share de linhas.
+
+**Sazonalidade: neutra nos 12 meses, por ausência de evidência numérica.** Os gráficos mensais
+do informe são imagens; só há cinco números mensais em prosa, todos do total da alimentação e
+nunca por categoria. Além disso a janela cobre apenas agosto. O mecanismo existe, aplica-se à
+**taxa de pedidos** (nunca ao mix — um fator global sobre o mix se normalizaria e não faria
+nada) e tem teste que prova que um perfil não neutro muda a saída.
+
+Os quatro seeds versionados — `mapa_2025_benchmark_seed.csv`,
+`demand_category_mapping_seed.csv`, `demand_profile_seed.csv`,
+`demand_seasonality_seed.csv` — têm `sha256` em `reference.demand_seeds_sha256`.
 
 ## 3. Garantias
 
@@ -155,6 +216,18 @@ Não existe default para nenhuma premissa — uma chave ausente reprova a geraç
 6. **Acrescentar um dia é aditivo.** Como nenhum dia depende do sorteio de outro, gerar
    `D+1` deixa a partição de `D` **byte a byte idêntica**. É o análogo da propriedade de
    prefixo da Fase 1, num eixo diferente.
+
+   **As quatro condições NÃO-aditivas**, que trocam os pedidos por trás dos mesmos ids:
+   outra `seed`; outra referência (clientes ou catálogo reingeridos); outro
+   `order_premises_seed.csv`; e — desde a Fase 4 — outro **`demand_model_version`**. As
+   quatro são registradas em `config`, e regenerar sob qualquer uma delas exige
+   `--overwrite`.
+
+   Uma consequência medida da quarta: a projeção Iceberg funde estado de forma **monotônica**,
+   descartando linha com `last_sequence_no` menor. Essa fusão assume que um `order_id` sempre
+   se refere ao mesmo pedido. Depois de trocar o modelo de demanda ele não se refere — e um
+   rebuild sem reset descartou 4.028 linhas como "mais velhas", deixando a projeção com dois
+   universos misturados. Use `make orders-rebuild-projection PROJECTION_RESET=1`.
 7. **Sem relógio.** Todo `occurred_at` deriva de `ingestion_date` mais offsets declarados,
    nunca de `datetime.now()`.
 8. **`event_id` determinístico.** Deriva de `(order_id, sequence_no)`, nunca de `uuid4()` —
@@ -209,7 +282,7 @@ Não existe default para nenhuma premissa — uma chave ausente reprova a geraç
 7. **`order_id` é único em toda a janela, não só na partição.** `wh` e o dia estão embutidos no
    próprio id, então `ord_mad1_20260824_000042` e `ord_mad1_20260825_000042` nunca colidem.
    A **estabilidade do referente**, porém, vale só dentro de `(wh, dia, seed, premissas,
-   referência)`: um `--overwrite` com outra seed mantém os mesmos ids e troca os pedidos por
+   referência, modelo de demanda)`: um `--overwrite` com outra seed mantém os mesmos ids e troca os pedidos por
    trás deles. O manifesto registra as duas em `history`.
 8. **Leia dinheiro como decimal, nunca como float.** Todo valor monetário viaja como string,
    pelo mesmo motivo da obrigação 4.4 do contrato da Mercadona.
@@ -229,7 +302,8 @@ Não existe default para nenhuma premissa — uma chave ausente reprova a geraç
   ser byte-reprodutível que o replay pelo broker pode ser conferido contra ele.
 - **Não materializa o estado do pedido.** Ver obrigação 4.3.
 - **Não fornece identidade persistente de pedido entre execuções.** `order_id` é chave da
-  janela; o referente é estável apenas sob a mesma `(seed, premissas, referência)`.
+  janela; o referente é estável apenas sob a mesma `(seed, premissas, referência, modelo de
+  demanda)`.
 - **Não modela estoque, reposição, rota nem tempo de entrega.** Ver seção 6.
 - **Não corrige o Silver.** Onde o dado a montante tem limite (seção 6), esta Source se defende
   de forma explícita e medida, mas não o conserta.

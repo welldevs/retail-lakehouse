@@ -34,6 +34,16 @@ select
     p.primary_category_id,
 
     p.unit_price,
+
+    -- O PRECO DE UNIDADE COMPRAVEL, ao lado do valor cru. Sao iguais em 99,9% das linhas; nas
+    -- 10 combinacoes produto x armazem vendidas a granel sem `unit_size`, a API devolve
+    -- `reference_price * 99` — o teto do seletor de peso, e nao um preco de consumo. E contra
+    -- ESTA coluna que FACT_ORDER_ITEM fecha: o pedido cobrou a porcao, nao o teto.
+    p.purchasable_unit_price,
+    p.price_basis,
+    p.net_content_kg_l,
+    p.min_bunch_amount,
+
     p.bulk_price,
     p.reference_price,
     p.reference_format,
@@ -47,11 +57,12 @@ select
     -- dashboard. Trocar de moeda e editar a var, nao cacar 'EUR' espalhado por modelo.
     '{{ var("currency") }}'                                 as currency,
 
-    -- Preco sem imposto, derivado. tax_percentage e da fonte; a divisao e deste modelo, e
-    -- por isso a coluna tem nome proprio em vez de sobrescrever unit_price.
+    -- Preco sem imposto, derivado do preco COMPRAVEL. tax_percentage e da fonte; a divisao
+    -- e deste modelo, e por isso a coluna tem nome proprio em vez de sobrescrever
+    -- unit_price. Derivar do valor cru daria 3.663,00 sem imposto para 150 g de langostino.
     case
         when p.tax_percentage is null or p.tax_percentage = 0 then null
-        else round(p.unit_price / (1 + p.tax_percentage / 100), 4)
+        else round(p.purchasable_unit_price / (1 + p.tax_percentage / 100), 4)
     end                                                     as unit_price_ex_tax,
 
     p.is_pack,

@@ -54,6 +54,8 @@ import os
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 
+from . import demand_profile
+
 DEFAULT_SEEDS_DIR = os.path.join("platform", "dbt", "seeds")
 PROVINCE_MAP_SEED = "warehouse_province_map_seed.csv"
 PREMISES_SEED = "order_premises_seed.csv"
@@ -62,6 +64,7 @@ CUSTOMERS_FILE = "customers.json"
 CATALOG_FILE = "catalog.json"
 CALENDAR_FILE = "calendar.json"
 PREMISES_FILE = "premises.json"
+DEMAND_FILE = "demand_profile.json"
 
 PRICE_OBSERVED = "observed"
 PRICE_CARRIED_FORWARD = "carried_forward"
@@ -347,7 +350,14 @@ def _catalog_sql(price_dates: list[str]) -> str:
             category_name,
             subgroup_id,
             subgroup_name,
+            product_level1_category_name,
             unit_price,
+            -- O PRECO QUE O GERADOR USA. Difere de unit_price so nas linhas `bunch`, onde
+            -- a fonte devolve reference_price * 99 — o teto do seletor de peso, e nao o
+            -- preco de nada que um domicilio compre (obrigacao 5 do contrato da Mercadona).
+            purchasable_unit_price,
+            price_basis,
+            net_content_kg_l,
             tax_percentage,
             -- Dedup de GRAO, nao regra de negocio: um produto aparece em mais de uma
             -- categoria (semantica da fonte). O preco e identico entre as aparicoes, e isso
@@ -359,8 +369,8 @@ def _catalog_sql(price_dates: list[str]) -> str:
             ) as rn
         from silver_product_price
         where ingestion_date in ({dates_in})
-          and unit_price is not null
-          and unit_price > 0
+          and purchasable_unit_price is not null
+          and purchasable_unit_price > 0
     )
     select
         wh,
@@ -371,9 +381,17 @@ def _catalog_sql(price_dates: list[str]) -> str:
         category_name,
         subgroup_id,
         subgroup_name,
+        product_level1_category_name    as l1,
         -- String, nunca float: obrigacao 4.4 do contrato da Mercadona. O gerador faz a
         -- aritmetica com decimal.Decimal, que e stdlib.
-        cast(unit_price as varchar)     as unit_price,
+        --
+        -- `unit_price` AQUI E O PRECO DA PORCAO COMPRAVEL. O valor cru que a API devolveu
+        -- viaja ao lado em `source_unit_price`, para que a diferenca seja auditavel em vez
+        -- de ficar so no Silver: nas 10 linhas de granel ela e de tres ordens de grandeza.
+        cast(purchasable_unit_price as varchar) as unit_price,
+        cast(unit_price as varchar)             as source_unit_price,
+        price_basis,
+        cast(net_content_kg_l as varchar)       as net_content_kg_l,
         cast(tax_percentage as varchar) as tax_percentage
     from scoped
     where rn = 1
@@ -381,14 +399,78 @@ def _catalog_sql(price_dates: list[str]) -> str:
     """
 
 
-def _build_catalog(connection, price_dates: list[str]) -> dict:
+def _tree_triples_sql(price_dates: list[str]) -> str:
+    """Toda trinca (nivel 1, categoria, subgrupo) da arvore, ANTES do dedup.
+
+    MEDIDO, e a razao de esta query existir: o recorte do catalogo guarda UMA linha por
+    (armazem, data, produto), com desempate pela menor (category_id, subgroup_id). Um
+    produto que vive em `Congelados > Carne` e tambem em `Carne > Carne congelada` some da
+    primeira depois do dedup — e tres regras de mapeamento perfeitamente corretas pareceram
+    mortas. Conferir cobertura contra o recorte mediria o desempate, nao o mapeamento.
+    """
+    dates_in = ", ".join(f"date {_sql_literal(d)}" for d in price_dates)
+    return f"""
+    select distinct
+        product_level1_category_name as l1,
+        category_name                as l2,
+        subgroup_name                as l3
+    from silver_product_price
+    where ingestion_date in ({dates_in})
+    order by 1, 2, 3
+    """
+
+
+def _stamp_demand_group(connection, rows: list[dict], price_dates: list[str], seeds_dir: str) -> dict:
+    """Carimba `demand_group` em cada linha do catalogo e devolve a contagem por grupo.
+
+    A RESOLUCAO ACONTECE AQUI, NA PLATAFORMA, e nao no gerador. E deliberado: a Source e
+    FROZEN e nao pode carregar a tabela de-para nem a arvore de categorias; e, mais
+    importante, o recorte que atravessa a fronteira continua BURRO — uma coluna ja
+    resolvida, sem regra de negocio do outro lado.
+    """
+    mapping = demand_profile.load_mapping(seeds_dir)
+    contagem: dict[str, int] = {}
+    cache: dict[tuple, str] = {}
+    for row in rows:
+        chave = (row["l1"], row["category_name"], row["subgroup_name"])
+        grupo = cache.get(chave)
+        if grupo is None:
+            grupo = demand_profile.resolve(mapping, *chave)
+            cache[chave] = grupo
+        row["demand_group"] = grupo
+        contagem[grupo] = contagem.get(grupo, 0) + 1
+
+    # Cobertura contra a ARVORE, nao contra o recorte. Toda trinca precisa de regra mesmo
+    # que o dedup a esconda hoje: o desempate pode mudar quando a fonte reordenar as
+    # categorias de um produto, e ai a trinca escondida vira a escolhida.
+    arvore = [
+        (row["l1"], row["l2"], row["l3"])
+        for row in _rows(connection, _tree_triples_sql(price_dates))
+    ]
+    for l1, l2, l3 in arvore:
+        demand_profile.resolve(mapping, l1, l2, l3)
+
+    mortas = demand_profile.unused_rules(mapping, arvore)
+    if mortas:
+        raise OrdersReferenceError(
+            f"{len(mortas)} regra(s) de {demand_profile.MAPPING_SEED} nao casam com nenhuma "
+            f"trinca da arvore de categorias: "
+            f"{[(m['l1'], m['l2'], m['l3']) for m in mortas[:5]]}. Regra morta documenta uma "
+            f"decisao que nao esta em vigor, e quem ler o seed vai acreditar nela."
+        )
+    return contagem
+
+
+def _build_catalog(connection, price_dates: list[str], seeds_dir: str) -> dict:
     rows = _rows(connection, _catalog_sql(price_dates))
     if not rows:
         raise OrdersReferenceError(
             f"nenhuma linha de catalogo para as datas {price_dates}. "
             f"`silver_product_price` foi construido?"
         )
+    grupos = _stamp_demand_group(connection, rows, price_dates, seeds_dir)
     return {
+        "demand_groups": dict(sorted(grupos.items())),
         "generated_at_utc": _utc_now(),
         "catalog_ingestion_dates": sorted(price_dates),
         "dedup_rule": (
@@ -484,7 +566,9 @@ def _build_customers(connection, warehouses: list[str]) -> dict:
 # Coerencia entre os quatro arquivos
 # --------------------------------------------------------------------------------
 
-def _assert_coverage(customers: dict, catalog: dict, calendar: dict, premises: dict) -> None:
+def _assert_coverage(
+    customers: dict, catalog: dict, calendar: dict, premises: dict, demand: dict
+) -> None:
     """Cobertura verificada em tempo de execucao, nunca presumida como permanente."""
     warehouses = set(calendar["warehouses"])
 
@@ -528,6 +612,30 @@ def _assert_coverage(customers: dict, catalog: dict, calendar: dict, premises: d
             f"produtos: {magros[:10]}"
         )
 
+    # TODO GRUPO COM PESO PRECISA TER PRODUTO EM TODO PAR (armazem, price_as_of).
+    # Sem esta checagem, um grupo vazio num armazem seria renormalizado em silencio no
+    # sorteio e aquele armazem passaria a ter um mix diferente dos outros — plausivel, sem
+    # erro, e impossivel de notar num total. E a mesma classe de defeito que
+    # `_duplicates_sql` pega em oltp_reference.py.
+    com_peso = {
+        g["demand_group"] for g in demand["groups"]
+        if float(g["line_weight"]) > 0
+    }
+    por_par: dict[tuple, set] = {}
+    for row in catalog["rows"]:
+        por_par.setdefault((row["wh"], row["price_as_of"]), set()).add(row["demand_group"])
+    buracos = sorted(
+        (par, sorted(com_peso - presentes)[:5])
+        for par, presentes in por_par.items()
+        if com_peso - presentes
+    )
+    if buracos:
+        raise OrdersReferenceError(
+            f"{len(buracos)} par(es) (armazem, price_as_of) sem produto em algum grupo com "
+            f"peso: {buracos[:5]}. O sorteio renormalizaria em silencio e o mix daquele "
+            f"armazem divergiria dos demais sem erro nenhum."
+        )
+
 
 def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     """Monta os quatro payloads a partir de uma conexao DuckDB ja aberta.
@@ -541,15 +649,17 @@ def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT
     premises = _build_premises(seeds_dir)
     calendar = _build_calendar(connection, warehouses, days)
     price_dates = sorted({row["price_as_of"] for row in calendar["rows"]})
-    catalog = _build_catalog(connection, price_dates)
+    catalog = _build_catalog(connection, price_dates, seeds_dir)
     customers = _build_customers(connection, warehouses)
+    demand = demand_profile.build(catalog["rows"], seeds_dir)
 
-    _assert_coverage(customers, catalog, calendar, premises)
+    _assert_coverage(customers, catalog, calendar, premises, demand)
     return {
         "customers": customers,
         "catalog": catalog,
         "calendar": calendar,
         "premises": premises,
+        "demand": demand,
     }
 
 
@@ -571,6 +681,11 @@ def write(payloads: dict, out_dir: str) -> dict:
         ),
         PREMISES_FILE: _write_json(
             os.path.join(out_dir, PREMISES_FILE), payloads["premises"], indent=2
+        ),
+        # Indentado: sao dezenas de grupos, nao dezenas de milhares de produtos, e este e o
+        # arquivo que alguem vai abrir para conferir de onde saiu um peso.
+        DEMAND_FILE: _write_json(
+            os.path.join(out_dir, DEMAND_FILE), payloads["demand"], indent=2
         ),
     }
 
@@ -605,5 +720,8 @@ def export(
         "catalog_ingestion_dates": calendar["catalog_ingestion_dates"],
         "carried_forward_rows": calendar["carried_forward_rows"],
         "premises_sha256": payloads["premises"]["seed_sha256"],
+        "demand_model_version": payloads["demand"]["demand_model_version"],
+        "demand_groups": len(payloads["demand"]["groups"]),
+        "demand_seeds_sha256": payloads["demand"]["seeds_sha256"],
         "bytes": written,
     }

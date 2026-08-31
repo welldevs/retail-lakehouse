@@ -68,11 +68,48 @@ def premises_csv(extra: dict | None = None, label: str = "synthetic") -> str:
     return "".join(linhas)
 
 
+def demand_seeds() -> dict:
+    """Os quatro seeds da calibracao, minimos, cobrindo os dois niveis 1 da fixture."""
+    return {
+        "mapa_2025_benchmark_seed.csv": (
+            "mapa_key,mapa_label,scope,use_as_weight,volume_share_pct,value_share_pct,"
+            "avg_price_eur_kg,volume_yoy_pct,value_yoy_pct,ecommerce_volume_pct,"
+            "channel_basis,informe_section,provenance,note\n"
+            "FRUTAS_FRESCAS,Frutas frescas,fresh,true,14.13,9.94,2.28,2.7,9.8,,coarse,4.9,informe_table,\n"
+            "SIN_BENCHMARK,Sem benchmark,rest,false,,,,,,,coarse,,none,destino declarado\n"
+            "NO_FOOD,Nao alimentar,none,false,,,,,,,coarse,,none,fora do universo\n"
+        ),
+        "demand_category_mapping_seed.csv": (
+            "l1,l2,l3,mapa_key,rationale\n"
+            f"{L1_ALIMENTAR},Fruta,*,FRUTAS_FRESCAS,fixture\n"
+            f"{L1_NAO_ALIMENTAR},*,*,NO_FOOD,fixture\n"
+        ),
+        "demand_profile_seed.csv": (
+            "param_key,value,unit,label,rationale\n"
+            "demand_model_version,fixture_v1,version,synthetic,x\n"
+            "food_line_share,0.85,proportion,synthetic,x\n"
+            "benchmark_volume_coverage_pct,100.00,percent,derived,x\n"
+            "unbenchmarked_allocation,assortment,rule,synthetic,x\n"
+            "within_group_selection,uniform,rule,synthetic,x\n"
+            "volume_coverage_min,0.5,proportion,synthetic,x\n"
+            "channel_reference_pct,2.2,percent,observed,x\n"
+            "channel_fresh_pct,1.1,percent,observed,x\n"
+            "channel_rest_pct,2.8,percent,observed,x\n"
+        ),
+        "demand_seasonality_seed.csv": (
+            "month,factor,label,rationale\n"
+            + "".join(f"{m},1.0,synthetic,x\n" for m in range(1, 13))
+        ),
+    }
+
+
 SCHEMA = """
 create table silver_product_price (
     ingestion_date date, warehouse varchar, source_product_id varchar, display_name varchar,
     category_id bigint, category_name varchar, subgroup_id bigint, subgroup_name varchar,
-    unit_price decimal(10,2), tax_percentage decimal(6,3)
+    product_level1_category_name varchar,
+    unit_price decimal(10,2), purchasable_unit_price decimal(10,2), price_basis varchar,
+    net_content_kg_l decimal(12,4), tax_percentage decimal(6,3)
 );
 create table silver_customer (
     ingestion_date date, customer_id varchar, wh varchar, province_code varchar,
@@ -81,12 +118,25 @@ create table silver_customer (
 """
 
 
+# Dois niveis 1 de proposito: um alimentar e um nao alimentar. Com um so, o perfil de
+# demanda teria um bloco vazio e a fixture exercitaria o caminho de redistribuicao em vez do
+# caminho normal.
+L1_ALIMENTAR = "Fruta y verdura"
+L1_NAO_ALIMENTAR = "Limpieza y hogar"
+
+
 def catalogo(wh: str, dia: str, total: int = 8, primeiro: int = 0) -> list[tuple]:
-    return [
-        (dia, wh, f"p{primeiro + i:04d}", f"Produto {i}", 10 + i % 2, "Cat", 100 + i % 3,
-         "Sub", 1.00 + i, 21.0)
-        for i in range(total)
-    ]
+    linhas = []
+    for i in range(total):
+        alimentar = i % 2 == 0
+        l1 = L1_ALIMENTAR if alimentar else L1_NAO_ALIMENTAR
+        l2 = "Fruta" if alimentar else "Limpieza cocina"
+        preco = 1.00 + i
+        linhas.append(
+            (dia, wh, f"p{primeiro + i:04d}", f"Produto {i}", 10 + i % 2, l2, 100 + i % 3,
+             "Sub", l1, preco, preco, "unit", 0.5 + i * 0.1, 21.0)
+        )
+    return linhas
 
 
 class Fixture:
@@ -98,6 +148,8 @@ class Fixture:
         os.makedirs(self.seeds, exist_ok=True)
         self.write_seed("warehouse_province_map_seed.csv", PROVINCE_MAP_CSV)
         self.write_seed("order_premises_seed.csv", premises_csv())
+        for nome, conteudo in demand_seeds().items():
+            self.write_seed(nome, conteudo)
         self.con = duckdb.connect()
         self.con.execute(SCHEMA)
 
@@ -107,7 +159,7 @@ class Fixture:
 
     def add_catalog(self, linhas) -> None:
         self.con.executemany(
-            "insert into silver_product_price values (?,?,?,?,?,?,?,?,?,?)", linhas
+            "insert into silver_product_price values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", linhas
         )
 
     def add_customers(self, wh: str, dia: str, total: int = 4) -> None:
@@ -202,7 +254,8 @@ class CatalogoTest(Base):
         # sortearia o mesmo produto duas vezes, com pesos diferentes.
         self.fx.povoado()
         self.fx.add_catalog([
-            ("2026-08-24", "mad1", "p0000", "Produto 0", 99, "Outra", 999, "Sub", 1.00, 21.0)
+            ("2026-08-24", "mad1", "p0000", "Produto 0", 99, "Fruta", 999, "Sub",
+             L1_ALIMENTAR, 1.00, 1.00, "unit", 0.5, 21.0)
         ])
         payloads = build(self.fx.con, "2026-08-24", "2026-08-24", seeds_dir=self.fx.seeds)
         do_mad1 = [r for r in payloads["catalog"]["rows"] if r["wh"] == "mad1"]
@@ -323,13 +376,15 @@ class PremissasTest(Base):
 
 
 class EscritaTest(Base):
-    def test_grava_os_quatro_arquivos_e_devolve_o_tamanho(self):
+    def test_grava_os_cinco_arquivos_e_devolve_o_tamanho(self):
         self.fx.povoado()
         payloads = build(self.fx.con, "2026-08-24", "2026-08-24", seeds_dir=self.fx.seeds)
         destino = os.path.join(self.tmp.name, "ref")
         tamanhos = write(payloads, destino)
         self.assertEqual(
-            sorted(tamanhos), ["calendar.json", "catalog.json", "customers.json", "premises.json"]
+            sorted(tamanhos),
+            ["calendar.json", "catalog.json", "customers.json", "demand_profile.json",
+             "premises.json"],
         )
         for nome, tamanho in tamanhos.items():
             caminho = os.path.join(destino, nome)

@@ -68,8 +68,9 @@ data_tests:
 
 seeds:
   retail_lakehouse:
-    # SO NO DUCKDB. Os quatro seeds alimentam modelos do Silver (warehouse_service_area,
-    # warehouse_province_map) e o de-para de homonimo do INE — tudo do lado do lakehouse.
+    # SO NO DUCKDB. Os nove seeds alimentam modelos do Silver (warehouse_service_area,
+    # warehouse_province_map), o de-para de homonimo do INE, as premissas de Orders e os
+    # quatro da calibracao de demanda — tudo do lado do lakehouse.
     # A arvore do warehouse le exclusivamente `source()` sobre o STAGE e nao referencia
     # seed nenhum. Sem este guard, `dbt build --target snowflake` carregava os quatro para
     # dentro do Snowflake, onde ficavam sem funcao e sem quem os mantivesse em dia.
@@ -114,5 +115,49 @@ seeds:
         premise_key: varchar
         value: decimal(18,6)
         unit: varchar
+        label: varchar
+        rationale: varchar
+
+    mapa_2025_benchmark_seed:
+      # `informe_section` PRECISA ser varchar: "4.3" e "3" viram DOUBLE na inferencia e a
+      # citacao da secao — que e a rastreabilidade inteira desta tabela — vira 4.3 e 3.0.
+      # Os shares sao DECIMAL pelo mesmo motivo de order_premises_seed: sao comparados
+      # contra medicoes num teste de tolerancia, e comparacao binaria de limiar nao serve.
+      +column_types:
+        mapa_key: varchar
+        mapa_label: varchar
+        scope: varchar
+        use_as_weight: boolean
+        volume_share_pct: decimal(9,4)
+        value_share_pct: decimal(9,4)
+        avg_price_eur_kg: decimal(9,4)
+        volume_yoy_pct: decimal(9,4)
+        value_yoy_pct: decimal(9,4)
+        ecommerce_volume_pct: decimal(9,4)
+        channel_basis: varchar
+        informe_section: varchar
+        provenance: varchar
+        note: varchar
+    demand_category_mapping_seed:
+      +column_types:
+        l1: varchar
+        l2: varchar
+        l3: varchar
+        mapa_key: varchar
+        rationale: varchar
+    demand_profile_seed:
+      # `value` e varchar de proposito: a coluna mistura versao ("mapa_2025_v1"), nome de
+      # regra ("assortment") e numero (0.85). Tipar como numero forcaria dois seeds, e
+      # separar a versao do modelo dos parametros que ela versiona seria pior.
+      +column_types:
+        param_key: varchar
+        value: varchar
+        unit: varchar
+        label: varchar
+        rationale: varchar
+    demand_seasonality_seed:
+      +column_types:
+        month: integer
+        factor: decimal(9,4)
         label: varchar
         rationale: varchar

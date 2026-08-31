@@ -133,7 +133,9 @@ não efeito colateral de pipeline.
 │   │   ├── verify.py                   # releitura e reconferência independentes
 │   │   ├── query.py                    # conexão configurada + secret do DuckDB
 │   │   ├── oltp_reference.py           # Silver -> 3 JSON planos para a source de OLTP simulado
-│   │   ├── orders_reference.py         # Silver -> 4 JSON planos para a source de pedidos
+│   │   ├── orders_reference.py         # Silver -> 5 JSON planos para a source de pedidos
+│   │   ├── demand_profile.py           # de-para + benchmark do MAPA -> pesos de demanda
+│   │   ├── demand_check.py             # reality check ANTES | MAPA | ALVO | DEPOIS
 │   │   ├── orders_oltp.py              # o OLTP de pedidos: estado + outbox NA MESMA transacao
 │   │   ├── orders_stream.py            # produtor, consumidor e read model; a semantica de entrega
 │   │   ├── orders_projection.py        # a projecao em Iceberg: dois escritores, fusao monotonica
@@ -831,6 +833,78 @@ toca GOLD e MART, que são inteiramente reconstruíveis a partir do STAGE.
 Depois do que aconteceu com os timestamps, um teste verde que nunca foi visto vermelho não é
 evidência de nada.
 
+## Calibração da demanda contra o MAPA 2025
+
+`docs/Informe comsumo 2025_.pdf` — o Informe del Consumo Alimentario en España do Ministerio
+de Agricultura, Pesca y Alimentación — passou a servir de **benchmark** para a distribuição de
+demanda da cesta sintética. Não é uma fonte que a plataforma ingere: é referência externa,
+usada só como alvo de distribuição.
+
+```bash
+make demand-check-mapping     # 444 trincas do catalogo, uma regra cada, zero default
+make demand-reality-check SNAPSHOT=before_mapa_2025_v1   # congela o ANTES
+make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS nas tres dimensoes
+```
+
+### O achado que abriu a fase não era de demanda
+
+"Marisco y pescado" tinha 3,38% das unidades e **22,82% da receita**, com preço médio pago de
+27,09 € num catálogo cujo produto mais caro custava 24,05 €. O RAW explicou: quando
+`selling_method = 1` e `unit_size` é nulo, a API devolve `unit_price = reference_price × 99`
+— o teto do seletor de peso, não um preço de consumo. **12 produtos em 4.939 produziam 23% da
+receita**, e nenhum dos 947 testes reprovava.
+
+O campo que corrige — `min_bunch_amount` — sempre esteve no RAW e o Silver o descartava.
+`silver_product_price` ganhou `purchasable_unit_price` ao lado do valor cru, que permanece
+intacto.
+
+### A cadeia, com preço fora do caminho da demanda
+
+```
+grupo de demanda   <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
+produto no grupo   <- UNIFORME (nenhuma fonte mede giro por SKU)
+quantidade / preço <- inalterado / observado
+valor do pedido    <- consequência, nunca objetivo
+```
+
+**Volume e valor divergem de propósito**: no MAPA, mariscos são 0,81% do volume e 2,88% do
+valor. Um simulador que os igualasse estaria errado.
+
+**O que o benchmark NÃO calibra:** `daily_order_rate`, `basket_lines_*`, `quantity_max`. O
+MAPA mede consumo doméstico do residente, não pedido de loja online. Essas continuam
+`synthetic`.
+
+### Configuração versionada, zero hardcode
+
+| Seed | Papel |
+|---|---|
+| `mapa_2025_benchmark_seed.csv` | 64 linhas do informe, com seção citada em cada uma; 39 pesáveis cobrindo 86,12% do volume doméstico |
+| `demand_category_mapping_seed.csv` | 128 regras `(l1, l2, l3)` com `*` como coringa; a mais específica vence |
+| `demand_profile_seed.csv` | `demand_model_version`, share alimentar, limiar de cobertura, bases de canal |
+| `demand_seasonality_seed.csv` | 12 meses, **neutros** — e o motivo escrito em cada linha |
+
+O perfil resolvido viaja como quinto arquivo de referência (`demand_profile.json`) para a
+Source, que continua **FROZEN**: ela recebe pesos, não regras.
+
+### Resultado medido na mesma janela
+
+| dimensão | ANTES | DEPOIS |
+|---|---:|---:|
+| receita | 821.121,93 | 583.154,43 |
+| EUR/kg | 6,49 | 4,04 |
+| MARISCOS, % do volume | 11,44 | 0,43 (alvo 0,43) |
+| FRUTAS_FRESCAS, % do volume | 3,11 | 9,51 (alvo 9,17) |
+
+Erro absoluto médio contra o alvo: **0,098 ponto**. A queda de 29% na receita é a correção
+funcionando — 23% dela eram os 12 produtos com preço de teto de API.
+
+### O que o informe não sustenta, e ficou registrado
+
+Sazonalidade mensal por categoria **não é extraível**: os gráficos mensais são imagens. O
+perfil sazonal é neutro por ausência de evidência, aplica-se à taxa de pedidos, e tem um par
+de testes que prova que o mecanismo funciona *e* que o perfil entregue está neutro. O gatilho
+para propor um perfil é a janela cobrir novembro e dezembro.
+
 ## Warehouse analítico (Snowflake)
 
 ```bash
@@ -874,7 +948,7 @@ descritos em [ARCHITECTURE.md](ARCHITECTURE.md), e viraram teste.
 **Trocar de conta Snowflake** é editar `.env.snowflake` e o bloco correspondente de
 `~/.snowflake/config.toml`, e rodar `make warehouse-bootstrap`. Nenhum modelo, nenhum SQL e
 nenhum teste muda: a fronteira L2→L3 é física. A metade Lakehouse não depende disso —
-`make silver` e as 947 checagens de `make test` rodam sem nenhuma variável de Snowflake
+`make silver` e as 992 checagens de `make test` rodam sem nenhuma variável de Snowflake
 definida.
 
 **Evidência datada.** A metade Snowflake não é reproduzível offline como o Lakehouse, e a
@@ -1021,9 +1095,9 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 947 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                    + 125 OLTP simulado + 130 pedidos + 316 plataforma
-make silver        # dbt build no DuckDB: 21 modelos + 5 seeds + 293 testes de dados
+make test          # 992 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                    + 125 OLTP simulado + 148 pedidos + 343 plataforma
+make silver        # dbt build no DuckDB: 21 modelos + 9 seeds + 298 testes de dados
 make warehouse     # dbt build no Snowflake: 21 modelos + 149 testes de dados
 ```
 

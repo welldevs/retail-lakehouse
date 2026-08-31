@@ -1,0 +1,129 @@
+l1,l2,l3,mapa_key,rationale
+"Aceite, especias y salsas","Aceite, vinagre y sal",*,SIN_BENCHMARK,"Sal, bicarbonato, vinagre e aderecos nao tem share no informe."
+"Aceite, especias y salsas","Aceite, vinagre y sal",Aceite de oliva,ACEITES_OLIVA,O nivel 3 nao separa virgem de virgem extra; o agregado dos tres tipos e o nivel que o catalogo sustenta.
+"Aceite, especias y salsas","Aceite, vinagre y sal",Otros aceites,ACEITE_GIRASOL,Girasol e o dominante em Otros aceites; o informe so publica share para oliva e girasol.
+"Aceite, especias y salsas",Especias,*,SIN_BENCHMARK,O informe nao mede especiarias.
+"Aceite, especias y salsas","Mayonesa, ketchup y mostaza",*,SIN_BENCHMARK,Molhos nao tem secao propria no informe.
+"Aceite, especias y salsas",Otras salsas,*,SIN_BENCHMARK,Idem. Tomate frito fica aqui e nao em conserva de tomate por ser molho pronto.
+Agua y refrescos,Agua,*,AGUA,Secao 4.4.3. Gaseosa aparece no nivel 3 de Agua no catalogo e segue com ela.
+Agua y refrescos,Isotónico y energético,*,SIN_BENCHMARK,Secao 4.4.4 (gaseosas e refrescantes) nao tem tabela-cabecalho no informe.
+Agua y refrescos,Refresco de cola,*,SIN_BENCHMARK,Secao 4.4.4 (gaseosas e refrescantes) nao tem tabela-cabecalho no informe.
+Agua y refrescos,Refresco de naranja y de limón,*,SIN_BENCHMARK,Secao 4.4.4 (gaseosas e refrescantes) nao tem tabela-cabecalho no informe.
+Agua y refrescos,Refresco de té y sin gas,*,SIN_BENCHMARK,Secao 4.4.4 (gaseosas e refrescantes) nao tem tabela-cabecalho no informe.
+Agua y refrescos,Tónica y bitter,*,SIN_BENCHMARK,Secao 4.4.4 (gaseosas e refrescantes) nao tem tabela-cabecalho no informe.
+Aperitivos,Aceitunas y encurtidos,*,SIN_BENCHMARK,"ACEITUNAS nao tem share de mercado publicado, so share por tipo dentro da categoria."
+Aperitivos,Frutos secos y fruta desecada,*,FRUTOS_SECOS,Secao 4.11.
+Aperitivos,Patatas fritas y snacks,*,SIN_BENCHMARK,Snacks nao tem secao no consumo domestico; aperitivos so aparecem no extradomestico.
+"Arroz, legumbres y pasta",Arroz,*,ARROZ,Secao 4.3.
+"Arroz, legumbres y pasta",Legumbres,*,LEGUMBRES,Secao 4.15.
+"Arroz, legumbres y pasta",Pasta y fideos,*,PASTAS,Secao 4.19.
+"Azúcar, caramelos y chocolate",Azúcar y edulcorante,*,SIN_BENCHMARK,Sem secao no informe.
+"Azúcar, caramelos y chocolate",Chicles y caramelos,*,SIN_BENCHMARK,Sem secao no informe.
+"Azúcar, caramelos y chocolate",Chocolate,*,CHOCOLATES_CACAOS,Secao 4.8.
+"Azúcar, caramelos y chocolate",Golosinas,*,SIN_BENCHMARK,Sem secao no informe.
+"Azúcar, caramelos y chocolate",Mermelada y miel,*,SIN_BENCHMARK,Mermelada e confitura nao tem secao propria.
+"Azúcar, caramelos y chocolate",Mermelada y miel,Miel,MIEL,Secao 4.16. O nivel 3 separa mel de compota.
+Bebé,Alimentación infantil,*,SIN_BENCHMARK,"Alimento, mas o informe nao itemiza alimentacao infantil."
+Bebé,Biberón y chupete,*,NO_FOOD,Puericultura e higiene: fora do universo do MAPA.
+Bebé,Higiene y cuidado,*,NO_FOOD,Puericultura e higiene: fora do universo do MAPA.
+Bebé,Toallitas y pañales,*,NO_FOOD,Puericultura e higiene: fora do universo do MAPA.
+Bodega,Cerveza,*,CERVEZA,Secao 4.4.2.
+Bodega,Cerveza sin alcohol,*,CERVEZA,O informe nao separa cerveja sem alcool.
+Bodega,Licores,*,BEBIDAS_ESPIRITUOSAS,Secao 4.4.5.
+Bodega,Sidra y cava,*,SIN_BENCHMARK,"Sidras e cava aparecem so em prosa, sem share."
+Bodega,Tinto de verano y sangría,*,SIN_BENCHMARK,Bebidas derivadas do vinho: prosa sem share.
+Bodega,Vino blanco,*,VINO,Secao 4.4.1.
+Bodega,Vino lambrusco y espumoso,*,VINO,Secao 4.4.1.
+Bodega,Vino rosado,*,VINO,Secao 4.4.1.
+Bodega,Vino tinto,*,VINO,Secao 4.4.1.
+"Cacao, café e infusiones",Cacao soluble y chocolate a la taza,*,CHOCOLATES_CACAOS,Secao 4.8 cobre chocolates e cacaus.
+"Cacao, café e infusiones",Café cápsula y monodosis,*,CAFES_INFUSIONES,Secao 4.6.
+"Cacao, café e infusiones",Café molido y en grano,*,CAFES_INFUSIONES,Secao 4.6.
+"Cacao, café e infusiones",Café soluble y otras bebidas,*,CAFES_INFUSIONES,Secao 4.6.
+"Cacao, café e infusiones",Té e infusiones,*,CAFES_INFUSIONES,Secao 4.6.
+Carne,Arreglos,*,CARNE_FRESCA_OTRAS,Residuo declarado de carne fresca: aparos e ossos nao cabem em nenhum dos cinco tipos.
+Carne,Aves y pollo,*,CARNE_POLLO,Secao 4.7.3. Peru entra aqui: o informe nao o separa.
+Carne,Carne congelada,*,SIN_BENCHMARK,O informe cita a evolucao da carne congelada mas nao publica share.
+Carne,Cerdo,*,CARNE_CERDO,Secao 4.7.5.
+Carne,Conejo y cordero,Conejo,CARNE_CONEJO,Secao 4.7.6. O nivel 3 separa o que o nivel 2 juntou.
+Carne,Conejo y cordero,Cordero,CARNE_OVINO_CAPRINO,Secao 4.7.4.
+Carne,Embutido,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Carne,Empanados y elaborados,*,CARNE_TRANSFORMADA,"Elaborado e transformacao, secao 4.7.7."
+Carne,Hamburguesas y picadas,*,CARNE_FRESCA_OTRAS,Picada e hamburguer fresco: carne fresca fora dos cinco tipos publicados.
+Carne,Vacuno,*,CARNE_VACUNO,Secao 4.7.2.
+Cereales y galletas,Cereales,*,SIN_BENCHMARK,Subsecoes 4.5.2 e 4.5.3 nao tem tabela-cabecalho; so preco em prosa.
+Cereales y galletas,Galletas,*,SIN_BENCHMARK,Subsecoes 4.5.2 e 4.5.3 nao tem tabela-cabecalho; so preco em prosa.
+Cereales y galletas,Tortitas,*,SIN_BENCHMARK,Subsecoes 4.5.2 e 4.5.3 nao tem tabela-cabecalho; so preco em prosa.
+Charcutería y quesos,Aves y jamón cocido,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,Bacón y salchichas,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,Chopped y mortadela,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,Embutido curado,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,Jamón serrano,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,Paté y sobrasada,*,CARNE_TRANSFORMADA,Secao 4.7.7.
+Charcutería y quesos,"Queso curado, semicurado y tierno",*,QUESOS,Secao 4.14.2.1.
+Charcutería y quesos,"Queso lonchas, rallado y en porciones",*,QUESOS,Secao 4.14.2.1.
+Charcutería y quesos,"Queso untable, fresco y especialidades",*,QUESOS,Secao 4.14.2.1.
+Congelados,Arroz y pasta,Arroz,ARROZ,Secao 4.3; o congelamento nao muda a categoria do MAPA.
+Congelados,Arroz y pasta,Pasta,PASTAS,Secao 4.19.
+Congelados,Carne,*,SIN_BENCHMARK,Carne congelada sem share publicado.
+Congelados,Fruta y verdura,*,FRUTAS_HORTALIZAS_TRANSFORMADAS,"Secao 4.10 cobre fruta e hortalica transformada, o que inclui congelada."
+Congelados,Fruta y verdura,Patatas,PATATAS,"Secao 4.20 cobre fresca, congelada e processada."
+Congelados,Helados,*,SIN_BENCHMARK,"Helados e tartas ficam dentro de derivados lacteos no informe, sem share proprio."
+Congelados,Hielo,*,NO_FOOD,Gelo nao e alimento no perimetro do MAPA.
+Congelados,Marisco,*,MARISCOS_MOLUSCOS_CRUSTACEOS,Secao 4.21.2 cobre marisco em qualquer preparacao.
+Congelados,Pescado,*,PESCADOS_CONGELADOS,"Secao 4.21, tipo pescados congelados."
+Congelados,Pizzas,*,PLATOS_PREPARADOS,Secao 4.22.
+Congelados,Rebozados,*,FRUTAS_HORTALIZAS_TRANSFORMADAS,Verdura empanada e hortalica transformada.
+Congelados,Rebozados,Carne rebozada,CARNE_TRANSFORMADA,Empanado e transformacao.
+Congelados,Rebozados,Pescado rebozado,PESCADOS_CONGELADOS,Pescado empanado congelado segue com pescado congelado.
+Congelados,Tartas y churros,*,SIN_BENCHMARK,Mesma ressalva de helados.
+"Conservas, caldos y cremas",Atún y otras conservas de pescado,*,CONSERVAS_PESCADO_MARISCO,Secao 4.21.3.
+"Conservas, caldos y cremas",Berberechos y mejillones,*,CONSERVAS_PESCADO_MARISCO,Secao 4.21.3.
+"Conservas, caldos y cremas",Conservas de verdura y frutas,*,FRUTAS_HORTALIZAS_TRANSFORMADAS,Secao 4.10.
+"Conservas, caldos y cremas",Gazpacho y cremas,*,PLATOS_PREPARADOS,Secao 4.22: prato pronto refrigerado.
+"Conservas, caldos y cremas",Sopa y caldo,*,SIN_BENCHMARK,"Caldos aparecem em prosa, sem share."
+"Conservas, caldos y cremas",Tomate,*,FRUTAS_HORTALIZAS_TRANSFORMADAS,Tomate em conserva e hortalica transformada.
+Cuidado del cabello,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Cuidado facial y corporal,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Fitoterapia y parafarmacia,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Fruta y verdura,Fruta,*,FRUTAS_FRESCAS,Secao 4.9.
+Fruta y verdura,Lechuga y ensalada preparada,*,HORTALIZAS_FRESCAS,Secao 4.12.
+Fruta y verdura,Verdura,*,HORTALIZAS_FRESCAS,Secao 4.12.
+Fruta y verdura,Verdura,Patata,PATATAS,Secao 4.20. O nivel 3 e o unico lugar do catalogo onde a batata se separa da hortalica.
+"Huevos, leche y mantequilla",Huevos,*,HUEVOS,Secao 4.13.
+"Huevos, leche y mantequilla",Leche y bebidas vegetales,*,SIN_BENCHMARK,"Bebida vegetal, leite infantil e condensado: sem share proprio no informe."
+"Huevos, leche y mantequilla",Leche y bebidas vegetales,Leche desnatada,LECHE_DESNATADA,Secao 4.14.1.3.
+"Huevos, leche y mantequilla",Leche y bebidas vegetales,Leche entera,LECHE_ENTERA,Secao 4.14.1.1.
+"Huevos, leche y mantequilla",Leche y bebidas vegetales,Leche semidesnatada,LECHE_SEMIDESNATADA,Secao 4.14.1.2.
+"Huevos, leche y mantequilla",Mantequilla y margarina,*,SIN_BENCHMARK,Sem secao propria no informe.
+Limpieza y hogar,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Maquillaje,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Marisco y pescado,Marisco,*,MARISCOS_MOLUSCOS_CRUSTACEOS,Secao 4.21.2.
+Marisco y pescado,Pescado congelado,*,PESCADOS_CONGELADOS,"Secao 4.21, tipo congelados."
+Marisco y pescado,Pescado fresco,*,PESCADO_FRESCO,Secao 4.21.1.
+Marisco y pescado,Salazones y ahumados,*,SIN_BENCHMARK,Salga e defumado nao tem share proprio.
+Mascotas,*,*,NO_FOOD,"Fora do universo do MAPA, que mede alimentos e bebidas."
+Panadería y pastelería,Bollería de horno,*,BOLLERIA_PASTELERIA,Secao 4.5.1.
+Panadería y pastelería,Bollería envasada,*,BOLLERIA_PASTELERIA,Secao 4.5.1.
+Panadería y pastelería,Harina y preparado repostería,*,SIN_BENCHMARK,"Levedura, massas e preparados nao tem share."
+Panadería y pastelería,Harina y preparado repostería,Harina,HARINAS_SEMOLAS,Secao 4.18.2.
+Panadería y pastelería,Pan de horno,*,PAN,Secao 4.18.1.
+Panadería y pastelería,Pan de molde y otras especialidades,*,PAN,Secao 4.18.1.
+Panadería y pastelería,Pan tostado y rallado,*,PAN,Secao 4.18.1.
+Panadería y pastelería,"Picos, rosquilletas y picatostes",*,SIN_BENCHMARK,Sem secao no informe.
+Panadería y pastelería,Tartas y pasteles,*,BOLLERIA_PASTELERIA,Secao 4.5.1 cobre pastelaria.
+Panadería y pastelería,Velas y decoración,*,NO_FOOD,Velas e decoracao nao sao alimento.
+Pizzas y platos preparados,Listo para Comer,*,PLATOS_PREPARADOS,Secao 4.22.
+Pizzas y platos preparados,Pizzas,*,PLATOS_PREPARADOS,Secao 4.22.
+Pizzas y platos preparados,Platos preparados calientes,*,PLATOS_PREPARADOS,Secao 4.22.
+Pizzas y platos preparados,Platos preparados fríos,*,PLATOS_PREPARADOS,Secao 4.22.
+Postres y yogures,Bífidus,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Postres y yogures,Flan y natillas,*,SIN_BENCHMARK,Sobremesas prontas nao tem share proprio no informe.
+Postres y yogures,Gelatina y otros postres,*,SIN_BENCHMARK,Sobremesas prontas nao tem share proprio no informe.
+Postres y yogures,Postres de soja,*,SIN_BENCHMARK,Sobremesas prontas nao tem share proprio no informe.
+Postres y yogures,Yogures desnatados,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Postres y yogures,Yogures griegos,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Postres y yogures,Yogures líquidos,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Postres y yogures,Yogures naturales y sabores,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Postres y yogures,Yogures y postres infantiles,*,LECHES_FERMENTADAS,Secao 4.14.2.2.
+Zumos,*,*,ZUMOS,Secao 4.4.6.

@@ -76,8 +76,47 @@ models:
         description: NAO identifica o produto — nomes repetem entre formatos, com precos diferentes.
         tests: [not_null]
       - name: unit_price
-        description: DECIMAL(10,2). Vem string da fonte; converter para float perderia precisao.
+        description: >
+          DECIMAL(10,2). Vem string da fonte; converter para float perderia precisao.
+          NEM SEMPRE E PRECO DE UNIDADE COMPRAVEL — veja price_basis e
+          purchasable_unit_price. Preservado como a fonte devolveu, de proposito.
         tests: [not_null]
+      - name: price_basis
+        description: >
+          Como o preco desta linha se forma, MEDIDO na fonte (CONTRACT.md 4.5):
+          `bunch` = selling_method 1 com unit_size nulo, onde
+          unit_price = reference_price * 99 e NAO serve (105 linhas);
+          `piece` = peca inteira, unit_price = reference_price * unit_size, preco legitimo;
+          `unit` = embalagem de consumo, o caso normal.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['unit', 'piece', 'bunch']
+      - name: purchasable_unit_price
+        description: >
+          Preco da porcao comprável. Igual a unit_price em tudo menos nas linhas `bunch`,
+          onde e reference_price * min_bunch_amount — dois campos observados, nenhuma
+          estimativa. Medido: max 5,55 em `bunch` contra 3.663,00 do unit_price da fonte.
+          A ancora tem teste proprio em
+          tests/assert_purchasable_price_is_anchored_in_the_bunch_amount.sql.
+        tests: [not_null]
+      - name: purchasable_unit_size
+        description: >
+          Tamanho da porcao comprável em reference_format. min_bunch_amount nas linhas
+          `bunch`, unit_size da fonte no resto (nulo quando a fonte nao a declara).
+      - name: min_bunch_amount
+        description: >
+          Porcao minima do seletor de peso, em reference_format. Sempre estivera no RAW e
+          este modelo a descartava — e era o unico caminho para um preco comprável nas
+          linhas de granel. Nenhuma reingestao foi necessaria para traze-la.
+      - name: net_content_kg_l
+        description: >
+          Conteudo da porcao comprável em kg ou litro, derivado de
+          purchasable_unit_price / reference_price. NULO DE PROPOSITO quando
+          reference_format nao e massa nem volume (`ud`, `dz`, `lv`, `dc`, `m`): converter
+          ovos para kg exigiria um peso por ovo que nenhuma fonte deste repo mede.
+          Cobertura medida em 2026-08-31: 83,3% das linhas.
       - name: tax_percentage
         description: O campo preenchido. `iva` e nulo em 100% das linhas e nao foi projetado.
         tests: [not_null]

@@ -661,7 +661,12 @@ def _cmd_orders_rebuild_projection(args) -> int:
         print(f"ERRO: nenhuma particao completa sob {args.root}.")
         return EXIT_FATAL
     try:
-        resultado = rebuild(catalog(), particoes, seeds_dir=args.seeds_dir)
+        if getattr(args, "reset", False):
+            print("RESET: a tabela sera apagada e recriada antes da reconstrucao.")
+        resultado = rebuild(
+            catalog(), particoes, seeds_dir=args.seeds_dir,
+            reset=getattr(args, "reset", False),
+        )
     except (OrdersProjectionError, ManifestError) as exc:
         print(f"ERRO: {exc}")
         return EXIT_FAILED
@@ -849,6 +854,78 @@ def _cmd_load_snowflake(args) -> int:
     print(f"  {'TOTAL':<30} {sum(d['rows'] for d in resumo.values()):>9,} linhas")
     print("OK: carregado e reconferido contagem a contagem.")
     return EXIT_OK
+
+
+def _cmd_demand_reality_check(args) -> int:
+    """Mede o mix atual e o compara com o ANTES congelado e com o MAPA.
+
+    Com `--snapshot NOME` apenas CONGELA a medicao e sai. E um passo separado de proposito:
+    depois de regerar a janela o estado anterior nao existe mais em lugar nenhum, e um
+    reality check sem ANTES so consegue dizer "e assim hoje" — que e metade da pergunta.
+    """
+    from . import config as config_module
+    from .demand_check import (
+        DEFAULT_SNAPSHOT_DIR,
+        DemandCheckError,
+        calibration_error,
+        load_snapshot,
+        measure,
+        render,
+        save_snapshot,
+        write,
+    )
+    from .query import connect_lakehouse
+
+    connection = connect_lakehouse(config_module.from_env())
+    try:
+        atual = measure(connection, args.seeds_dir)
+    except DemandCheckError as exc:
+        print(f"ERRO: {exc}")
+        return 1
+    finally:
+        connection.close()
+
+    if args.snapshot:
+        destino = os.path.join(DEFAULT_SNAPSHOT_DIR, f"{args.snapshot}.json")
+        save_snapshot(atual, destino)
+        grupos = len(atual["groups"])
+        print(f"snapshot '{args.snapshot}' congelado em {destino} ({grupos} grupos)")
+        return 0
+
+    antes = None
+    if args.before:
+        caminho = args.before
+        if not os.path.sep in caminho and not caminho.endswith(".json"):
+            caminho = os.path.join(DEFAULT_SNAPSHOT_DIR, f"{caminho}.json")
+        try:
+            antes = load_snapshot(caminho)
+        except DemandCheckError as exc:
+            print(f"AVISO: {exc}")
+
+    write(render(atual, antes, args.seeds_dir), args.out)
+    erro = calibration_error(atual, args.seeds_dir)
+    if args.out != "-":
+        print(f"reality check escrito em {args.out}")
+        if antes is None:
+            print("AVISO: sem ANTES, a pagina compara so o estado atual com o MAPA.")
+        if erro["medio"] is not None:
+            print(
+                f"erro contra o alvo .. medio {erro['medio']:.3f} pt, "
+                f"pior {erro['pior']:.3f} pt ({erro['pior_grupo']}), "
+                f"sobre {erro['grupos']} grupo(s)"
+            )
+
+    # O LIMIAR NAO E UMA NOTA DE QUALIDADE. Ele e largo de proposito e existe para pegar UM
+    # caso: a calibracao deixar de ser aplicada sem que nada estoure. Antes desta fase o pior
+    # desvio era de 11,44 pontos; a inercia se anuncia nessa ordem de grandeza.
+    if erro["pior"] is not None and float(erro["pior"]) > args.max_error:
+        print(
+            f"REPROVADO: o pior desvio ({erro['pior']:.3f} pt em {erro['pior_grupo']}) passa "
+            f"do limiar declarado de {args.max_error} pt. Ou o perfil deixou de ser "
+            f"aplicado, ou o benchmark mudou sem que a janela fosse regerada."
+        )
+        return 1
+    return 0
 
 
 def _cmd_stream_evidence(args) -> int:
@@ -1168,6 +1245,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--through", metavar="YYYY-MM-DD",
         help="so as particoes ate esta data — o recorte do par lambda")
     ice_rebuild.add_argument("--seeds-dir", default=STREAM_SEEDS_DIR)
+    ice_rebuild.add_argument(
+        "--reset", action="store_true",
+        help="DESTRUTIVO: apaga e recria a tabela antes de reconstruir. Necessario quando a "
+             "Source foi regerada com outra seed, referencia, premissas ou "
+             "demand_model_version — o merge monotonico assume que um order_id sempre e o "
+             "mesmo pedido, e ai nao e.",
+    )
     ice_rebuild.set_defaults(handler=_cmd_orders_rebuild_projection)
 
     ice_rec = subparsers.add_parser(
@@ -1255,6 +1339,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="destino do markdown; '-' escreve na saida padrao",
     )
     stream_ev.set_defaults(handler=_cmd_stream_evidence)
+
+    demand_check = subparsers.add_parser(
+        "demand-reality-check",
+        help="compara o mix observado com o ANTES congelado e com o benchmark do MAPA",
+    )
+    demand_check.add_argument(
+        "--snapshot", default=None,
+        help="em vez de renderizar, congela a medicao atual sob este nome",
+    )
+    demand_check.add_argument(
+        "--before", default="before_mapa_2025_v1",
+        help="nome ou caminho do snapshot ANTES",
+    )
+    demand_check.add_argument("--seeds-dir", default=os.path.join("platform", "dbt", "seeds"))
+    demand_check.add_argument(
+        "--max-error", type=float, default=3.0,
+        help="maior desvio tolerado, em pontos percentuais, contra o alvo inclinado. LARGO "
+             "de proposito: existe para pegar calibracao inerte, nao para ser perseguido.",
+    )
+    demand_check.add_argument(
+        "--out", default=os.path.join("docs", "demand-evidence", "README.md"),
+        help="destino do markdown; '-' escreve na saida padrao",
+    )
+    demand_check.set_defaults(handler=_cmd_demand_reality_check)
 
     silver_build = subparsers.add_parser(
         "silver-build",

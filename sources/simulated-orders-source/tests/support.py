@@ -50,6 +50,13 @@ PREMISES = {
 }
 
 
+# Tres grupos de demanda na fixture, com pesos DESIGUAIS de proposito: com pesos iguais o
+# sorteio ponderado seria indistinguivel do uniforme, e um teste que passa nas duas
+# implementacoes nao testa nenhuma.
+DEMAND_GROUPS = ("GRUPO_A", "GRUPO_B", "GRUPO_C")
+DEMAND_WEIGHTS = {"GRUPO_A": "0.6", "GRUPO_B": "0.3", "GRUPO_C": "0.1"}
+
+
 def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) -> list[dict]:
     """Catalogo sintetico com subgrupos povoados, para que a substituicao tenha candidato."""
     rows = []
@@ -62,11 +69,31 @@ def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) 
                 "display_name": f"Produto {index}",
                 "category_id": 10 + index % 3,
                 "subgroup_id": 100 + index % 5,
+                "demand_group": DEMAND_GROUPS[index % len(DEMAND_GROUPS)],
                 "unit_price": f"{1 + index % 7}.{(index * 7) % 100:02d}",
                 "tax_percentage": "21.000",
             }
         )
     return rows
+
+
+def demand_payload(weights=None, seasonality=None, version: str = "fixture_v1") -> dict:
+    """Perfil de demanda minimo, no mesmo formato que a plataforma escreve."""
+    pesos = dict(DEMAND_WEIGHTS if weights is None else weights)
+    return {
+        "demand_model_version": version,
+        "benchmark": "fixture",
+        "seeds_sha256": {},
+        "blocks": {},
+        "seasonality_applies_to": "daily_order_rate",
+        "seasonality": {str(m): "1.0" for m in range(1, 13)}
+        if seasonality is None
+        else {str(m): str(v) for m, v in seasonality.items()},
+        "groups": [
+            {"demand_group": key, "line_weight": pesos[key], "block": "benchmark"}
+            for key in sorted(pesos)
+        ],
+    }
 
 
 def customer_rows(wh: str = WH, total: int = 8, first: str = FIRST_INGESTION) -> list[dict]:
@@ -90,8 +117,9 @@ def write_reference(
     calendar=None,
     premises=None,
     customer_ingestion_dates=None,
+    demand=None,
 ) -> str:
-    """Grava os quatro arquivos de referencia. Devolve o diretorio."""
+    """Grava os cinco arquivos de referencia. Devolve o diretorio."""
     os.makedirs(directory, exist_ok=True)
     dates = customer_ingestion_dates or [FIRST_INGESTION]
     payloads = {
@@ -128,6 +156,7 @@ def write_reference(
             "values": dict(premises or PREMISES),
             "rows": [],
         },
+        "demand_profile.json": demand_payload() if demand is None else demand,
     }
     for name, payload in payloads.items():
         with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:

@@ -383,8 +383,31 @@ class RebuildResult:
     partitions_read: list = field(default_factory=list)
 
 
+def reset_table(cat=None):
+    """Apaga e recria `live_order_state`. Existe por causa de UMA condicao especifica.
+
+    A fusao da projecao e MONOTONICA: uma linha com `last_sequence_no` menor que a gravada e
+    descartada como velha, e e assim que os dois escritores convivem sem se atropelar. A
+    fusao assume, sem dizer, que um `order_id` sempre se refere ao MESMO pedido.
+
+    Essa premissa cai quando a Source e regerada com outra `seed`, outra referencia, outras
+    premissas ou outro `demand_model_version` — as quatro condicoes nao-aditivas do
+    CONTRACT. Ai o pedido `ord_mad1_20260824_000001` e um pedido DIFERENTE com o mesmo id, e
+    o merge monotonico mistura os dois: MEDIDO em 2026-08-31, um rebuild depois da
+    recalibracao descartou 4.028 linhas por "estado igual ou mais novo" e deixou a projecao
+    com uma mistura de dois universos. `orders-reconcile` pegou.
+
+    Reset e destrutivo de proposito e nunca acontece sozinho — so com --reset explicito.
+    """
+    cat = cat or catalog()
+    if cat.table_exists(TABLE_NAME):
+        cat.drop_table(TABLE_NAME)
+    return ensure_table(cat)
+
+
 def rebuild(cat, partitions, *, sla_minutes: int = None,
-            seeds_dir: str = DEFAULT_SEEDS_DIR, batch_size: int = 500) -> RebuildResult:
+            seeds_dir: str = DEFAULT_SEEDS_DIR, batch_size: int = 500,
+            reset: bool = False) -> RebuildResult:
     """Reconstrói a projeção a partir do log em disco. É o SEGUNDO ESCRITOR.
 
     ELE COMPARTILHA `fold_event` COM O CONSUMIDOR, E ISSO É DELIBERADO — mas exige uma
@@ -399,7 +422,7 @@ def rebuild(cat, partitions, *, sla_minutes: int = None,
     from .orders_oltp import read_log, verify_log
 
     sla = sla_minutes if sla_minutes is not None else read_sla_minutes(seeds_dir)
-    tabela = ensure_table(cat)
+    tabela = reset_table(cat) if reset else ensure_table(cat)
     projection = IcebergProjection(tabela, writer=WRITER_REBUILD, cat=cat)
     resultado = RebuildResult()
     estados: dict = {}

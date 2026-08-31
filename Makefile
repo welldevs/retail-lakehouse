@@ -125,7 +125,8 @@ ORDERS_OVERWRITE       ?=
         stream-evidence \
         warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
         warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
-        dashboard dashboard-venv dashboard-contract dashboard-check
+        dashboard dashboard-venv dashboard-contract dashboard-check \
+        demand-reality-check demand-check-mapping
 
 help:
 	@echo "infra"
@@ -216,6 +217,11 @@ help:
 	@echo "  orders-reconcile          Iceberg x Silver x OLTP; sai 1 se divergirem"
 	@echo "  orders-prove-projection   concorrencia, fusao monotonica e snapshot isolation"
 	@echo "  stream-evidence           registra OLTP, broker, projecao e os tres folds, datado"
+	@echo ""
+	@echo "calibracao da demanda (MAPA 2025):"
+	@echo "  demand-reality-check      ANTES | MAPA | DEPOIS nas tres dimensoes"
+	@echo "  demand-reality-check SNAPSHOT=before_mapa_2025_v1   congela o ANTES"
+	@echo "  demand-check-mapping      confere as 444 trincas do catalogo contra o de-para"
 	@echo ""
 	@echo "warehouse analitico (Snowflake, DB=$(SNOWFLAKE_DATABASE)) —"
 	@echo "recebe um recorte do Silver (~5% das linhas), nunca o Silver inteiro:"
@@ -493,6 +499,20 @@ oltp-refresh-all:
 # Roda UMA vez e cobre os quatro armazens e a janela inteira. Encadea-lo no orders-refresh
 # (que e por armazem e por dia) repetiria a mesma consulta pesada 16 vezes. Mesmo motivo pelo
 # qual oltp-export-reference nao entra em oltp-refresh.
+# CONGELA o ANTES. Passo separado de proposito: depois de `orders-refresh-all --overwrite`
+# o estado anterior nao existe mais em lugar nenhum, e um reality check sem ANTES so
+# consegue dizer "e assim hoje", que e metade da pergunta.
+demand-reality-check:
+	$(PLATFORM_PY) -m retail_platform demand-reality-check \
+	  $(if $(SNAPSHOT),--snapshot $(SNAPSHOT),)
+
+# Confere o de-para contra a ARVORE de categorias, nao contra o recorte: o dedup do catalogo
+# esconde trincas que existem na fonte, e conferir contra ele mediria o desempate.
+demand-check-mapping:
+	$(PLATFORM_PY) -m retail_platform export-orders-reference \
+	  --out $(ORDERS_REFERENCE_ROOT) --date $(ORDERS_TO) \
+	  --from $(ORDERS_FROM) --to $(ORDERS_TO)
+
 orders-export-reference:
 	$(PLATFORM_PY) -m retail_platform export-orders-reference \
 	  --out $(ORDERS_REFERENCE_ROOT) --date $(ORDERS_TO) \
@@ -685,8 +705,14 @@ orders-project-iceberg:
 	  --group "$(KAFKA_GROUP_ICEBERG)" --from-beginning $(PROJECT_ARGS)
 
 # O SEGUNDO escritor da mesma tabela.
+# PROJECTION_RESET=1 apaga e recria a tabela antes de reconstruir. Necessario quando a Source
+# foi regerada com outra seed, referencia, premissas ou demand_model_version: o merge da
+# projecao e monotonico e assume que um order_id sempre e o mesmo pedido — e depois de uma
+# regeracao nao e. Sem o reset, o rebuild descarta as linhas novas como "velhas" e a projecao
+# fica com dois universos misturados (medido: 4.028 linhas descartadas em 2026-08-31).
 orders-rebuild-projection:
-	$(PLATFORM_PY) -m retail_platform.cli orders-rebuild-projection --root "$(ORDERS_DATA_ROOT)"
+	$(PLATFORM_PY) -m retail_platform.cli orders-rebuild-projection --root "$(ORDERS_DATA_ROOT)" \
+	  $(if $(PROJECTION_RESET),--reset,)
 
 # Tres folds, uma comparacao. Sai 1 em qualquer divergencia.
 orders-reconcile:

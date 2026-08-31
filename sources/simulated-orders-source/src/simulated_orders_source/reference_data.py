@@ -1,6 +1,6 @@
-"""Leitura e validacao estrutural dos quatro arquivos de referencia.
+"""Leitura e validacao estrutural dos cinco arquivos de referencia.
 
-A Source nao fala com o Lakehouse: le quatro JSON planos que a plataforma escreveu com
+A Source nao fala com o Lakehouse: le cinco JSON planos que a plataforma escreveu com
 `retail-platform export-orders-reference`. Este modulo e a unica porta de entrada desse
 insumo, e ele DESCONFIA do arquivo — um export truncado, de schema antigo, ou vazio para um
 armazem tem de REPROVAR a geracao, nunca produzir pedidos enviesados em silencio.
@@ -22,12 +22,15 @@ import json
 import os
 from decimal import Decimal, InvalidOperation
 
+from .demand import DemandError, DemandModel
+
 CUSTOMERS_FILE = "customers.json"
 CATALOG_FILE = "catalog.json"
 CALENDAR_FILE = "calendar.json"
 PREMISES_FILE = "premises.json"
+DEMAND_FILE = "demand_profile.json"
 
-REFERENCE_FILES = (CUSTOMERS_FILE, CATALOG_FILE, CALENDAR_FILE, PREMISES_FILE)
+REFERENCE_FILES = (CUSTOMERS_FILE, CATALOG_FILE, CALENDAR_FILE, PREMISES_FILE, DEMAND_FILE)
 
 CUSTOMER_FIELDS = (
     "customer_id",
@@ -46,6 +49,9 @@ CATALOG_FIELDS = (
     "subgroup_id",
     "unit_price",
     "tax_percentage",
+    # Resolvido PELA PLATAFORMA contra o de-para versionado. Chega aqui como rotulo, e o
+    # gerador nao sabe — nem precisa saber — que regra o produziu.
+    "demand_group",
 )
 CALENDAR_FIELDS = ("wh", "order_date", "price_as_of", "price_source")
 
@@ -103,7 +109,8 @@ def _decimal(value, path: str, field: str) -> Decimal:
 class Reference:
     """Indice imutavel sobre os quatro arquivos, pronto para amostragem deterministica."""
 
-    def __init__(self, directory: str, customers: dict, catalog: dict, calendar: dict, premises: dict):
+    def __init__(self, directory: str, customers: dict, catalog: dict, calendar: dict,
+                 premises: dict, demand: dict):
         self.directory = directory
         self.customer_ingestion_dates = list(customers.get("customer_ingestion_dates") or [])
         self.roster_ingestion_date = customers.get("roster_ingestion_date")
@@ -143,10 +150,38 @@ class Reference:
         # do sortimento que aquele armazem realmente vende naquele dia.
         self._by_subgroup: dict[tuple, list[int]] = {}
         self._by_category: dict[tuple, list[int]] = {}
+        # (wh, price_as_of, demand_group) -> [posicao, ...], mais a TUPLA ORDENADA de grupos
+        # presentes em cada par. A tupla e ordenada aqui, uma vez, e nao no laco do sorteio:
+        # ordenar por chave e o que impede a CDF de depender de PYTHONHASHSEED.
+        self._by_demand_group: dict[tuple, list[int]] = {}
+        grupos_por_par: dict[tuple, set] = {}
         for key, produtos in self._catalog.items():
             for position, row in enumerate(produtos):
                 self._by_subgroup.setdefault(key + (row["subgroup_id"],), []).append(position)
                 self._by_category.setdefault(key + (row["category_id"],), []).append(position)
+                grupo = row.get("demand_group")
+                if not grupo:
+                    raise ReferenceError(
+                        f"{CATALOG_FILE}: produto {row.get('source_product_id')!r} sem "
+                        f"demand_group. O export da referencia precisa carimba-lo."
+                    )
+                self._by_demand_group.setdefault(key + (grupo,), []).append(position)
+                grupos_por_par.setdefault(key, set()).add(grupo)
+        self._demand_groups_of: dict[tuple, tuple] = {
+            key: tuple(sorted(grupos)) for key, grupos in grupos_por_par.items()
+        }
+
+        # CDF por par, calculada uma vez. Recalcula-la por linha custaria uma varredura de
+        # dezenas de grupos por linha da cesta, e o resultado seria identico.
+        self.demand = DemandModel(demand)
+        self._demand_cdf: dict[tuple, tuple] = {}
+        for key, grupos in self._demand_groups_of.items():
+            try:
+                self._demand_cdf[key] = self.demand.cumulative(grupos)
+            except DemandError as exc:
+                raise ReferenceError(
+                    f"{DEMAND_FILE}: {exc} (par {key})"
+                ) from exc
 
         # (wh, order_date) -> linha do calendario.
         self._calendar: dict[tuple, dict] = {}
@@ -196,6 +231,21 @@ class Reference:
             )
         return rows
 
+    def demand_groups_of(self, wh: str, price_as_of: str) -> tuple:
+        """Grupos com produto naquele (armazem, dia), em ordem estavel."""
+        grupos = self._demand_groups_of.get((wh, price_as_of))
+        if not grupos:
+            raise ReferenceError(
+                f"referencia sem grupo de demanda para wh={wh!r} price_as_of={price_as_of!r}"
+            )
+        return grupos
+
+    def demand_cdf_of(self, wh: str, price_as_of: str) -> tuple:
+        return self._demand_cdf[(wh, price_as_of)]
+
+    def positions_in_demand_group(self, wh: str, price_as_of: str, group: str) -> list[int]:
+        return self._by_demand_group.get((wh, price_as_of, group), [])
+
     def substitutes_in_subgroup(self, wh: str, price_as_of: str, subgroup_id) -> list[int]:
         return self._by_subgroup.get((wh, price_as_of, subgroup_id), [])
 
@@ -215,8 +265,23 @@ class Reference:
         return max(candidatas) if candidatas else None
 
 
+def _load_plain(directory: str, name: str) -> dict:
+    """Le um JSON de referencia que NAO tem a lista `rows` (premissas, perfil de demanda)."""
+    path = os.path.join(directory, name)
+    if not os.path.exists(path):
+        raise ReferenceError(f"arquivo de referencia ausente: {path}")
+    try:
+        with open(path, "rb") as handle:
+            payload = json.loads(handle.read().decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ReferenceError(f"{path}: JSON invalido ({exc})") from exc
+    if not isinstance(payload, dict):
+        raise ReferenceError(f"{path}: raiz nao e um objeto JSON")
+    return payload
+
+
 def load(directory: str) -> Reference:
-    """Le e valida os quatro arquivos de referencia de um diretorio."""
+    """Le e valida os cinco arquivos de referencia de um diretorio."""
     if not os.path.isdir(directory):
         raise ReferenceError(
             f"diretorio de referencia nao encontrado: {directory}. Gere-o com "
@@ -226,18 +291,10 @@ def load(directory: str) -> Reference:
     catalog = _load_file(directory, CATALOG_FILE)
     calendar = _load_file(directory, CALENDAR_FILE)
 
-    path = os.path.join(directory, PREMISES_FILE)
-    if not os.path.exists(path):
-        raise ReferenceError(f"arquivo de referencia ausente: {path}")
-    try:
-        with open(path, "rb") as handle:
-            premises = json.loads(handle.read().decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise ReferenceError(f"{path}: JSON invalido ({exc})") from exc
-    if not isinstance(premises, dict):
-        raise ReferenceError(f"{path}: raiz nao e um objeto JSON")
+    premises = _load_plain(directory, PREMISES_FILE)
+    demand = _load_plain(directory, DEMAND_FILE)
 
     _require_fields(os.path.join(directory, CUSTOMERS_FILE), customers["rows"], CUSTOMER_FIELDS)
     _require_fields(os.path.join(directory, CATALOG_FILE), catalog["rows"], CATALOG_FIELDS)
     _require_fields(os.path.join(directory, CALENDAR_FILE), calendar["rows"], CALENDAR_FIELDS)
-    return Reference(directory, customers, catalog, calendar, premises)
+    return Reference(directory, customers, catalog, calendar, premises, demand)

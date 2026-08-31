@@ -376,6 +376,7 @@ def run(args) -> int:
     print(f"dia do pedido .... {order_date}")
     print(f"seed ............. {config.get('seed')}")
     print(f"premissas ........ {str(config.get('premises_sha256'))[:16]}...")
+    print(f"demanda .......... {config.get('demand_model_version')}")
     print(f"completa ......... {manifest.get('complete')}")
 
     # ---- Integridade dos arquivos declarados -------------------------------
@@ -484,6 +485,14 @@ def run(args) -> int:
         print()
         print(f"FALHOU: referencia inutilizavel: {exc}")
         return EXIT_FAILED
+
+    declared_demand = (manifest.get("config") or {}).get("demand_model_version")
+    if declared_demand != reference.demand.version:
+        errors.append(
+            f"referencia com outro modelo de demanda: manifesto={declared_demand} "
+            f"arquivo={reference.demand.version}. O mix por tras destes pedidos nao e o que "
+            f"o perfil deste diretorio descreve."
+        )
 
     declared_premises = (manifest.get("reference") or {}).get("premises_sha256")
     if declared_premises != reference.premises_sha256:

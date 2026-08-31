@@ -21,7 +21,13 @@
 -- separacao. Nao ha preco pago para conferir, e exigir um seria exigir que o modelo
 -- inventasse o numero que este teste existe para proibir.
 --
--- Medido: 112.864 linhas conferidas, zero divergencias e zero ausencias.
+-- A COMPARACAO E CONTRA `purchasable_unit_price`, e nao contra o `unit_price` cru. Nas 10
+-- combinacoes produto x armazem vendidas a granel sem `unit_size`, a API devolve
+-- `reference_price * 99` — o teto do seletor de peso, nao um preco de consumo. Casar contra
+-- o valor cru faria este teste EXIGIR que o pedido tivesse cobrado 1.084,05 EUR por 150 g de
+-- langostino, ou seja, exigir de volta o defeito. O valor cru viaja no relatorio de falha ao
+-- lado, para que a diferenca seja visivel quando houver.
+--
 -- Falha com uma linha por divergencia.
 select
     i.order_id,
@@ -30,7 +36,9 @@ select
     i.price_as_of,
     i.fulfilled_source_product_id,
     i.unit_price_paid,
-    p.unit_price                                            as preco_no_catalogo,
+    p.purchasable_unit_price                                as preco_no_catalogo,
+    p.unit_price                                            as preco_cru_da_fonte,
+    p.price_basis,
     case
         when p.source_product_id is null then 'produto cumprido ausente do catalogo daquele armazem e dia'
         else 'preco pago diverge do catalogo'
@@ -41,4 +49,4 @@ left join {{ ref('fact_price_snapshot') }} p
       and  p.wh                 = i.wh
       and  p.source_product_id  = i.fulfilled_source_product_id
 where i.fulfilled_source_product_id is not null
-  and (p.source_product_id is null or p.unit_price <> i.unit_price_paid)
+  and (p.source_product_id is null or p.purchasable_unit_price <> i.unit_price_paid)

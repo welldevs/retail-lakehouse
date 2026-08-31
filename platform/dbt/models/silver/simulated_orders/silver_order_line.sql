@@ -55,7 +55,8 @@ with colocadas as (
             from_json(
                 payload -> '$.lines',
                 '[{"line_no":"INTEGER","source_product_id":"VARCHAR","category_id":"INTEGER",
-                   "subgroup_id":"INTEGER","quantity":"INTEGER","unit_price":"VARCHAR"}]'
+                   "subgroup_id":"INTEGER","demand_group":"VARCHAR","quantity":"INTEGER",
+                   "unit_price":"VARCHAR"}]'
             )
         ) as linha
     from {{ ref('silver_order_event') }}
@@ -118,6 +119,11 @@ select
     c.linha.source_product_id                              as source_product_id,
     c.linha.category_id                                    as category_id,
     c.linha.subgroup_id                                    as subgroup_id,
+    -- Carimbado no evento pela Source, resolvido pela plataforma contra o de-para
+    -- versionado. Vem do evento e nao de um join com o catalogo aqui, pelo mesmo motivo de
+    -- `unit_price`: o que importa e o grupo que valia NO MOMENTO DO PEDIDO, e nao o que o
+    -- de-para diria hoje.
+    c.linha.demand_group                                   as demand_group,
     c.linha.quantity                                       as quantity,
     cast(c.linha.unit_price as decimal(10, 2))             as unit_price,
 

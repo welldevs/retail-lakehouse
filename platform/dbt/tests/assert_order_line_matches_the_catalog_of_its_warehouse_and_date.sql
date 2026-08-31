@@ -19,13 +19,22 @@
 --
 -- LINHA REMOVIDA tambem entra: o produto PEDIDO tinha de existir mesmo que nao tenha sido
 -- entregue. O que nao se confere para ela e o `fulfilled_*`, que e nulo por contrato.
+--
+-- A COMPARACAO E CONTRA `purchasable_unit_price`, NAO CONTRA `unit_price`. Medido em
+-- 2026-08-31: quando `selling_method = 1` e `unit_size` e nulo, a fonte devolve
+-- `unit_price = reference_price * 99` — o teto do seletor de peso (obrigacao 5 do contrato
+-- da Mercadona). Sao 10 combinacoes produto x armazem, e casar contra `unit_price` faria
+-- este teste EXIGIR que o pedido cobrasse 1.084,05 EUR por 150 g de langostino. O valor cru
+-- viaja no relatorio de falha ao lado, para que a diferenca seja visivel quando houver.
 with catalogo as (
 
     select distinct
-        warehouse         as wh,
-        ingestion_date    as price_as_of,
+        warehouse              as wh,
+        ingestion_date         as price_as_of,
         source_product_id,
-        unit_price
+        purchasable_unit_price as unit_price,
+        unit_price             as source_unit_price,
+        price_basis
     from {{ ref('silver_product_price') }}
 
 ),
@@ -52,7 +61,9 @@ select
     p.line_status,
     p.source_product_id,
     p.unit_price,
-    c.unit_price   as preco_no_catalogo,
+    c.unit_price        as preco_no_catalogo,
+    c.source_unit_price as preco_cru_da_fonte,
+    c.price_basis,
     p.fulfilled_source_product_id,
     p.fulfilled_unit_price,
     f.unit_price   as preco_do_substituto_no_catalogo,

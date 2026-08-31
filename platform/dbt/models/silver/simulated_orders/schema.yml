@@ -166,6 +166,15 @@ models:
       por 42% do valor substituido. Media aritmetica de valor de cesta e dominada por punhado
       de linha — use mediana ou percentil, ou declare a cauda.
     columns:
+      - name: demand_group
+        description: >
+          Grupo de demanda contra o qual a cesta foi calibrada (MAPA 2025). Carimbado no
+          evento pela Source e resolvido pela plataforma contra
+          demand_category_mapping_seed.csv — vem do EVENTO e nao de um join com o catalogo,
+          porque o que importa e o grupo que valia no momento do pedido. A estabilidade do
+          carimbo dentro da janela tem teste proprio em
+          tests/assert_demand_group_is_stable_across_the_window.sql.
+        tests: [not_null]
       - name: order_id
         tests: [not_null]
       - name: line_no

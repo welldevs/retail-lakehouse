@@ -114,7 +114,33 @@ preservada como recebida, e a Source não define tipos, chaves primárias ou nor
    sem o caminho perde o armazém de forma irrecuperável.
 4. **Leia `unit_price` como string.** É string em 100% dos registros. Converter para
    `float` perde precisão decimal em moeda.
-5. **Distinga `source_product_id` de identidade de negócio.** São duas coisas, e a fonte
+5. **`unit_price` nem sempre é o preço de uma unidade comprável.** Quando
+   `price_instructions.selling_method = 1` (seletor de peso, `bunch_selector: true`) **e**
+   `unit_size` é nulo, a API devolve `unit_price = reference_price × 99` — o preço do
+   **teto** do seletor, não de nada que um domicílio compre **[fonte]**. Medido em
+   2026-08-31 sobre as 9 partições de catálogo: o fator é exatamente `99,000` em 10
+   combinações produto×armazém (105 linhas no grão do snapshot), com `unit_price` chegando a
+   **3.663,00** para um congelado a granel de **37,00 por kg**. Nas outras 21 do mesmo
+   `selling_method` o fator é `0,200`, que é a própria `unit_size`, e essas estão corretas.
+
+   O preço da porção comprável é **`reference_price × min_bunch_amount`**, e ambos os
+   campos vêm da fonte:
+
+   ```
+   Alistado mediano congelado   reference_price 37,00/kg   min_bunch_amount 0,15
+     unit_price       3.663,00   <- teto do seletor, NÃO use
+     porção comprável     5,55   <- 37,00 x 0,15
+   ```
+
+   Consequência para quem soma dinheiro: usar `unit_price` aqui infla receita por três
+   ordens de grandeza numa linha. Numa cesta sintética indiferente ao preço, estas 10
+   linhas produziram **16,6% de toda a receita** de 6.400 pedidos, e nenhum teste de
+   totalização reprovou — porque o número continuava internamente consistente.
+6. **`min_bunch_amount` e `increment_bunch_amount` são a granularidade de compra**, não
+   metadado decorativo. Um produto a granel só é comprável em múltiplos de
+   `increment_bunch_amount`; tratá-lo como unidade inteira inventa uma embalagem que não
+   existe.
+7. **Distinga `source_product_id` de identidade de negócio.** São duas coisas, e a fonte
    só entrega a primeira.
    - **`source_product_id`** é `product.id` (string). É a chave **da fonte** e a única
      disponível para join — use-a. Dentro de um snapshot ela é consistente: as aparições
@@ -127,9 +153,9 @@ preservada como recebida, e a Source não define tipos, chaves primárias ou nor
      snapshots consecutivos com nome, categoria e subgrupo idênticos **[fonte]**.
      Resolvê-la é do consumidor, com chave externa ou regra de casamento declarada como
      premissa.
-6. **Não assuma moeda a partir do payload** — a API não a declara **[fonte]**.
-7. **Verifique `schema_fingerprint` entre snapshots** se depender da forma dos campos.
-8. **Espere repetição de produto.** Um produto pode aparecer em mais de uma categoria e em
+8. **Não assuma moeda a partir do payload** — a API não a declara **[fonte]**.
+9. **Verifique `schema_fingerprint` entre snapshots** se depender da forma dos campos.
+10. **Espere repetição de produto.** Um produto pode aparecer em mais de uma categoria e em
    mais de um subgrupo. É semântica da fonte **[fonte]** e não é removida aqui.
 
 ## 5. O que a Source não faz
@@ -140,8 +166,12 @@ detecção de variação de preço · ingestão em Snowflake · envio para S3 ·
 Airflow · Kafka.
 
 Cada execução é uma **fotografia**. Interpretação temporal é da camada posterior. Os campos
-`unit_price`, `reference_price`, `bulk_price`, `previous_unit_price`, `price_decreased` e
-`tax_percentage` são preservados no payload sem interpretação.
+`unit_price`, `reference_price`, `bulk_price`, `previous_unit_price`, `price_decreased`,
+`tax_percentage`, `selling_method`, `bunch_selector`, `min_bunch_amount`,
+`increment_bunch_amount` e `unit_size` são preservados no payload sem interpretação — o que
+inclui **não corrigir** o `unit_price` de teto descrito na obrigação 5. Corrigi-lo aqui
+apagaria a evidência do que a API devolveu; a porção comprável é derivada uma camada acima,
+em `silver_product_price`, ao lado do valor original.
 
 ## 6. Escopo e limites da fonte **[fonte]**
 

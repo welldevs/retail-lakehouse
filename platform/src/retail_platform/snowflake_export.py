@@ -101,9 +101,21 @@ SPECS: list[dict] = [
                 any_value(product_level1_category_id)       as product_level1_category_id,
 
                 any_value(unit_price)                       as unit_price,
+
+                -- O PRECO DE UNIDADE COMPRAVEL, ao lado do valor cru da fonte. Difere
+                -- apenas nas linhas `bunch`, onde a API devolve reference_price * 99 — o
+                -- teto do seletor de peso, e nao um preco de consumo (obrigacao 5 do
+                -- contrato da Mercadona; 10 combinacoes produto x armazem, medidas).
+                -- Atravessam OS DOIS: FACT_ORDER_ITEM fecha contra o primeiro, e o segundo
+                -- e a evidencia de que a correcao existe e do tamanho dela.
+                any_value(purchasable_unit_price)           as purchasable_unit_price,
+                any_value(price_basis)                      as price_basis,
+                any_value(net_content_kg_l)                 as net_content_kg_l,
+
                 any_value(bulk_price)                       as bulk_price,
                 any_value(reference_price)                  as reference_price,
                 any_value(reference_format)                 as reference_format,
+                any_value(min_bunch_amount)                 as min_bunch_amount,
                 any_value(previous_unit_price)              as previous_unit_price,
                 any_value(tax_percentage)                   as tax_percentage,
 

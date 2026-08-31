@@ -46,3 +46,8 @@ platform/dbt/.user.yml
 # projeto, para consulta de quem o construiu. Nao e documentacao do repositorio — o que
 # um terceiro precisa saber esta em README.md e ARCHITECTURE.md.
 FAQ.md
+
+# Documento de benchmark do MAPA: 29 MB de binario, e o historico do git e permanente.
+# A rastreabilidade que o repo precisa esta em docs/README.md (URL + sha256 + data) e na
+# coluna `informe_section` de mapa_2025_benchmark_seed.csv, que cita a secao de cada numero.
+docs/*.pdf

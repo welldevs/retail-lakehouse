@@ -1,0 +1,65 @@
+mapa_key,mapa_label,scope,use_as_weight,volume_share_pct,value_share_pct,avg_price_eur_kg,volume_yoy_pct,value_yoy_pct,ecommerce_volume_pct,channel_basis,informe_section,provenance,note
+TOTAL_ALIMENTACION,Total alimentacion,total,false,100.00,100.00,3.25,0.8,4.8,2.2,fine,3,informe_table,"Agregado de referencia: 27.047,1 milhoes de kg ou L e 87.831,1 milhoes de EUR em 2025. Nao entra como peso; e o denominador de tudo."
+ALIMENTACION_FRESCA,Alimentacion fresca,fresh,false,38.10,40.90,3.49,1.2,6.8,1.1,fine,3,informe_table,"Agregado. Definicao da propria fonte (nota de pe de pagina 2): frutas frescas, hortalizas frescas incluidas patatas frescas, carnes frescas, pescado fresco, marisco/molusco fresco, pan fresco e huevos."
+RESTO_ALIMENTACION,Resto alimentacion,rest,false,61.90,59.10,3.10,0.6,3.5,2.8,fine,3,informe_table,"Agregado. Base da inclinacao de canal grossa para as categorias sem linha de canal propria."
+ACEITES_OLIVA,Aceites de oliva,rest,true,1.18,1.74,4.79,,,,coarse,4.1.1-4.1.3,derived,"Soma dos tres tipos publicados (oliva 0,53 + virgen 0,14 + virgen extra 0,51). Preco derivado dos volumes e valores absolutos publicados: 1.527.076,91 mil EUR / 318.708,40 mil kg. Agregado porque o catalogo da Mercadona nao separa virgem de virgem extra no nivel 3."
+ACEITE_OLIVA,Aceite de oliva,rest,false,0.53,0.67,4.13,9.9,-38.1,,coarse,4.1.1,informe_table,"Detalhe documentado. Nao entra como peso para nao contar duas vezes com ACEITES_OLIVA."
+ACEITE_OLIVA_VIRGEN,Aceite de oliva virgen,rest,false,0.14,0.20,4.73,19.5,-28.2,,coarse,4.1.2,informe_table,Detalhe documentado.
+ACEITE_OLIVA_VIRGEN_EXTRA,Aceite de oliva virgen extra,rest,false,0.51,0.87,5.50,33.9,-16.2,,coarse,4.1.3,informe_table,Detalhe documentado.
+ACEITE_GIRASOL,Aceite de girasol,rest,true,0.55,0.30,1.77,-8.7,3.7,,coarse,4.1.4,informe_table,"Mapeado a partir de 'Otros aceites' do catalogo. Preco medio caiu 29,7% no sector oleicola e subiu 13,5% no girasol."
+ARROZ,Arroz,rest,true,0.68,0.51,2.41,4.4,9.7,2.5,fine,4.3,informe_table,
+VINO,Vino,rest,true,1.18,1.29,3.55,-1.6,-1.8,,coarse,4.4.1,informe_table,"Cobre tinto, blanco, rosado e espumoso no catalogo."
+CERVEZA,Cerveza,rest,true,3.10,1.57,1.64,-4.7,-6.4,,coarse,4.4.2,informe_table,"Cobre tambem cerveja sem alcool: o informe nao a separa."
+AGUA,Agua de bebida envasada,rest,true,10.90,0.80,0.24,-0.7,1.1,,coarse,4.4.3,informe_table,"Maior share de volume depois de frutas frescas, e o menor preco medio do informe."
+BEBIDAS_ESPIRITUOSAS,Bebidas espirituosas,rest,true,0.12,0.41,11.58,-5.0,-8.2,,coarse,4.4.5,informe_table,"Sazonalidade citada em prosa (dezembro), sem numero mensal publicado."
+ZUMOS,Zumos y nectares,rest,true,0.94,0.44,1.51,-4.5,-0.9,,coarse,4.4.6,informe_table,
+BOLLERIA_PASTELERIA,Bolleria y pasteleria,rest,true,1.01,2.18,6.99,5.3,5.6,2.9,fine,4.5.1,informe_table,
+CAFES_INFUSIONES,Cafes e infusiones,rest,true,0.31,2.00,21.19,-0.1,10.2,,coarse,4.6,informe_table,"Maior preco medio por kg do informe entre as categorias com share publicado."
+CARNES,Total carnes,rest,false,7.47,20.11,8.75,3.4,6.9,1.4,fine,4.7,informe_table,Agregado. Nao entra como peso.
+CARNE_FRESCA,Carne fresca,fresh,false,5.43,12.98,7.77,3.5,6.5,1.4,fine,4.7.1,informe_table,Agregado dos cinco tipos de carne fresca mais um residuo. Nao entra como peso.
+CARNE_VACUNO,Carne de vacuno,fresh,true,0.65,2.87,14.27,-3.5,9.6,1.4,group,4.7.2,informe_table,
+CARNE_POLLO,Carne de pollo,fresh,true,2.29,3.90,5.53,5.4,6.7,1.4,group,4.7.3,informe_table,
+CARNE_OVINO_CAPRINO,Carne de ovino y caprino,fresh,true,0.12,0.61,17.04,-12.1,-1.7,1.4,group,4.7.4,informe_table,
+CARNE_CERDO,Carne de cerdo,fresh,true,1.73,4.05,7.59,7.5,7.4,1.4,group,4.7.5,informe_table,
+CARNE_CONEJO,Carne de conejo,fresh,true,0.09,0.25,9.00,-3.9,1.9,1.4,group,4.7.6,informe_table,
+CARNE_FRESCA_OTRAS,Otras carnes frescas,fresh,true,0.55,1.30,,,,1.4,group,4.7.1,derived,"Residuo: carne fresca 5,43 menos a soma dos cinco tipos publicados 4,88. Em valor, 12,98 menos 11,68. Preco medio nao derivado: as duas derivacoes possiveis divergem e publicar uma escolheria por conta propria."
+CARNE_TRANSFORMADA,Carne transformada,rest,true,1.84,6.79,11.99,3.0,7.7,1.4,group,4.7.7,informe_table,
+CHOCOLATES_CACAOS,Chocolates y cacaos,rest,true,0.49,1.81,11.93,-6.5,10.4,,coarse,4.8,informe_table,
+FRUTAS_FRESCAS,Frutas frescas,fresh,true,14.13,9.94,2.28,2.7,9.8,,coarse,4.9,informe_table,"Maior share de volume da cesta espanhola. Ganhou 0,2 pontos em 2025."
+FRUTAS_HORTALIZAS_TRANSFORMADAS,Frutas y hortalizas transformadas,rest,true,2.03,1.83,2.92,2.3,3.3,,coarse,4.10,informe_table,Cobre conserva e congelado de fruta e verdura.
+FRUTOS_SECOS,Frutos secos,rest,true,0.62,1.72,8.98,1.0,8.7,,coarse,4.11,informe_table,
+HORTALIZAS_FRESCAS,Hortalizas frescas,fresh,true,8.50,6.60,2.52,-1.0,5.2,1.2,fine,4.12,informe_table,
+HUEVOS,Huevos,fresh,true,1.60,1.90,3.85,3.0,23.0,1.5,fine,4.13,informe_table,"Preco medio subiu 19,4% em 2025 sem penalizar o volume. Vendido em 'ud'/'dz' no catalogo: sem conversao para kg, entra pelo caminho de share de linhas."
+LACTEOS,Leche liquida y derivados lacteos,rest,false,16.82,12.11,2.37,0.4,5.9,,coarse,4.14,informe_table,Agregado. Nao entra como peso.
+LECHE_LIQUIDA,Leche liquida,rest,false,10.58,3.17,0.97,-1.3,1.8,,coarse,4.14.1,informe_table,"Agregado. A soma de entera, semidesnatada e desnatada da 10,54 — praticamente o total, o que confirma que enriquecida e sin lactosa sao cortes transversais e nao tipos adicionais."
+LECHE_ENTERA,Leche envasada entera,rest,true,3.24,1.02,1.02,2.1,6.7,,coarse,4.14.1.1,informe_table,
+LECHE_SEMIDESNATADA,Leche envasada semidesnatada,rest,true,4.94,1.46,0.96,-0.9,2.0,,coarse,4.14.1.2,informe_table,O tipo de maior volume dentro do leite liquido.
+LECHE_DESNATADA,Leche envasada desnatada,rest,true,2.36,0.68,0.94,-6.1,-4.9,,coarse,4.14.1.3,informe_table,
+LECHE_ENRIQUECIDA,Leche enriquecida,rest,false,1.46,0.47,1.05,-3.9,-0.5,,coarse,4.14.1.6,informe_table,"CORTE TRANSVERSAL de entera/semi/desnatada. Somar com elas passaria de 100%."
+LECHE_SIN_LACTOSA,Leche sin lactosa,rest,false,1.49,0.47,1.02,-1.2,0.3,,coarse,4.14.1.7,informe_table,CORTE TRANSVERSAL. Mesma ressalva.
+DERIVADOS_LACTEOS,Derivados lacteos,rest,false,5.85,8.74,4.85,4.2,8.1,,coarse,4.14.2,informe_table,Agregado. Nao entra como peso.
+QUESOS,Quesos,rest,true,1.42,4.34,9.96,5.0,11.1,,coarse,4.14.2.1,informe_table,
+LECHES_FERMENTADAS,Leches fermentadas,rest,true,2.30,1.85,2.61,5.4,2.2,,coarse,4.14.2.2,informe_table,Cobre iogurte e leite fermentado no catalogo.
+LEGUMBRES,Legumbres,rest,true,0.60,0.40,2.18,3.0,5.3,3.0,fine,4.15,informe_table,
+MIEL,Miel,rest,true,0.06,0.13,7.55,3.2,6.6,,coarse,4.16,informe_table,
+PAN,Pan,fresh,true,4.76,3.96,2.70,0.1,3.0,0.8,fine,4.18.1,informe_table,"Cobre pan de horno, de molde e tostado no catalogo. Menor share de e-commerce do informe."
+HARINAS_SEMOLAS,Harinas y semolas,rest,true,0.35,0.16,1.47,-1.2,1.6,2.6,fine,4.18.2,informe_table,
+PASTAS,Pastas,rest,true,0.74,0.60,2.65,-0.2,1.1,,coarse,4.19,informe_table,
+PATATAS,Patatas,fresh,true,4.52,1.85,1.33,1.0,0.1,1.7,fine,4.20,informe_table,"Cobre fresca, congelada e processada. Separavel no catalogo so no nivel 3 (Verdura > Patata)."
+PATATAS_FRESCAS,Patatas frescas,fresh,false,3.07,1.16,1.23,0.6,-0.3,1.3,fine,4.20.1,informe_table,Subconjunto de PATATAS. Nao entra como peso.
+PESCADOS_MARISCOS,Pescados y mariscos,rest,false,3.08,11.01,11.59,-1.1,3.1,1.3,fine,4.21,informe_table,Agregado. Nao entra como peso.
+PESCADO_FRESCO,Pescado fresco,fresh,true,1.21,4.10,10.98,-4.3,1.1,0.8,fine,4.21.1,informe_table,"39,4% do volume e 37,3% do valor do sector pesqueiro."
+MARISCOS_MOLUSCOS_CRUSTACEOS,Mariscos moluscos y crustaceos,fresh,true,0.81,2.88,11.50,2.9,8.1,0.9,fine,4.21.2,informe_table,"O CASO QUE ABRIU ESTA FASE: 0,81% do volume contra 2,88% do valor. Volume e valor NAO sao a mesma distribuicao, e a diferenca e legitima."
+PESCADOS_CONGELADOS,Pescados congelados,rest,true,0.35,1.17,,1.5,4.9,,coarse,4.21,derived,"Derivado da tabela de importancia dos tipos: 11,4% do volume e 10,6% do valor do sector pesqueiro (3,08 e 11,01). Preco medio nao derivado: as duas derivacoes possiveis dao 10,28 e 10,85, e escolher uma seria inventar a terceira casa."
+CONSERVAS_PESCADO_MARISCO,Conservas de pescado y marisco,rest,true,0.71,2.87,13.16,-1.3,0.4,2.2,fine,4.21.3,informe_table,"Segundo segmento do sector: 22,9% do volume e 26,0% do valor."
+PLATOS_PREPARADOS,Platos preparados,rest,true,3.14,5.51,5.69,5.5,9.4,1.9,fine,4.22,informe_table,
+ACEITUNAS,Aceitunas,rest,false,,,4.57,,,,coarse,4.2,informe_prose,"SEM SHARE PUBLICADO. A secao traz share por tipo DENTRO da categoria, nunca a participacao da categoria no total. Preco de 4,57 EUR/kg vem da prosa. Sem alvo de volume: vai para o bloco sem benchmark."
+CEREALES,Cereales de desayuno,rest,false,,,4.60,,,4.8,fine,4.5.2,informe_prose,"SEM SHARE PUBLICADO: a subsecao nao tem tabela-cabecalho. Preco da prosa."
+GALLETAS,Galletas,rest,false,,,4.95,,,2.2,fine,4.5.3,informe_prose,SEM SHARE PUBLICADO. Preco da prosa.
+PRODUCTOS_NAVIDENOS,Productos navidenos,rest,false,,,12.62,,,1.3,fine,4.5.4,informe_prose,"SEM SHARE PUBLICADO. Preco da prosa. Sazonalidade evidente no nome, sem numero mensal publicado."
+GASEOSAS_REFRESCOS,Gaseosas y bebidas refrescantes,rest,false,,,,,,,coarse,4.4.4,informe_prose,"SEM TABELA-CABECALHO. Por subtracao dentro de BEBIDAS daria ~6,4 pontos de volume, mas a subtracao presume que o grupo tem exatamente os seis filhos listados no indice — presuncao que o informe nao confirma. Nao derivado de proposito."
+OTROS_ALIMENTOS,Otros alimentos,rest,false,,,,,,,coarse,4.17,informe_table,"EXCLUIDO POR AMBIGUIDADE: dois blocos diferentes na mesma secao devolvem 0,41 e 1,04 de share de volume, e o texto nao desambigua. Publicar um dos dois seria escolher no escuro."
+SIN_GLUTEN,Alimentos sin gluten,rest,false,3.75,5.12,4.43,5.4,10.4,4.5,fine,4.23,informe_table,"CORTE TRANSVERSAL, nao categoria disjunta. Somar com as demais passaria de 100%."
+ECOLOGICOS,Alimentos ecologicos,rest,false,2.31,3.31,4.66,-0.3,6.8,4.6,fine,4.24,informe_table,CORTE TRANSVERSAL. Mesma ressalva.
+SIN_BENCHMARK,Alimentar sem benchmark do MAPA,rest,false,,,,,,,coarse,,none,"Destino declarado de todo grupo alimentar do catalogo que o informe nao mede com share de volume. Recebe share de linhas por premissa, nunca alvo de volume."
+NO_FOOD,Nao alimentar,none,false,,,,,,,coarse,,none,"Fora do universo do MAPA: cuidado pessoal, cabelo, maquiagem, limpeza, mascotas, parafarmacia, menaje. O informe mede alimentos e bebidas e nao tem nada a dizer sobre isto."

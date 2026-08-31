@@ -1,0 +1,13 @@
+month,factor,label,rationale
+1,1.0,synthetic,"NEUTRO POR AUSENCIA DE EVIDENCIA, nao por esquecimento. Os graficos 'Evolucion mensual' do informe sao IMAGENS: so os rotulos dos eixos saem no texto extraido, os valores nao. Em prosa ha cinco numeros mensais, e so para o total da alimentacao. Nenhum perfil mensal POR CATEGORIA e extraivel."
+2,1.0,synthetic,"Idem. O menor gasto mensal de 2025 foi fevereiro (6.523,75 milhoes de EUR) — numero do TOTAL, que nao se distribui por categoria sem inventar a distribuicao."
+3,1.0,synthetic,Idem.
+4,1.0,synthetic,Idem.
+5,1.0,synthetic,Idem.
+6,1.0,synthetic,"Idem. Junho e o segundo mes mais baixo do total (6.957,58 milhoes de EUR)."
+7,1.0,synthetic,Idem.
+8,1.0,synthetic,"Idem. E O UNICO MES QUE A JANELA DO SIMULADOR COBRE: 2026-08-24 a 2026-08-27. Nao existe eixo mensal para exercer um perfil sazonal, e um fator diferente de 1,0 aqui seria indistinguivel de um erro de calibracao."
+9,1.0,synthetic,Idem.
+10,1.0,synthetic,"Idem. Outubro e o terceiro maior gasto do total (7.658,68 milhoes de EUR)."
+11,1.0,synthetic,"Idem. O informe afirma em prosa que pescados e mariscos concentram compras em novembro e dezembro, sem publicar o multiplicador. GATILHO: quando a janela cobrir novembro, um perfil pode ser proposto."
+12,1.0,synthetic,"Idem. Dezembro e o maior gasto do ano (8.765,94 milhoes de EUR) e o informe cita concentracao em pescado, mariscos, espirituosas e produtos navidenos — sempre sem numero por categoria. GATILHO: janela cobrindo dezembro."

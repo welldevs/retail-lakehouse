@@ -100,6 +100,11 @@ def run(args) -> int:
             "seed": args.seed,
             "orders": totals["order_rows"],
             "premises_sha256": reference.premises_sha256,
+            # QUARTA CONDICAO NAO-ADITIVA. Trocar o modelo de demanda troca os pedidos por
+            # tras dos mesmos ids, exatamente como trocar seed, referencia ou premissas.
+            # Fica no config, e nao so na referencia, para que reler uma particao antiga
+            # responda com que modelo ela nasceu sem depender do export ainda existir.
+            "demand_model_version": reference.demand.version,
             "reference": os.path.normpath(args.reference),
         },
         # Proveniencia do insumo: quais snapshots sustentam estes pedidos.
@@ -113,6 +118,9 @@ def run(args) -> int:
             "window_to": reference.window_to,
             "premises_seed_path": reference.premises_seed_path,
             "premises_sha256": reference.premises_sha256,
+            "demand_model_version": reference.demand.version,
+            "demand_benchmark": reference.demand.benchmark,
+            "demand_seeds_sha256": reference.demand.seeds_sha256,
         },
         "totals": totals,
         "schema_fingerprint": fingerprint(),
@@ -141,6 +149,7 @@ def run(args) -> int:
     print(f"  preco .......... price_as_of={calendar['price_as_of']} "
           f"({calendar['price_source']})")
     print(f"  premissas ...... sha256={reference.premises_sha256[:16]}... (todas sinteticas)")
+    print(f"  demanda ........ {reference.demand.version} ({len(reference.demand.groups)} grupos)")
     print(f"seed ............. {args.seed} (sub-seed do dia derivada por sha256)")
     print(f"pedidos .......... {totals['order_rows']} de {totals['customers_used']} cliente(s)")
     print(f"eventos .......... {totals['event_rows']} em {len(totals['event_rows_by_type'])} tipos")

@@ -11,18 +11,29 @@ O QUE E SORTEADO, E O QUE ISSO SIGNIFICA
     dia + armazem -> sub-seed proprio
                   -> quais clientes pedem hoje (UNIFORME, sem reposicao)
                   -> quantas linhas tem a cesta (triangular declarada)
-                  -> quais produtos (UNIFORME entre os do catalogo daquele armazem e dia)
+                  -> qual GRUPO DE DEMANDA (ponderado pelo perfil calibrado contra o MAPA)
+                  -> qual produto DENTRO do grupo (UNIFORME)
                   -> quantidade por linha (decrescente, derivada de quantity_max)
                   -> horario, janela de entrega e marcos (faixas declaradas)
                   -> quais linhas sao substituidas ou removidas (taxas declaradas)
                   -> qual ramo terminal o pedido segue (taxas declaradas)
 
-A ESCOLHA DO PRODUTO E UNIFORME DE PROPOSITO, e isso NAO e "cesta realista": nenhuma fonte
-deste repo mede venda, giro ou composicao de cesta. Ponderar produto inventaria uma
-distribuicao que ninguem mediu — a mesma proibicao que a Fase 1 aplicou a escolha do tramo
-("nao existe populacao por rua nem por tramo em nenhuma fonte que esta plataforma ingere").
-A consequencia declarada: o mix por categoria espelha o TAMANHO do sortimento, e isso e
-consequencia de uma premissa, nao afirmacao sobre o mercado.
+A ESCOLHA DO PRODUTO DENTRO DO GRUPO CONTINUA UNIFORME, de proposito: nenhuma fonte deste
+repo mede giro por SKU, e ponderar produto inventaria uma distribuicao que ninguem mediu — a
+mesma proibicao que a Fase 1 aplicou a escolha do tramo ("nao existe populacao por rua nem
+por tramo em nenhuma fonte que esta plataforma ingere").
+
+O QUE MUDOU NA FASE 4 e o nivel acima. Antes, o produto era sorteado uniformemente sobre o
+CATALOGO INTEIRO, e a consequencia declarada era que o mix por categoria espelhava o TAMANHO
+DO SORTIMENTO. Agora existe uma ancora observacional que nao existia: o Informe del Consumo
+Alimentario en España 2025 do MAPA. O grupo de demanda e sorteado com peso calibrado contra
+o volume domestico espanhol, inclinado pela participacao do e-commerce; o produto dentro do
+grupo continua uniforme.
+
+A FRONTEIRA, que importa mais que a calibracao: o MAPA mede consumo domestico do residente.
+NAO mede pedido de loja online, nem cesta, nem cadencia de compra. Por isso `daily_order_rate`,
+`basket_lines_*` e `quantity_max` continuam premissas `synthetic` sem calibracao nenhuma, e
+o terco nao alimentar do catalogo — que o informe nao cobre — recebe share declarado.
 
 REPRODUTIBILIDADE: SUB-SEED POR (ARMAZEM, DIA)
 -----------------------------------------------
@@ -150,8 +161,27 @@ def _order_id(wh: str, order_date: str, index: int) -> str:
 
 
 def _basket(rng, reference, premises, wh, price_as_of):
-    """Monta a cesta: linhas com produto real, preco real, quantidade sorteada."""
+    """Monta a cesta: linhas com produto real, preco real, quantidade sorteada.
+
+    DOIS PASSOS, e a separacao entre eles e o que esta fase inteira introduziu:
+
+        1. GRUPO DE DEMANDA, ponderado pelo perfil calibrado contra o MAPA.
+        2. PRODUTO DENTRO DO GRUPO, uniforme.
+
+    O passo 2 continua uniforme de proposito: nenhuma fonte deste repo mede giro por SKU, e
+    ponderar produto inventaria uma distribuicao que ninguem mediu. O que mudou foi so o
+    passo 1 — antes, o produto era sorteado uniformemente sobre o CATALOGO INTEIRO, e o mix
+    por categoria espelhava o TAMANHO DO SORTIMENTO. Um catalogo tem 475 SKUs de cuidado
+    facial e 162 de fruta e verdura; um domicilio nao compra nessa proporcao.
+
+    PRECO NAO ENTRA EM NENHUM DOS DOIS SORTEIOS. Ele so aparece depois, copiado da
+    referencia. Uma categoria cara pode ter volume baixo e receita alta, e isso e resultado
+    do modelo, nao defeito: no MAPA, mariscos sao 0,81% do volume e 2,88% do valor.
+    """
     catalog = reference.catalog_of(wh, price_as_of)
+    grupos = reference.demand_groups_of(wh, price_as_of)
+    cumulative = reference.demand_cdf_of(wh, price_as_of)
+
     low = premises.integer("basket_lines_min")
     high = premises.integer("basket_lines_max")
     mode = premises.integer("basket_lines_mode")
@@ -161,7 +191,27 @@ def _basket(rng, reference, premises, wh, price_as_of):
     wanted = min(wanted, len(catalog))
 
     quantity_cumulative = _quantity_weights(premises.integer("quantity_max"))
-    positions = _sample_indices(rng, len(catalog), wanted)
+
+    # SEM REPOSICAO, como antes: um produto aparece no maximo uma vez na cesta. A diferenca
+    # e que agora a exclusao pode esgotar um GRUPO pequeno (MIEL tem 5 produtos). Quando
+    # isso acontece o sorteio do grupo e refeito — e a tentativa gasta consumiu uma extracao
+    # do rng, o que mantem a sequencia deterministica em vez de "pular" silenciosamente.
+    # O teto de tentativas existe para que um perfil patologico falhe rapido em vez de
+    # travar; nunca foi atingido na janela medida.
+    positions: list[int] = []
+    taken: set = set()
+    tentativas = 0
+    teto = max(wanted * 8, 32)
+    while len(positions) < wanted and tentativas < teto:
+        tentativas += 1
+        grupo = reference.demand.pick(rng, grupos, cumulative)
+        candidatos = reference.positions_in_demand_group(wh, price_as_of, grupo)
+        livres = [p for p in candidatos if p not in taken]
+        if not livres:
+            continue
+        escolhido = livres[rng.randrange(len(livres))]
+        taken.add(escolhido)
+        positions.append(escolhido)
 
     lines = []
     for line_no, position in enumerate(positions, start=1):
@@ -175,6 +225,7 @@ def _basket(rng, reference, premises, wh, price_as_of):
                 "display_name": product["display_name"],
                 "category_id": product["category_id"],
                 "subgroup_id": product["subgroup_id"],
+                "demand_group": product["demand_group"],
                 "quantity": quantity,
                 "unit_price": product["unit_price"],
             }
@@ -196,6 +247,10 @@ def _substitute_for(rng, reference, wh, price_as_of, line, taken: set) -> dict |
     for candidates in (
         reference.substitutes_in_subgroup(wh, price_as_of, line["subgroup_id"]),
         reference.substitutes_in_category(wh, price_as_of, line["category_id"]),
+        # Terceiro nivel: o mesmo GRUPO DE DEMANDA. Mais largo que a categoria da fonte e
+        # ainda dentro do que a calibracao considera a mesma necessidade — trocar merluza
+        # por dourada e substituicao; trocar por xampu nao seria.
+        reference.positions_in_demand_group(wh, price_as_of, line["demand_group"]),
     ):
         livres = [p for p in candidates if catalog[p]["source_product_id"] not in taken]
         if livres:
@@ -280,6 +335,10 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
                     "source_product_id": line["source_product_id"],
                     "category_id": line["category_id"],
                     "subgroup_id": line["subgroup_id"],
+                    # No evento, e nao apenas na referencia: e assim que o Silver pode
+                    # agrupar por grupo de demanda sem reimplementar o de-para, e assim que
+                    # `validate` reconfere o carimbo contra a referencia em vez de confiar.
+                    "demand_group": line["demand_group"],
                     "quantity": line["quantity"],
                     "unit_price": str(line["unit_price"]),
                 }
@@ -475,11 +534,19 @@ def generate(reference, premises, wh: str, order_date: str, seed: int) -> list[d
             f"em {min(reference.customer_ingestion_dates)}."
         )
 
-    wanted = round(len(eligible) * premises.number("daily_order_rate"))
+    # SAZONALIDADE ENTRA AQUI, NA TAXA DE PEDIDOS — nunca no mix. A distincao vem da
+    # evidencia: o informe do MAPA publica gasto mensal do TOTAL da alimentacao e NAO publica
+    # perfil mensal por categoria (os graficos mensais sao imagens). Um fator global sobre o
+    # mix se normalizaria e nao faria nada. O perfil entregue e neutro em todos os 12 meses,
+    # por ausencia de evidencia numerica e porque a janela cobre so agosto — mas o mecanismo
+    # existe e tem teste que prova que um perfil nao neutro muda a saida.
+    fator = reference.demand.seasonal_factor(base_day.month)
+    taxa = premises.number("daily_order_rate") * fator
+    wanted = round(len(eligible) * taxa)
     if wanted <= 0:
         raise GenerationError(
-            f"daily_order_rate={premises.number('daily_order_rate')} sobre {len(eligible)} "
-            f"cliente(s) da zero pedido em {order_date}"
+            f"daily_order_rate={premises.number('daily_order_rate')} x fator sazonal "
+            f"{fator} sobre {len(eligible)} cliente(s) da zero pedido em {order_date}"
         )
 
     # Sem reposicao: um cliente faz no maximo um pedido por dia. E uma simplificacao
