@@ -141,13 +141,14 @@ não efeito colateral de pipeline.
 │   │   ├── snowflake_load.py           # transporte: DDL, PUT em stage interno, COPY INTO, papéis
 │   │   ├── snowflake_evidence.py       # observa o destino e escreve a evidência datada
 │   │   ├── stream_evidence.py          # observa os TRÊS planos vivos; ausência é declarada
+│   │   ├── silver_gate.py              # o que excluir do dbt build do Silver — UM lugar só
 │   │   └── cli.py                      # land / verify-landing / query / prune-local / has-data
 │   │                                   # / export-oltp-reference / export-orders-reference
 │   │                                   # / orders-oltp-ddl / orders-oltp-init
 │   │                                   # / orders-apply / orders-outbox
 │   │                                   # / export-snowflake / snowflake-ddl
 │   │                                   # / snowflake-bootstrap / load-snowflake / snowflake-evidence
-│   │                                   # / stream-evidence
+│   │                                   # / stream-evidence / silver-build
 │   ├── dbt/seeds/
 │   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
 │   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
@@ -866,7 +867,7 @@ descritos em [ARCHITECTURE.md](ARCHITECTURE.md), e viraram teste.
 **Trocar de conta Snowflake** é editar `.env.snowflake` e o bloco correspondente de
 `~/.snowflake/config.toml`, e rodar `make warehouse-bootstrap`. Nenhum modelo, nenhum SQL e
 nenhum teste muda: a fronteira L2→L3 é física. A metade Lakehouse não depende disso —
-`make silver` e as 919 checagens de `make test` rodam sem nenhuma variável de Snowflake
+`make silver` e as 930 checagens de `make test` rodam sem nenhuma variável de Snowflake
 definida.
 
 **Evidência datada.** A metade Snowflake não é reproduzível offline como o Lakehouse, e a
@@ -879,6 +880,33 @@ completam isso estão listados em
 ```bash
 make warehouse-ddl   # imprime o DDL do STAGE sem conectar em nada (derivado do recorte)
 ```
+
+## O portão do `dbt build` do Silver
+
+Nem todos os 21 modelos podem ser construídos sempre, e os dois motivos são legítimos: uma
+source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver zero linhas), e
+`silver_live_order_state` só pode ser lido quando o catálogo Iceberg responde.
+
+`make silver` e as cinco DAGs chamam **o mesmo verbo**, e ele diz o que decidiu:
+
+```
+mercadona_catalog_api....... aterrissado
+ine_population_api.......... aterrissado
+ine_callejero............... aterrissado
+simulated_oltp.............. aterrissado
+simulated_orders............ aterrissado
+projecao iceberg............ CATALOGO INDISPONIVEL (excluida)
+argumentos ................. --exclude silver_live_order_state assert_live_projection_matches_batch_fold
+```
+
+**Isto já morou em seis arquivos**, e o custo apareceu: a DAG da Mercadona não tinha portão
+nenhum — ela sempre tem dado, então ninguém sentiu falta — e passou a reprovar todo dia
+assim que o Marco 6 criou um modelo que não tem nada a ver com a source dela. `make silver`
+passava, `make test` passava, e só a execução real reprovava, um dia depois.
+
+`plan()` é **pura**, então a decisão inteira é testável sem MinIO e sem catálogo. E uma
+checagem de fonte exige que nenhuma DAG monte o próprio `dbt build`, porque **um portão
+único só vale enquanto for o único**. Ver [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Consultar o Silver
 
@@ -948,8 +976,8 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 919 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                    + 125 OLTP simulado + 130 pedidos + 288 plataforma
+make test          # 930 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                    + 125 OLTP simulado + 130 pedidos + 299 plataforma
 make silver        # dbt build no DuckDB: 21 modelos + 5 seeds + 293 testes de dados
 make warehouse     # dbt build no Snowflake: 21 modelos + 149 testes de dados
 ```

@@ -46,7 +46,6 @@ PLATFORM_SRC = f"{REPO}/platform/src"
 # com /opt/platform-venv.
 SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
-DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
 # Quatro cidades, escolhidas por DIVERGENCIA DE SORTIMENTO medida contra a fonte, nao por
 # tamanho de mercado. Os armazens de uma mesma cidade (mad1/mad2/mad3) tem conjuntos de
@@ -209,9 +208,23 @@ def verify_landing(ds: str, warehouse: str, **_) -> None:
 
 
 def silver(**_) -> None:
-    code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
-                 "--profiles-dir", f"{REPO}/platform/dbt"],
-                {"PYTHONPATH": PLATFORM_SRC})
+    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+
+    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
+    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
+    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
+    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
+    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
+    source desta DAG.
+
+    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
+    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    """
+    code = _run_platform([
+        "silver-build",
+        "--project-dir", f"{REPO}/platform/dbt",
+        "--profiles-dir", f"{REPO}/platform/dbt",
+    ])
     if code != EXIT_OK:
         raise RuntimeError(f"dbt build falhou (exit {code})")
 

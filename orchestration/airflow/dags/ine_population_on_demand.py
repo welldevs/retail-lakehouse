@@ -43,7 +43,6 @@ PLATFORM_SRC = f"{REPO}/platform/src"
 
 SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
-DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
 TABLES = os.environ.get("RETAIL_INE_TABLES", "31304")
 
@@ -146,18 +145,23 @@ def verify_landing(ds: str, **_) -> None:
 
 
 def silver(**_) -> None:
-    # Mesma invocacao da Mercadona: `dbt build` cobre o projeto inteiro, entao os modelos
-    # silver_ine_population_series e silver_ine_population_by_municipality sao pegos
-    # automaticamente, sem alvo dedicado. Faz o mesmo `retail-platform has-data` do
-    # Makefile antes de excluir os modelos do build quando nada foi aterrissado ainda —
-    # ver Makefile, alvo `silver`.
-    has_data = _run_platform(["has-data", "ine_population_api"]) == EXIT_OK
-    exclude = [] if has_data else [
-        "--exclude", "silver_ine_population_series", "silver_ine_population_by_municipality",
-    ]
-    code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
-                 "--profiles-dir", f"{REPO}/platform/dbt", *exclude],
-                {"PYTHONPATH": PLATFORM_SRC})
+    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+
+    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
+    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
+    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
+    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
+    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
+    source desta DAG.
+
+    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
+    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    """
+    code = _run_platform([
+        "silver-build",
+        "--project-dir", f"{REPO}/platform/dbt",
+        "--profiles-dir", f"{REPO}/platform/dbt",
+    ])
     if code != EXIT_OK:
         raise RuntimeError(f"dbt build falhou (exit {code})")
 

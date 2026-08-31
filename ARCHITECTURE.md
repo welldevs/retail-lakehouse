@@ -1518,6 +1518,7 @@ o motivo escrito abaixo.
 | **`TIMESTAMP` atravessava a fronteira 56 milhões de anos no futuro** | **Fechada** no Marco 7, no dia em que foi achada. `use_logical_type = true` no `COPY INTO`; o DuckDB anota a unidade só no `LogicalType` moderno e o Snowflake caía no `ConvertedType` legado. **166 nós do dbt construíram em verde por cima do defeito** — quem apontou foi um humano lendo um mart. Guardado agora por `assert_order_milestones_are_plausible_against_the_order_date` |
 | Contagem de eventos virando `FLOAT` no parquet | **Fechada** no Marco 7. `sum()` devolve `HUGEINT`, o parquet não tem `INT128`, a escrita rebaixa para `DOUBLE`. Achada pelo DDL ser derivado do próprio recorte |
 | **Premissa do gerador vivendo em dois lugares** | **Evitada** no Marco 7 em vez de fechada: `STG_ORDER_PREMISE`/`FACT_ORDER_PREMISE` carregam o seed inteiro para o warehouse, então `MART_FULFILLMENT_SLA` mede contra o mesmo número que gerou as durações. Uma var do dbt teria criado a cópia |
+| **O portão do `dbt build` do Silver morava em seis arquivos** | **Fechado em 2026-08-31**, no dia em que a DAG reprovou. Ver abaixo |
 | **Metade em streaming sem registro de execução real** | **Fechada** no Marco 8. `make stream-evidence` escreve `docs/stream-evidence/README.md` a partir dos três planos vivos — nenhum número à mão, e seção ausente aparece como ausência declarada, nunca como zero |
 
 ### Vestir os papéis: o que só aparece quando se para de rodar como administrador
@@ -1751,6 +1752,70 @@ fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e 
 `+format: parquet` em `dbt_project.yml`. É config do `dbt-duckdb`, não do dbt-core, e mover
 para `config.meta` como o aviso sugere pode quebrar a materialização `external`. Deixado
 como está até o `dbt-duckdb` publicar a forma suportada; o aviso é ruído, não sintoma.
+
+## O portão do Silver morava em seis arquivos, e nenhum concordava com o outro
+
+Achado em 2026-08-31 pela execução real: `mercadona_catalog_daily` reprovava **todo dia** na
+última tarefa. Os quatro armazéns extraíam, validavam, aterrissavam e verificavam com
+sucesso; o `silver` caía com *"no version-hint could be found"*.
+
+**O dado estava certo o tempo inteiro. O portão é que morava no arquivo errado.**
+
+### A decisão, e as seis cópias dela
+
+Nem todos os 21 modelos do Silver podem ser construídos sempre, e os dois motivos são
+legítimos: uma source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver
+zero linhas), e `silver_live_order_state` só pode ser lido quando o catálogo Iceberg
+responde, porque o caminho do metadado vem dele e nunca de uma varredura do storage.
+
+Essa decisão existia em seis lugares:
+
+| Onde | Portões que tinha |
+|---|---|
+| alvo `silver` do Makefile | os cinco — quatro sources + Iceberg |
+| `simulated_orders_events` | um — a própria source |
+| `ine_population_on_demand` | um — a própria source |
+| `ine_callejero_on_demand` | um — a própria source |
+| `simulated_oltp_customers` | um — a própria source |
+| **`mercadona_catalog_daily`** | **nenhum** |
+
+A Mercadona sempre tem dado, então ninguém sentiu falta do portão dela — até o Marco 6
+criar um modelo que **não tem nada a ver com a source daquela DAG** e que ela passou a
+tentar construir todo dia.
+
+### Por que nada pegou
+
+`make silver` passava — tem o portão completo. `make test` passava — não olha DAG. A suíte
+do dbt nunca chegava a rodar. Só a execução real reprovava, e um dia depois, o que é a
+distância máxima entre a causa e o sintoma neste repositório.
+
+### O que ficou
+
+Um verbo: `retail_platform silver-build`, sobre `silver_gate.py`. `plan()` é **pura** —
+recebe o que foi observado e devolve `--exclude`/`--vars` — então a decisão inteira é
+exercitável sem MinIO e sem catálogo. Makefile e as cinco DAGs chamam o mesmo verbo.
+
+E uma checagem de fonte, porque **um portão único só vale enquanto for o único**: a suíte
+exige que nenhuma DAG do Silver monte o próprio `dbt build`, e que todo modelo de source
+esteja atribuído a alguma source em `SOURCE_MODELS`. A segunda é a que pega o modelo *novo*
+— quem criar um e esquecer de registrá-lo reproduz este defeito exatamente. As duas foram
+provadas capazes de reprovar antes de serem aceitas.
+
+### O segundo achado, que o primeiro escondia
+
+Com o portão certo, o container do Airflow passou a **excluir** a projeção — e a excluir
+sempre. `orders_projection.catalog()` cai num default `localhost:5433`, que dentro do
+container é o próprio container.
+
+**Isso não reprova nada**: o build fica verde com uma tabela a menos, que é o pior tipo de
+sucesso. Resolvido dando ao serviço o seu próprio endereço
+(`ICEBERG_CATALOG_URI: postgresql+psycopg://oltp:oltp@oltp-postgres:5432/iceberg_catalog`),
+que é a diferença entre *"não pode"* e *"não tentou"*.
+
+E, ao verificar, apareceu o terceiro: a **imagem do Airflow em execução era anterior ao
+Marco 5** — sem `psycopg`, `confluent-kafka` nem `pyiceberg`. O `Dockerfile.airflow` já
+tinha a verificação de import que quebra o build quando uma dependência some; ela estava
+certa e ninguém a executou. Reconstruída, o Airflow constrói os 319 nós.
 
 ## Dois defeitos de orquestração que só apareceram com dois armazéns
 

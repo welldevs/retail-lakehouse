@@ -200,6 +200,31 @@ def _cmd_query(args) -> int:
     return EXIT_OK
 
 
+def _cmd_silver_build(args) -> int:
+    """`dbt build` do Silver com o portao aplicado — o UNICO lugar que decide o que excluir.
+
+    Antes de 2026-08-31 essa decisao vivia em seis arquivos: o alvo `silver` do Makefile,
+    com os cinco portoes, e cada uma das cinco DAGs, com o portao da propria source e mais
+    nenhum. A DAG da Mercadona nao tinha portao algum — a Mercadona sempre tem dado, entao
+    ninguem sentiu falta — e passou a reprovar todo dia assim que `silver_live_order_state`
+    nasceu no Marco 6. Ver silver_gate.py.
+    """
+    from .silver_gate import build
+
+    codigo, argumentos, observado = build(
+        args.project_dir, args.profiles_dir, dbt=args.dbt, extra=args.dbt_args or None
+    )
+    if not args.quiet:
+        for prefixo, presente in observado["landed"].items():
+            print(f"{prefixo:.<28} {'aterrissado' if presente else 'AUSENTE (excluido)'}")
+        metadado = observado["iceberg_metadata"]
+        print(f"{'projecao iceberg':.<28} "
+              f"{metadado if metadado else 'CATALOGO INDISPONIVEL (excluida)'}")
+        if argumentos:
+            print(f"argumentos ................. {' '.join(argumentos)}")
+    return EXIT_OK if codigo == 0 else EXIT_FAILED
+
+
 def _cmd_has_data(args) -> int:
     """Existe ao menos um objeto aterrissado sob <raw_bucket>/<prefixo>/?
 
@@ -1230,6 +1255,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="destino do markdown; '-' escreve na saida padrao",
     )
     stream_ev.set_defaults(handler=_cmd_stream_evidence)
+
+    silver_build = subparsers.add_parser(
+        "silver-build",
+        help="dbt build do Silver com o portao (exclusoes + var do Iceberg) aplicado",
+    )
+    silver_build.add_argument("--project-dir", default="platform/dbt")
+    silver_build.add_argument("--profiles-dir", default="platform/dbt")
+    silver_build.add_argument("--dbt", default=None, help="executavel; padrao RETAIL_DBT")
+    silver_build.add_argument("--quiet", action="store_true")
+    silver_build.add_argument(
+        "dbt_args", nargs="*",
+        help="argumentos extras repassados ao dbt, depois do portao",
+    )
+    silver_build.set_defaults(handler=_cmd_silver_build)
 
     has_data_parser = subparsers.add_parser(
         "has-data",

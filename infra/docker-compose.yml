@@ -52,6 +52,20 @@ x-airflow-common: &airflow-common
     # com mensagem acionavel — nao com timeout — quando `make stream-up` nao rodou.
     OLTP_DSN: postgresql://oltp:oltp@oltp-postgres:5432/oltp
     PROJECTION_DSN: postgresql://oltp:oltp@oltp-postgres:5432/projection
+    # O CATALOGO ICEBERG PRECISA DO SEU PROPRIO ENDERECO, e a falta dele foi silenciosa por
+    # tres dias. `orders_projection.catalog()` cai num default `localhost:5433` que so vale
+    # para quem roda no host; dentro do container `localhost` e o proprio container, entao a
+    # conexao falhava e `silver_live_order_state` ficava permanentemente fora do build.
+    #
+    # Sem esta linha nada REPROVA — o portao apenas exclui o modelo e o build fica verde com
+    # uma tabela a menos, que e o pior tipo de sucesso. Com ela, o Airflow constroi a
+    # projecao quando `make stream-up` esta de pe e a exclui quando nao esta, que e a
+    # diferenca entre "nao pode" e "nao tentou".
+    #
+    # `postgresql+psycopg://` e nao `postgresql://`: o SqlCatalog usa SQLAlchemy, e sem o
+    # driver explicito ele procura psycopg2, que nao esta instalado (a plataforma usa
+    # psycopg 3).
+    ICEBERG_CATALOG_URI: postgresql+psycopg://oltp:oltp@oltp-postgres:5432/iceberg_catalog
     KAFKA_BOOTSTRAP: kafka:19092
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}

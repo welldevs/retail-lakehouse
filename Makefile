@@ -356,14 +356,12 @@ silver:
 	  echo "      tente de novo, ou use: make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb"; \
 	  echo "      O arquivo so guarda views: nada se perde ao recria-lo."; \
 	  exit 2; }
-	$(eval SILVER_EXCLUDE := $(shell $(PLATFORM_PY) -m retail_platform has-data ine_population_api >/dev/null 2>&1 || echo "--exclude silver_ine_population_series silver_ine_population_by_municipality"))
-	$(eval SILVER_EXCLUDE += $(shell $(PLATFORM_PY) -m retail_platform has-data ine_callejero >/dev/null 2>&1 || echo "--exclude silver_callejero_sections silver_callejero_population_units silver_callejero_streets silver_callejero_pseudo_addresses silver_callejero_tramos"))
-	$(eval SILVER_EXCLUDE += $(shell $(PLATFORM_PY) -m retail_platform has-data simulated_oltp >/dev/null 2>&1 || echo "--exclude silver_customer silver_oltp_manifest"))
-	$(eval SILVER_EXCLUDE += $(shell $(PLATFORM_PY) -m retail_platform has-data simulated_orders >/dev/null 2>&1 || echo "--exclude silver_order_event silver_order silver_order_line silver_orders_manifest"))
-	$(eval ICEBERG_META := $(shell $(PLATFORM_PY) -m retail_platform iceberg-metadata --quiet 2>/dev/null))
-	$(eval SILVER_EXCLUDE += $(if $(ICEBERG_META),,--exclude silver_live_order_state assert_live_projection_matches_batch_fold))
-	$(eval SILVER_VARS := $(if $(ICEBERG_META),--vars '{live_order_state_metadata: $(ICEBERG_META)}',))
-	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt $(SILVER_EXCLUDE) $(SILVER_VARS)
+# O PORTAO MORA EM UM LUGAR SO: retail_platform/silver_gate.py. Ele decidia o que excluir
+# aqui E, em copia parcial, dentro de cada uma das cinco DAGs — seis lugares, nenhum igual
+# ao outro. A DAG da Mercadona nao tinha portao nenhum e reprovava todo dia desde que
+# `silver_live_order_state` nasceu. Um `--exclude` a mais neste arquivo nao chega no Airflow.
+	RETAIL_DBT=$(DBT) $(PLATFORM_PY) -m retail_platform silver-build \
+	  --project-dir platform/dbt --profiles-dir platform/dbt
 
 daily: extract validate land verify-landing silver
 	@echo ""
