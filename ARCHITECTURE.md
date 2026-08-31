@@ -1490,7 +1490,7 @@ seção ausente aparece como ausência declarada, nunca como zero — *"o outbox
 
 ## Dívida técnica
 
-Revisada em 2026-08-29, no fecho da Fase 3. Cinco itens em aberto, todos deliberados e com
+Revisada em 2026-08-31. Seis itens em aberto, todos deliberados e com
 o motivo escrito abaixo.
 
 | Item | Situação |
@@ -1510,7 +1510,7 @@ o motivo escrito abaixo.
 | **Árvore `models/warehouse/` sem teste offline** | **Em aberto**, e é consequência de uma escolha. Mitigada por `make warehouse-evidence` |
 | **Conta Snowflake é trial** | **Em aberto por natureza**, e o destino é trocável — verificado, não afirmado |
 | Aviso `CustomKeyInConfigDeprecation` do dbt | **Em aberto, cosmético.** Config do `dbt-duckdb`, sem forma suportada ainda |
-| **CI** | **Em aberto.** Cobriria a metade offline (919 testes + `make silver`), nunca a metade Snowflake |
+| **CI** | **Em aberto.** Cobriria a metade offline (947 testes + `make silver`), nunca a metade Snowflake |
 | Modelo Silver e DAG dos pedidos simulados | **Fechados** na Fase 3 (4 modelos, 8 testes singulares, `simulated_orders_events.py`) |
 | **Metade em streaming sem teste offline** | **Parcialmente fechada** nos Marcos 4, 5 e 6: `fake_pg.py` cobre a fronteira da transação, `fake_kafka.py` a ordem entre escrita e commit de offset, e `fake_iceberg.py` a fusão monotônica e o laço de retry — offline, em `make test`. Continua em aberto o que nenhum duplo cobre: que `rollback` desfaz, que o broker preserva ordem por chave, e que o Iceberg recusa commit de snapshot velho. Isso é `make orders-prove-atomicity`, `make orders-prove-stream` e `make orders-prove-projection` |
 | **Silver de pedidos afirmava separação que o log não declara** | **Fechada** no Marco 4, no dia em que foi achada: 5.508 linhas de 298 pedidos. Achada por dois folds independentes discordando, não por teste |
@@ -1519,6 +1519,8 @@ o motivo escrito abaixo.
 | Contagem de eventos virando `FLOAT` no parquet | **Fechada** no Marco 7. `sum()` devolve `HUGEINT`, o parquet não tem `INT128`, a escrita rebaixa para `DOUBLE`. Achada pelo DDL ser derivado do próprio recorte |
 | **Premissa do gerador vivendo em dois lugares** | **Evitada** no Marco 7 em vez de fechada: `STG_ORDER_PREMISE`/`FACT_ORDER_PREMISE` carregam o seed inteiro para o warehouse, então `MART_FULFILLMENT_SLA` mede contra o mesmo número que gerou as durações. Uma var do dbt teria criado a cópia |
 | **O portão do `dbt build` do Silver morava em seis arquivos** | **Fechado em 2026-08-31**, no dia em que a DAG reprovou. Ver abaixo |
+| Papel `RETAIL_READER` criado, verificado e sem nenhum consumidor | **Fechada em 2026-08-31.** O painel Streamlit é o primeiro a vesti-lo, e prova a recusa em GOLD/STAGE na própria tela |
+| **Nenhum mart junta cliente com pedido** | **Em aberto, e é a lacuna mais acionável do modelo.** Sem ela não há recompra, LTV, coorte nem receita por cliente. O elo existe em `FACT_ORDER.customer_sk`, no GOLD, fora do alcance do papel de BI. Não exige fonte nova — exige um mart com grão de cliente |
 | **Metade em streaming sem registro de execução real** | **Fechada** no Marco 8. `make stream-evidence` escreve `docs/stream-evidence/README.md` a partir dos três planos vivos — nenhum número à mão, e seção ausente aparece como ausência declarada, nunca como zero |
 
 ### Vestir os papéis: o que só aparece quando se para de rodar como administrador
@@ -1742,7 +1744,7 @@ em vez de por disciplina. Adiado para quando o repositório subir.
 
 Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
 com ele os 21 modelos e 149 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
-e as 919 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
+e as 947 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
 fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
 `390913`, com o login autenticando e nenhum warehouse disponível.
 
@@ -1752,6 +1754,77 @@ fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e 
 `+format: parquet` em `dbt_project.yml`. É config do `dbt-duckdb`, não do dbt-core, e mover
 para `config.meta` como o aviso sugere pode quebrar a materialização `external`. Deixado
 como está até o `dbt-duckdb` publicar a forma suportada; o aviso é ruído, não sintoma.
+
+## Painel de conferência: o terceiro papel finalmente vestido
+
+Streamlit sobre o `MART`, 16 indicadores em 6 grupos. O propósito declarado não é *mostrar
+dados* — é **conferir os indicadores antes de reconstruí-los no Power BI**, que é uma
+ferramenta onde a medida obviamente errada e a certa têm exatamente a mesma aparência.
+
+### O papel de BI deixa de ser decorativo
+
+Os três papéis existem desde a Fase 2. A carga passou a vestir `RETAIL_LOADER` e o dbt
+`RETAIL_TRANSFORMER` quando aquela dívida foi fechada; **`RETAIL_READER` continuava sem
+nenhum consumidor**. Este painel é o primeiro, e a consequência é concreta: ele lê `MART` e
+é *recusado pelo motor* em `GOLD` e `STAGE` — verificado ao vivo, na própria tela, com
+`use secondary roles none`.
+
+Isso tem um efeito de projeto que vale mais que a conveniência: quando um indicador pede algo
+que o papel não alcança, isso é **informação**, não obstáculo. Foi assim que a maior lacuna
+do modelo apareceu (abaixo).
+
+### O CONTRACT é gerado, não escrito
+
+`streamlit/indicators.py` carrega, para cada indicador, a pergunta, o grão, o tipo
+(observado/sintético) e o SQL **no mesmo objeto**. `streamlit/CONTRACT.md` é derivado dele.
+
+O motivo é o de sempre neste repositório, e aqui ele morde mais: o CONTRACT existe para
+alguém ler a consulta ao lado da explicação e decidir se o indicador está certo. Se os dois
+morassem em arquivos separados, divergiriam no primeiro ajuste — e **a conferência continuaria
+passando**, porque ninguém lê um SQL e um texto lado a lado procurando desacordo. Um teste
+offline reprova se o arquivo no disco não for o que o gerador produz, e foi provado capaz de
+reprovar.
+
+### As três armadilhas que o painel existe para publicar
+
+| Armadilha | Medido |
+|---|---|
+| **Perda de valor tem duas causas** | `SUM(gross) − SUM(net)` = 58.327,81 mistura cesta que encolheu na separação (4.834,73) com pedido que morreu antes dela (53.493,08). A soma fecha exatamente; um número único esconde qual está acontecendo, e são áreas diferentes — operação de loja contra pagamento |
+| **Ticket médio tem dois denominadores** | receita/separados = 134,57; receita/colocados = 128,30. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou lá |
+| **`orders_touching_category` não é aditivo** | somar as 151 categorias de um dia dá muito mais que os 1.600 pedidos daquele dia |
+
+E as duas que a Fase 3 já havia registrado voltam aqui como aviso na tela, porque é onde
+alguém as leria errado: `orders_breaching_sla = 0` só é legível ao lado do limiar (90) e do
+máximo observado (80); e a aderência à janela de 8% precisa das três contagens, porque
+**5.166 das 6.046 entregas chegam antes de a janela abrir** — chegar cedo e chegar tarde são
+problemas opostos.
+
+### A lacuna que o exercício revelou
+
+**Nenhum mart junta cliente com pedido.** `MART_CUSTOMER_BASE` tem cliente sem pedido;
+`MART_ORDER_FUNNEL` e `MART_BASKET_DAILY` têm pedido agregado sem cliente. O elo existe em
+`FACT_ORDER.customer_sk`, no GOLD — fora do alcance de `RETAIL_READER`.
+
+Consequência: **não há recompra, LTV, coorte, RFM nem receita por cliente**, e são
+exatamente os indicadores que um painel estratégico costuma ser cobrado de ter. Não exige
+fonte nova — exige um mart com grão de cliente e medidas de pedido. Fica registrado como a
+ausência mais acionável da lista, com o gatilho escrito, em vez de aproximada por algum
+número que *pareceria* responder.
+
+### Onde as dependências ficam, e por quê
+
+`streamlit`, `pandas`, `pyarrow` e `altair` vão em `[project.optional-dependencies]` de
+`platform/pyproject.toml`, **fora** de `dependencies`. O `infra/Dockerfile.airflow` instala
+exatamente aquela lista, e ~150 MB de UI não têm o que fazer numa imagem que não renderiza
+dashboard. Mesmo venv, porém: o app precisa do conector do Snowflake que já está lá, e um
+segundo venv duplicaria o conector só para não duplicar o Streamlit.
+
+### Por que o smoke test não é um `curl`
+
+O Streamlit devolve **HTTP 200 com o esqueleto da página mesmo quando o script morre no
+primeiro `select`** — a renderização é no cliente. `make dashboard-check` roda o script de
+verdade via `AppTest` e exige zero exceção; é a única forma de as 19 consultas serem
+exercitadas. Fica fora de `make test` porque exige conta viva.
 
 ## O portão do Silver morava em seis arquivos, e nenhum concordava com o outro
 

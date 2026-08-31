@@ -124,7 +124,8 @@ ORDERS_OVERWRITE       ?=
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
         warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
-        warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests
+        warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
+        dashboard dashboard-venv dashboard-contract dashboard-check
 
 help:
 	@echo "infra"
@@ -226,6 +227,12 @@ help:
 	@echo "  warehouse-refresh         os tres acima, em ordem"
 	@echo "  warehouse-prove-tests     injeta o defeito que cada teste diz pegar e exige o vermelho"
 	@echo "  warehouse-evidence        registra posse, volume e isolamento do destino, datado"
+	@echo ""
+	@echo "painel estrategico (Streamlit sobre o MART, papel RETAIL_READER) —"
+	@echo "  dashboard-venv            instala streamlit/pandas/altair (extra, fora da imagem)"
+	@echo "  dashboard                 sobe o painel em http://localhost:$(DASHBOARD_PORT)"
+	@echo "  dashboard-contract        regenera streamlit/CONTRACT.md (sem conectar em nada)"
+	@echo "  dashboard-check           roda o painel de verdade e exige zero excecao (exige conta)"
 	@echo "  warehouse-trigger         dispara a DAG do warehouse no Airflow e acompanha"
 	@echo "  ...trocar de conta:       edite .env.snowflake (veja .env.snowflake.example) e"
 	@echo "                            ~/.snowflake/config.toml; nenhum modelo ou teste muda"
@@ -778,6 +785,36 @@ warehouse-prove-tests:
 warehouse-refresh: warehouse-export warehouse-load warehouse
 	@echo ""
 	@echo "warehouse-refresh OK: STAGE carregado e GOLD/MART reconstruidos"
+
+# ---- painel estrategico (Streamlit sobre o MART) -----------------------------
+# Bancada de CONFERENCIA dos indicadores antes de reconstrui-los no Power BI. Le so o MART, e
+# veste `RETAIL_READER` — o papel de BI, que este painel e o primeiro consumidor a vestir de
+# verdade (a carga ja vestia RETAIL_LOADER e o dbt RETAIL_TRANSFORMER).
+#
+# As dependencias vivem em [project.optional-dependencies] de platform/pyproject.toml, FORA de
+# `dependencies`: o Dockerfile.airflow instala exatamente aquela lista, e ~150 MB de UI nao tem
+# o que fazer numa imagem que nao renderiza dashboard.
+DASHBOARD_PORT ?= 8501
+dashboard-venv:
+	$(PLATFORM_PY) -m pip install --quiet -e "platform[dashboard]"
+	@$(PLATFORM_PY) -c "import streamlit, pandas, altair; \
+	  print(f'dashboard venv OK: streamlit {streamlit.__version__}, pandas {pandas.__version__}, altair {altair.__version__}')"
+
+dashboard:
+	$(PLATFORM_PY) -m streamlit run streamlit/app.py \
+	  --server.port $(DASHBOARD_PORT) --server.headless true
+
+# Sem conexao nenhuma: o CONTRACT e derivado de indicators.py, entao pode ser revisado antes
+# de qualquer coisa tocar o Snowflake — mesma propriedade de `make warehouse-ddl`.
+dashboard-contract:
+	@$(PLATFORM_PY) streamlit/contract.py
+
+# EXIGE CONTA VIVA, e por isso fica fora de `make test`. Roda o script do Streamlit de verdade
+# e exige zero excecao: um `curl` no /health nao serve, porque o Streamlit devolve HTTP 200 com
+# o esqueleto da pagina mesmo quando o script morre no primeiro `select` — a renderizacao e no
+# cliente. As 19 consultas so sao exercitadas assim.
+dashboard-check:
+	@$(PLATFORM_PY) streamlit/smoke.py
 
 warehouse-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause warehouse_load

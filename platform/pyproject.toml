@@ -39,6 +39,24 @@ dependencies = [
     "pyiceberg[sql-postgres,pyarrow]>=0.9",
 ]
 
+# FORA de `dependencies`, e o motivo e concreto: infra/Dockerfile.airflow instala
+# exatamente `['project']['dependencies']` desta lista. Streamlit, pandas e altair pesam
+# ~150 MB e nao servem a nenhuma DAG — deixa-los na lista principal os empurraria para
+# dentro da imagem do Airflow, que nao renderiza dashboard nenhum.
+#
+# Mesmo venv, porem: o app precisa do `snowflake-connector-python` que ja esta acima, e um
+# segundo venv duplicaria o conector so para nao duplicar o streamlit. Instale com
+# `make dashboard-venv`.
+[project.optional-dependencies]
+dashboard = [
+    "streamlit>=1.39",
+    # O conector devolve o resultado em pandas por `fetch_pandas_all()`, que e o caminho
+    # que evita construir 112 mil tuplas em Python para depois converter.
+    "pandas>=2.2",
+    "pyarrow>=15",
+    "altair>=5.4",
+]
+
 [project.scripts]
 retail-platform = "retail_platform.cli:main"
 

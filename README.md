@@ -185,6 +185,13 @@ não efeito colateral de pipeline.
 │   ├── simulated_oltp_customers.py     # sem cron — a base muda quando alguém decide
 │   ├── simulated_orders_events.py      # sem cron — o streaming NÃO é tarefa de DAG
 │   └── warehouse_load.py               # a única que atravessa a fronteira entre dois motores
+├── streamlit/                          # painel de CONFERÊNCIA sobre o MART (RETAIL_READER)
+│   ├── indicators.py                   # a FONTE ÚNICA: SQL e explicação juntos
+│   ├── CONTRACT.md                     # GERADO de indicators.py — o doc de conferência
+│   ├── contract.py                     # o gerador; não importa nada que conecte
+│   ├── connection.py                   # sessão RETAIL_READER + `use secondary roles none`
+│   ├── smoke.py                        # roda o app de verdade e exige zero exceção
+│   └── app.py                          # a interface, 6 grupos + "Fora de alcance"
 ├── scripts/
 │   ├── prove_oltp_atomicity.py         # injeta falha no BANCO e prova que os dois lados caem
 │   ├── prove_stream_semantics.py       # reproduz a janela de duplicação e prova o replay
@@ -867,7 +874,7 @@ descritos em [ARCHITECTURE.md](ARCHITECTURE.md), e viraram teste.
 **Trocar de conta Snowflake** é editar `.env.snowflake` e o bloco correspondente de
 `~/.snowflake/config.toml`, e rodar `make warehouse-bootstrap`. Nenhum modelo, nenhum SQL e
 nenhum teste muda: a fronteira L2→L3 é física. A metade Lakehouse não depende disso —
-`make silver` e as 930 checagens de `make test` rodam sem nenhuma variável de Snowflake
+`make silver` e as 947 checagens de `make test` rodam sem nenhuma variável de Snowflake
 definida.
 
 **Evidência datada.** A metade Snowflake não é reproduzível offline como o Lakehouse, e a
@@ -880,6 +887,44 @@ completam isso estão listados em
 ```bash
 make warehouse-ddl   # imprime o DDL do STAGE sem conectar em nada (derivado do recorte)
 ```
+
+## Painel estratégico (Streamlit sobre o MART)
+
+Bancada de **conferência** dos indicadores antes de reconstruí-los no Power BI. 16
+indicadores em 6 grupos, lendo só o `MART`.
+
+```bash
+make dashboard-venv       # 1x: streamlit/pandas/altair (extra, fora da imagem do Airflow)
+make dashboard            # http://localhost:8501
+make dashboard-contract   # regenera streamlit/CONTRACT.md, sem conectar em nada
+make dashboard-check      # roda o painel de verdade e exige zero exceção (exige conta)
+```
+
+**Veste `RETAIL_READER`, e prova isso na tela.** É o primeiro consumidor a vestir o papel de
+BI — a carga já vestia `RETAIL_LOADER` e o dbt `RETAIL_TRANSFORMER`. O painel roda uma sonda
+ao vivo que confirma a recusa em `GOLD` e `STAGE`, com `use secondary roles none`. Um painel
+que afirma respeitar um limite sem demonstrar está pedindo confiança.
+
+**Lê ao vivo, com o relógio à mostra.** Cache de 60 s e um botão que o limpa. A barra lateral
+mostra a contagem e a janela de **cada** mart, para que uma carga nova apareça como *mudança
+de base* e não como número diferente sem explicação. Verificado: um `make warehouse-refresh`
+levou `MART_PRICE_EVOLUTION` de 112.061 para 129.275 linhas e a janela de 08-29 para 08-31, e
+o painel viu — enquanto os marts de pedido ficaram parados, porque não houve pedido novo.
+
+**As armadilhas não ficam em rodapé.** [`streamlit/CONTRACT.md`](streamlit/CONTRACT.md) é
+**gerado** de `indicators.py`, onde a consulta e a explicação moram juntas — e um teste
+offline reprova se os dois saírem de sincronia. Três exemplos do que ele registra:
+
+| Armadilha | O erro que ela evita |
+|---|---|
+| Perda de valor tem **duas** causas | `SUM(gross) − SUM(net)` = 58.327,81 mistura cesta que encolheu (4.834,73) com pedido que morreu antes da separação (53.493,08) |
+| Ticket médio tem **dois** denominadores | receita/separados = 134,57; receita/colocados = 128,30 — o segundo mede algo que não existe |
+| `orders_touching_category` **não é aditivo** | somar as 151 categorias de um dia dá muito mais que os 1.600 pedidos daquele dia |
+
+E a aba *Fora de alcance* declara o que o painel **não** exibe, com o gatilho de cada item:
+margem, estoque, recompra/LTV/coorte, rota, penetração de mercado, tendência. A lacuna mais
+acionável: **nenhum mart junta cliente com pedido** — o elo existe em
+`FACT_ORDER.customer_sk`, no GOLD, fora do alcance de `RETAIL_READER` por desenho.
 
 ## O portão do `dbt build` do Silver
 
@@ -976,8 +1021,8 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 930 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                    + 125 OLTP simulado + 130 pedidos + 299 plataforma
+make test          # 947 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                    + 125 OLTP simulado + 130 pedidos + 316 plataforma
 make silver        # dbt build no DuckDB: 21 modelos + 5 seeds + 293 testes de dados
 make warehouse     # dbt build no Snowflake: 21 modelos + 149 testes de dados
 ```
