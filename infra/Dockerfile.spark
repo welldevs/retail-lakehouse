@@ -1,0 +1,68 @@
+# Imagem do Spark com o que o job de estoque e o experimento precisam alcancar.
+#
+# POR QUE UMA IMAGEM, E NAO `pip install pyspark` NO VENV DA PLATAFORMA.
+#
+# O venv da plataforma e a dependencia do CAMINHO PADRAO: `make silver`, `make warehouse`,
+# as DAGs. Instalar pyspark ali coloca o Spark — e a JVM — na arvore de dependencias de
+# quem nunca vai usa-lo. O Spark e opcional neste projeto por decisao, entao ele mora onde
+# o opcional mora: um servico sob perfil, como o plano de stream.
+#
+# OS TRES JARS SAO O EXPERIMENTO. Baixa-los no BUILD, com versao cravada, e o que torna o
+# resultado do spike uma medicao repetivel em vez de "funcionou naquele dia":
+#
+#   iceberg-spark-runtime   o catalogo, o leitor e o escritor Iceberg dentro do Spark
+#   iceberg-aws-bundle      S3FileIO — le o MESMO `s3://` que o PyArrowFileIO do pyiceberg
+#   postgresql              o driver JDBC do catalogo, que e um Postgres comum
+#
+# `--packages` em runtime foi RECUSADO: resolve pelo Ivy a cada execucao, exige rede na
+# hora de rodar e nao fixa o que foi medido.
+#
+# Nenhum CODIGO vai para a imagem — mesma regra do Dockerfile.airflow. O repositorio e
+# montado em runtime e alcancado por PYTHONPATH.
+
+FROM apache/spark:3.5.3
+
+USER root
+
+ARG ICEBERG_VERSION=1.7.1
+ARG POSTGRES_JDBC_VERSION=42.7.4
+ARG MAVEN=https://repo1.maven.org/maven2
+
+RUN set -eux; \
+    cd /opt/spark/jars; \
+    curl -fsSLO "${MAVEN}/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/${ICEBERG_VERSION}/iceberg-spark-runtime-3.5_2.12-${ICEBERG_VERSION}.jar"; \
+    curl -fsSLO "${MAVEN}/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar"; \
+    curl -fsSLO "${MAVEN}/org/postgresql/postgresql/${POSTGRES_JDBC_VERSION}/postgresql-${POSTGRES_JDBC_VERSION}.jar"
+
+# pandas + pyarrow: `applyInPandas` e a forma que justifica o Spark neste projeto (uma soma
+# corrida realimentada pelo proprio estado). Sem pyarrow o Spark cai para um caminho lento e
+# avisa em WARN — o que transformaria a medicao do job num numero sobre o ambiente errado.
+#
+# AS VERSOES SAO AS QUE O PYTHON DA IMAGEM ACEITA, e nao as do venv da plataforma. A
+# `apache/spark:3.5.3` traz Python 3.8.10; pandas parou no 2.0.3 para essa serie. Descobrir
+# isso no build e o ponto de instalar aqui em vez de em runtime — a alternativa e o job
+# falhar no executor, no meio de uma medicao. O venv da plataforma NAO precisa acompanhar:
+# os dois interpretadores sao independentes de proposito, como no Dockerfile.airflow.
+RUN pip install --no-cache-dir --quiet "pandas==2.0.3" "pyarrow==17.0.0"
+
+# A conferencia final e parte do build: se um jar nao estiver no classpath, o build quebra
+# aqui e nao o spike, com uma ClassNotFoundException no meio de uma medicao.
+RUN set -eux; \
+    ls /opt/spark/jars/iceberg-spark-runtime-3.5_2.12-${ICEBERG_VERSION}.jar; \
+    ls /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar; \
+    ls /opt/spark/jars/postgresql-${POSTGRES_JDBC_VERSION}.jar; \
+    python3 -c "import pandas, pyarrow; print('pandas', pandas.__version__, 'pyarrow', pyarrow.__version__)"
+
+# O PYTHONPATH MORA NA IMAGEM, e nao no compose. Motivo concreto, medido: a
+# `apache/spark:3.5.3` deixa o PYTHONPATH VAZIO — quem o monta e o `spark-submit`, em
+# runtime. Um `PYTHONPATH` definido no compose, portanto, nao acrescenta ao da imagem: ele
+# e o unico que existe, e apagar o caminho do proprio pyspark e o resultado. Foi
+# exatamente o que aconteceu na primeira execucao do spike, e o sintoma
+# (`ModuleNotFoundError: No module named 'pyspark'` dentro da imagem do Spark) nao aponta
+# para a causa.
+#
+# `/repo/platform/src` e o mount que o servico `spark` do compose garante. A imagem e feita
+# para este repositorio — igual a do Airflow, que conhece `/opt/retail-lakehouse`.
+ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip:/repo/platform/src
+
+USER spark

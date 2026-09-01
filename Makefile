@@ -125,6 +125,7 @@ ORDERS_OVERWRITE       ?=
         orders-apply orders-apply-all orders-outbox orders-prove-atomicity \
         orders-projection-init orders-publish orders-project orders-lag \
         orders-replay orders-topic orders-prove-stream spike-iceberg \
+        spike-spark-iceberg spark-build \
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
@@ -221,6 +222,8 @@ help:
 	@echo "  orders-topic              descreve o topico no broker"
 	@echo "  orders-prove-stream       prova transporte, duplicata, replay e buraco"
 	@echo "  spike-iceberg             experimento fechado: Iceberg + catalogo + DuckDB"
+	@echo "  spike-spark-iceberg       PORTAO: o Spark le/escreve o catalogo do pyiceberg?"
+	@echo "  spark-build               constroi a imagem do Spark (perfil spark)"
 	@echo ""
 	@echo "projecao viva (Iceberg) — dois escritores na mesma tabela, um leitor:"
 	@echo "  iceberg-init              catalogo SQL + tabela live_order_state"
@@ -691,6 +694,30 @@ orders-topic:
 # veredito. Se reprovar, nao se constroi a projecao — se contorna ou se muda de plano.
 spike-iceberg:
 	@$(PLATFORM_PY) scripts/spike_iceberg_duckdb.py
+
+# ---- Spark: o experimento fechado que decide se ele entra ----------------------
+#
+# ESTE PORTAO E SOBRE O ICEBERG, e nao sobre o Spark. O ARCHITECTURE justifica o Iceberg
+# com duas propriedades: commit atomico com concorrencia otimista, que `orders-prove-iceberg`
+# demonstra; e INTEROP ENTRE ENGINES, que esta afirmada e nunca foi demonstrada, porque os
+# dois escritores sao Python e usam a mesma biblioteca.
+#
+# O Spark e o terceiro escritor, e o primeiro fora do Python. Se ele nao ler o catalogo que
+# o pyiceberg escreveu, o Spark nao entra E a clausula de interop sai do ARCHITECTURE.
+#
+# O `depends_on` do servico nao pode cobrar `oltp-postgres` porque os perfis sao
+# independentes — o compose recusaria a referencia. Entao o pre-requisito e cobrado aqui,
+# com a mensagem que diz o que fazer, como a trava do DuckDB em `make silver`.
+spike-spark-iceberg:
+	@docker ps --format '{{.Names}}' | grep -qx retail-oltp-postgres || { \
+	  echo "ERRO: o catalogo Iceberg mora no oltp-postgres, e ele nao esta de pe."; \
+	  echo "      O plano de stream nao sobe com \`make up\`. Rode: make stream-up"; \
+	  exit 2; }
+	@$(COMPOSE) --profile spark build spark
+	@$(PLATFORM_PY) scripts/spike_spark_iceberg.py
+
+spark-build:
+	@$(COMPOSE) --profile spark build spark
 
 orders-prove-stream:
 	@$(PLATFORM_PY) scripts/prove_stream_semantics.py

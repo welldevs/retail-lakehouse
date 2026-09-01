@@ -297,6 +297,61 @@ services:
           --topic retail.orders.events.v1
     restart: "no"
 
+  # O SPARK. PERFIL PROPRIO, e nao `stream`, e a razao e uma decisao de arquitetura:
+  #
+  # O Spark e OPCIONAL neste projeto. `make silver`, `make warehouse`, o painel e as cinco
+  # DAGs rodam sem ele e continuam rodando sem ele — quem garante isso e o portao de
+  # `silver_gate.py`, que tira do build o que depende de uma tabela que nao existe. Um
+  # perfil separado torna essa promessa uma propriedade do compose, e nao um paragrafo de
+  # README: `make up` nao sobe Spark, e `make stream-up` tambem nao.
+  #
+  # Ele PRECISA dos dois servicos do plano de stream, e por isso `make spark-*` cobra que
+  # `make stream-up` tenha rodado: o catalogo Iceberg mora no `oltp-postgres`, e os dados
+  # da tabela moram no MinIO.
+  #
+  # SERVICO DE UMA EXECUCAO SO (`docker compose run --rm`), sem `sleep infinity`: um
+  # container Spark parado no `docker ps` sugere um cluster que nao existe. Aqui o Spark
+  # roda `local[*]` — um processo, driver e executor no mesmo JVM. O que se demonstra e
+  # interoperabilidade e forma do job, nao um cluster.
+  spark:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.spark
+    image: retail-lakehouse/spark:3.5.3
+    profiles: ["spark"]
+    # SEM `depends_on`, e isso e uma consequencia de os perfis serem independentes: o
+    # `oltp-postgres` mora no perfil `stream`, entao com `--profile spark` sozinho ele nem
+    # existe no projeto, e o compose recusa a referencia. Quem cobra o pre-requisito e o
+    # Makefile, com a mensagem que diz o que fazer — como a trava do DuckDB em `make
+    # silver`. Trocar isso por `profiles: [spark, stream]` faria `--profile spark` subir um
+    # broker Kafka que o Spark nao usa.
+    environment:
+      # DENTRO da rede do compose os enderecos sao nomes de SERVICO. E a mesma armadilha
+      # ja documentada nas duas listeners do Kafka: `localhost:9000` serve ao venv da
+      # plataforma, que roda no host, e nao resolve aqui.
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # O catalogo e o MESMO que o pyiceberg escreve — a URI muda de dialeto (JDBC em vez
+      # de SQLAlchemy) porque o cliente e Java, mas aponta para o mesmo banco e as mesmas
+      # duas tabelas. Se apontasse para outro lugar, nao haveria interop a demonstrar.
+      ICEBERG_CATALOG_JDBC: jdbc:postgresql://oltp-postgres:5432/${ICEBERG_CATALOG_DB:-iceberg_catalog}
+      ICEBERG_CATALOG_USER: oltp
+      ICEBERG_CATALOG_PASSWORD: oltp
+      ICEBERG_CATALOG_NAME: ${ICEBERG_CATALOG_NAME:-retail}
+      ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-projection}
+      ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://retail-lakehouse/iceberg}
+      # PYTHONPATH NAO vem daqui, de proposito: ver Dockerfile.spark. Defini-lo aqui
+      # apaga o caminho do proprio pyspark, porque a imagem o deixa vazio.
+    volumes:
+      # READ-ONLY, ao contrario do mount do Airflow: o Spark escreve em Iceberg, no MinIO.
+      # Se algum dia ele precisar escrever no checkout, isso e um defeito a investigar e
+      # nao uma permissao a afrouxar.
+      - ../:/repo:ro
+    working_dir: /repo
+    restart: "no"
+
   # Migra o schema, cria o usuario da UI e — o que importa para a arquitetura — cria o
   # POOL de 1 slot. Sem ele o LocalExecutor rodaria varios `extract` em paralelo e
   # dobraria a taxa de requisicao contra a fonte, porque o throttle da Source e por
