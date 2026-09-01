@@ -4,7 +4,7 @@ GERADO por `make demand-reality-check`. Nenhum numero desta pagina foi escrito a
 
 - modelo de demanda: **mapa_2025_v2**
 - benchmark: MAPA, Informe del Consumo Alimentario en Espana 2025
-- medido em: 2026-09-01T13:11:26Z
+- medido em: 2026-09-01T17:04:53Z
 - ANTES congelado em: 2026-09-01T11:32:54Z (`before_mapa_2025_v2`) — o estado IMEDIATAMENTE anterior a esta versao do modelo, e nao o mais antigo que existe. `before_mapa_2025_v1` guarda o mix uniforme de antes da calibracao agregada e continua no disco; misturar os dois numa coluna so faria os efeitos de duas fases serem lidos como um.
 
 ## Como ler as colunas

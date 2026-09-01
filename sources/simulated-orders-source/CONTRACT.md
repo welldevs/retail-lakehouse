@@ -307,6 +307,14 @@ faixas diferentes, e está certo.
    com dois universos misturados. Use `make orders-rebuild-projection PROJECTION_RESET=1`.
    Na Fase 5 o mesmo passo foi necessário de novo, e o reset devolveu 5.248 pedidos — 18%
    abaixo dos 6.400 anteriores, porque os menores de idade deixaram de comprar.
+
+   Na Fase 6 foi a **segunda** condição, e não a quarta: o modelo de demanda não mudou, mas
+   a base de clientes foi redimensionada pela população servida (20.000 → 286.826), o que é
+   "outra referência". Esta Source não mudou uma linha, e mesmo assim a janela inteira teve
+   de ser regerada — 91.788 pedidos — porque `buyer_age_band` é carimbado no evento e o
+   teste `assert_buyer_age_band_matches_the_customer_birth_year` reprova quando a pessoa por
+   trás de um `customer_id` muda. **Cliente e pedido são domínios separados no código e
+   acoplados no dado**, e é este parágrafo que evita a surpresa.
 7. **Sem relógio.** Todo `occurred_at` deriva de `ingestion_date` mais offsets declarados,
    nunca de `datetime.now()`.
 8. **`event_id` determinístico.** Deriva de `(order_id, sequence_no)`, nunca de `uuid4()` —

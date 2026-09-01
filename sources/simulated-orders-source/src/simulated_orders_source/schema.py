@@ -95,10 +95,6 @@ def events_of(payload: object) -> list:
     return [row for row in payload if isinstance(row, dict)]
 
 
-def count_events(payload: object) -> int:
-    return len(events_of(payload))
-
-
 def fingerprint() -> dict:
     """Impressao digital do vocabulario declarado. Nao depende da seed nem do dia."""
     declared = {

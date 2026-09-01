@@ -30,6 +30,9 @@ orchestration/.venv/
 # Artefatos do dbt. O dado real vive no object storage; o .duckdb e so estado local.
 platform/dbt/target/
 platform/dbt/logs/
+# O dbt escreve logs/ RELATIVO ao cwd, nao ao --project-dir: rodar dbt de dentro de
+# platform/ cria platform/logs/. Um deles ja foi commitado por engano.
+platform/logs/
 platform/dbt/retail.duckdb
 platform/dbt/package-lock.yml
 

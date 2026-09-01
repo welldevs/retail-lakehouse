@@ -10,6 +10,8 @@ container.
 from __future__ import annotations
 
 import os
+import pathlib
+import re
 import tempfile
 import unittest
 
@@ -106,6 +108,56 @@ class TestEndpointHost(unittest.TestCase):
 
     def test_passes_through_a_bare_host_port(self):
         self.assertEqual(_endpoint_host("minio:9000"), "minio:9000")
+
+
+class TodaVariavelDeAmbienteEDeclarada(unittest.TestCase):
+    """Uma variavel que o codigo le e que nenhum arquivo declara e configuracao invisivel:
+    existe, muda comportamento, e ninguem que clone o repositorio descobre que existe.
+
+    Este teste varre o codigo real atras de `os.environ[...]` / `os.environ.get(...)` /
+    `os.getenv(...)` e exige que cada nome apareca em `.env.example` (ainda que comentado,
+    como sobrescrita opcional) ou em `infra/docker-compose.yml`. Nao confere o VALOR — o
+    default mora no codigo, e duplica-lo aqui criaria o segundo lugar onde ele vive.
+
+    Visto vermelho: apagar a linha de `KAFKA_ORDERS_TOPIC` do `.env.example` reprova.
+    """
+
+    RAIZES = ("platform/src", "streamlit", "orchestration/airflow/dags", "scripts")
+
+    # Definidas pelo ambiente de execucao, nunca pelo repositorio.
+    DO_SISTEMA = {"HOME", "PATH", "PWD", "USER", "SNOWFLAKE_HOME", "PYTHONPATH", "TZ"}
+
+    def _repo(self):
+        return pathlib.Path(__file__).resolve().parents[2]
+
+    def test_toda_variavel_lida_aparece_no_env_example_ou_no_compose(self):
+        padrao = re.compile(
+            r"""(?:environ\.get\(|environ\[|getenv\()\s*["']([A-Z][A-Z0-9_]*)["']"""
+        )
+        repo = self._repo()
+        lidas: dict[str, str] = {}
+        for raiz in self.RAIZES:
+            for arquivo in sorted((repo / raiz).rglob("*.py")):
+                if "__pycache__" in str(arquivo):
+                    continue
+                for nome in padrao.findall(arquivo.read_text()):
+                    lidas.setdefault(nome, str(arquivo.relative_to(repo)))
+
+        declarado = (repo / ".env.example").read_text()
+        declarado += (repo / ".env.snowflake.example").read_text()
+        declarado += (repo / "infra" / "docker-compose.yml").read_text()
+
+        ausentes = sorted(
+            f"{nome} (lida em {onde})"
+            for nome, onde in lidas.items()
+            if nome not in self.DO_SISTEMA and nome not in declarado
+        )
+        self.assertEqual(
+            ausentes,
+            [],
+            "variaveis lidas pelo codigo e declaradas em lugar nenhum:\n  "
+            + "\n  ".join(ausentes),
+        )
 
 
 if __name__ == "__main__":

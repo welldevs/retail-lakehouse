@@ -29,7 +29,6 @@ from . import validate as validate_module
 from .partition import DEFAULT_WAREHOUSES
 
 DEFAULT_ROOT = "data/oltp"
-DEFAULT_REFERENCE = "data/oltp-reference"
 DEFAULT_SEED = 20260827
 
 EXIT_UNHANDLED = 3

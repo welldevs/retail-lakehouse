@@ -36,7 +36,6 @@ from . import validate as validate_module
 from .partition import DEFAULT_WAREHOUSES
 
 DEFAULT_ROOT = "data/orders"
-DEFAULT_REFERENCE = "data/orders-reference"
 DEFAULT_SEED = 20260828
 
 EXIT_UNHANDLED = 3

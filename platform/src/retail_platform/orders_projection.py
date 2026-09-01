@@ -44,7 +44,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 
 from .orders_stream import DEFAULT_SEEDS_DIR, fold_event, read_sla_minutes

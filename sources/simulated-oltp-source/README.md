@@ -60,7 +60,7 @@ Direto, sem o Makefile da raiz:
 ```bash
 PYTHONPATH=src python3 -m simulated_oltp_source extract \
   --reference ../../data/oltp-reference/ingestion_date=2026-08-27 \
-  --out data/oltp --wh mad1 --date 2026-08-27 --count 200 --seed 20260827
+  --out data/oltp --wh mad1 --date 2026-08-27 --seed 20260827
 
 PYTHONPATH=src python3 -m simulated_oltp_source validate \
   data/oltp/ingestion_date=2026-08-27/wh=mad1 \
@@ -75,7 +75,7 @@ PYTHONPATH=src python3 -m simulated_oltp_source validate \
 | `--wh` | — (obrigatório) | `mad1`, `bcn1`, `svq1` ou `vlc1` |
 | `--out` | `data/oltp` | raiz do snapshot |
 | `--date` | hoje em UTC | `ingestion_date` da partição |
-| `--count` | `200` | clientes a gerar |
+| `--count` | **sem default** | clientes a gerar. Omitido, usa o alvo de `customer_allocation` da referência — população adulta do armazém × taxa de penetração. Um default aqui reintroduziria em silêncio a base dimensionada por ninguém |
 | `--seed` | `20260827` | semente: a mesma seed reproduz a mesma saída |
 | `--overwrite` | desligado | reescreve partição completa |
 

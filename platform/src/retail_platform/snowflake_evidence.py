@@ -33,6 +33,26 @@ from .snowflake_load import (
 # Uma amostra por mart. Poucas linhas e poucas colunas de proposito: a evidencia e de que a
 # tabela existe com conteudo plausivel, nao um extrato de dado — para dado ha o proprio
 # warehouse enquanto ele viver.
+# A separacao de papeis vista no VERBO, e nao no nome. Um papel chamado RETAIL_READER
+# que executasse CREATE_TABLE estaria nomeado errado; esta consulta e o que torna isso
+# consultavel em vez de anedotico.
+#
+# 167 HORAS, e nao 7 dias: `information_schema.query_history` recusa a compilacao com
+# "Cannot retrieve data from more than 7 days ago" quando o limite bate exatamente na
+# borda. E tambem por que a secao pode vir VAZIA — uma semana sem execucao apaga o
+# historico, e vazio aqui significa "nao houve execucao na janela", nunca "nao ha
+# separacao". A pagina declara a ausencia em vez de imprimir uma tabela sem linhas.
+PAPEIS_EM_EXECUCAO = """
+select role_name, query_type, count(*) as queries,
+       to_char(max(start_time), 'YYYY-MM-DD HH24:MI') as ultima
+from table(information_schema.query_history(
+       end_time_range_start => dateadd('hour', -167, current_timestamp()),
+       result_limit => 10000))
+where role_name like 'RETAIL%'
+group by 1, 2
+order by 1, 3 desc
+"""
+
 AMOSTRAS = {
     # O mart onde o sintetico encontra o observado: clientes gerados contra populacao do
     # INE. E onde a densidade da simulacao fica visivel em vez de implicita.
@@ -136,6 +156,13 @@ def collect(connection, connect_as_role, database: str = DEFAULT_DATABASE) -> di
                 order by t.table_schema, t.table_name"""
         ).fetchall()
 
+        # Tolerante pela mesma razao das amostras: uma conta sem privilegio de ler o
+        # historico, ou sem execucao na janela, nao pode derrubar a pagina inteira.
+        try:
+            papeis = _consulta(cursor, PAPEIS_EM_EXECUCAO)
+        except Exception as exc:
+            papeis = (["erro"], [(str(exc).splitlines()[0],)])
+
         amostras = {}
         for nome, sql in AMOSTRAS.items():
             try:
@@ -155,6 +182,7 @@ def collect(connection, connect_as_role, database: str = DEFAULT_DATABASE) -> di
             "database": database,
         },
         "objetos": objetos,
+        "papeis_em_execucao": papeis,
         "amostras": amostras,
         "isolamento": check_isolation(connect_as_role, database),
     }
@@ -231,6 +259,36 @@ def render(dados: dict) -> str:
         linhas += [f"- {p}" for p in problemas]
     else:
         linhas += ["Resultado: **a matriz confere inteira** — nenhuma violação."]
+    linhas += [""]
+
+    colunas_papel, corpo_papel = dados.get("papeis_em_execucao", ([], []))
+    linhas += [
+        "## Papéis em execução, vistos pelo verbo",
+        "",
+        "A matriz acima prova o que cada papel **pode** ler. Esta tabela prova o que cada um",
+        "**fez** — e é a diferença entre governança verificada e governança adotada. Os três",
+        "papéis existiam desde a Fase 2, com os grants certos, enquanto todas as execuções",
+        "passavam por `ACCOUNTADMIN`; nada nesta página teria mostrado isso, porque a posse",
+        "só muda quando alguém escreve de fato.",
+        "",
+        "Janela de 167 horas: `information_schema.query_history` não recupera nada além de",
+        "sete dias. Uma semana sem execução esvazia a seção, e ela **declara a ausência** em",
+        "vez de imprimir uma tabela vazia, que se leria como \"não há separação\".",
+        "",
+    ]
+    if corpo_papel and colunas_papel != ["erro"]:
+        linhas += _tabela_markdown(
+            ["papel", "tipo de query", "queries", "última"],
+            [(f"`{p}`", f"`{q}`", f"{n:,}", u) for p, q, n, u in corpo_papel],
+        )
+    elif colunas_papel == ["erro"]:
+        linhas += [f"**Não foi possível ler o histórico:** `{corpo_papel[0][0]}`"]
+    else:
+        linhas += [
+            "**Nenhuma execução de papel `RETAIL%` na janela de sete dias.** A ausência é o",
+            "dado: não houve carga nem `dbt build` na semana, e o histórico do Snowflake não",
+            "guarda mais que isso.",
+        ]
     linhas += [""]
 
     linhas += [

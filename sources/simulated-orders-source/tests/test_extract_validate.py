@@ -13,7 +13,7 @@ from simulated_orders_source import extract as extract_module
 from simulated_orders_source import validate as validate_module
 from simulated_orders_source.partition import events_path, manifest_path, partition_path
 
-from .support import ORDER_DATE, WH, Args, catalog_rows, customer_rows, write_reference
+from .support import ORDER_DATE, WH, Args, write_reference
 
 
 class Base(unittest.TestCase):

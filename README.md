@@ -20,8 +20,9 @@ consome pelo contrato físico — nunca importando o código de nenhuma delas. V
 [ARCHITECTURE.md § "Segunda source: população do INE"](ARCHITECTURE.md) para por que são
 pacotes irmãos, não uma abstração compartilhada.
 
-As decisões de arquitetura, e o gatilho de cada tecnologia ainda ausente
-(Iceberg, Kafka, Spark, Snowflake), estão em [ARCHITECTURE.md](ARCHITECTURE.md).
+As decisões de arquitetura estão em [ARCHITECTURE.md](ARCHITECTURE.md), com a data de
+adoção de Snowflake, Kafka e Iceberg — e o gatilho de **Spark**, a única ainda ausente, que
+continua sem disparar porque nada aqui excede um nó.
 
 ## Camadas
 
@@ -122,6 +123,8 @@ não efeito colateral de pipeline.
 │   └── simulated-orders-source/        # Pedidos como LOG DE EVENTOS, FROZEN — derivada do Silver
 ├── .env.example                        # copie para .env; credenciais só de desenvolvimento
 ├── .env.snowflake.example              # copie para .env.snowflake; identidade da conta, sem segredo
+├── docs/README.md                      # o benchmark do MAPA: URL, sha256, como reextrair
+├── docs/demand-evidence/               # ANTES | MAPA | ALVO | DEPOIS — gerada, mais os ANTES congelados
 ├── docs/warehouse-evidence/            # a execução real no Snowflake, datada — gerada, não escrita
 ├── docs/stream-evidence/               # OLTP, broker e projeção vivos, datado — gerado, não escrito
 ├── platform/
@@ -151,13 +154,21 @@ não efeito colateral de pipeline.
 │   │                                   # / export-snowflake / snowflake-ddl
 │   │                                   # / snowflake-bootstrap / load-snowflake / snowflake-evidence
 │   │                                   # / stream-evidence / silver-build
-│   ├── dbt/seeds/
+│   ├── dbt/seeds/                      # 14 seeds, todos com coluna de proveniência
 │   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
 │   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
 │   │   ├── order_premises_seed.csv          # premissas do gerador de pedidos, TODAS `synthetic`
 │   │   ├── customer_premises_seed.csv       # quem EXISTE: idade mínima, denominador, alocação
 │   │   ├── ine_municipality_codes_seed.csv  # nome (Tempus3) -> código de município, 08/28/41/46
-│   │   └── ine_ambiguous_series_seed.csv    # série -> código oficial, para nomes homônimos na Espanha
+│   │   ├── ine_ambiguous_series_seed.csv    # série -> código oficial, para nomes homônimos na Espanha
+│   │   ├── ine_ccaa_map_seed.csv            # província -> comunidade autónoma; sem destino padrão
+│   │   ├── demand_profile_seed.csv          # a configuração do modelo de demanda, versionada
+│   │   ├── demand_category_mapping_seed.csv # categoria da Mercadona -> grupo do MAPA (444 trincas)
+│   │   ├── demand_seasonality_seed.csv      # o que o informe NÃO publica por categoria, declarado
+│   │   ├── mapa_2025_benchmark_seed.csv     # 64 linhas do informe, cada uma citando a seção
+│   │   ├── mapa_2025_region_seed.csv        # consumo per cápita por comunidade autónoma
+│   │   ├── demand_cohort_age_seed.csv       # volume x população por faixa etária, `benchmark`
+│   │   └── demand_cohort_region_seed.csv    # idem por comunidade; a página do PDF em cada linha
 │   ├── dbt/macros/                     # generate_schema_name: GOLD/MART absolutos, sem prefixo
 │   ├── dbt/models/silver/              # target dev (duckdb) — 22 modelos
 │   │   ├── warehouse_province_map.sql   # passagem do seed para o object storage
@@ -172,7 +183,7 @@ não efeito colateral de pipeline.
 │   ├── dbt/models/warehouse/           # target snowflake — 22 modelos, ligados por source()
 │   │   ├── sources.yml                  # as 13 tabelas STAGE: a fronteira, declarada
 │   │   ├── gold/                        # 6 DIM + 8 FACT, SCD2 derivado da história
-│   │   └── mart/                        # 7 marts, grão no cabeçalho de cada um
+│   │   └── mart/                        # 8 marts, grão no cabeçalho de cada um
 │   ├── dbt/tests/                      # testes singulares do Silver
 │   ├── dbt/tests/warehouse/            # idem do Gold/Mart (separados: ref() cruzado não compila)
 │   └── tests/                          # sem rede (duplos de S3 e de Postgres em memória)
@@ -196,12 +207,17 @@ não efeito colateral de pipeline.
 │   ├── connection.py                   # sessão RETAIL_READER + `use secondary roles none`
 │   ├── smoke.py                        # roda o app de verdade e exige zero exceção
 │   └── app.py                          # a interface, 6 grupos + "Fora de alcance"
-├── scripts/
-│   ├── prove_oltp_atomicity.py         # injeta falha no BANCO e prova que os dois lados caem
-│   ├── prove_stream_semantics.py       # reproduz a janela de duplicação e prova o replay
-│   ├── spike_iceberg_duckdb.py         # o experimento FECHADO, rodado antes do Marco 6
-│   ├── prove_iceberg_projection.py     # concorrência, fusão monotônica, snapshot isolation
-│   └── prove_warehouse_orders_tests.py # injeta o defeito que cada teste diz pegar, no dado real
+├── scripts/                            # cada um tem alvo no Makefile; nenhum roda sozinho
+│   ├── derive_warehouse_province_map.py   # deriva o seed de província/município do Callejero
+│   ├── derive_warehouse_service_area.py   # deriva a AUF de cada armazém do AUF_mun.xlsx do INE
+│   ├── derive_municipality_codes.py       # deriva nome (Tempus3) -> código oficial de município
+│   ├── derive_ambiguous_series.py         # resolve homônimo nacional pelo código do VALORES_SERIE
+│   ├── gen-secrets.py                     # gera as chaves do Airflow no .env (modo 600)
+│   ├── prove_oltp_atomicity.py            # injeta falha no BANCO e prova que os dois lados caem
+│   ├── prove_stream_semantics.py          # reproduz a janela de duplicação e prova o replay
+│   ├── spike_iceberg_duckdb.py            # o experimento FECHADO, rodado antes do Marco 6
+│   ├── prove_iceberg_projection.py        # concorrência, fusão monotônica, snapshot isolation
+│   └── prove_warehouse_orders_tests.py    # injeta o defeito que cada teste diz pegar, no dado real
 ├── infra/
 │   ├── docker-compose.yml              # MinIO + mc + Postgres + scheduler + webserver
 │   │                                   # + oltp-postgres e kafka (profile `stream`); o
@@ -271,9 +287,11 @@ população da API pública Tempus3 do INE — hoje **duas granularidades**, mes
 genérico de fetch (só muda o `table_id`, configurado fora da Source): **por província**
 (`31304`, com idade+sexo) e **por município** (`29005`, só sexo, sem idade — extensão
 adicionada para dar densidade real por município, já que "Valencia" em `31304` é a
-província inteira, 2,6 milhões de habitantes, não a cidade). Pensado para eventualmente
-cruzar com os dados de retail por armazém (mad1/bcn1/vlc1/svq1 =
-Madrid/Barcelona/Valência/Sevilha), embora esse cruzamento (Gold) ainda não exista. Ver
+província inteira, 2,6 milhões de habitantes, não a cidade). O cruzamento com os dados de
+retail por armazém (mad1/bcn1/vlc1/svq1 = Madrid/Barcelona/Valência/Sevilha) **existe desde
+a Fase 2**, em `MART_MARKET_COVERAGE` — clientes por 10 mil habitantes, município a
+município —, e desde a Fase 6 é essa mesma população que **dimensiona** a base de clientes,
+e não só a compara. Ver
 [ARCHITECTURE.md § "Extensão: população por município (Fase A)"](ARCHITECTURE.md) para o porquê
 de estender esta Source em vez de criar uma quarta, e por que faixa etária por município
 ficou de fora desta rodada.
@@ -359,6 +377,21 @@ Callejero real (cada código confirmado contra `SECC`, cada nome vindo do `UP`) 
 já baixadas (Ávila/Guadalajara/Toledo) e a de Barcelona tem 2 (Tarragona) — ficam de
 fora da área derivada aqui, porque não há Callejero landado pra cruzar. Sevilla e
 Valencia estão 100% contidas na própria província, sem essa lacuna.
+
+**Os quatro seeds derivados têm procedência executável.** O CSV versionado é a verdade do
+repositório; o script é *como* ele foi obtido, e cada um tem alvo — sem isso, "de onde saiu
+este CSV" só se responde lendo o docstring de um arquivo que ninguém sabe que existe.
+
+```bash
+make seed-province-map         # wh -> província/município, reconferido contra o Callejero
+make seed-service-area         # wh -> municípios da AUF (AUF_XLSX=temp/AUF_mun.xlsx)
+make seed-municipality-codes   # nome (Tempus3) -> código oficial    [rede: API do INE]
+make seed-ambiguous-series     # série -> código, para homônimo      [rede: API do INE]
+```
+
+Rodados em 2026-09-01, os quatro reproduziram o CSV versionado **byte a byte** — inclusive
+os dois que consultam a API do INE ao vivo. Não é um alvo do pipeline: a fonte de cada um
+muda uma vez por semestre ou nunca.
 
 ## Quarta source: OLTP simulado (Customers)
 
@@ -795,7 +828,7 @@ make warehouse-prove-tests    # injeta o defeito que cada teste diz pegar e exig
 
 | Camada | Objetos novos |
 |---|---|
-| STAGE | `STG_ORDER` · `STG_ORDER_LINE` · `STG_ORDER_EVENT` · `STG_ORDER_PREMISE` — 6.400 pedidos quando a Fase 3 mediu; **5.248** desde que `min_buyer_age` entrou |
+| STAGE | `STG_ORDER` · `STG_ORDER_LINE` · `STG_ORDER_EVENT` · `STG_ORDER_PREMISE` — 6.400 pedidos quando a Fase 3 mediu; **91.788** desde que a Fase 6 redimensionou a base de clientes |
 | GOLD | `FACT_ORDER` · `FACT_ORDER_ITEM` · `FACT_ORDER_EVENT` · `FACT_ORDER_PREMISE` |
 | MART | `MART_ORDER_FUNNEL` · `MART_FULFILLMENT_SLA` · `MART_BASKET_DAILY` · `MART_DEMAND_COHORT` *(Fase 5)* |
 
@@ -1123,15 +1156,19 @@ descritos em [ARCHITECTURE.md](ARCHITECTURE.md), e viraram teste.
 **Trocar de conta Snowflake** é editar `.env.snowflake` e o bloco correspondente de
 `~/.snowflake/config.toml`, e rodar `make warehouse-bootstrap`. Nenhum modelo, nenhum SQL e
 nenhum teste muda: a fronteira L2→L3 é física. A metade Lakehouse não depende disso —
-`make silver` e as 992 checagens de `make test` rodam sem nenhuma variável de Snowflake
+`make silver` e as 1.068 checagens de `make test` rodam sem nenhuma variável de Snowflake
 definida.
 
 **Evidência datada.** A metade Snowflake não é reproduzível offline como o Lakehouse, e a
 conta usada aqui é um trial. [`make warehouse-evidence`](docs/warehouse-evidence/README.md)
-registra posse, volume, matriz de isolamento e amostra de cada mart, com data e identidade
-da conta — para que os modelos continuem tendo prova depois que ela expirar. Os prints que
-completam isso estão listados em
-[docs/warehouse-evidence/PRINTS.md](docs/warehouse-evidence/PRINTS.md).
+registra posse, volume, matriz de isolamento, **papéis em execução vistos pelo verbo** e
+amostra de cada mart, com data e identidade da conta — para que os modelos continuem tendo
+prova depois que ela expirar. A tabela de papéis é a que separa governança verificada de
+governança adotada: mostra que `RETAIL_READER` só executou `SELECT`, e que quem escreveu
+GOLD foi `RETAIL_TRANSFORMER` — nunca o administrador. A captura do console em
+[docs/warehouse-evidence/screens/query-history.png](docs/warehouse-evidence/screens/query-history.png)
+é a mesma separação vista pela interface do fornecedor, que é a única coisa aqui que o
+repositório não consegue produzir sozinho.
 
 ```bash
 make warehouse-ddl   # imprime o DDL do STAGE sem conectar em nada (derivado do recorte)
@@ -1177,7 +1214,7 @@ acionável: **nenhum mart junta cliente com pedido** — o elo existe em
 
 ## O portão do `dbt build` do Silver
 
-Nem todos os 21 modelos podem ser construídos sempre, e os dois motivos são legítimos: uma
+Nem todos os 22 modelos podem ser construídos sempre, e os dois motivos são legítimos: uma
 source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver zero linhas), e
 `silver_live_order_state` só pode ser lido quando o catálogo Iceberg responde.
 
@@ -1270,8 +1307,8 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 1.055 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                      + 140 OLTP simulado + 163 pedidos + 376 plataforma
+make test          # 1.068 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                      + 140 OLTP simulado + 163 pedidos + 389 plataforma
 make silver        # dbt build no DuckDB: 22 modelos + 14 seeds + 318 testes de dados
 make warehouse     # dbt build no Snowflake: 22 modelos + 157 testes de dados
 ```

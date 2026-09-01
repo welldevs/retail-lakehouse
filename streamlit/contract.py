@@ -18,19 +18,33 @@ Snowflake e sem rede — como o `make warehouse-ddl`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import indicators as I  # noqa: E402
 
 DESTINO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CONTRACT.md")
+ORIGEM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "indicators.py")
+
+
+def origem_sha256() -> str:
+    """sha256 de indicators.py.
+
+    NAO e um relogio, e isso e o ponto. Um carimbo de data mudaria a cada execucao e
+    deixaria o arquivo gerado eternamente "modificado" no git — o que treina quem revisa
+    a ignorar o diff, justamente no arquivo onde o diff e a unica conferencia. Com o hash
+    da origem, `make dashboard-contract` sobre um CONTRACT em dia nao muda um byte, e
+    `git diff --exit-code` vira teste de que os dois nao divergiram.
+    """
+    with open(ORIGEM, "rb") as arquivo:
+        return hashlib.sha256(arquivo.read()).hexdigest()
 
 
 def render() -> str:
-    agora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    origem = origem_sha256()
     grupos: dict[str, list] = {}
     for indicador in I.INDICADORES:
         grupos.setdefault(indicador.grupo, []).append(indicador)
@@ -38,12 +52,16 @@ def render() -> str:
     linhas = [
         "# Contrato dos indicadores do painel",
         "",
-        f"**Gerado por `make dashboard-contract` em {agora}.** Não editar à mão: este arquivo",
-        "é derivado de [`indicators.py`](indicators.py), que é onde a consulta e a explicação",
-        "moram juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois",
-        "divergem no primeiro ajuste de SQL — com o detalhe cruel de que a conferência",
-        "continuaria passando, porque ninguém lê um SQL e um texto lado a lado procurando",
-        "desacordo.",
+        "**Gerado por `make dashboard-contract`.** Não editar à mão: este arquivo é derivado",
+        "de [`indicators.py`](indicators.py), que é onde a consulta e a explicação moram",
+        "juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois divergem",
+        "no primeiro ajuste de SQL — com o detalhe cruel de que a conferência continuaria",
+        "passando, porque ninguém lê um SQL e um texto lado a lado procurando desacordo.",
+        "",
+        f"Deriva de `indicators.py` sha256 `{origem}`. O cabeçalho traz o hash da origem e",
+        "**não** a data da geração: assim regerar um contrato em dia não muda um byte, e",
+        "`git diff --exit-code streamlit/CONTRACT.md` depois de `make dashboard-contract`",
+        "é a conferência de que os dois não divergiram.",
         "",
         "## Para que serve",
         "",
@@ -77,7 +95,7 @@ def render() -> str:
         "| `%(fim)s` | data ISO | limite superior, inclusivo |",
         "| `%(armazens)s` | lista por vírgula | `array_contains(wh::variant, split(%(armazens)s, ','))` |",
         "",
-        f"Os indicadores marcados **sem eixo de data** ignoram `inicio`/`fim`: trazem a versão",
+        "Os indicadores marcados **sem eixo de data** ignoram `inicio`/`fim`: trazem a versão",
         "vigente.",
         "",
         "## Índice",
@@ -155,6 +173,7 @@ def main() -> int:
         arquivo.write(texto)
     os.replace(temporario, DESTINO)
     print(f"escrito em ....... {os.path.relpath(DESTINO)}")
+    print(f"origem sha256 .... {origem_sha256()}")
     print(f"indicadores ...... {len(I.INDICADORES)}")
     print(f"fora de alcance .. {len(I.FORA_DE_ALCANCE)}")
     return 0

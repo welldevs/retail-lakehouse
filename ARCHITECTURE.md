@@ -4,9 +4,17 @@ Registro datado do que foi adotado, do que **não** foi, e do gatilho objetivo d
 tecnologia ainda ausente. Existe porque "não usamos Iceberg" sem motivo escrito é
 indistinguível de esquecimento.
 
-Data: 2026-08-24. Todos os números abaixo foram medidos nas três partições em disco.
+**Como ler este documento.** Ele é cumulativo e cresce por fase, então cada seção carrega a
+data em que foi medida e **não é reescrita** quando a fase seguinte muda o número. Uma
+decisão datada que envelheceu ensina mais que uma que parece ter nascido certa; onde a fase
+posterior contradisse a anterior, isso está dito no lugar, com um ponteiro. A revisão mais
+recente é de **2026-09-01** (Fase 6).
 
 ## Escala real
+
+**Medida em 2026-08-24**, sobre as três partições do catálogo que existiam então. É a escala
+que justificou o motor, e continua sendo a pergunta certa — o volume nunca cresceu o
+bastante para mudar a resposta:
 
 | Métrica | Valor |
 |---|---|
@@ -16,8 +24,20 @@ Data: 2026-08-24. Todos os números abaixo foram medidos nas três partições e
 | Duração de uma extração | 227 s (152 requisições a 1,5 s) |
 | Silver completo (3 partições, 4 modelos, 36 testes) | ~6 s |
 
-Nenhuma tecnologia distribuída é justificada por este volume. O que segue não é recusa —
-é a condição em que cada uma passa a valer.
+**Onde está hoje, medido em 2026-09-01**, depois de mais quatro sources e seis fases:
+
+| Métrica | Valor |
+|---|---|
+| Clientes (`silver_customer`) | 286.826, em 4 AUFs |
+| Pedidos, janela de 4 dias | 91.788 · 1.726.833 linhas · 636.848 eventos |
+| `make silver` | 22 modelos, 14 seeds, 318 testes de dados — **33,7 s** |
+| `make warehouse` | 22 modelos, 157 testes de dados — **21,9 s** |
+| Suítes Python, offline | 1.068 |
+
+Nenhuma tecnologia distribuída é justificada por este volume — **nem no primeiro número, nem
+no segundo**, e isso é resultado, não premissa: os pedidos cresceram 14× desde que a Fase 3
+os mediu (6.400 → 91.788) e o `dbt build` inteiro continua em 34 segundos. O que segue não é
+recusa — é a condição em que cada uma passa a valer.
 
 ## Camadas adotadas
 
@@ -693,10 +713,16 @@ retornar sucesso.
 ### Resultado medido
 
 STAGE reconferido contagem a contagem (146.240 linhas na entrega da fase); **102 testes
-dbt** no target `snowflake`, 0 erros; **215** no target `dev`, inalterados. O fechamento cruza os três
-caminhos: soma de `MART_MARKET_COVERAGE.customers` = `DIM_CUSTOMER` vigente = base do
-STAGE = **20.000** *(o número desta fase; a Fase 6 redimensionou a base pela população e ele
-é 286.826 hoje — o que importa aqui é as três somas continuarem iguais entre si)*. `DIM_PRODUCT` tem 4.962 versões para 4.959 produtos (3 com mais de uma
+dbt** no target `snowflake`, 0 erros; **215** no target `dev`, inalterados. O fechamento
+cruza os três caminhos: soma de `MART_MARKET_COVERAGE.customers` = `DIM_CUSTOMER` vigente =
+base do STAGE = **20.000**.
+
+> **Fase 6 redimensionou a base pela população, e esse número é 286.826 hoje.** Os
+> `102`/`215`/`146.240` acima também são desta fase e não da atual — ver "Escala real",
+> no topo, para o estado corrente. O que esta seção estabelece não é o valor: é que **as
+> três somas continuam iguais entre si**, e isso segue valendo em qualquer tamanho.
+
+`DIM_PRODUCT` tem 4.962 versões para 4.959 produtos (3 com mais de uma
 versão, 7 marcados como identidade ambígua). E a lacuna de 08-17 a 08-23 aparece como sete
 dias com zero em `DIM_DATE` — que é exatamente o que o calendário completo e o
 `FACT_INGESTION_RUN` existem para tornar visível.
@@ -1491,12 +1517,27 @@ seção ausente aparece como ausência declarada, nunca como zero — *"o outbox
 
 ## Dívida técnica
 
-Revisada em 2026-08-31. Seis itens em aberto, todos deliberados e com
-o motivo escrito abaixo.
+Revisada em **2026-09-01**, depois da Fase 6. **Cinco itens em aberto**, todos deliberados,
+cada um com o motivo e o gatilho escritos abaixo. O resto da tabela é histórico: fica porque
+o que foi fechado e *como* foi fechado é a parte que se aprende.
+
+Nenhum item aberto é "falta terminar", e é por isso que a contagem cai em vez de crescer:
+
+1. **`models/warehouse/` sem teste offline** — escolha de desenho. Um espelho DuckDB teria
+   passado nos dois erros que quebraram a primeira execução real. Mitigada por evidência
+   datada, não por um segundo motor.
+2. **Conta Snowflake é trial** — aberta por natureza. O que o repositório garante é que
+   trocar de conta é barato, e isso está verificado.
+3. **Sem CI** — bloqueada por não haver remoto, e escrever um workflow que nunca rodou
+   seria afirmar uma verificação que ninguém viu.
+4. **Aviso `CustomKeyInConfigDeprecation`** — cosmético e alheio: config do `dbt-duckdb`,
+   sem forma suportada publicada.
+5. **Nenhum mart junta cliente com pedido** — a única lacuna funcional do modelo, e a
+   única que se fecha escrevendo SQL.
 
 | Item | Situação |
 |---|---|
-| Cobertura de teste | **Fechada.** 19 → 131 testes na plataforma, com duplo de S3 em memória |
+| Cobertura de teste | **Fechada.** 19 → 389 testes na plataforma, com duplo de S3 em memória |
 | Caminho de extração em container | **Fechado.** `bcn1` extraído, validado, aterrissado e transformado dentro do container |
 | Ambientes redundantes | **Removidos.** 265 MB (`venv/` quebrado e `orchestration/.venv`) |
 | Credenciais de desenvolvimento | **Endurecidas.** Portas em loopback, chaves aleatórias, compose recusa subir sem elas |
@@ -1511,7 +1552,7 @@ o motivo escrito abaixo.
 | **Árvore `models/warehouse/` sem teste offline** | **Em aberto**, e é consequência de uma escolha. Mitigada por `make warehouse-evidence` |
 | **Conta Snowflake é trial** | **Em aberto por natureza**, e o destino é trocável — verificado, não afirmado |
 | Aviso `CustomKeyInConfigDeprecation` do dbt | **Em aberto, cosmético.** Config do `dbt-duckdb`, sem forma suportada ainda |
-| **CI** | **Em aberto.** Cobriria a metade offline (992 testes + `make silver`), nunca a metade Snowflake |
+| **CI** | **Em aberto, e bloqueada por não haver remoto.** Cobriria a metade offline (`make test` + `make silver`), nunca a metade Snowflake |
 | Modelo Silver e DAG dos pedidos simulados | **Fechados** na Fase 3 (4 modelos, 8 testes singulares, `simulated_orders_events.py`) |
 | **Metade em streaming sem teste offline** | **Parcialmente fechada** nos Marcos 4, 5 e 6: `fake_pg.py` cobre a fronteira da transação, `fake_kafka.py` a ordem entre escrita e commit de offset, e `fake_iceberg.py` a fusão monotônica e o laço de retry — offline, em `make test`. Continua em aberto o que nenhum duplo cobre: que `rollback` desfaz, que o broker preserva ordem por chave, e que o Iceberg recusa commit de snapshot velho. Isso é `make orders-prove-atomicity`, `make orders-prove-stream` e `make orders-prove-projection` |
 | **Silver de pedidos afirmava separação que o log não declara** | **Fechada** no Marco 4, no dia em que foi achada: 5.508 linhas de 298 pedidos. Achada por dois folds independentes discordando, não por teste |
@@ -1523,6 +1564,14 @@ o motivo escrito abaixo.
 | Papel `RETAIL_READER` criado, verificado e sem nenhum consumidor | **Fechada em 2026-08-31.** O painel Streamlit é o primeiro a vesti-lo, e prova a recusa em GOLD/STAGE na própria tela |
 | **Nenhum mart junta cliente com pedido** | **Em aberto, e é a lacuna mais acionável do modelo.** Sem ela não há recompra, LTV, coorte nem receita por cliente. O elo existe em `FACT_ORDER.customer_sk`, no GOLD, fora do alcance do papel de BI. Não exige fonte nova — exige um mart com grão de cliente |
 | **Metade em streaming sem registro de execução real** | **Fechada** no Marco 8. `make stream-evidence` escreve `docs/stream-evidence/README.md` a partir dos três planos vivos — nenhum número à mão, e seção ausente aparece como ausência declarada, nunca como zero |
+| Todo cliente comprava a mesma cesta esperada | **Fechada** na Fase 5: o mix passou a ser condicional à coorte (idade × comunidade), calibrado por IPF para o agregado não se mover |
+| **Recém-nascido com cadastro de titular** | **Fechada** na Fase 6, e ela corrigiu o domínio que a Fase 5 errou. A Fase 5 barrou o menor no *pedido* (`min_buyer_age`) e deixou o cadastro intacto; `min_customer_age` mora agora em `customer_premises_seed.csv`, e 3.602 menores viraram 0 |
+| **Base de clientes sem densidade** | **Fechada** na Fase 6. Eram 5.000 por armazém para AUFs que diferem por 4,6× em população — nada reprovava, porque densidade não aparece em nenhum total. Hoje é `população municipal × share adulto da província × 2,2%`, e o total é consequência, não cota |
+| Lista de prints do Snowflake, 1 de 6 capturados | **Fechada em 2026-09-01.** Cinco dos seis itens já eram cobertos pela evidência gerada; o sexto virou a seção **Papéis em execução** de `make warehouse-evidence`, lida do `query_history`. `PRINTS.md` foi removido: era uma lista de tarefas morando no repositório |
+| Variáveis de ambiente lidas pelo código e declaradas em lugar nenhum | **Fechada em 2026-09-01.** Dezenove delas — de `AWS_ACCESS_KEY_ID` a `RETAIL_DASHBOARD_TTL`. Todas têm default no código, então nada quebrava: elas simplesmente não existiam para quem clonasse o repositório. Estão em `.env.example` como sobrescritas comentadas, e `TodaVariavelDeAmbienteEDeclarada` varre o código atrás de `os.environ`/`getenv` e reprova se aparecer uma nova sem declaração |
+| `streamlit/CONTRACT.md` eternamente "modificado" no git | **Fechada em 2026-09-01.** O cabeçalho trazia a data da geração, então o arquivo derivado mudava a cada execução e o teste de sincronia precisava **isentar aquela linha** — uma faixa cega dentro do próprio teste que existe para não haver faixa cega. Passou a trazer o sha256 de `indicators.py`: a comparação virou byte a byte |
+| Quatro seeds versionados sem procedência executável | **Fechada em 2026-09-01.** Os `scripts/derive_*.py` existiam, com docstring bom, e **nenhum alvo no Makefile** — a origem de quatro CSVs só se descobria abrindo um arquivo que o README não dizia como executar. Viraram `make seed-province-map`, `seed-service-area`, `seed-municipality-codes` e `seed-ambiguous-series`; os quatro reproduziram o CSV versionado byte a byte |
+| Documentação conferida só por leitura | **Fechada em 2026-09-01.** `test_documentacao.py` varre o que dá para verificar por máquina: todo caminho da árvore do README existe, todo link relativo resolve, nada de log/artefato versionado, todo alvo do Makefile aparece no `make help`, todo script tem alvo, toda variável do Makefile é usada. Seis injeções vistas vermelhas |
 
 ### Vestir os papéis: o que só aparece quando se para de rodar como administrador
 
@@ -1623,7 +1672,7 @@ Snowflake ausentes, e `--target snowflake` falha nomeando a que falta.
 
 ### `models/warehouse/` sem teste offline — e por que a resposta não é um espelho DuckDB
 
-Um espelho em DuckDB dos 21 modelos teria **passado** nos dois erros que quebraram a
+Um espelho em DuckDB dos 22 modelos teria **passado** nos dois erros que quebraram a
 primeira execução real: `FILTER (WHERE ...)` e `WINDOW ... AS`, que o DuckDB aceita e o
 Snowflake não. Um teste que não reproduz o modo de falha não é teste — é uma segunda
 implementação para manter, e daria confiança falsa exatamente onde não há.
@@ -1634,9 +1683,10 @@ isolamento e amostra de cada mart — com data e identidade da conta. Converte "
 teste" em "código executado, com a prova anexada e datada". É regenerável: vincular outra
 conta e rodar de novo produz a evidência daquela conta.
 
-O que continua verdadeiro: o recorte (24 testes) e o transporte (29) são cobertos offline,
-e é neles que moram os erros silenciosos — agregado somado junto do detalhe, escopo
-esquecido, coluna casada por posição. O SQL do warehouse falha alto quando falha.
+O que continua verdadeiro: o recorte (`snowflake_export.py`) e o transporte
+(`snowflake_load.py`) são cobertos offline, e é neles que moram os erros silenciosos —
+agregado somado junto do detalhe, escopo esquecido, coluna casada por posição. O SQL do
+warehouse falha alto quando falha.
 
 ### Fanout de homônimo no Silver de população
 
@@ -1684,18 +1734,29 @@ valor por conta própria.
 
 ### Cobertura de teste
 
-| Módulo | Testes | Situação |
-|---|---|---|
-| `manifest.py` | 17 | Obrigações do contrato e recusas |
-| `land.py` | 10 | Upload, idempotência, auto-correção, abortar antes de `_SUCCESS` |
-| `verify.py` | 7 | Adulteração, objeto ausente, órfão, manifesto divergente |
-| `config.py` | 8 | Precedência de credencial e o `.env` não sobrepor o ambiente |
-| `query.py` | 2 | Conversão de endpoint com e sem esquema |
-| `oltp_reference.py` | 33 | As 3 queries do export contra fixtures DuckDB reais |
-| `prune_local` | 10 | Só apaga a cópia local depois de duas conferências |
-| `snowflake_export.py` | 24 | O recorte: agregado `'Total'`, escopo AUF, dedup, DDL derivado |
-| `snowflake_load.py` | 29 | Stage qualificado, `OVERWRITE`, casamento por nome, reconferência, e os 4 defeitos de papel |
-| `snowflake_evidence.py` | 10 | Totais somados e não escritos, isolamento quebrado em destaque, amostra que falhou não vira vazia |
+**Sem contagem por módulo, de propósito.** A tabela que morava aqui trazia um inteiro por
+módulo, copiado à mão, e apodreceu: dizia 131 testes na plataforma quando eram 389, listava
+`verify.py` e `query.py` como se tivessem arquivo próprio (não têm — são exercitados de
+dentro de `test_landing_roundtrip.py` e `test_config.py`), e afirmava 29 e 16 para
+`snowflake_load.py` em dois parágrafos da **mesma seção**. Um número mantido à mão em dois
+lugares é uma contradição esperando a data; a lista abaixo diz o que cada suíte prova, que é
+a parte que não muda a cada teste novo. O total sai de `make test`, medido, não escrito.
+
+| Arquivo | O que a suíte prova |
+|---|---|
+| `test_manifest.py` | Obrigações do contrato do consumidor, e as recusas |
+| `test_land.py` · `test_landing_roundtrip.py` | Upload, idempotência, auto-correção, abortar antes de `_SUCCESS`, e a releitura que reconfere (`verify.py`) |
+| `test_config.py` | Precedência de credencial, o `.env` não sobrepor o ambiente, a conversão de endpoint (`query.py`), e toda variável lida estar declarada |
+| `test_prune_local.py` | Só apaga a cópia local depois de duas conferências independentes |
+| `test_oltp_reference.py` | As queries do export contra fixtures DuckDB reais, a alocação por população e o share adulto medido antes do corte |
+| `test_orders_reference.py` · `test_demand_profile.py` · `test_demand_check.py` | O calendário de preço, o IPF, os dois checksums da extração do MAPA e o reality check |
+| `test_orders_oltp.py` · `test_orders_stream.py` · `test_orders_projection.py` | A fronteira da transação, a ordem entre escrita e commit de offset, a fusão monotônica |
+| `test_snowflake_export.py` | O recorte: agregado `'Total'`, escopo AUF, dedup, DDL derivado do próprio recorte |
+| `test_snowflake_load.py` | Stage qualificado, `OVERWRITE`, casamento por nome, reconferência, e os 4 defeitos de papel |
+| `test_snowflake_evidence.py` · `test_stream_evidence.py` | Totais somados e não escritos, isolamento quebrado em destaque, e o que falhou não virar vazio |
+| `test_silver_gate.py` | O portão do `dbt build` decidindo num lugar só |
+| `test_dashboard_indicators.py` | O `CONTRACT.md` byte a byte igual ao que o gerador produz, e todo parâmetro ligado |
+| `test_cli.py` | Os defaults da linha de comando, incluindo `--count` **não** ter um |
 
 Fechado com um duplo de cliente S3 em memória (`platform/tests/fake_s3.py`), no espírito do
 duplo de HTTP que a Source já usa. O duplo **valida o `ChecksumSHA256` declarado**, como o
@@ -1706,18 +1767,18 @@ Confirmado não-vazio por mutação: desligar a comparação de sha256 em `verif
 
 **O que ainda não é coberto**, e a lista cresceu com a Fase 2:
 
-- **O caminho `dbt` do Silver** — os 293 testes de dados exigem object storage de pé.
+- **O caminho `dbt` do Silver** — os testes de dados exigem object storage de pé.
 - **As DAGs** — nenhum teste importa o módulo do Airflow. As seis compilam via `DagBag`
   no container, o que pega erro de import mas não comportamento.
-- **A árvore `models/warehouse/`** — os 21 modelos e 149 testes só rodam **contra o
+- **A árvore `models/warehouse/`** — os 22 modelos e seus testes só rodam **contra o
   Snowflake**. Não há equivalente offline, e não é oversight: um espelho em DuckDB seria
   uma segunda materialização da mesma verdade, e foi justamente a diferença entre os dois
   motores (`FILTER`, `WINDOW`) que os quebrou na primeira execução — um espelho DuckDB teria
   passado e escondido exatamente esses erros. **A consequência é real e fica registrada: sem
   conta Snowflake, `make warehouse` não roda e essa metade do projeto não é verificável.**
-  O que atenua é que o recorte que a alimenta (`snowflake_export.py`, 24 testes) e o
-  transporte (`snowflake_load.py`, 16) são cobertos offline, e é neles que moram os erros
-  silenciosos — o SQL do Gold falha alto quando falha.
+  O que atenua é que o recorte que a alimenta (`snowflake_export.py`) e o transporte
+  (`snowflake_load.py`) são cobertos offline, e é neles que moram os erros silenciosos — o
+  SQL do Gold falha alto quando falha.
 
 Os três foram verificados manualmente, em execução real.
 
@@ -1736,16 +1797,21 @@ Os três foram verificados manualmente, em execução real.
 
 ### Sem CI
 
-Nenhum `.github/workflows`. A fronteira depende de alguém rodar `make test` — e o alvo
-`source-test` existe exatamente para ser um job que não instala nada. Dois jobs
-(Source sem dependência, plataforma com venv) tornariam a fronteira verificada a cada push
-em vez de por disciplina. Adiado para quando o repositório subir.
+Nenhum `.github/workflows`, e **nenhum remoto configurado** (`git remote -v` é vazio). A
+fronteira depende de alguém rodar `make test` — e o alvo `source-test` existe exatamente
+para ser um job que não instala nada. Dois jobs (Source sem dependência, plataforma com
+venv) tornariam a fronteira verificada a cada push em vez de por disciplina.
+
+Não está escrito porque **um workflow que nunca rodou é o oposto do que este repositório
+faz com teste**: seria um arquivo afirmando uma verificação que ninguém viu acontecer, nem
+verde nem vermelha. O gatilho é literal — no dia em que houver remoto, os dois jobs entram
+e a primeira execução é a prova.
 
 ### A conta Snowflake é um trial — **aberta, por natureza**
 
 Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
-com ele os 21 modelos e 149 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
-e as 992 suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
+com ele os 22 modelos e 157 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
+e as suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
 fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
 `390913`, com o login autenticando e nenhum warehouse disponível.
 
@@ -1758,7 +1824,7 @@ como está até o `dbt-duckdb` publicar a forma suportada; o aviso é ruído, n�
 
 ## Painel de conferência: o terceiro papel finalmente vestido
 
-Streamlit sobre o `MART`, 16 indicadores em 6 grupos. O propósito declarado não é *mostrar
+Streamlit sobre o `MART`, 18 indicadores em 6 grupos. O propósito declarado não é *mostrar
 dados* — é **conferir os indicadores antes de reconstruí-los no Power BI**, que é uma
 ferramenta onde a medida obviamente errada e a certa têm exatamente a mesma aparência.
 
@@ -1824,7 +1890,7 @@ segundo venv duplicaria o conector só para não duplicar o Streamlit.
 
 O Streamlit devolve **HTTP 200 com o esqueleto da página mesmo quando o script morre no
 primeiro `select`** — a renderização é no cliente. `make dashboard-check` roda o script de
-verdade via `AppTest` e exige zero exceção; é a única forma de as 19 consultas serem
+verdade via `AppTest` e exige zero exceção; é a única forma de as 21 consultas serem
 exercitadas. Fica fora de `make test` porque exige conta viva.
 
 ## O portão do Silver morava em seis arquivos, e nenhum concordava com o outro
@@ -1837,7 +1903,7 @@ sucesso; o `silver` caía com *"no version-hint could be found"*.
 
 ### A decisão, e as seis cópias dela
 
-Nem todos os 21 modelos do Silver podem ser construídos sempre, e os dois motivos são
+Nem todos os 22 modelos do Silver podem ser construídos sempre, e os dois motivos são
 legítimos: uma source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver
 zero linhas), e `silver_live_order_state` só pode ser lido quando o catálogo Iceberg
 responde, porque o caminho do metadado vem dele e nunca de uma varredura do storage.

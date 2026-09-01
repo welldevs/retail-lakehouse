@@ -20,7 +20,7 @@ import os
 from . import MANIFEST_VERSION
 from .canonical import CorruptFileError, digest, read_json
 from .partition import MANIFEST_NAME, RUN_LOG_NAME, SUCCESS_NAME, manifest_path, success_path
-from .schema import count_data_points, count_series, fingerprint, is_mapping, series_of
+from .schema import count_series, fingerprint, is_mapping, series_of
 
 EXIT_OK = 0
 EXIT_FAILED = 1

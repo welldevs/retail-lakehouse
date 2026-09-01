@@ -17,7 +17,7 @@ datada de que os modelos rodaram; `make silver` e as suítes seguem rodando sem 
 | papel da sessão | `ACCOUNTADMIN` |
 | warehouse | `COMPUTE_WH` |
 | database | `RETAIL` |
-| capturado em | 2026-09-01 06:26:01 -07:00 |
+| capturado em | 2026-09-01 09:42:55 -07:00 |
 
 O papel acima é o da **captura**, não o do pipeline. Ler as três camadas de uma vez é
 justamente o que nenhum papel do projeto pode fazer — é essa a separação. O pipeline
@@ -91,6 +91,33 @@ todos os papéis do usuário além do primário — medido nesta conta antes da 
 
 Resultado: **a matriz confere inteira** — nenhuma violação.
 
+## Papéis em execução, vistos pelo verbo
+
+A matriz acima prova o que cada papel **pode** ler. Esta tabela prova o que cada um
+**fez** — e é a diferença entre governança verificada e governança adotada. Os três
+papéis existiam desde a Fase 2, com os grants certos, enquanto todas as execuções
+passavam por `ACCOUNTADMIN`; nada nesta página teria mostrado isso, porque a posse
+só muda quando alguém escreve de fato.
+
+Janela de 167 horas: `information_schema.query_history` não recupera nada além de
+sete dias. Uma semana sem execução esvazia a seção, e ela **declara a ausência** em
+vez de imprimir uma tabela vazia, que se leria como "não há separação".
+
+| papel | tipo de query | queries | última |
+|---|---|---|---|
+| `RETAIL_LOADER` | `SELECT` | 345 | 2026-09-01 07:01 |
+| `RETAIL_LOADER` | `PUT_FILES` | 136 | 2026-09-01 07:01 |
+| `RETAIL_LOADER` | `CREATE_TABLE` | 136 | 2026-09-01 07:01 |
+| `RETAIL_LOADER` | `COPY` | 135 | 2026-09-01 07:01 |
+| `RETAIL_LOADER` | `USE` | 16 | 2026-09-01 06:26 |
+| `RETAIL_READER` | `SELECT` | 732 | 2026-09-01 06:43 |
+| `RETAIL_READER` | `USE` | 33 | 2026-09-01 06:43 |
+| `RETAIL_READER` | `SHOW` | 3 | 2026-08-31 06:41 |
+| `RETAIL_TRANSFORMER` | `SELECT` | 2,531 | 2026-09-01 07:02 |
+| `RETAIL_TRANSFORMER` | `CREATE_TABLE_AS_SELECT` | 346 | 2026-09-01 07:02 |
+| `RETAIL_TRANSFORMER` | `SHOW` | 187 | 2026-09-01 07:01 |
+| `RETAIL_TRANSFORMER` | `USE` | 16 | 2026-09-01 06:26 |
+
 ## Amostras
 
 Poucas linhas por mart, só para que o conteúdo seja inspecionável depois que o
@@ -120,11 +147,11 @@ destino não existir mais. Não substituem o warehouse enquanto ele viver.
 
 | SNAPSHOT_DATE | WH | CATEGORY_NAME | PRODUCTS | PRODUCTS_EXCLUSIVE_HERE | AVG_UNIT_PRICE |
 |---|---|---|---|---|---|
-| 2026-08-28 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
-| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
-| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
 | 2026-08-27 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
+| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
 | 2026-08-26 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
+| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
+| 2026-08-28 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
 
 ### `MART_DEMAND_COHORT`
 

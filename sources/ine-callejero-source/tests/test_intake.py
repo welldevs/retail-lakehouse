@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from ine_callejero_source import intake, partition as part
-from ine_callejero_source.canonical import digest, read_bytes
+from ine_callejero_source.canonical import read_bytes
 from tests.support import build_input_dir, extract_args, write_callejero_file
 
 

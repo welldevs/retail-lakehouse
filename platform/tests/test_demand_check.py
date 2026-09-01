@@ -10,7 +10,6 @@ realismo por receita.
 from __future__ import annotations
 
 import unittest
-from decimal import Decimal
 
 from retail_platform import demand_check as dc
 

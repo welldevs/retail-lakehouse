@@ -20,7 +20,7 @@ from retail_platform.snowflake_evidence import AMOSTRAS, render  # noqa: E402
 from retail_platform.snowflake_load import ROLES  # noqa: E402
 
 
-def _dados(objetos=None, isolamento=None, amostras=None):
+def _dados(objetos=None, isolamento=None, amostras=None, papeis=None):
     return {
         "identidade": {
             "conta": "ACC123",
@@ -38,8 +38,49 @@ def _dados(objetos=None, isolamento=None, amostras=None):
         "amostras": amostras if amostras is not None else {
             "MART_CUSTOMER_BASE": (["CUSTOMER_ID"], [("cust_bcn1_000000",)]),
         },
+        "papeis_em_execucao": papeis if papeis is not None else (
+            ["ROLE_NAME", "QUERY_TYPE", "QUERIES", "ULTIMA"],
+            [
+                ("RETAIL_LOADER", "COPY", 135, "2026-09-01 07:01"),
+                ("RETAIL_TRANSFORMER", "CREATE_TABLE_AS_SELECT", 346, "2026-09-01 07:02"),
+                ("RETAIL_READER", "SELECT", 732, "2026-09-01 06:43"),
+            ],
+        ),
         "isolamento": isolamento or [],
     }
+
+
+class PapeisEmExecucaoTest(unittest.TestCase):
+    """A matriz de isolamento prova o que cada papel PODE ler; esta secao prova o que cada
+    um FEZ. Foi a distincao que custou quatro defeitos na Fase 2 — os tres papeis existiam,
+    verificados, e nenhuma execucao passava por eles.
+
+    Substitui a lista de prints que vivia em docs/warehouse-evidence/PRINTS.md: cinco dos
+    seis itens daquela lista ja eram cobertos por esta pagina, e o sexto era este.
+    """
+
+    def test_o_verbo_de_cada_papel_e_publicado(self):
+        texto = render(_dados())
+        self.assertIn("CREATE_TABLE_AS_SELECT", texto)
+        self.assertIn("`RETAIL_READER`", texto)
+        self.assertIn("732", texto)
+
+    def test_historico_vazio_declara_a_ausencia_em_vez_de_tabela_vazia(self):
+        """Uma tabela sem linhas se le como "os papeis nao fizeram nada", que e
+        indistinguivel de "nao ha separacao de papeis". Sao coisas diferentes: o
+        query_history do Snowflake nao guarda mais de sete dias, e uma semana parada
+        apaga a evidencia sem apagar a propriedade."""
+        texto = render(_dados(papeis=(["ROLE_NAME"], [])))
+        self.assertIn("Nenhuma execução de papel", texto)
+        self.assertIn("sete dias", texto)
+
+    def test_erro_ao_ler_o_historico_aparece_como_erro(self):
+        """Mesma regra das amostras: falha que se disfarca de vazio e a unica coisa pior
+        que falha."""
+        texto = render(_dados(papeis=(["erro"], [("Insufficient privileges",)])))
+        self.assertIn("Não foi possível ler o histórico", texto)
+        self.assertIn("Insufficient privileges", texto)
+        self.assertNotIn("Nenhuma execução de papel", texto)
 
 
 class RelatorioTest(unittest.TestCase):

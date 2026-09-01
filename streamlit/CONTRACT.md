@@ -1,11 +1,15 @@
 # Contrato dos indicadores do painel
 
-**Gerado por `make dashboard-contract` em 2026-09-01 13:20:39 UTC.** Não editar à mão: este arquivo
-é derivado de [`indicators.py`](indicators.py), que é onde a consulta e a explicação
-moram juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois
-divergem no primeiro ajuste de SQL — com o detalhe cruel de que a conferência
-continuaria passando, porque ninguém lê um SQL e um texto lado a lado procurando
-desacordo.
+**Gerado por `make dashboard-contract`.** Não editar à mão: este arquivo é derivado
+de [`indicators.py`](indicators.py), que é onde a consulta e a explicação moram
+juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois divergem
+no primeiro ajuste de SQL — com o detalhe cruel de que a conferência continuaria
+passando, porque ninguém lê um SQL e um texto lado a lado procurando desacordo.
+
+Deriva de `indicators.py` sha256 `d9237b3474b9db3944b8a382f2c701cf0f85ebc2e67dcfd4bfd743deb6a2ec85`. O cabeçalho traz o hash da origem e
+**não** a data da geração: assim regerar um contrato em dia não muda um byte, e
+`git diff --exit-code streamlit/CONTRACT.md` depois de `make dashboard-contract`
+é a conferência de que os dois não divergiram.
 
 ## Para que serve
 

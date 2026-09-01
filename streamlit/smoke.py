@@ -18,7 +18,6 @@ que este arquivo existe em vez de uma checagem de porta.
 from __future__ import annotations
 
 import os
-import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(RAIZ, "streamlit", "app.py")

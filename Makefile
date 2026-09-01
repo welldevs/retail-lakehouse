@@ -131,13 +131,16 @@ ORDERS_OVERWRITE       ?=
         warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
         warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
         dashboard dashboard-venv dashboard-contract dashboard-check \
-        demand-reality-check demand-check-mapping
+        demand-reality-check demand-check-mapping \
+        seed-province-map seed-service-area seed-municipality-codes \
+        seed-ambiguous-series
 
 help:
 	@echo "infra"
 	@echo "  up              sobe o MinIO e cria os buckets (so o plano de dados)"
 	@echo "  down            derruba tudo (mantem os volumes)"
 	@echo "  status          estado dos containers e conteudo dos buckets"
+	@echo "  logs            ultimas 50 linhas de todos os containers"
 	@echo ""
 	@echo "orquestracao"
 	@echo "  airflow         builda e sobe Postgres + scheduler + webserver (:8080)"
@@ -202,7 +205,9 @@ help:
 	@echo "plano de stream (nao sobe com \`make up\`) — OLTP de pedidos e outbox transacional:"
 	@echo "  stream-up                 sobe o oltp-postgres e cria orders/order_line/outbox"
 	@echo "  stream-down               derruba so o plano de stream (mantem o volume)"
+	@echo "  stream-logs               logs do oltp-postgres e do kafka"
 	@echo "  orders-oltp-ddl           imprime a DDL do OLTP (sem conectar em nada)"
+	@echo "  orders-oltp-init          cria as tres tabelas; OLTP_RESET=--reset derruba antes"
 	@echo "  orders-apply              replica o log de $(WH)/$(ORDERS_DATE) no OLTP"
 	@echo "  orders-apply-all          a janela inteira: 4 armazens x N dias"
 	@echo "  orders-outbox             estado do outbox; PARTITION=... reconstitui o log"
@@ -219,6 +224,8 @@ help:
 	@echo ""
 	@echo "projecao viva (Iceberg) — dois escritores na mesma tabela, um leitor:"
 	@echo "  iceberg-init              catalogo SQL + tabela live_order_state"
+	@echo "  iceberg-metadata          imprime o metadado CORRENTE, lido do catalogo"
+	@echo "  orders-projection-init    cria o read model no Postgres da projecao"
 	@echo "  orders-project-iceberg    o consumidor escrevendo no Iceberg (escritor 1)"
 	@echo "  orders-rebuild-projection reconstroi do RAW na MESMA tabela (escritor 2)"
 	@echo "  orders-reconcile          Iceberg x Silver x OLTP; sai 1 se divergirem"
@@ -249,6 +256,12 @@ help:
 	@echo "  warehouse-trigger         dispara a DAG do warehouse no Airflow e acompanha"
 	@echo "  ...trocar de conta:       edite .env.snowflake (veja .env.snowflake.example) e"
 	@echo "                            ~/.snowflake/config.toml; nenhum modelo ou teste muda"
+	@echo ""
+	@echo "seeds derivados (sob demanda; o CSV versionado e a verdade, o script e a procedencia) —"
+	@echo "  seed-province-map         wh -> provincia/municipio, reconferido no Callejero"
+	@echo "  seed-service-area         wh -> municipios da AUF (AUF_XLSX=$(AUF_XLSX))"
+	@echo "  seed-municipality-codes   nome (Tempus3) -> codigo oficial   [rede: API do INE]"
+	@echo "  seed-ambiguous-series     serie -> codigo, para homonimo     [rede: API do INE]"
 	@echo ""
 	@echo "espaco em disco —"
 	@echo "  data-usage                quanto o scratch local (data/) esta ocupando"
@@ -845,7 +858,7 @@ dashboard-contract:
 # EXIGE CONTA VIVA, e por isso fica fora de `make test`. Roda o script do Streamlit de verdade
 # e exige zero excecao: um `curl` no /health nao serve, porque o Streamlit devolve HTTP 200 com
 # o esqueleto da pagina mesmo quando o script morre no primeiro `select` — a renderizacao e no
-# cliente. As 19 consultas so sao exercitadas assim.
+# cliente. As 21 consultas (18 indicadores + 3 auxiliares) so sao exercitadas assim.
 dashboard-check:
 	@$(PLATFORM_PY) streamlit/smoke.py
 
@@ -853,6 +866,32 @@ warehouse-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause warehouse_load
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger warehouse_load
 	@echo "disparado. acompanhe com: make airflow-logs"
+
+# ---- derivacao de seed -------------------------------------------------------
+# Os quatro seeds abaixo sao DERIVADOS de uma fonte e depois VERSIONADOS: o CSV e a
+# verdade do repositorio, e o script e como ele foi obtido. Rodam sob demanda, nao no
+# pipeline — a fonte de cada um muda uma vez por semestre ou nunca.
+#
+# EXISTIREM COMO ALVO E O PONTO. Sem isto, "de onde saiu este CSV" so se responde lendo o
+# docstring de um script que ninguem sabe que existe, e um seed sem procedencia executavel
+# e indistinguivel de um numero digitado.
+CALLEJERO_ROOT ?= $(CALLEJERO_IN)
+AUF_XLSX       ?= temp/AUF_mun.xlsx
+
+seed-province-map:
+	$(PYTHON) scripts/derive_warehouse_province_map.py "$(CALLEJERO_ROOT)"
+
+seed-service-area:
+	$(PYTHON) scripts/derive_warehouse_service_area.py "$(AUF_XLSX)" "$(CALLEJERO_ROOT)"
+
+# Estes dois consultam a API Tempus3 do INE ao vivo — os unicos alvos de derivacao que
+# usam rede. O `derive_ambiguous_series` so consulta as series cujo NOME e ambiguo na
+# Espanha inteira E existe nas 4 provincias (hoje 3 nomes, 18 series), nao as ~8.200.
+seed-municipality-codes:
+	$(PYTHON) scripts/derive_municipality_codes.py
+
+seed-ambiguous-series:
+	$(PYTHON) scripts/derive_ambiguous_series.py
 
 # ---- consulta ---------------------------------------------------------------
 # O retail.duckdb guarda apenas VIEWs sobre o parquet do object storage — nao contem

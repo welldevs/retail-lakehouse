@@ -154,26 +154,34 @@ class ContractEmSincroniaTest(unittest.TestCase):
     motivo pelo qual o DDL do STAGE e derivado do recorte.
     """
 
-    def test_o_contract_no_disco_e_o_que_o_gerador_produz(self):
+    def test_o_contract_no_disco_e_BYTE_A_BYTE_o_que_o_gerador_produz(self):
+        """Comparacao EXATA, sem nenhuma linha isenta.
+
+        Ate a revisao de 2026-09-01 o cabecalho trazia a data da geracao, e este teste
+        precisava descartar essa linha antes de comparar. Uma isencao dentro do proprio
+        teste de sincronia e uma faixa cega: qualquer coisa que caisse naquela linha
+        deixava de ser conferida. O cabecalho passou a trazer o sha256 de indicators.py —
+        funcao da origem, e nao do relogio — entao a comparacao pode ser total, e
+        `make dashboard-contract` sobre um contrato em dia nao muda um byte.
+        """
         caminho = os.path.join(DASHBOARD, "CONTRACT.md")
         self.assertTrue(os.path.exists(caminho), "CONTRACT.md nao existe — rode `make dashboard-contract`")
         with open(caminho, encoding="utf-8") as arquivo:
             no_disco = arquivo.read()
-        gerado = C.render()
-
-        # A primeira linha do corpo carrega o timestamp da geracao: ela muda a cada execucao
-        # e comparar isso exigiria regenerar o arquivo a cada commit. O resto tem de bater.
-        def sem_data(texto: str) -> str:
-            return "\n".join(
-                linha for linha in texto.splitlines()
-                if not linha.startswith("**Gerado por `make dashboard-contract` em ")
-            )
 
         self.assertEqual(
-            sem_data(no_disco), sem_data(gerado),
+            no_disco, C.render(),
             "CONTRACT.md esta fora de sincronia com indicators.py. "
             "Rode `make dashboard-contract`.",
         )
+
+    def test_o_cabecalho_carrega_o_sha256_da_origem_e_nenhuma_data(self):
+        """Se o carimbo voltar a ser um relogio, o arquivo gerado fica eternamente sujo no
+        git e o teste acima tem de voltar a isentar uma linha. Guardado aqui para que a
+        regressao apareca como falha, e nao como ruido no diff."""
+        cabecalho = C.render().splitlines()[8]
+        self.assertIn(C.origem_sha256(), cabecalho)
+        self.assertNotRegex(C.render(), r"Gerado por `make dashboard-contract` em \d{4}-")
 
     def test_o_contract_traz_o_sql_de_todo_indicador(self):
         gerado = C.render()
@@ -215,11 +223,38 @@ class ContractEmSincroniaTest(unittest.TestCase):
                 importados.update(alias.name.split(".")[0] for alias in no.names)
             elif isinstance(no, ast.ImportFrom) and no.module:
                 importados.add(no.module.split(".")[0])
-        permitidos = {"os", "sys", "datetime", "indicators", "__future__"}
+        permitidos = {"os", "sys", "hashlib", "indicators", "__future__"}
         self.assertEqual(
             importados - permitidos, set(),
             "o gerador do CONTRACT so pode importar stdlib e indicators",
         )
+
+
+class ContagemNaProsaTest(unittest.TestCase):
+    """O ARCHITECTURE diz quantos indicadores o painel tem. Esse numero e copiado a mao, e
+    ja errou: dizia 16 quando eram 18, e 19 consultas quando eram 21.
+
+    Nao vale automatizar toda contagem escrita em prosa — a maioria delas o remedio foi
+    parar de escrever. Esta fica porque a frase perde o sentido sem o numero, e porque
+    acrescentar um indicador e justamente o momento em que ninguem lembra do ARCHITECTURE.
+    """
+
+    def _arquitetura(self) -> str:
+        raiz = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        with open(os.path.join(raiz, "ARCHITECTURE.md"), encoding="utf-8") as arquivo:
+            return arquivo.read()
+
+    def test_o_numero_de_indicadores_no_architecture_confere(self):
+        texto = self._arquitetura()
+        grupos = len({indicador.grupo for indicador in I.INDICADORES})
+        self.assertIn(
+            f"{len(I.INDICADORES)} indicadores em {grupos} grupos", texto,
+            "ARCHITECTURE.md descreve outro numero de indicadores/grupos",
+        )
+
+    def test_o_numero_de_consultas_no_architecture_confere(self):
+        total = len(I.INDICADORES) + 3  # FRESCOR, JANELA, ARMAZENS
+        self.assertIn(f"as {total} consultas", self._arquitetura())
 
 
 class ForaDeAlcanceTest(unittest.TestCase):
