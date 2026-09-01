@@ -78,6 +78,7 @@ PREMISE_LABEL = "synthetic"
 # produzir pedidos com um default escondido no gerador.
 REQUIRED_PREMISES = (
     "daily_order_rate",
+    "min_buyer_age",
     "basket_lines_min",
     "basket_lines_mode",
     "basket_lines_max",
@@ -493,7 +494,8 @@ def _build_catalog(connection, price_dates: list[str], seeds_dir: str) -> dict:
 _CUSTOMERS_SQL = """
 with versions as (
     select
-        customer_id, wh, province_code, municipality_code, postal_code, ingestion_date,
+        customer_id, wh, province_code, municipality_code, postal_code, birth_year,
+        ingestion_date,
         row_number() over (partition by customer_id order by ingestion_date desc) as rn
     from silver_customer
 ),
@@ -508,6 +510,10 @@ select
     v.province_code,
     v.municipality_code,
     v.postal_code,
+    -- `birth_year` e nao a faixa etaria: a faixa depende do DIA DO PEDIDO, que so o gerador
+    -- conhece. Carimba-la aqui congelaria a idade do cliente na data do export, e um
+    -- aniversario dentro da janela passaria despercebido.
+    v.birth_year,
     cast(f.first_ingestion_date as varchar) as first_ingestion_date
 from versions v
 join first_seen f on v.customer_id = f.customer_id
@@ -563,11 +569,112 @@ def _build_customers(connection, warehouses: list[str]) -> dict:
 
 
 # --------------------------------------------------------------------------------
+# 5. Coorte do cliente: a ponte entre um atributo observado e um corte do MAPA
+# --------------------------------------------------------------------------------
+
+def _warehouse_regions(seeds_dir: str) -> dict:
+    """armazem -> comunidade autonoma, via a provincia que ja estava declarada.
+
+    Dois seeds em cadeia e nao um: `warehouse_province_map_seed` e decisao DESTA plataforma
+    (onde ficam os armazens), e `ine_ccaa_map_seed` e geografia administrativa do INE (a
+    que comunidade uma provincia pertence). Juntar as duas num arquivo so faria uma decisao
+    nossa parecer um fato oficial.
+    """
+    path = _seed(seeds_dir, PROVINCE_MAP_SEED)
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    province_ccaa = demand_profile.load_province_ccaa(seeds_dir)
+
+    regions: dict[str, str] = {}
+    for row in rows:
+        wh = (row.get("wh") or "").strip()
+        ccaa = demand_profile.ccaa_of(province_ccaa, row.get("province_code"))
+        anterior = regions.setdefault(wh, ccaa)
+        if anterior != ccaa:
+            raise OrdersReferenceError(
+                f"o armazem {wh!r} aparece em duas comunidades ({anterior}, {ccaa}). A "
+                f"inclinacao regional deixaria de ser definida para ele."
+            )
+    return regions
+
+
+def _cohort_counts(
+    customer_rows: list[dict],
+    seeds_dir: str,
+    min_buyer_age: int,
+    reference_date: str,
+) -> tuple[dict, dict]:
+    """(faixa, ccaa) -> quantos clientes ELEGIVEIS, mais um resumo do que ficou de fora.
+
+    A IDADE E CALCULADA NA DATA DE REFERENCIA DA JANELA, e nao no relogio: o export tem de
+    ser reprodutivel no ano que vem. Um cliente pode cruzar a fronteira de uma faixa dentro
+    de uma janela longa; a massa das coortes e propriedade da JANELA, e a data usada viaja
+    no payload para que a escolha fique visivel em vez de implicita.
+
+    O CORTE POR IDADE MINIMA ENTRA AQUI, e nao so no gerador. Se a massa fosse contada
+    sobre a base inteira, o IPF fecharia a conta contra uma distribuicao de coortes que
+    inclui quem nunca vai colocar um pedido — e o agregado sairia do alvo por um caminho
+    que nenhum teste do gerador alcanca.
+    """
+    province_ccaa = demand_profile.load_province_ccaa(seeds_dir)
+    ano = int(reference_date[:4])
+
+    counts: dict[tuple, int] = {}
+    menores = 0
+    sem_ano = 0
+    for row in customer_rows:
+        birth_year = row.get("birth_year")
+        if birth_year is None:
+            sem_ano += 1
+            continue
+        idade = ano - int(birth_year)
+        if idade < min_buyer_age:
+            menores += 1
+            continue
+        banda = demand_profile.age_band_of(idade)
+        ccaa = demand_profile.ccaa_of(province_ccaa, row.get("province_code"))
+        chave = (banda, ccaa)
+        counts[chave] = counts.get(chave, 0) + 1
+
+    if sem_ano:
+        raise OrdersReferenceError(
+            f"{sem_ano} cliente(s) sem birth_year em silver_customer. Sem ano de nascimento "
+            f"nao ha faixa etaria, e um cliente sem faixa nao tem propensao definida."
+        )
+    if not counts:
+        raise OrdersReferenceError(
+            f"nenhum cliente com {min_buyer_age} anos ou mais em {reference_date}. Com "
+            f"min_buyer_age={min_buyer_age} a base inteira ficaria inelegivel."
+        )
+
+    resumo = {
+        "reference_date": reference_date,
+        "min_buyer_age": min_buyer_age,
+        "eligible": sum(counts.values()),
+        "below_min_age": menores,
+        "note": (
+            "Medido em 2026-08-31, antes desta fase: 18,01% da base tinha menos de 18 anos "
+            "(3.602 de 20.000), com idades a partir de zero. Isso NAO e defeito da Source de "
+            "OLTP — o contrato dela declara que a idade vem da distribuicao POPULACIONAL do "
+            "INE, e e isso que ela entrega. O que faltava declarado era a diferenca entre "
+            "residente e quem coloca um pedido, e ela so passou a importar quando a idade "
+            "comecou a governar a demanda."
+        ),
+    }
+    return counts, resumo
+
+
+# --------------------------------------------------------------------------------
 # Coerencia entre os quatro arquivos
 # --------------------------------------------------------------------------------
 
 def _assert_coverage(
-    customers: dict, catalog: dict, calendar: dict, premises: dict, demand: dict
+    customers: dict,
+    catalog: dict,
+    calendar: dict,
+    premises: dict,
+    demand: dict,
+    warehouse_regions: dict,
 ) -> None:
     """Cobertura verificada em tempo de execucao, nunca presumida como permanente."""
     warehouses = set(calendar["warehouses"])
@@ -636,6 +743,40 @@ def _assert_coverage(
             f"armazem divergiria dos demais sem erro nenhum."
         )
 
+    # TODO ARMAZEM PRECISA DE UMA COMUNIDADE COM INDICE DE FREQUENCIA, e toda coorte
+    # precisa de um vetor de pesos que cubra os mesmos grupos do perfil agregado. Um vetor
+    # curto faria o sorteio daquela coorte ignorar um grupo inteiro — sem erro, sem nulo, e
+    # com um mix que continua somando 1.
+    cohorts = demand.get("cohorts")
+    if not cohorts:
+        raise OrdersReferenceError(
+            "o perfil de demanda saiu sem a secao `cohorts`. Um perfil sem a camada de "
+            "coorte carimbado com a versao que a promete seria um no-op silencioso."
+        )
+    com_indice = {r["ccaa_code"] for r in cohorts["regions"]}
+    sem_regiao = sorted(
+        wh for wh in warehouses if warehouse_regions.get(wh) not in com_indice
+    )
+    if sem_regiao:
+        raise OrdersReferenceError(
+            f"armazem(ns) sem comunidade com indice de frequencia: {sem_regiao}"
+        )
+
+    todos_grupos = {g["demand_group"] for g in demand["groups"]}
+    for vetor in cohorts["weights"]:
+        presentes = {g["demand_group"] for g in vetor["groups"]}
+        faltando = sorted(todos_grupos - presentes)
+        if faltando:
+            raise OrdersReferenceError(
+                f"a coorte {vetor['cohort']!r} nao tem peso para {len(faltando)} grupo(s): "
+                f"{faltando[:5]}. O sorteio daquela coorte ignoraria o grupo inteiro."
+            )
+        soma = sum(float(g["line_weight"]) for g in vetor["groups"])
+        if abs(soma - 1.0) > 1e-6:
+            raise OrdersReferenceError(
+                f"os pesos da coorte {vetor['cohort']!r} somam {soma}, e nao 1"
+            )
+
 
 def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     """Monta os quatro payloads a partir de uma conexao DuckDB ja aberta.
@@ -651,9 +792,27 @@ def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT
     price_dates = sorted({row["price_as_of"] for row in calendar["rows"]})
     catalog = _build_catalog(connection, price_dates, seeds_dir)
     customers = _build_customers(connection, warehouses)
-    demand = demand_profile.build(catalog["rows"], seeds_dir)
 
-    _assert_coverage(customers, catalog, calendar, premises, demand)
+    # A coorte do cliente e resolvida AQUI, num lugar so, pelo mesmo motivo que
+    # `_stamp_demand_group` resolve o mapeamento num lugar so: duas resolucoes divergem no
+    # primeiro ajuste e a divergencia seria invisivel, porque as duas dariam mix plausivel.
+    warehouse_regions = _warehouse_regions(seeds_dir)
+    cohort_counts, cohort_summary = _cohort_counts(
+        customers["rows"],
+        seeds_dir,
+        int(float(premises["values"]["min_buyer_age"])),
+        days[0],
+    )
+    customers["cohort_summary"] = cohort_summary
+
+    demand = demand_profile.build(
+        catalog["rows"],
+        seeds_dir,
+        customers_by_cohort=cohort_counts,
+        warehouse_regions=warehouse_regions,
+    )
+
+    _assert_coverage(customers, catalog, calendar, premises, demand, warehouse_regions)
     return {
         "customers": customers,
         "catalog": catalog,
@@ -723,5 +882,9 @@ def export(
         "demand_model_version": payloads["demand"]["demand_model_version"],
         "demand_groups": len(payloads["demand"]["groups"]),
         "demand_seeds_sha256": payloads["demand"]["seeds_sha256"],
+        "demand_cohorts": len(payloads["demand"]["cohorts"]["weights"]),
+        "demand_ipf_iterations": payloads["demand"]["cohorts"]["ipf_iterations"],
+        "eligible_customers": payloads["customers"]["cohort_summary"]["eligible"],
+        "below_min_buyer_age": payloads["customers"]["cohort_summary"]["below_min_age"],
         "bytes": written,
     }

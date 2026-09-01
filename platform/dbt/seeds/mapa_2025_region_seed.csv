@@ -1,0 +1,19 @@
+ccaa_code,ccaa_label,per_capita_kg_l,per_capita_eur,informe_section,provenance,note
+00,Total Espana,577.32,1874.75,3,informe_prose,"Media nacional. Nao e uma regiao: e o denominador contra o qual as demais sao lidas."
+01,Andalucia,544.70,1692.44,3,informe_prose,"Servida por svq1."
+02,Aragon,576.60,1921.26,3,informe_prose,
+03,Principado de Asturias,564.87,1973.84,3,informe_prose,
+04,Illes Balears,682.70,2068.96,3,informe_prose,"Maior consumo per capita do pais."
+05,Canarias,669.71,1886.58,3,informe_prose,
+06,Cantabria,578.48,1906.27,3,informe_prose,
+07,Castilla y Leon,603.19,1949.19,3,informe_prose,
+08,Castilla-La Mancha,582.94,1679.79,3,informe_prose,
+09,Cataluna,620.82,2130.97,3,informe_prose,"Servida por bcn1."
+10,Comunitat Valenciana,593.07,1846.63,3,informe_prose,"Servida por vlc1."
+11,Extremadura,581.98,1626.30,3,informe_prose,"Menor gasto per capita do pais."
+12,Galicia,597.66,1970.20,3,informe_prose,
+13,Comunidad de Madrid,505.86,1754.95,3,informe_prose,"Servida por mad1. Menor consumo per capita do pais."
+14,Region de Murcia,563.38,1773.54,3,informe_prose,
+15,C. Foral de Navarra,624.80,2164.64,3,informe_prose,"Maior gasto per capita do pais."
+16,Pais Vasco,558.70,2093.34,3,informe_prose,
+17,La Rioja,546.73,1866.54,3,informe_prose,

@@ -55,6 +55,24 @@ AMOSTRAS = {
         "products_exclusive_here, avg_unit_price "
         "from {db}.MART.MART_ASSORTMENT_DAILY order by products desc limit 5"
     ),
+    # A amostra ordena pela RAZAO entre a faixa mais velha e a mais nova, e nao pelo volume:
+    # o volume mostraria os grupos grandes, que sao os mesmos em toda faixa. O que esta
+    # camada produz e a diferenca entre coortes, e uma amostra que nao a mostrasse seria
+    # evidencia de que a fase existiu sem evidencia do que ela fez.
+    "MART_DEMAND_COHORT": (
+        "with f as ("
+        " select demand_group, buyer_age_band, sum(lines_placed) as l"
+        " from {db}.MART.MART_DEMAND_COHORT group by 1, 2), "
+        "t as (select buyer_age_band, sum(l) as total from f group by 1) "
+        "select f.demand_group, "
+        " max(case when f.buyer_age_band = 'LT35' then round(100*f.l/t.total, 2) end) as pct_lt35, "
+        " max(case when f.buyer_age_band = 'GE65' then round(100*f.l/t.total, 2) end) as pct_ge65 "
+        "from f join t on t.buyer_age_band = f.buyer_age_band "
+        "group by 1 having sum(f.l) >= 500 "
+        "order by div0(max(case when f.buyer_age_band = 'GE65' then f.l/t.total end), "
+        "              max(case when f.buyer_age_band = 'LT35' then f.l/t.total end)) desc "
+        "limit 5"
+    ),
     "MART_CUSTOMER_BASE": (
         "select customer_id, wh, municipality_name, postal_code, age_band, sex_label "
         "from {db}.MART.MART_CUSTOMER_BASE order by customer_id limit 5"

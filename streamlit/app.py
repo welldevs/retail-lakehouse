@@ -353,6 +353,40 @@ with abas[2]:
     )
     armadilhas(ind["substituicao_categoria"])
 
+    st.divider()
+    st.subheader("Perfil de consumo por faixa etaria do comprador")
+    perfil = numerico(consulta(ind["perfil_por_faixa"].sql, P),
+                      ["PCT_LT35", "PCT_35_49", "PCT_50_64", "PCT_GE65", "LINHAS_TOTAL"])
+    st.caption(
+        "Fatia de cada grupo DENTRO da faixa, em % das linhas. Ordenado pela razao "
+        "GE65/LT35: no topo, o que a faixa mais velha leva desproporcionalmente."
+    )
+    if not perfil.empty:
+        extremos = pd.concat([perfil.head(8), perfil.tail(8)])
+        st.bar_chart(extremos, x="GRUPO", y=["PCT_LT35", "PCT_GE65"], horizontal=True)
+    st.dataframe(perfil, hide_index=True, width="stretch")
+    st.info(
+        "**O agregado nao muda entre faixas, de proposito.** A calibracao por coorte e "
+        "neutra no total — procurar o efeito dela num total nao encontra nada. Ele esta "
+        "inteiro na comparacao ENTRE colunas da mesma linha.",
+        icon="ℹ️",
+    )
+    armadilhas(ind["perfil_por_faixa"])
+
+    st.divider()
+    st.subheader("Pedidos por armazem")
+    regiao = numerico(consulta(ind["pedidos_por_regiao"].sql, P),
+                      ["DIAS", "LINHAS", "UNIDADES", "RECEITA"])
+    st.dataframe(regiao, hide_index=True, width="stretch")
+    st.info(
+        "A diferenca entre armazens e OBSERVADA e deliberada: o consumo per capita por "
+        "comunidade autonoma do informe do MAPA — Cataluna 620,82 kg-L por pessoa e ano "
+        "contra 505,86 de Madrid — inclina quantos clientes pedem. O total da janela nao "
+        "muda: o indice e renormalizado sobre as quatro comunidades servidas.",
+        icon="ℹ️",
+    )
+    armadilhas(ind["pedidos_por_regiao"])
+
 # ---------------------------------------------------------------- D. Sortimento
 with abas[3]:
     st.subheader("Sortimento por armazem")

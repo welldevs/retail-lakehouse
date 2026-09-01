@@ -66,6 +66,20 @@ MAPPING = [
 PARAMS = [
     dict(param_key="demand_model_version", value="teste_v1", unit="version",
          label="synthetic", rationale="x"),
+    dict(param_key="cohort_dimensions", value="age,region", unit="rule",
+         label="synthetic", rationale="x"),
+    dict(param_key="cohort_independence", value="multiplicative", unit="rule",
+         label="synthetic", rationale="x"),
+    dict(param_key="cohort_calibration", value="ipf", unit="rule",
+         label="synthetic", rationale="x"),
+    dict(param_key="ipf_tolerance", value="0.000000001", unit="proportion",
+         label="synthetic", rationale="x"),
+    dict(param_key="ipf_max_iterations", value="200", unit="iterations",
+         label="synthetic", rationale="x"),
+    dict(param_key="region_frequency_basis", value="per_capita_volume", unit="rule",
+         label="synthetic", rationale="x"),
+    dict(param_key="region_frequency_normalization", value="served_regions", unit="rule",
+         label="synthetic", rationale="x"),
     dict(param_key="food_line_share", value="0.8", unit="proportion", label="synthetic", rationale="x"),
     dict(param_key="benchmark_volume_coverage_pct", value="25.00", unit="percent",
          label="derived", rationale="x"),
@@ -83,13 +97,84 @@ PARAMS = [
 SEASONALITY = [dict(month=str(m), factor="1.0", label="synthetic", rationale="x")
                for m in range(1, 13)]
 
+# Coortes da fixture. Os shares de VOLUME sao desiguais de proposito e diferentes entre os
+# tres grupos: com indices iguais o perfil por coorte seria indistinguivel do agregado, e um
+# teste que passa nas duas implementacoes nao testa nenhuma. As quatro faixas somam 100 nas
+# duas colunas, que e o mesmo checksum que o seed real precisa fechar.
+COHORT_AGE = []
+for _key, _vols in (
+    ("FRUTA", ("5.00", "20.00", "33.00", "42.00")),
+    ("AGUA", ("15.00", "35.00", "30.00", "20.00")),
+    ("HUEVOS", ("10.00", "25.00", "32.00", "33.00")),
+):
+    for _banda, _pop, _vol in zip(
+        ("LT35", "35_49", "50_64", "GE65"),
+        ("8.89", "30.33", "31.34", "29.44"),
+        _vols,
+    ):
+        COHORT_AGE.append(dict(
+            mapa_key=_key, age_band=_banda, population_share_pct=_pop,
+            volume_share_pct=_vol, informe_page="1", provenance="informe_chart", note="",
+        ))
 
-def escrever_seeds(directory, benchmark=None, mapping=None, params=None, seasonality=None):
+COHORT_REGION = []
+for _key, _vols in (
+    ("FRUTA", ("18.00", "12.00")),
+    ("AGUA", ("14.00", "9.00")),
+    ("HUEVOS", ("16.00", "11.00")),
+):
+    for _ccaa, _label, _pop, _vol in zip(
+        ("13", "09"), ("Madrid", "Cataluna"), ("13.86", "16.26"), _vols
+    ):
+        COHORT_REGION.append(dict(
+            mapa_key=_key, ccaa_code=_ccaa, ccaa_label=_label,
+            population_share_pct=_pop, volume_share_pct=_vol,
+            informe_page="1", provenance="informe_chart", note="",
+        ))
+
+REGIONS = [
+    dict(ccaa_code="00", ccaa_label="Total Espana", per_capita_kg_l="577.32",
+         per_capita_eur="1874.75", informe_section="3", provenance="informe_prose", note=""),
+    dict(ccaa_code="13", ccaa_label="Madrid", per_capita_kg_l="505.86",
+         per_capita_eur="1754.95", informe_section="3", provenance="informe_prose", note=""),
+    dict(ccaa_code="09", ccaa_label="Cataluna", per_capita_kg_l="620.82",
+         per_capita_eur="2130.97", informe_section="3", provenance="informe_prose", note=""),
+]
+
+CCAA_MAP = [
+    dict(province_code="28", province_name="Madrid", ccaa_code="13", ccaa_label="Madrid"),
+    dict(province_code="08", province_name="Barcelona", ccaa_code="09", ccaa_label="Cataluna"),
+]
+
+# Base de clientes da fixture: as quatro faixas nas duas comunidades, com tamanhos
+# desiguais — se todas as coortes tivessem a mesma massa, o IPF nunca teria o que corrigir.
+COHORT_COUNTS = {
+    ("LT35", "13"): 120, ("35_49", "13"): 200, ("50_64", "13"): 180, ("GE65", "13"): 150,
+    ("LT35", "09"): 90, ("35_49", "09"): 160, ("50_64", "09"): 140, ("GE65", "09"): 170,
+}
+WAREHOUSE_REGIONS = {"mad1": "13", "bcn1": "09"}
+
+
+def escrever_seeds(
+    directory,
+    benchmark=None,
+    mapping=None,
+    params=None,
+    seasonality=None,
+    cohort_age=None,
+    cohort_region=None,
+    regions=None,
+    ccaa_map=None,
+):
     for nome, linhas in (
         (dp.BENCHMARK_SEED, benchmark if benchmark is not None else BENCHMARK),
         (dp.MAPPING_SEED, mapping if mapping is not None else MAPPING),
         (dp.PROFILE_SEED, params if params is not None else PARAMS),
         (dp.SEASONALITY_SEED, seasonality if seasonality is not None else SEASONALITY),
+        (dp.COHORT_AGE_SEED, cohort_age if cohort_age is not None else COHORT_AGE),
+        (dp.COHORT_REGION_SEED, cohort_region if cohort_region is not None else COHORT_REGION),
+        (dp.REGION_SEED, regions if regions is not None else REGIONS),
+        (dp.CCAA_MAP_SEED, ccaa_map if ccaa_map is not None else CCAA_MAP),
     ):
         caminho = os.path.join(directory, nome)
         with open(caminho, "w", encoding="utf-8", newline="") as handle:
@@ -232,10 +317,15 @@ class CanalTest(unittest.TestCase):
 
 
 class ConstrucaoTest(unittest.TestCase):
-    def _perfil(self, linhas, **kwargs):
+    def _perfil(self, linhas, counts=None, regions=None, **kwargs):
         with tempfile.TemporaryDirectory() as tmp:
             escrever_seeds(tmp, **kwargs)
-            return dp.build(linhas, tmp)
+            return dp.build(
+                linhas,
+                tmp,
+                customers_by_cohort=COHORT_COUNTS if counts is None else counts,
+                warehouse_regions=WAREHOUSE_REGIONS if regions is None else regions,
+            )
 
     def test_pesos_somam_um_e_os_tres_blocos_batem(self):
         perfil = self._perfil(catalogo([
@@ -360,13 +450,244 @@ class EstabilidadeTest(unittest.TestCase):
                            ("SIN_BENCHMARK", "0.5"), ("NO_FOOD", None)])
         with tempfile.TemporaryDirectory() as tmp:
             escrever_seeds(tmp)
-            primeiro = json.dumps(dp.build(linhas, tmp), sort_keys=True)
-            segundo = json.dumps(dp.build(linhas, tmp), sort_keys=True)
+            saida = lambda: json.dumps(  # noqa: E731 - duas chamadas identicas, uma linha
+                dp.build(
+                    linhas,
+                    tmp,
+                    customers_by_cohort=COHORT_COUNTS,
+                    warehouse_regions=WAREHOUSE_REGIONS,
+                ),
+                sort_keys=True,
+            )
+            primeiro, segundo = saida(), saida()
         self.assertEqual(primeiro, segundo)
 
     def test_seeds_reais_produzem_hash_estavel(self):
         self.assertEqual(dp.seeds_sha256(SEEDS_REAIS), dp.seeds_sha256(SEEDS_REAIS))
-        self.assertEqual(len(dp.seeds_sha256(SEEDS_REAIS)), 4)
+        self.assertEqual(len(dp.seeds_sha256(SEEDS_REAIS)), 8)
+
+class CoorteTest(unittest.TestCase):
+    """A camada de coorte, e os dois checksums que a leitura do informe precisa fechar.
+
+    O erro realista nesta parte nao e de logica, e de LEITURA: os cortes demograficos do
+    informe estao em graficos, e um digito trocado num rotulo produz um indice plausivel que
+    nada reprova. As duas somas existem para que isso pare aqui.
+    """
+
+    def test_shares_de_volume_das_quatro_faixas_somam_cem(self):
+        # Nos seeds REAIS do repo, e nao so nas fixtures: as 39 leituras precisam fechar.
+        dados = dp.load_cohort_age(SEEDS_REAIS)
+        self.assertEqual(len(dados), 39)
+        for chave, linhas in sorted(dados.items()):
+            soma = sum(v for _pop, v in linhas.values())
+            self.assertLess(
+                abs(soma - Decimal("100")), dp.COHORT_SUM_TOLERANCE,
+                f"{chave}: volume soma {soma}",
+            )
+
+    def test_um_digito_trocado_no_seed_reprova(self):
+        # A prova de que o checksum e util: sem ele, 42,27 -> 24,27 passaria e a faixa de
+        # 65+ perderia 43% da sua propensao a fruta fresca sem que nada avisasse.
+        errado = [dict(linha) for linha in COHORT_AGE]
+        errado[3]["volume_share_pct"] = "24.00"
+        with tempfile.TemporaryDirectory() as tmp:
+            escrever_seeds(tmp, cohort_age=errado)
+            with self.assertRaises(dp.DemandProfileError) as caught:
+                dp.load_cohort_age(tmp)
+        self.assertIn("soma", str(caught.exception))
+
+    def test_share_de_populacao_e_o_mesmo_em_todo_grupo(self):
+        # O `% Poblacion` e o UNIVERSO, nao uma medicao da categoria: ele tem de repetir em
+        # toda secao do informe. Uma divergencia aqui e leitura errada, nao dado novo.
+        #
+        # Tolerancia, e nao igualdade: o proprio informe publica ora uma casa decimal (8,9)
+        # ora duas (8,89), e uma secao — carne transformada, pagina 206 — traz 30,5/31,7/29,0
+        # onde todas as outras trazem 30,3/31,3/29,4. A discrepancia e da fonte e esta
+        # registrada na coluna `note` daquela linha.
+        for carregar, esperado in (
+            (dp.load_cohort_age, {"LT35": "8.89", "35_49": "30.33",
+                                  "50_64": "31.34", "GE65": "29.44"}),
+            (dp.load_cohort_region, {"09": "16.26", "10": "11.14",
+                                     "01": "17.52", "13": "13.86"}),
+        ):
+            dados = carregar(SEEDS_REAIS)
+            for chave, linhas in sorted(dados.items()):
+                for coorte, (populacao, _vol) in sorted(linhas.items()):
+                    self.assertLess(
+                        abs(populacao - Decimal(esperado[coorte])), Decimal("0.5"),
+                        f"{chave}/{coorte}: populacao {populacao}, universo {esperado[coorte]}",
+                    )
+
+    def test_indice_de_afinidade_e_adimensional(self):
+        # 1,0 significa "compra na proporcao do proprio tamanho". Nao ha teto nem piso: o
+        # informe mede AGUA em 4,3% do volume para 13,86% da populacao de Madrid, e aparar
+        # esse 0,31 seria descartar a medicao mais forte que a fonte publica.
+        self.assertEqual(
+            dp.affinity_index(Decimal("20"), Decimal("20")), Decimal("1")
+        )
+        regiao = dp.load_cohort_region(SEEDS_REAIS)["AGUA"]["13"]
+        self.assertLess(dp.affinity_index(*regiao), Decimal("0.4"))
+
+    def test_indices_de_frequencia_somam_o_numero_de_regioes(self):
+        # A renormalizacao e o que mantem o TOTAL de pedidos onde estava. Sem ela, os quatro
+        # armazens servidos — que consomem menos que a media espanhola — produziriam alguns
+        # por cento menos pedidos sem que isso significasse nada.
+        referencia = dp.load_region_reference(SEEDS_REAIS)
+        servidas = ["01", "09", "10", "13"]
+        indices = dp.region_frequency(referencia, servidas)
+        self.assertEqual(len(indices), 4)
+        self.assertAlmostEqual(float(sum(indices.values())), 4.0, places=9)
+        self.assertGreater(indices["09"], indices["13"])
+
+    def test_frequencia_ponderada_pela_base_tambem_soma_um(self):
+        # Com bases desiguais, a media que normaliza precisa ser PONDERADA — senao a soma
+        # ponderada dos indices deixa de ser 1 e o total de pedidos anda.
+        referencia = dp.load_region_reference(SEEDS_REAIS)
+        pesos = {"01": 100, "09": 300, "10": 50, "13": 550}
+        indices = dp.region_frequency(referencia, list(pesos), weights=pesos)
+        total = sum(Decimal(pesos[c]) for c in pesos)
+        ponderada = sum(Decimal(pesos[c]) * indices[c] for c in sorted(pesos)) / total
+        self.assertAlmostEqual(float(ponderada), 1.0, places=9)
+
+    def test_provincia_sem_comunidade_reprova(self):
+        # Sem destino padrao, pelo mesmo motivo do de-para de categoria: uma provincia nova
+        # herdaria em silencio o perfil de consumo de outra regiao.
+        mapa = dp.load_province_ccaa(SEEDS_REAIS)
+        self.assertEqual(dp.ccaa_of(mapa, "08"), "09")
+        with self.assertRaises(dp.DemandProfileError) as caught:
+            dp.ccaa_of(mapa, "33")
+        self.assertIn("nao existe comunidade padrao", str(caught.exception))
+
+    def test_ipf_com_indices_planos_e_a_identidade(self):
+        # Quando nao ha nada a corrigir, o IPF nao pode corrigir nada. Sem isto, um IPF que
+        # "ajusta" pesos ja corretos deslocaria a calibracao agregada em toda execucao.
+        base = {"A": Decimal("0.5"), "B": Decimal("0.3"), "C": Decimal("0.2")}
+        massa = {"x": Decimal("0.6"), "y": Decimal("0.4")}
+        plano = {c: {g: Decimal("1") for g in base} for c in massa}
+        fator, iteracoes, desvio = dp.ipf_calibrate(
+            base, plano, massa, Decimal("1e-9"), 200
+        )
+        self.assertEqual(iteracoes, 1)
+        self.assertEqual(set(fator.values()), {Decimal("1")})
+        self.assertEqual(desvio, Decimal("0"))
+
+    def test_ipf_converge_e_reproduz_os_pesos_agregados(self):
+        base = {"A": Decimal("0.5"), "B": Decimal("0.3"), "C": Decimal("0.2")}
+        massa = {"x": Decimal("0.6"), "y": Decimal("0.4")}
+        indice = {
+            "x": {"A": Decimal("1.5"), "B": Decimal("0.5"), "C": Decimal("1.0")},
+            "y": {"A": Decimal("0.4"), "B": Decimal("2.0"), "C": Decimal("1.0")},
+        }
+        fator, _it, desvio = dp.ipf_calibrate(base, indice, massa, Decimal("1e-9"), 200)
+        self.assertLessEqual(desvio, Decimal("1e-9"))
+
+        agregado = {g: Decimal("0") for g in base}
+        for coorte, peso in massa.items():
+            bruto = {g: base[g] * fator[g] * indice[coorte][g] for g in base}
+            total = sum(bruto.values())
+            for g in base:
+                agregado[g] += peso * bruto[g] / total
+        for g in base:
+            self.assertAlmostEqual(float(agregado[g]), float(base[g]), places=8)
+
+    def test_ipf_que_nao_converge_reprova(self):
+        # Tolerancia abaixo da precisao do proprio Decimal (28 digitos): o alvo nunca e
+        # alcancado, e o modulo precisa REPROVAR em vez de devolver uma matriz que nao
+        # fecha. Aceita-la em silencio desfaria a calibracao agregada da versao anterior.
+        base = {"A": Decimal("0.5"), "B": Decimal("0.3"), "C": Decimal("0.2")}
+        massa = {"x": Decimal("0.6"), "y": Decimal("0.4")}
+        indice = {
+            "x": {"A": Decimal("40"), "B": Decimal("0.05"), "C": Decimal("1")},
+            "y": {"A": Decimal("0.02"), "B": Decimal("60"), "C": Decimal("1")},
+        }
+        with self.assertRaises(dp.DemandProfileError) as caught:
+            dp.ipf_calibrate(base, indice, massa, Decimal("1e-40"), 5)
+        self.assertIn("nao convergiu", str(caught.exception))
+
+
+class PerfilPorCoorteTest(unittest.TestCase):
+    """O perfil completo com a camada de coorte, sobre as fixtures."""
+
+    def _perfil(self, **kwargs):
+        linhas = catalogo([
+            ("FRUTA", "1.0"), ("FRUTA", "1.0"),
+            ("AGUA", "1.5"), ("AGUA", "1.5"),
+            ("HUEVOS", None), ("HUEVOS", None),
+            ("SIN_BENCHMARK", "0.5"),
+            ("NO_FOOD", None), ("NO_FOOD", None),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            escrever_seeds(tmp, **kwargs)
+            return dp.build(
+                linhas, tmp,
+                customers_by_cohort=COHORT_COUNTS,
+                warehouse_regions=WAREHOUSE_REGIONS,
+            )
+
+    def test_o_agregado_nao_se_move(self):
+        # O CRITERIO DE ACEITACAO DA FASE INTEIRA. A media dos pesos por coorte, ponderada
+        # pela massa real das coortes, tem de reproduzir os pesos agregados — senao esta
+        # camada teria desfeito a calibracao da anterior de lado, sem nada falhar.
+        perfil = self._perfil()
+        base = {g["demand_group"]: Decimal(g["line_weight"]) for g in perfil["groups"]}
+        coortes = perfil["cohorts"]
+        massa = {m["cohort"]: Decimal(m["share"]) for m in coortes["mass"]}
+        pesos = {
+            v["cohort"]: {g["demand_group"]: Decimal(g["line_weight"]) for g in v["groups"]}
+            for v in coortes["weights"]
+        }
+        self.assertAlmostEqual(float(sum(massa.values())), 1.0, places=9)
+        for grupo, esperado in base.items():
+            obtido = sum(massa[c] * pesos[c][grupo] for c in massa)
+            self.assertAlmostEqual(float(obtido), float(esperado), places=8, msg=grupo)
+
+    def test_a_fatia_de_cada_bloco_e_constante_entre_coortes(self):
+        # NO_FOOD e SIN_BENCHMARK tem indice neutro por AUSENCIA DE EVIDENCIA. Sem confinar
+        # o IPF a cada bloco, eles absorviam o residuo da normalizacao e o modelo passava a
+        # afirmar que idoso compra menos drogaria — numero que ninguem mediu, e maior que a
+        # maioria dos efeitos que sao medidos.
+        perfil = self._perfil()
+        blocos = {g["demand_group"]: g["block"] for g in perfil["groups"]}
+        pesos = {
+            v["cohort"]: {g["demand_group"]: Decimal(g["line_weight"]) for g in v["groups"]}
+            for v in perfil["cohorts"]["weights"]
+        }
+        for bloco in sorted(set(blocos.values())):
+            fatias = [
+                sum(p[g] for g, b in blocos.items() if b == bloco) for p in pesos.values()
+            ]
+            # Tolerancia no ultimo digito do Decimal, e nao igualdade exata: a divisao que
+            # normaliza cada bloco tem 28 digitos significativos, e o residuo de
+            # arredondamento nao e o defeito que este teste procura — o defeito e a fatia
+            # ANDAR, na terceira casa ou antes.
+            self.assertLess(
+                max(fatias) - min(fatias), Decimal("1e-20"),
+                f"{bloco} varia entre coortes: min {min(fatias)} max {max(fatias)}",
+            )
+
+    def test_coortes_diferentes_produzem_pesos_diferentes(self):
+        # O par do teste acima: sem ele, "o agregado nao se move" e "o bloco e constante"
+        # passariam tambem numa implementacao que devolve o mesmo vetor para toda coorte.
+        perfil = self._perfil()
+        pesos = {
+            v["cohort"]: {g["demand_group"]: Decimal(g["line_weight"]) for g in v["groups"]}
+            for v in perfil["cohorts"]["weights"]
+        }
+        self.assertGreater(pesos["GE65|13"]["FRUTA"], pesos["LT35|13"]["FRUTA"] * 2)
+        self.assertLess(pesos["GE65|13"]["AGUA"], pesos["LT35|13"]["AGUA"])
+
+    def test_grupo_pesavel_sem_corte_demografico_reprova(self):
+        # Deixar um grupo neutro em silencio esconderia uma lacuna de EXTRACAO atras de um
+        # mix plausivel — e a extracao e a parte desta fase mais sujeita a erro humano.
+        parcial = [linha for linha in COHORT_AGE if linha["mapa_key"] != "AGUA"]
+        with self.assertRaises(dp.DemandProfileError) as caught:
+            self._perfil(cohort_age=parcial)
+        self.assertIn("sem corte demografico", str(caught.exception))
+
+    def test_armazem_em_comunidade_sem_consumo_publicado_reprova(self):
+        with self.assertRaises(dp.DemandProfileError) as caught:
+            self._perfil(regions=[r for r in REGIONS if r["ccaa_code"] != "09"])
+        self.assertIn("consumo per capita", str(caught.exception))
 
 
 if __name__ == "__main__":

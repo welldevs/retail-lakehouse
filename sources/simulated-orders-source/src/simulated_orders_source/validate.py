@@ -41,6 +41,7 @@ from .events import (
     event_id,
 )
 from .partition import MANIFEST_NAME, SUCCESS_NAME, manifest_path, success_path
+from .demand import DemandError
 from .reference_data import ReferenceError, load
 from .schema import events_of, fingerprint, group_by_order, missing_fields, totals_of
 
@@ -115,6 +116,7 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
     price_as_of = calendar["price_as_of"]
     catalogo = {row["source_product_id"]: row for row in reference.catalog_of(warehouse, price_as_of)}
     clientes = {row["customer_id"]: row for row in reference.customers_of(warehouse)}
+    minima = int(float(reference.premises["min_buyer_age"]))
 
     for order_id in sorted(grouped):
         eventos = grouped[order_id]
@@ -177,6 +179,30 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
                     problemas.append(
                         f"{order_id}: {campo}={placed.get(campo)!r} diverge do cadastro do "
                         f"cliente ({cliente[campo]!r})"
+                    )
+                    falhou = True
+
+            # ---- a faixa etaria carimbada e a que a idade do cliente produz -----
+            # RECALCULADA, e nao apenas conferida contra si mesma: e o carimbo que decide
+            # qual vetor de pesos sorteou a cesta, e um carimbo errado produziria um mix
+            # coerente com outra coorte — plausivel, sem nulo, sem total quebrado.
+            idade = int(order_date[:4]) - int(cliente["birth_year"])
+            if idade < minima:
+                problemas.append(
+                    f"{order_id}: cliente {cliente['customer_id']} tinha {idade} ano(s) em "
+                    f"{order_date}, abaixo de min_buyer_age={minima}"
+                )
+                falhou = True
+            try:
+                esperada = reference.demand.band_of(idade)
+            except DemandError as exc:
+                problemas.append(f"{order_id}: {exc}")
+                falhou = True
+            else:
+                if placed.get("buyer_age_band") != esperada:
+                    problemas.append(
+                        f"{order_id}: buyer_age_band={placed.get('buyer_age_band')!r}, mas "
+                        f"a idade {idade} do cliente cai em {esperada!r}"
                     )
                     falhou = True
 

@@ -67,6 +67,12 @@ select
     o.municipality_code,
     o.postal_code,
 
+    -- A faixa etaria que ESCOLHEU O VETOR DE PESOS desta cesta, carimbada no evento. Fica
+    -- ao lado de customer_sk e nao dentro de dim_customer de proposito: dim_customer
+    -- versiona quem o cliente e, e esta coluna registra em que faixa ele estava quando
+    -- pediu. Sao duas perguntas, e so a segunda explica o mix daquele pedido.
+    o.buyer_age_band,
+
     o.order_status,
     o.is_terminal,
     -- DELIVERED nao e terminal: uma devolucao ainda pode vir depois. 61 dos 6.046 pedidos

@@ -1,6 +1,6 @@
 # Contrato dos indicadores do painel
 
-**Gerado por `make dashboard-contract` em 2026-08-31 13:58:45 UTC.** Não editar à mão: este arquivo
+**Gerado por `make dashboard-contract` em 2026-09-01 11:56:54 UTC.** Não editar à mão: este arquivo
 é derivado de [`indicators.py`](indicators.py), que é onde a consulta e a explicação
 moram juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois
 divergem no primeiro ajuste de SQL — com o detalhe cruel de que a conferência
@@ -57,6 +57,8 @@ vigente.
 - **C. Cesta e categoria**
   - [Receita por categoria](#receita_categoria)
   - [Substituicao e remocao, por categoria](#substituicao_categoria)
+  - [Perfil de consumo por faixa etaria do comprador](#perfil_por_faixa)
+  - [Pedidos por armazem, e a intensidade regional que os separa](#pedidos_por_regiao)
 - **D. Sortimento e preco**
   - [Sortimento por armazem](#sortimento_armazem)
   - [Maiores variacoes de preco](#variacao_preco)
@@ -84,7 +86,7 @@ vigente.
 
 **Armadilhas ao reconstruir no Power BI**
 
-1. TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: receita/pedidos_separados = 134,57 e receita/pedidos_colocados = 128,30. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.
+1. TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: receita/pedidos_separados = 95,78 e receita/pedidos_colocados = 91,69. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.
 2. `net_amount_picked` e NULO para pedido que morreu antes da separacao, e `sum()` ignora nulo. Isso e correto e proposital: quem nunca foi separado nao contribui com zero, contribui com nada. No Power BI, um `SUM` sobre coluna nula faz o mesmo; um `COALESCE(...,0)` inventaria uma apuracao que nao houve.
 
 ```sql
@@ -417,6 +419,94 @@ select
             group by 1
             having sum(lines_placed) >= 100
             order by taxa_substituicao desc
+```
+
+<a id="perfil_por_faixa"></a>
+### Perfil de consumo por faixa etaria do comprador
+
+| | |
+|---|---|
+| Chave | `perfil_por_faixa` |
+| Pergunta | O que cada faixa etaria leva, e onde ela difere mais das outras? |
+| Grão da fonte | `(order_date, wh, buyer_age_band, demand_group) agregado por faixa e grupo` |
+| Tipo do dado | sintetico calibrado contra benchmark (MAPA 2025) |
+| Marts | `MART_DEMAND_COHORT` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. O AGREGADO NAO MUDA ENTRE FAIXAS, DE PROPOSITO. A calibracao por coorte e neutra no total — um IPF garante que a media ponderada dos pesos por coorte reproduz o mix agregado. Procurar o efeito desta camada num total nao encontra nada; ele esta inteiro na comparacao ENTRE faixas da mesma linha.
+2. COMPARE FATIA, NUNCA CONTAGEM. As quatro faixas tem tamanhos diferentes na base (35_49 e a maior, LT35 a menor), entao 'linhas por faixa' mede o tamanho da coorte e nao a propensao dela. `share_within_band` ja tem a propria coorte no denominador; e ela que isola as duas coisas.
+3. A PROPENSAO E BENCHMARK, NAO OBSERVACAO DESTA LOJA. Os indices vem do consumo domestico espanhol medido pelo MAPA, e o `% Poblacion` de la e a populacao que VIVE EM LARES com responsavel naquela faixa — nao a populacao daquela idade. Por isso o numero entra como indice relativo, e nunca como share absoluto.
+4. NO_FOOD e SIN_BENCHMARK aparecem com razao proxima de 1 por CONSTRUCAO: o informe nao mede drogaria nem limpeza, o indice deles e neutro e a fatia de cada bloco e mantida constante entre coortes. Ler isso como 'todas as idades compram xampu igual' seria transformar ausencia de medicao em medicao.
+
+```sql
+with por_faixa as (
+                select
+                    buyer_age_band,
+                    demand_group,
+                    sum(lines_placed)                               as linhas
+                from RETAIL.MART.MART_DEMAND_COHORT
+                where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                group by 1, 2
+            ),
+            total as (
+                select buyer_age_band, sum(linhas) as linhas_faixa
+                from por_faixa group by 1
+            )
+            select
+                p.demand_group                                      as grupo,
+                max(case when p.buyer_age_band = 'LT35'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_lt35,
+                max(case when p.buyer_age_band = '35_49'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_35_49,
+                max(case when p.buyer_age_band = '50_64'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_50_64,
+                max(case when p.buyer_age_band = 'GE65'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_ge65,
+                sum(p.linhas)                                       as linhas_total
+            from por_faixa p
+            join total t on t.buyer_age_band = p.buyer_age_band
+            group by 1
+            having sum(p.linhas) >= 100
+            order by div0(
+                max(case when p.buyer_age_band = 'GE65'
+                         then p.linhas / t.linhas_faixa end),
+                max(case when p.buyer_age_band = 'LT35'
+                         then p.linhas / t.linhas_faixa end)
+            ) desc
+```
+
+<a id="pedidos_por_regiao"></a>
+### Pedidos por armazem, e a intensidade regional que os separa
+
+| | |
+|---|---|
+| Chave | `pedidos_por_regiao` |
+| Pergunta | Por que bcn1 coloca mais pedidos que mad1, se as bases tem o mesmo tamanho? |
+| Grão da fonte | `(order_date, wh) agregado por armazem` |
+| Tipo do dado | sintetico inclinado por consumo per capita observado (MAPA, secao 3) |
+| Marts | `MART_DEMAND_COHORT` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. A DIFERENCA E DELIBERADA E OBSERVADA. Ate a fase anterior os quatro armazens tinham a mesma contagem por construcao. O informe mede consumo per capita por comunidade autonoma — Cataluna 620,82 kg-L por pessoa e ano contra 505,86 de Madrid — e essa razao passou a pesar QUANTOS clientes pedem.
+2. A INTENSIDADE VIRA FREQUENCIA, E ISSO E ESCOLHA DECLARADA. O informe da kg por ano e NAO publica frequencia de compra domestica; repartir a intensidade entre frequencia e tamanho de cesta seria inventar a reparticao. Ler estes numeros como 'catalao compra mais vezes' e ler a premissa, nao uma medicao.
+3. O TOTAL DA JANELA NAO MUDA por causa desta inclinacao: o indice e renormalizado sobre as quatro comunidades servidas. O que ela move e a REPARTICAO entre armazens, nunca a soma.
+
+```sql
+select
+                wh                                                  as armazem,
+                count(distinct order_date)                          as dias,
+                sum(lines_placed)                                   as linhas,
+                sum(units_placed)                                   as unidades,
+                round(sum(revenue_fulfilled), 2)                    as receita,
+                max(currency)                                       as moeda
+            from RETAIL.MART.MART_DEMAND_COHORT
+            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            group by 1
+            order by linhas desc
 ```
 
 ## D. Sortimento e preco

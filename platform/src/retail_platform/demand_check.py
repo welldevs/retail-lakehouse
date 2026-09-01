@@ -92,6 +92,38 @@ order by 1, 2, 3
 """
 
 
+# O MIX POR COORTE, que e a unica dimensao em que a Fase 5 se enxerga. O agregado nao se
+# move de proposito — criterio de aceitacao do IPF — entao um relatorio que mostrasse so
+# totais concluiria que a fase nao fez nada.
+#
+# `demand_group` vem carimbado na LINHA e `buyer_age_band` no PEDIDO, os dois de dentro do
+# proprio evento. Nenhum join com o catalogo nem com o cadastro: o que se quer e o que valia
+# no momento do pedido, e e exatamente isso que os dois carimbos guardam.
+COHORT_SQL = """
+select
+    o.buyer_age_band,
+    o.wh,
+    l.demand_group,
+    count(*)          as linhas,
+    sum(l.quantity)   as unidades,
+    sum(l.line_amount) as receita
+from silver_order_line l
+join silver_order o on o.order_id = l.order_id
+where l.line_status <> 'removed'
+group by 1, 2, 3
+order by 1, 2, 3
+"""
+
+# Quantos pedidos cada armazem colocou. E aqui que a inclinacao regional de FREQUENCIA se
+# enxerga: antes desta fase os quatro armazens tinham a mesma contagem por construcao.
+WAREHOUSE_SQL = """
+select wh, count(*) as pedidos, count(distinct customer_id) as clientes
+from silver_order
+group by 1
+order by 1
+"""
+
+
 class DemandCheckError(Exception):
     """Nao ha o que medir, ou o snapshot pedido nao existe."""
 
@@ -143,6 +175,66 @@ def measure(connection, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> di
             }
             for key, valor in sorted(grupos.items())
         },
+        **_measure_cohorts(connection),
+    }
+
+
+def _measure_cohorts(connection) -> dict:
+    """Mix por coorte e contagem por armazem, quando a janela ja os carrega.
+
+    TOLERANTE POR UM MOTIVO ESPECIFICO, e nao por generosidade: o ANTES desta fase e uma
+    janela gerada por `mapa_2025_v1`, cujo `silver_order` nao tem a coluna `buyer_age_band`.
+    Ele precisa ser congelavel — sem ANTES nao ha como PROVAR que o agregado nao se moveu, e
+    essa prova e o criterio de aceitacao da fase. Um erro aqui impediria justamente a
+    medicao que justifica a mudanca.
+
+    A ausencia e REGISTRADA (`cohorts: None`) em vez de virar um dicionario vazio: vazio
+    seria indistinguivel de "medi e nao havia nada".
+    """
+    try:
+        resultado = connection.execute(COHORT_SQL)
+    except Exception:  # noqa: BLE001 - coluna ausente na janela anterior a esta fase
+        return {"cohorts": None, "warehouses": None}
+
+    colunas = [d[0] for d in resultado.description]
+    linhas = [dict(zip(colunas, linha)) for linha in resultado.fetchall()]
+    coortes: dict[str, dict] = {}
+    for row in linhas:
+        banda = row["buyer_age_band"]
+        if banda is None:
+            continue
+        alvo = coortes.setdefault(banda, {})
+        grupo = alvo.setdefault(
+            row["demand_group"],
+            {"linhas": 0, "unidades": Decimal("0"), "receita": Decimal("0")},
+        )
+        grupo["linhas"] += int(row["linhas"])
+        grupo["unidades"] += _decimal(row["unidades"])
+        grupo["receita"] += _decimal(row["receita"])
+
+    if not coortes:
+        return {"cohorts": None, "warehouses": None}
+
+    resultado = connection.execute(WAREHOUSE_SQL)
+    colunas = [d[0] for d in resultado.description]
+    armazens = {
+        row["wh"]: {"pedidos": int(row["pedidos"]), "clientes": int(row["clientes"])}
+        for row in (dict(zip(colunas, linha)) for linha in resultado.fetchall())
+    }
+
+    return {
+        "cohorts": {
+            banda: {
+                grupo: {
+                    "linhas": valor["linhas"],
+                    "unidades": str(valor["unidades"]),
+                    "receita": str(valor["receita"]),
+                }
+                for grupo, valor in sorted(grupos.items())
+            }
+            for banda, grupos in sorted(coortes.items())
+        },
+        "warehouses": armazens,
     }
 
 
@@ -230,7 +322,12 @@ def _block_shares(shares: dict, chaves: list) -> dict:
     }
 
 
-def render(depois: dict, antes: dict | None, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> str:
+def render(
+    depois: dict,
+    antes: dict | None,
+    seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR,
+    antes_nome: str | None = None,
+) -> str:
     """Markdown do reality check. Nenhum numero escrito a mao."""
     benchmark = demand_profile.load_benchmark(seeds_dir)
     params = demand_profile.load_params(seeds_dir)
@@ -254,7 +351,14 @@ def render(depois: dict, antes: dict | None, seeds_dir: str = demand_profile.DEF
     linhas.append(f"- benchmark: MAPA, Informe del Consumo Alimentario en Espana 2025")
     linhas.append(f"- medido em: {depois['measured_at_utc']}")
     if antes:
-        linhas.append(f"- ANTES congelado em: {antes['measured_at_utc']}")
+        rotulo = f" (`{antes_nome}`)" if antes_nome else ""
+        linhas.append(
+            f"- ANTES congelado em: {antes['measured_at_utc']}{rotulo} — o estado "
+            f"IMEDIATAMENTE anterior a esta versao do modelo, e nao o mais antigo que "
+            f"existe. `before_mapa_2025_v1` guarda o mix uniforme de antes da calibracao "
+            f"agregada e continua no disco; misturar os dois numa coluna so faria os "
+            f"efeitos de duas fases serem lidos como um."
+        )
     else:
         linhas.append(
             "- ANTES: **ausente**. Sem ele esta pagina mostra so o estado atual contra o "
@@ -498,6 +602,7 @@ def render(depois: dict, antes: dict | None, seeds_dir: str = demand_profile.DEF
         "aplica-se a taxa de pedidos e tem teste que prova que um perfil nao neutro muda a "
         "saida; o gatilho para propor um perfil e a janela cobrir novembro e dezembro."
     )
+    linhas.extend(_cohort_section(depois, antes))
     linhas.append("")
     linhas.append("## Fronteira que a calibracao nao atravessa")
     linhas.append("")
@@ -511,6 +616,127 @@ def render(depois: dict, antes: dict | None, seeds_dir: str = demand_profile.DEF
     )
     linhas.append("")
     return "\n".join(linhas) + "\n"
+
+
+def _cohort_section(depois: dict, antes: dict | None) -> list[str]:
+    """A unica dimensao em que a camada de coorte se enxerga.
+
+    O AGREGADO NAO SE MOVE DE PROPOSITO — e o criterio de aceitacao do IPF — entao uma
+    pagina que so mostrasse totais concluiria que a fase nao fez nada. Esta secao existe
+    porque o efeito e inteiramente condicional, e algo que so aparece na condicional precisa
+    de um lugar proprio para ser visto.
+    """
+    coortes = depois.get("cohorts")
+    linhas: list[str] = ["", "## Propensao por coorte do comprador", ""]
+
+    if not coortes:
+        linhas.append(
+            "**Ausente nesta janela.** `silver_order.buyer_age_band` nao esta preenchido — "
+            "a janela foi gerada por um modelo anterior a camada de coorte. Nao e uma "
+            "medicao de zero, e a ausencia do carimbo."
+        )
+        return linhas
+
+    linhas.append(
+        "A coorte tem duas dimensoes, e sao as duas UNICAS em que um atributo observado do "
+        "cliente coincide com um corte publicado do informe: **idade** (`birth_year`, da "
+        "distribuicao provincial do INE) e **comunidade autonoma** (`province_code`, do "
+        "Callejero). Ciclo de vida do lar e nivel socioeconomico sao os cortes mais ricos do "
+        "MAPA e ficaram de fora: o cliente nao tem composicao familiar nem renda, e "
+        "atribui-las seria inventar o atributo."
+    )
+    linhas.append("")
+    linhas.append(
+        "**O agregado nao se move, e isso e o criterio de aceitacao.** Os pesos por coorte, "
+        "ponderados pela distribuicao real de coortes entre os pedidos, reproduzem os pesos "
+        "da calibracao agregada — o IPF existe para isso. Quem procurar o efeito desta "
+        "camada num total nao vai encontrar: ele esta inteiro nas colunas abaixo."
+    )
+
+    bandas = [b for b in ("LT35", "35_49", "50_64", "GE65") if b in coortes]
+    totais = {
+        b: sum(int(v["linhas"]) for v in coortes[b].values()) for b in bandas
+    }
+
+    linhas.append("")
+    linhas.append("### Fatia de cada grupo DENTRO da coorte (% das linhas)")
+    linhas.append("")
+    linhas.append(
+        "Denominador e a propria coorte, e nao o total: e assim que a comparacao entre "
+        "faixas isola a propensao do tamanho da coorte. A coluna `x` e a razao entre a "
+        "faixa mais velha e a mais nova — o resumo de uma linha inteira."
+    )
+    linhas.append("")
+    cabecalho = "| grupo | " + " | ".join(f"{b} %" for b in bandas) + " | x GE65/LT35 |"
+    linhas.append(cabecalho)
+    linhas.append("|---|" + "---:|" * (len(bandas) + 1))
+
+    grupos = sorted({g for b in bandas for g in coortes[b]})
+    ordenados = []
+    for grupo in grupos:
+        fatias = {}
+        for b in bandas:
+            total = totais[b] or 1
+            fatias[b] = Decimal(coortes[b].get(grupo, {}).get("linhas", 0)) * 100 / total
+        razao = None
+        if "GE65" in fatias and "LT35" in fatias and fatias["LT35"] > 0:
+            razao = fatias["GE65"] / fatias["LT35"]
+        ordenados.append((razao if razao is not None else Decimal("0"), grupo, fatias))
+    ordenados.sort(reverse=True)
+
+    for razao, grupo, fatias in ordenados:
+        celulas = " | ".join(_fmt(fatias[b]) for b in bandas)
+        linhas.append(f"| {grupo} | {celulas} | {_fmt(razao)} |")
+
+    linhas.append("")
+    linhas.append(
+        "Uma razao de 1,00 significa que a faixa etaria nao move aquele grupo. `NO_FOOD` e "
+        "`SIN_BENCHMARK` ficam perto de 1 por construcao: o informe nao os mede, o indice "
+        "deles e neutro, e a fatia de cada BLOCO e mantida constante entre coortes de "
+        "proposito. Sem essa fronteira eles absorviam o residuo da normalizacao e o modelo "
+        "passava a afirmar que idoso compra 40% menos drogaria — numero que nenhuma fonte "
+        "deste repo mede, e maior que a maioria dos efeitos que sao medidos."
+    )
+
+    armazens = depois.get("warehouses") or {}
+    if armazens:
+        linhas.append("")
+        linhas.append("### Frequencia por comunidade autonoma")
+        linhas.append("")
+        linhas.append(
+            "Antes desta fase os quatro armazens tinham a MESMA contagem de pedidos por "
+            "construcao. O informe mede consumo per capita por comunidade, e essa diferenca "
+            "passa a valer — como frequencia, nunca como tamanho de cesta, porque o informe "
+            "da kg por ano e nao publica frequencia de compra domestica."
+        )
+        linhas.append("")
+        linhas.append("| armazem | pedidos | clientes distintos | pedidos por cliente |")
+        linhas.append("|---|---:|---:|---:|")
+        for wh in sorted(armazens):
+            dados = armazens[wh]
+            por_cliente = (
+                Decimal(dados["pedidos"]) / Decimal(dados["clientes"])
+                if dados["clientes"] else Decimal("0")
+            )
+            linhas.append(
+                f"| {wh} | {dados['pedidos']} | {dados['clientes']} | {_fmt(por_cliente)} |"
+            )
+        antes_wh = (antes or {}).get("warehouses")
+        if antes_wh:
+            linhas.append("")
+            linhas.append(
+                "O ANTES congelado tem a contagem por armazem ao lado; a diferenca entre "
+                "eles e a inclinacao regional entrando em vigor."
+            )
+        else:
+            linhas.append("")
+            linhas.append(
+                "O ANTES congelado nao registra contagem por armazem: ele e anterior a esta "
+                "medicao existir. A comparacao util e entre os quatro armazens de HOJE, que "
+                "antes eram iguais por construcao."
+            )
+
+    return linhas
 
 
 def calibration_error(depois: dict, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> dict:

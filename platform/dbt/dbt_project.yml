@@ -68,9 +68,9 @@ data_tests:
 
 seeds:
   retail_lakehouse:
-    # SO NO DUCKDB. Os nove seeds alimentam modelos do Silver (warehouse_service_area,
+    # SO NO DUCKDB. Os treze seeds alimentam modelos do Silver (warehouse_service_area,
     # warehouse_province_map), o de-para de homonimo do INE, as premissas de Orders e os
-    # quatro da calibracao de demanda — tudo do lado do lakehouse.
+    # oito da calibracao de demanda — tudo do lado do lakehouse.
     # A arvore do warehouse le exclusivamente `source()` sobre o STAGE e nao referencia
     # seed nenhum. Sem este guard, `dbt build --target snowflake` carregava os quatro para
     # dentro do Snowflake, onde ficavam sem funcao e sem quem os mantivesse em dia.
@@ -161,3 +161,43 @@ seeds:
         factor: decimal(9,4)
         label: varchar
         rationale: varchar
+
+    demand_cohort_age_seed:
+      # `informe_page` e varchar porque uma linha cita TRES paginas ("57;61;65"): o perfil
+      # de ACEITES_OLIVA e composto das tres secoes de azeite de oliva. Tipar como inteiro
+      # perderia justamente a linha cuja rastreabilidade e menos obvia.
+      +column_types:
+        mapa_key: varchar
+        age_band: varchar
+        population_share_pct: decimal(9,4)
+        volume_share_pct: decimal(9,4)
+        informe_page: varchar
+        provenance: varchar
+        note: varchar
+    demand_cohort_region_seed:
+      # `ccaa_code` varchar pelo mesmo motivo de province_code: 01 e 09 sao identificadores
+      # do INE, e a inferencia numerica comeria o zero a esquerda.
+      +column_types:
+        mapa_key: varchar
+        ccaa_code: varchar
+        ccaa_label: varchar
+        population_share_pct: decimal(9,4)
+        volume_share_pct: decimal(9,4)
+        informe_page: varchar
+        provenance: varchar
+        note: varchar
+    mapa_2025_region_seed:
+      +column_types:
+        ccaa_code: varchar
+        ccaa_label: varchar
+        per_capita_kg_l: decimal(9,2)
+        per_capita_eur: decimal(9,2)
+        informe_section: varchar
+        provenance: varchar
+        note: varchar
+    ine_ccaa_map_seed:
+      +column_types:
+        province_code: varchar
+        province_name: varchar
+        ccaa_code: varchar
+        ccaa_label: varchar

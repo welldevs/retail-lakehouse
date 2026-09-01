@@ -10,6 +10,7 @@ import unittest
 from decimal import Decimal
 
 from simulated_orders_source import events as ev
+from simulated_orders_source.events import ORDER_PLACED
 from simulated_orders_source.orders_generator import (
     GenerationError,
     _quantity_weights,
@@ -21,7 +22,16 @@ from simulated_orders_source.premises import Premises
 from simulated_orders_source.reference_data import load
 from simulated_orders_source.schema import group_by_order, totals_of
 
-from .support import ORDER_DATE, PREMISES, WH, catalog_rows, customer_rows, write_reference
+from .support import (
+    FIXTURE_YEAR,
+    ORDER_DATE,
+    PREMISES,
+    WH,
+    catalog_rows,
+    customer_rows,
+    demand_payload,
+    write_reference,
+)
 
 PACKAGE_DIR = __file__.rsplit("/tests/", 1)[0]
 
@@ -267,6 +277,101 @@ class RecusaTest(unittest.TestCase):
         events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         for eventos in group_by_order(events).values():
             self.assertLessEqual(len(eventos[0]["payload"]["lines"]), 6)
+
+
+class ElegibilidadeTest(unittest.TestCase):
+    """Quem pode colocar um pedido.
+
+    O modo de falha que isto pega e o Achado 1 da fase: `silver_customer` e uma projecao
+    fiel da POPULACAO residente, e populacao inclui criancas — 18,01% da base media tinha
+    menos de 18 anos, com idades a partir de zero. Enquanto a idade nao fazia nada isso era
+    inofensivo. Ao ligar a idade a demanda, deixa de ser: 18% da base entraria na faixa
+    '-35 anos' do MAPA sendo crianca, e o mix resultante seria plausivel.
+    """
+
+    def _referencia(self, tmp, ages, total=8):
+        clientes = customer_rows(total=total, ages=ages)
+        return load(write_reference(os.path.join(tmp, "ref"), customers=clientes))
+
+    def test_menor_de_idade_nunca_coloca_pedido(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Metade da base com 8 anos: se a idade minima fosse ignorada, esses clientes
+            # apareceriam como comprador em cerca de metade dos pedidos.
+            reference = self._referencia(tmp, ages=(8, 40))
+            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            clientes = {row["customer_id"]: row for row in reference.customers_of(WH)}
+            compradores = {
+                e["payload"]["customer_id"] for e in eventos
+                if e["event_type"] == ORDER_PLACED
+            }
+            self.assertTrue(compradores, "a fixture precisa gerar ao menos um pedido")
+            for cid in compradores:
+                idade = FIXTURE_YEAR - int(clientes[cid]["birth_year"])
+                self.assertGreaterEqual(idade, 18, f"{cid} tinha {idade} anos")
+
+    def test_base_inteira_abaixo_da_idade_minima_reprova(self):
+        # Sem isto, `wanted` cairia a zero e o dia sairia sem pedido nenhum — silencioso, e
+        # indistinguivel de um dia legitimamente vazio.
+        with tempfile.TemporaryDirectory() as tmp:
+            reference = self._referencia(tmp, ages=(5, 9))
+            with self.assertRaises(GenerationError) as caught:
+                generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            self.assertIn("18 anos ou mais", str(caught.exception))
+
+
+class FrequenciaRegionalTest(unittest.TestCase):
+    """O indice regional pesa QUANTOS pedem, e nada mais.
+
+    Sem este par, um indice lido do perfil e nunca aplicado passaria despercebido: a
+    contagem de pedidos continuaria plausivel, so que igual em todos os armazens — que e
+    exatamente o estado que a fase veio corrigir.
+    """
+
+    def _pedidos(self, tmp, indice):
+        perfil = demand_payload(frequency=indice)
+        reference = load(write_reference(os.path.join(tmp, "ref"), demand=perfil))
+        eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+        return sum(1 for e in eventos if e["event_type"] == ORDER_PLACED)
+
+    def test_indice_maior_produz_mais_pedidos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            poucos = self._pedidos(tmp, {"13": "0.5", "09": "1.0"})
+        with tempfile.TemporaryDirectory() as tmp:
+            muitos = self._pedidos(tmp, {"13": "1.5", "09": "1.0"})
+        self.assertLess(poucos, muitos)
+
+    def test_indice_neutro_nao_muda_a_contagem(self):
+        # O par do teste acima: prova que o mecanismo so age quando o indice diz para agir,
+        # e nao que ele mexe na contagem por conta propria.
+        with tempfile.TemporaryDirectory() as tmp:
+            neutro = self._pedidos(tmp, {"13": "1.0", "09": "1.0"})
+        with tempfile.TemporaryDirectory() as tmp:
+            reference = load(write_reference(os.path.join(tmp, "ref")))
+            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            padrao = sum(1 for e in eventos if e["event_type"] == ORDER_PLACED)
+        self.assertEqual(neutro, padrao)
+
+
+class CoorteNoEventoTest(unittest.TestCase):
+    def test_buyer_age_band_carimbada_bate_com_a_idade_do_cliente(self):
+        # Carimbada no evento pelo mesmo motivo de `demand_group`: o que importa e a faixa
+        # que valia NO MOMENTO DO PEDIDO. Um carimbo errado escolheria outro vetor de pesos
+        # e a cesta sairia coerente com outra coorte — plausivel, sem nulo, sem total errado.
+        with tempfile.TemporaryDirectory() as tmp:
+            reference = load(write_reference(os.path.join(tmp, "ref")))
+            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            clientes = {row["customer_id"]: row for row in reference.customers_of(WH)}
+            vistos = set()
+            for evento in eventos:
+                if evento["event_type"] != ORDER_PLACED:
+                    continue
+                payload = evento["payload"]
+                idade = FIXTURE_YEAR - int(clientes[payload["customer_id"]]["birth_year"])
+                self.assertEqual(
+                    payload["buyer_age_band"], reference.demand.band_of(idade)
+                )
+                vistos.add(payload["buyer_age_band"])
+            self.assertGreater(len(vistos), 1, "a fixture precisa cobrir mais de uma faixa")
 
 
 if __name__ == "__main__":

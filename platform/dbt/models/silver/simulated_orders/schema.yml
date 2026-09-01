@@ -107,6 +107,16 @@ models:
       - name: customer_ingestion_date
         description: Geracao de cliente vigente na data do pedido. Alimenta o SCD2 do Gold.
         tests: [not_null]
+      - name: buyer_age_band
+        description: >
+          Faixa etaria do comprador NO MOMENTO DO PEDIDO, carimbada no evento pela Source.
+          Foi ela que escolheu o vetor de pesos por coorte que sorteou esta cesta. Vem do
+          payload e nao de um join com silver_customer: derivar hoje daria a faixa de hoje,
+          e reimplementar os limites em SQL criaria uma segunda definicao que divergiria da
+          primeira no primeiro ajuste.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: ['LT35', '35_49', '50_64', 'GE65']}}
       - name: price_as_of
         description: Snapshot de catalogo que sustenta o preco deste pedido.
         tests: [not_null]

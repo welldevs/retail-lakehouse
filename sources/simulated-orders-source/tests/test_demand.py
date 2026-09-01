@@ -16,7 +16,7 @@ import unittest
 
 from simulated_orders_source.demand import DemandError, DemandModel
 
-from .support import demand_payload
+from .support import WH, demand_payload
 
 PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -206,6 +206,144 @@ class SazonalidadeTest(unittest.TestCase):
         modelo = DemandModel(demand_payload())
         with self.assertRaises(DemandError):
             modelo.seasonal_factor(13)
+
+
+class CoorteTest(unittest.TestCase):
+    """A propensao por coorte: (faixa etaria x comunidade autonoma) -> pesos.
+
+    O modo de falha que ronda esta secao e o mais barato de cometer e o mais caro de
+    encontrar: o codigo LE a coorte, ignora, e continua sorteando pelo vetor agregado. Tudo
+    soma 1, nenhum total quebra, e o painel mostra um mix perfeitamente plausivel em que
+    idoso e jovem compram exatamente a mesma coisa.
+    """
+
+    def test_pesos_de_toda_coorte_somam_um(self):
+        modelo = DemandModel(demand_payload())
+        for coorte in modelo.cohorts:
+            total = sum(modelo.cohort_weights[coorte].values())
+            self.assertAlmostEqual(total, 1.0, places=9, msg=coorte)
+
+    def test_coorte_com_vetor_truncado_reprova(self):
+        # Um vetor que perde um grupo NAO soma 1, e sortear com ele daria mais peso a todos
+        # os outros — plausivel, e invisivel num total por armazem.
+        payload = demand_payload()
+        payload["cohorts"]["weights"][0]["groups"].pop()
+        with self.assertRaises(DemandError) as caught:
+            DemandModel(payload)
+        self.assertIn("somam", str(caught.exception))
+
+    def test_perfil_sem_secao_de_coorte_reprova(self):
+        # Sem isto, um perfil da versao anterior carregaria sob a versao nova e o sorteio
+        # cairia no vetor agregado. Seria um no-op silencioso — o pior resultado possivel
+        # para uma camada cujo criterio de sucesso e nao mover o agregado.
+        payload = demand_payload()
+        del payload["cohorts"]
+        with self.assertRaises(DemandError) as caught:
+            DemandModel(payload)
+        self.assertIn("cohorts", str(caught.exception))
+
+    def test_faixa_etaria_pela_idade(self):
+        modelo = DemandModel(demand_payload())
+        self.assertEqual(modelo.band_of(18), "LT35")
+        self.assertEqual(modelo.band_of(34), "LT35")
+        self.assertEqual(modelo.band_of(35), "35_49")
+        self.assertEqual(modelo.band_of(49), "35_49")
+        self.assertEqual(modelo.band_of(50), "50_64")
+        self.assertEqual(modelo.band_of(64), "50_64")
+        self.assertEqual(modelo.band_of(65), "GE65")
+        self.assertEqual(modelo.band_of(101), "GE65")
+
+    def test_faixas_sem_topo_aberto_reprovam(self):
+        # Sem exatamente uma faixa de teto nulo, `band_of` nao teria onde por quem passa do
+        # ultimo limite — e devolver a ultima faixa por acaso da ordem do JSON seria pior.
+        payload = demand_payload()
+        for banda in payload["cohorts"]["age_bands"]:
+            if banda["max_age"] is None:
+                banda["max_age"] = 99
+        with self.assertRaises(DemandError) as caught:
+            DemandModel(payload)
+        self.assertIn("aberta", str(caught.exception))
+
+    def test_coorte_desconhecida_reprova(self):
+        modelo = DemandModel(demand_payload())
+        with self.assertRaises(DemandError):
+            modelo.cumulative(modelo.groups, "GE65|99")
+        with self.assertRaises(DemandError) as caught:
+            modelo.region_of("wh_inexistente")
+        self.assertIn("comunidade", str(caught.exception))
+
+    def test_matriz_plana_reproduz_o_sorteio_agregado(self):
+        # Prova que a mudanca esta no PERFIL, e nao escondida no codigo: com todas as
+        # coortes carregando o vetor agregado, a sequencia sorteada tem de ser identica a
+        # que o sorteio sem coorte produziria com a mesma seed.
+        modelo = DemandModel(demand_payload())
+        disponiveis = modelo.groups
+
+        rng_a = random.Random(20260901)
+        agregado = modelo.cumulative(disponiveis)
+        saida_a = [modelo.pick(rng_a, disponiveis, agregado) for _ in range(500)]
+
+        rng_b = random.Random(20260901)
+        por_coorte = modelo.cumulative(disponiveis, f"GE65|{modelo.region_of(WH)}")
+        saida_b = [modelo.pick(rng_b, disponiveis, por_coorte) for _ in range(500)]
+
+        self.assertEqual(saida_a, saida_b)
+
+    def test_duas_coortes_com_pesos_diferentes_sorteiam_diferente(self):
+        # O PAR COM O TESTE ACIMA E O QUE VALE, exatamente como no perfil sazonal. Sozinho,
+        # "matriz plana reproduz o agregado" passaria tambem numa implementacao que IGNORA a
+        # coorte. Este prova que o mecanismo existe.
+        jovem = {"GRUPO_A": "0.1", "GRUPO_B": "0.2", "GRUPO_C": "0.7"}
+        idoso = {"GRUPO_A": "0.8", "GRUPO_B": "0.15", "GRUPO_C": "0.05"}
+        vetores = {}
+        for ccaa in ("13", "09"):
+            for banda in ("LT35", "35_49", "50_64", "GE65"):
+                vetores[f"{banda}|{ccaa}"] = idoso if banda == "GE65" else jovem
+        modelo = DemandModel(demand_payload(cohort_weights=vetores))
+
+        def mix(coorte):
+            rng = random.Random(7)
+            cdf = modelo.cumulative(modelo.groups, coorte)
+            saida = [modelo.pick(rng, modelo.groups, cdf) for _ in range(4000)]
+            return saida.count("GRUPO_A") / len(saida)
+
+        self.assertGreater(mix("GE65|13"), 0.7)
+        self.assertLess(mix("LT35|13"), 0.2)
+
+    def test_cdf_por_coorte_nao_depende_de_pythonhashseed(self):
+        # Mesma armadilha do sorteio agregado, um nivel acima. O alvo e a iteracao de um
+        # `set`: o hash de `str` em CPython e aleatorizado por processo, entao uma tupla de
+        # coortes ou de faixas derivada de um set sai em ordem diferente a cada execucao. A
+        # saida so muda entre PROCESSOS, nunca dentro de um — por isso o teste roda tres
+        # subprocessos com PYTHONHASHSEED distinto em vez de repetir a chamada aqui.
+        script = (
+            "import json,random;"
+            "from simulated_orders_source.demand import DemandModel;"
+            "import sys;"
+            "m=DemandModel(json.load(sys.stdin));"
+            "r=random.Random(11);"
+            "c=m.cumulative(m.groups,'GE65|13');"
+            "print('|'.join(m.cohorts));"
+            "print('|'.join(b for b,_ in m.age_bands));"
+            "print(','.join(m.pick(r,m.groups,c) for _ in range(60)))"
+        )
+        import json as _json
+        payload = _json.dumps(demand_payload())
+        saidas = set()
+        for semente in ("0", "1", "424242"):
+            ambiente = dict(os.environ, PYTHONHASHSEED=semente, PYTHONPATH="src")
+            resultado = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=PACKAGE_DIR, env=ambiente, input=payload,
+                capture_output=True, text=True, check=True,
+            )
+            saidas.add(resultado.stdout.strip())
+        self.assertEqual(len(saidas), 1, f"saidas divergentes: {saidas}")
+
+    def test_indice_de_frequencia_e_por_armazem(self):
+        modelo = DemandModel(demand_payload(frequency={"13": "0.9", "09": "1.1"}))
+        self.assertAlmostEqual(modelo.frequency_index("mad1"), 0.9)
+        self.assertAlmostEqual(modelo.frequency_index("bcn1"), 1.1)
 
 
 if __name__ == "__main__":

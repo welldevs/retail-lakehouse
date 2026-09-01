@@ -2028,6 +2028,136 @@ propósito e nunca acontece sozinho.
   declarado. O limiar não é nota de qualidade: existe para pegar calibração silenciosamente
   inerte. Provado — o ANTES reprova com 11,007 pontos; o estado atual passa com 0,660.
 
+## Perfil de consumo do cliente (Fase 5)
+
+A Fase 4 calibrou a demanda **agregada**. O que ficou de fora era que todos os clientes
+compravam a mesma cesta esperada: um cliente de 22 anos em Sevilha e um de 78 em Barcelona
+sorteavam da mesma distribuição. Esta fase troca `P(grupo)` por `P(grupo | coorte)`.
+
+### O achado que abriu a fase, outra vez, não era de demanda
+
+**18,01% dos clientes tinham menos de 18 anos** — 3.602 de 20.000, com `age_at_ingestion`
+indo de 0 a 100. Havia titular de conta recém-nascido.
+
+Isso **não era defeito da Source de OLTP**: o contrato dela declara que a idade vem da
+distribuição *populacional* provincial do INE (tabela 31304), e é exatamente isso que ela
+entrega — uma projeção fiel da população residente. O que nunca fora declarado era a
+diferença entre **residente** e **quem coloca um pedido**.
+
+Enquanto a idade não fazia nada, isso era inofensivo. É a mesma forma do achado da fase
+anterior: um número internamente consistente que só vira erro quando alguém passa a usá-lo.
+Ao ligar a idade à demanda, 18% da base entraria na faixa `-35 anos` do MAPA sendo criança, e
+a calibração ficaria errada por construção sem que nenhum total quebrasse.
+
+A correção mora onde a pergunta mora: `min_buyer_age = 18` em `order_premises_seed.csv`, uma
+premissa do **domínio de pedidos**. A base de clientes não foi tocada e continua sendo o que
+o contrato dela diz que é.
+
+### Duas pontes, e três recusas
+
+| corte do MAPA | o cliente tem? | veredito |
+|---|---|---|
+| idade do responsável de compra (4 faixas) | `birth_year`, do INE 31304 | **usado** — governa o mix |
+| comunidade autónoma (17) | `province_code`, do Callejero | **usado** — mix e frequência |
+| ciclo de vida do lar (9 tipos) | não tem composição familiar | **recusado** |
+| nível socioeconómico (5 níveis) | não tem renda | **recusado** |
+| sexo do comprador | tem — mas o informe só o publica para consumo *extradoméstico* | **recusado** |
+
+O ciclo de vida é o corte mais rico do informe e vem completo. O bloqueio não é o dado, é o
+atributo: atribuir composição familiar a um cliente que não a tem seria **inventar o
+atributo** — a mesma proibição que a Fase 1 aplicou à densidade por tramo. **Gatilho
+registrado:** se uma fase futura ingerir lares por província do INE, o corte abre, e o dado
+do MAPA já estará no seed.
+
+### A extração: os números estavam em gráficos, e os gráficos têm rótulo
+
+Só **17 das seções** trazem a tabela demográfica em texto; as demais são imagens. Mas os
+gráficos carregam **rótulo numérico impresso**, e ler um rótulo é extração, não estimativa.
+Foram lidas ~45 páginas para cobrir os 39 grupos pesáveis, cada leitura conferida por dois
+checksums independentes: as quatro faixas de volume somam 100,00, e as de população somam
+`8,89 + 30,33 + 31,34 + 29,44` — os mesmos quatro números em **toda** seção, porque são o
+universo. Um dígito mal lido quebra uma das duas somas, e `load_cohort_age` reprova.
+
+Duas discrepâncias da própria fonte ficaram registradas em vez de aparadas: a página 206
+publica `30,5 / 31,7 / 29,0` de população onde todas as outras publicam `30,3 / 31,3 / 29,4`,
+e a página 84 rotula Madrid com `13,78` onde as demais rotulam `13,86`.
+
+### O agregado não se move, e esse é o critério de aceitação
+
+Sem correção, o mix agregado sairia do alvo só porque a nossa pirâmide etária não é a do
+MAPA — a calibração da fase anterior seria desfeita de lado, sem nada falhar. Um *iterative
+proportional fitting* ajusta um fator por grupo até que a média dos pesos por coorte,
+ponderada pela distribuição real de coortes **entre os pedidos**, reproduza os pesos da `v1`.
+
+Medido: convergência em **6 iterações**, maior desvio **1,0×10⁻¹⁰**. O erro contra o alvo do
+MAPA ficou em 0,075 ponto médio, contra 0,098 antes — a diferença é ruído de amostragem.
+
+Isso dá à fase um critério limpo, e uma consequência para quem for lê-la: **procurar o efeito
+num total não encontra nada.** Ele está inteiro na condicional, e é por isso que
+`MART_DEMAND_COHORT` e a seção de coorte do reality check existem.
+
+### A restrição que só apareceu ao medir
+
+Normalizando a coorte inteira de uma vez, `NO_FOOD` e `SIN_BENCHMARK` — que têm índice neutro
+por **ausência de evidência** — saíam com **0,60×** da fatia em 65+ contra menos de 35. O
+modelo passaria a afirmar que quem tem mais de 65 anos compra 40% menos drogaria por linha de
+cesta. Ninguém mediu isso: era resíduo da normalização, e era **maior que a maioria dos
+efeitos que são medidos**.
+
+O IPF passou a rodar **dentro de cada bloco**, com a fatia de cada um constante em toda
+coorte. Isso devolve a `food_line_share` o estatuto que o seed lhe dá — premissa declarada,
+uniforme — e faz índice neutro significar de verdade "sem efeito", em vez de "efeito que
+sobrou da conta".
+
+### O que mudou, medido na mesma janela
+
+| | ANTES (v1) | DEPOIS (v2) |
+|---|---:|---:|
+| pedidos | 6.400 | **5.248** (−18,0%) |
+| unidades | 204.824 | 169.445 (−17,3%) |
+| receita (EUR) | 583.154,43 | 481.201,94 (−17,5%) |
+| **EUR por kg** | 4,04 | **4,06** (+0,5%) |
+
+As três primeiras caem pelo mesmo ~18%: são os menores de idade deixando de comprar. A quarta
+fica parada, e é ela que prova que o **mix** não se moveu — uma queda de volume sem mudança
+de composição.
+
+Os quatro armazéns deixaram de ser cópias: **bcn1 coloca 1.436 pedidos contra 1.176 de
+mad1**, 22,1% a mais, contra os 22,7% que o consumo per cápita das duas comunidades prevê
+(Cataluña 620,82 kg-L por pessoa/ano · Madrid 505,86). O índice é renormalizado sobre as
+quatro comunidades servidas, então o **total** da janela não se move — o que muda é a
+repartição.
+
+E a condicional, que é o produto da fase:
+
+| grupo | LT35 % | GE65 % | × |
+|---|---:|---:|---:|
+| CARNE_CONEJO | 0,01 | 0,08 | 6,08 |
+| VINO | 0,50 | 2,44 | 4,89 |
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 0,25 | 0,80 | 3,16 |
+| … | | | |
+| PASTAS | 2,34 | 0,94 | 0,40 |
+| ARROZ | 1,40 | 0,44 | 0,31 |
+
+### O que ficou verificável
+
+- `make demand-reality-check` ganhou a seção **Propensão por coorte**, com a tabela acima e a
+  contagem por armazém. A página declara a ausência quando a janela é anterior à camada —
+  `cohorts: None`, e não um dicionário vazio, que seria indistinguível de "medi e não havia
+  nada".
+- O ANTES padrão passou a ser o **estado imediatamente anterior**
+  (`before_mapa_2025_v2`). Manter `before_mapa_2025_v1` como padrão faria a queda de receita
+  da correção de preço da Fase 4 ser lida como se fosse desta fase.
+- `assert_buyer_age_band_matches_the_customer_birth_year` recalcula a faixa contra
+  `birth_year` — `not_null` e `accepted_values` passariam com um carimbo trocado, porque um
+  carimbo trocado continua sendo uma das quatro faixas válidas.
+- `assert_no_order_comes_from_a_minor` lê o limiar do seed **e** guarda um piso de 18. A
+  primeira metade sozinha passa se alguém baixar a premissa para zero — foi medido ao
+  escrever o teste, e a segunda metade existe por causa disso.
+- `assert_buyer_age_band_is_stable_across_the_window` pega a janela regerada pela metade, e
+  aceita aniversário: exige que a transição seja para a faixa **seguinte** e para frente no
+  tempo.
+
 ## Fora de escopo
 
 **Gold — ENTROU na Fase 2**, e o que estava registrado aqui como "a nomear quando entrar"

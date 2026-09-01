@@ -1,5 +1,6 @@
 premise_key,value,unit,label,rationale
-daily_order_rate,0.08,proportion,synthetic,"Fracao da base de clientes que faz um pedido num dia. Nenhuma fonte deste repo mede cadencia de compra; 0.08 equivale a ~1 pedido a cada 12,5 dias por cliente."
+daily_order_rate,0.08,proportion,synthetic,"Fracao da base ELEGIVEL de clientes que faz um pedido num dia. Nenhuma fonte deste repo mede cadencia de compra; 0.08 equivale a ~1 pedido a cada 12,5 dias por cliente elegivel. 'Elegivel' passou a significar algo na Fase 5: ver min_buyer_age."
+min_buyer_age,18,years,synthetic,"Idade minima, NO DIA DO PEDIDO, para um cliente poder colocar um pedido. Medido em 2026-08-31: 18,01% dos clientes tinham menos de 18 anos (3.602 de 20.000), com age_at_ingestion indo de 0 a 100 — ha titulares de conta recem-nascidos. Isso NAO e defeito da Source de OLTP: o contrato dela declara que a idade vem da distribuicao POPULACIONAL provincial do INE, e e isso que ela entrega. O que nunca foi declarado e a diferenca entre residente e quem coloca um pedido, e ela so passou a importar quando a idade comecou a governar a demanda (Fase 5). A base de clientes continua uma projecao fiel da populacao; quem PODE pedir e premissa do dominio de pedidos, e mora aqui."
 basket_lines_min,3,lines,synthetic,"Menor cesta possivel. Nenhuma fonte deste repo mede composicao de cesta."
 basket_lines_mode,14,lines,synthetic,"Moda da distribuicao triangular do numero de linhas por pedido."
 basket_lines_max,40,lines,synthetic,"Maior cesta possivel."

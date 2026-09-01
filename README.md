@@ -134,8 +134,8 @@ não efeito colateral de pipeline.
 │   │   ├── query.py                    # conexão configurada + secret do DuckDB
 │   │   ├── oltp_reference.py           # Silver -> 3 JSON planos para a source de OLTP simulado
 │   │   ├── orders_reference.py         # Silver -> 5 JSON planos para a source de pedidos
-│   │   ├── demand_profile.py           # de-para + benchmark do MAPA -> pesos de demanda
-│   │   ├── demand_check.py             # reality check ANTES | MAPA | ALVO | DEPOIS
+│   │   ├── demand_profile.py           # de-para + benchmark do MAPA -> pesos por coorte (IPF)
+│   │   ├── demand_check.py             # reality check ANTES | MAPA | ALVO | DEPOIS + coorte
 │   │   ├── orders_oltp.py              # o OLTP de pedidos: estado + outbox NA MESMA transacao
 │   │   ├── orders_stream.py            # produtor, consumidor e read model; a semantica de entrega
 │   │   ├── orders_projection.py        # a projecao em Iceberg: dois escritores, fusao monotonica
@@ -764,9 +764,9 @@ make warehouse-prove-tests    # injeta o defeito que cada teste diz pegar e exig
 
 | Camada | Objetos novos |
 |---|---|
-| STAGE | `STG_ORDER` (6.400) · `STG_ORDER_LINE` (120.693) · `STG_ORDER_EVENT` (44.456) · `STG_ORDER_PREMISE` (30) |
+| STAGE | `STG_ORDER` · `STG_ORDER_LINE` · `STG_ORDER_EVENT` · `STG_ORDER_PREMISE` — 6.400 pedidos quando a Fase 3 mediu; **5.248** desde que `min_buyer_age` entrou |
 | GOLD | `FACT_ORDER` · `FACT_ORDER_ITEM` · `FACT_ORDER_EVENT` · `FACT_ORDER_PREMISE` |
-| MART | `MART_ORDER_FUNNEL` · `MART_FULFILLMENT_SLA` · `MART_BASKET_DAILY` |
+| MART | `MART_ORDER_FUNNEL` · `MART_FULFILLMENT_SLA` · `MART_BASKET_DAILY` · `MART_DEMAND_COHORT` *(Fase 5)* |
 
 `FACT_ORDER` é **accumulating snapshot** — uma linha por pedido que se preenche conforme ele
 avança, com onze marcos e as durações entre eles. O padrão só existe porque há eventos: uma
@@ -842,8 +842,8 @@ usada só como alvo de distribuição.
 
 ```bash
 make demand-check-mapping     # 444 trincas do catalogo, uma regra cada, zero default
-make demand-reality-check SNAPSHOT=before_mapa_2025_v1   # congela o ANTES
-make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS nas tres dimensoes
+make demand-reality-check SNAPSHOT=before_mapa_2025_v2   # congela o ANTES
+make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS + propensao por coorte
 ```
 
 ### O achado que abriu a fase não era de demanda
@@ -882,6 +882,10 @@ MAPA mede consumo doméstico do residente, não pedido de loja online. Essas con
 | `demand_category_mapping_seed.csv` | 128 regras `(l1, l2, l3)` com `*` como coringa; a mais específica vence |
 | `demand_profile_seed.csv` | `demand_model_version`, share alimentar, limiar de cobertura, bases de canal |
 | `demand_seasonality_seed.csv` | 12 meses, **neutros** — e o motivo escrito em cada linha |
+| `demand_cohort_age_seed.csv` | 39 grupos × 4 faixas etárias, com a página do informe em cada linha |
+| `demand_cohort_region_seed.csv` | 39 grupos × 4 comunidades servidas |
+| `mapa_2025_region_seed.csv` | consumo e gasto per cápita das 17 comunidades + média nacional |
+| `ine_ccaa_map_seed.csv` | província → comunidade autónoma; província não mapeada **levanta** |
 
 O perfil resolvido viaja como quinto arquivo de referência (`demand_profile.json`) para a
 Source, que continua **FROZEN**: ela recebe pesos, não regras.
@@ -897,6 +901,58 @@ Source, que continua **FROZEN**: ela recebe pesos, não regras.
 
 Erro absoluto médio contra o alvo: **0,098 ponto**. A queda de 29% na receita é a correção
 funcionando — 23% dela eram os 12 produtos com preço de teto de API.
+
+## Perfil de consumo do cliente (`mapa_2025_v2`)
+
+A calibração acima é **agregada**: até aqui, um cliente de 22 anos em Sevilha e um de 78 em
+Barcelona sorteavam da mesma distribuição. A `v2` troca `P(grupo)` por `P(grupo | coorte)`.
+
+### O achado, outra vez, não era de demanda
+
+**18,01% dos clientes tinham menos de 18 anos** — 3.602 de 20.000, com idades a partir de
+zero. Não é defeito da Source de OLTP: o contrato dela declara que a idade vem da distribuição
+*populacional* do INE, e é isso que ela entrega. O que faltava declarado era a diferença entre
+**residente** e **quem coloca um pedido** — inofensiva enquanto a idade não fazia nada, errada
+por construção assim que ela passou a governar a demanda. `min_buyer_age = 18` mora em
+`order_premises_seed.csv`; a base de clientes não foi tocada.
+
+### Duas pontes, três recusas
+
+Usados: **idade** (`birth_year`, do INE 31304) e **comunidade autónoma** (`province_code`, do
+Callejero) — as duas únicas em que um atributo observado do cliente coincide com um corte
+publicado do informe.
+
+Recusados: **ciclo de vida do lar** e **nível socioeconómico**, que são os cortes mais ricos
+do MAPA mas exigiriam inventar composição familiar e renda no cliente; e **sexo**, que o
+cliente tem mas o informe só publica para consumo extradoméstico. Gatilho registrado: ingerir
+lares por província do INE abre o primeiro.
+
+### O agregado não se move — é o critério de aceitação
+
+Um *iterative proportional fitting* garante que a média dos pesos por coorte, ponderada pela
+distribuição real de coortes entre os pedidos, reproduza os pesos agregados da `v1`.
+Convergência em 6 iterações, desvio 1,0×10⁻¹⁰. **Procurar o efeito da fase num total não
+encontra nada**: ele está inteiro na condicional.
+
+| | ANTES (v1) | DEPOIS (v2) |
+|---|---:|---:|
+| pedidos | 6.400 | **5.248** (−18,0%) |
+| receita (EUR) | 583.154,43 | 481.201,94 (−17,5%) |
+| **EUR por kg** | 4,04 | **4,06** (+0,5%) |
+
+As duas primeiras caem pelos menores de idade; a terceira fica parada, e é ela que prova que o
+mix não se moveu.
+
+| grupo | LT35 % | GE65 % | × |
+|---|---:|---:|---:|
+| VINO | 0,50 | 2,44 | 4,89 |
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 0,25 | 0,80 | 3,16 |
+| PASTAS | 2,34 | 0,94 | 0,40 |
+| ARROZ | 1,40 | 0,44 | 0,31 |
+
+E os quatro armazéns deixaram de ser cópias: **bcn1 coloca 1.436 pedidos contra 1.176 de
+mad1**, contra os 22,7% que o consumo per cápita das duas comunidades prevê. O índice é
+renormalizado sobre as comunidades servidas, então o total da janela não se move.
 
 ### O que o informe não sustenta, e ficou registrado
 

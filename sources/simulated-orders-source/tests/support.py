@@ -18,6 +18,7 @@ FIRST_INGESTION = "2026-08-24"
 
 PREMISES = {
     "daily_order_rate": "0.5",
+    "min_buyer_age": "18",
     "basket_lines_min": "2",
     "basket_lines_mode": "3",
     "basket_lines_max": "5",
@@ -56,6 +57,15 @@ PREMISES = {
 DEMAND_GROUPS = ("GRUPO_A", "GRUPO_B", "GRUPO_C")
 DEMAND_WEIGHTS = {"GRUPO_A": "0.6", "GRUPO_B": "0.3", "GRUPO_C": "0.1"}
 
+# As quatro faixas do informe, e uma comunidade por armazem — a fixture espelha a forma do
+# perfil real, incluindo a colinearidade entre armazem e comunidade.
+AGE_BANDS = (("LT35", 34), ("35_49", 49), ("50_64", 64), ("GE65", None))
+WAREHOUSE_CCAA = {WH: "13", OTHER_WH: "09"}
+
+# Ano de referencia das idades da fixture. Fixo, e nao `date.today()`: uma fixture que
+# envelhece com o relogio faria o mesmo teste mudar de resultado no ano que vem.
+FIXTURE_YEAR = int(ORDER_DATE[:4])
+
 
 def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) -> list[dict]:
     """Catalogo sintetico com subgrupos povoados, para que a substituicao tenha candidato."""
@@ -77,7 +87,56 @@ def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) 
     return rows
 
 
-def demand_payload(weights=None, seasonality=None, version: str = "fixture_v1") -> dict:
+def cohort_payload(pesos, cohort_weights=None, frequency=None) -> dict:
+    """Secao `cohorts` da fixture.
+
+    Por padrao TODA coorte recebe o vetor agregado: e a matriz de indices plana, e com ela
+    o sorteio por coorte tem de reproduzir exatamente o sorteio agregado. Um teste que
+    passa nas duas implementacoes nao testa nenhuma, entao os testes que precisam de
+    diferenciacao passam `cohort_weights` explicitamente.
+    """
+    chaves = [
+        f"{banda}|{ccaa}"
+        for ccaa in sorted(set(WAREHOUSE_CCAA.values()))
+        for banda, _teto in AGE_BANDS
+    ]
+    vetores = cohort_weights or {c: pesos for c in chaves}
+    indices = frequency or {c: "1.0" for c in sorted(set(WAREHOUSE_CCAA.values()))}
+    return {
+        "dimensions": ["age", "region"],
+        "independence": "multiplicative",
+        "calibration": "ipf",
+        "age_bands": [{"key": nome, "max_age": teto} for nome, teto in AGE_BANDS],
+        "regions": [
+            {
+                "ccaa_code": ccaa,
+                "ccaa_label": f"CCAA {ccaa}",
+                "warehouses": sorted(w for w, c in WAREHOUSE_CCAA.items() if c == ccaa),
+                "frequency_index": indices[ccaa],
+            }
+            for ccaa in sorted(set(WAREHOUSE_CCAA.values()))
+        ],
+        "mass": [{"cohort": c, "share": str(1 / len(chaves))} for c in sorted(vetores)],
+        "weights": [
+            {
+                "cohort": chave,
+                "groups": [
+                    {"demand_group": g, "line_weight": str(vetores[chave][g])}
+                    for g in sorted(vetores[chave])
+                ],
+            }
+            for chave in sorted(vetores)
+        ],
+    }
+
+
+def demand_payload(
+    weights=None,
+    seasonality=None,
+    version: str = "fixture_v1",
+    cohort_weights=None,
+    frequency=None,
+) -> dict:
     """Perfil de demanda minimo, no mesmo formato que a plataforma escreve."""
     pesos = dict(DEMAND_WEIGHTS if weights is None else weights)
     return {
@@ -93,10 +152,19 @@ def demand_payload(weights=None, seasonality=None, version: str = "fixture_v1") 
             {"demand_group": key, "line_weight": pesos[key], "block": "benchmark"}
             for key in sorted(pesos)
         ],
+        "cohorts": cohort_payload(pesos, cohort_weights, frequency),
     }
 
 
-def customer_rows(wh: str = WH, total: int = 8, first: str = FIRST_INGESTION) -> list[dict]:
+# Uma idade por faixa, ciclada: a fixture cobre as quatro faixas mesmo com 8 clientes, e
+# nenhuma delas fica vazia por acaso do tamanho da amostra.
+FIXTURE_AGES = (25, 42, 57, 71)
+
+
+def customer_rows(
+    wh: str = WH, total: int = 8, first: str = FIRST_INGESTION, ages=None
+) -> list[dict]:
+    idades = tuple(ages or FIXTURE_AGES)
     return [
         {
             "customer_id": f"cust_{wh}_{index:06d}",
@@ -104,6 +172,7 @@ def customer_rows(wh: str = WH, total: int = 8, first: str = FIRST_INGESTION) ->
             "province_code": "28",
             "municipality_code": "079",
             "postal_code": f"280{index:02d}",
+            "birth_year": FIXTURE_YEAR - idades[index % len(idades)],
             "first_ingestion_date": first,
         }
         for index in range(total)

@@ -63,7 +63,7 @@ INDICADORES: tuple[Indicador, ...] = (
         marts=("MART_ORDER_FUNNEL",),
         armadilhas=(
             "TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: "
-            "receita/pedidos_separados = 134,57 e receita/pedidos_colocados = 128,30. O "
+            "receita/pedidos_separados = 95,78 e receita/pedidos_colocados = 91,69. O "
             "segundo divide a receita de quem foi separado pelo total incluindo quem nunca "
             "chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.",
             "`net_amount_picked` e NULO para pedido que morreu antes da separacao, e `sum()` "
@@ -430,6 +430,106 @@ INDICADORES: tuple[Indicador, ...] = (
             group by 1
             having sum(lines_placed) >= 100
             order by taxa_substituicao desc
+        """,
+    ),
+
+    Indicador(
+        chave="perfil_por_faixa",
+        titulo="Perfil de consumo por faixa etaria do comprador",
+        grupo="C. Cesta e categoria",
+        pergunta="O que cada faixa etaria leva, e onde ela difere mais das outras?",
+        grao="(order_date, wh, buyer_age_band, demand_group) agregado por faixa e grupo",
+        tipo="sintetico calibrado contra benchmark (MAPA 2025)",
+        marts=("MART_DEMAND_COHORT",),
+        armadilhas=(
+            "O AGREGADO NAO MUDA ENTRE FAIXAS, DE PROPOSITO. A calibracao por coorte e "
+            "neutra no total — um IPF garante que a media ponderada dos pesos por coorte "
+            "reproduz o mix agregado. Procurar o efeito desta camada num total nao encontra "
+            "nada; ele esta inteiro na comparacao ENTRE faixas da mesma linha.",
+            "COMPARE FATIA, NUNCA CONTAGEM. As quatro faixas tem tamanhos diferentes na base "
+            "(35_49 e a maior, LT35 a menor), entao 'linhas por faixa' mede o tamanho da "
+            "coorte e nao a propensao dela. `share_within_band` ja tem a propria coorte no "
+            "denominador; e ela que isola as duas coisas.",
+            "A PROPENSAO E BENCHMARK, NAO OBSERVACAO DESTA LOJA. Os indices vem do consumo "
+            "domestico espanhol medido pelo MAPA, e o `% Poblacion` de la e a populacao que "
+            "VIVE EM LARES com responsavel naquela faixa — nao a populacao daquela idade. "
+            "Por isso o numero entra como indice relativo, e nunca como share absoluto.",
+            "NO_FOOD e SIN_BENCHMARK aparecem com razao proxima de 1 por CONSTRUCAO: o "
+            "informe nao mede drogaria nem limpeza, o indice deles e neutro e a fatia de "
+            "cada bloco e mantida constante entre coortes. Ler isso como 'todas as idades "
+            "compram xampu igual' seria transformar ausencia de medicao em medicao.",
+        ),
+        sql=f"""
+            with por_faixa as (
+                select
+                    buyer_age_band,
+                    demand_group,
+                    sum(lines_placed)                               as linhas
+                from {DB}.MART.MART_DEMAND_COHORT
+                where {FILTRO_DATA} and {FILTRO_WH}
+                group by 1, 2
+            ),
+            total as (
+                select buyer_age_band, sum(linhas) as linhas_faixa
+                from por_faixa group by 1
+            )
+            select
+                p.demand_group                                      as grupo,
+                max(case when p.buyer_age_band = 'LT35'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_lt35,
+                max(case when p.buyer_age_band = '35_49'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_35_49,
+                max(case when p.buyer_age_band = '50_64'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_50_64,
+                max(case when p.buyer_age_band = 'GE65'
+                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_ge65,
+                sum(p.linhas)                                       as linhas_total
+            from por_faixa p
+            join total t on t.buyer_age_band = p.buyer_age_band
+            group by 1
+            having sum(p.linhas) >= 100
+            order by div0(
+                max(case when p.buyer_age_band = 'GE65'
+                         then p.linhas / t.linhas_faixa end),
+                max(case when p.buyer_age_band = 'LT35'
+                         then p.linhas / t.linhas_faixa end)
+            ) desc
+        """,
+    ),
+
+    Indicador(
+        chave="pedidos_por_regiao",
+        titulo="Pedidos por armazem, e a intensidade regional que os separa",
+        grupo="C. Cesta e categoria",
+        pergunta="Por que bcn1 coloca mais pedidos que mad1, se as bases tem o mesmo tamanho?",
+        grao="(order_date, wh) agregado por armazem",
+        tipo="sintetico inclinado por consumo per capita observado (MAPA, secao 3)",
+        marts=("MART_DEMAND_COHORT",),
+        armadilhas=(
+            "A DIFERENCA E DELIBERADA E OBSERVADA. Ate a fase anterior os quatro armazens "
+            "tinham a mesma contagem por construcao. O informe mede consumo per capita por "
+            "comunidade autonoma — Cataluna 620,82 kg-L por pessoa e ano contra 505,86 de "
+            "Madrid — e essa razao passou a pesar QUANTOS clientes pedem.",
+            "A INTENSIDADE VIRA FREQUENCIA, E ISSO E ESCOLHA DECLARADA. O informe da kg por "
+            "ano e NAO publica frequencia de compra domestica; repartir a intensidade entre "
+            "frequencia e tamanho de cesta seria inventar a reparticao. Ler estes numeros "
+            "como 'catalao compra mais vezes' e ler a premissa, nao uma medicao.",
+            "O TOTAL DA JANELA NAO MUDA por causa desta inclinacao: o indice e renormalizado "
+            "sobre as quatro comunidades servidas. O que ela move e a REPARTICAO entre "
+            "armazens, nunca a soma.",
+        ),
+        sql=f"""
+            select
+                wh                                                  as armazem,
+                count(distinct order_date)                          as dias,
+                sum(lines_placed)                                   as linhas,
+                sum(units_placed)                                   as unidades,
+                round(sum(revenue_fulfilled), 2)                    as receita,
+                max(currency)                                       as moeda
+            from {DB}.MART.MART_DEMAND_COHORT
+            where {FILTRO_DATA} and {FILTRO_WH}
+            group by 1
+            order by linhas desc
         """,
     ),
 

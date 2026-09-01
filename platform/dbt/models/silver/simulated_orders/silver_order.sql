@@ -54,6 +54,12 @@ colocacao as (
         json_extract_string(payload, '$.province_code')                as province_code,
         json_extract_string(payload, '$.municipality_code')            as municipality_code,
         json_extract_string(payload, '$.postal_code')                  as postal_code,
+        -- Faixa etaria do comprador NO MOMENTO DO PEDIDO, carimbada no evento pela Source.
+        -- Vem do payload e nao de um join com silver_customer de proposito, pelo mesmo
+        -- motivo de `demand_group` em silver_order_line: e a faixa que escolheu o vetor de
+        -- pesos daquela cesta, e derivá-la hoje daria a faixa de hoje. Um cliente que faz
+        -- aniversario dentro da janela tem dois pedidos em faixas diferentes, e esta certo.
+        json_extract_string(payload, '$.buyer_age_band')               as buyer_age_band,
         cast(json_extract_string(payload, '$.price_as_of') as date)    as price_as_of,
         json_extract_string(payload, '$.price_source')                 as price_source,
         cast(json_extract_string(payload, '$.delivery_slot_start') as timestamp)
@@ -156,6 +162,7 @@ select
     c.province_code,
     c.municipality_code,
     c.postal_code,
+    c.buyer_age_band,
 
     c.price_as_of,
     c.price_source,

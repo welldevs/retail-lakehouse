@@ -38,6 +38,7 @@ CUSTOMER_FIELDS = (
     "province_code",
     "municipality_code",
     "postal_code",
+    "birth_year",
     "first_ingestion_date",
 )
 CATALOG_FIELDS = (
@@ -171,17 +172,34 @@ class Reference:
             key: tuple(sorted(grupos)) for key, grupos in grupos_por_par.items()
         }
 
-        # CDF por par, calculada uma vez. Recalcula-la por linha custaria uma varredura de
-        # dezenas de grupos por linha da cesta, e o resultado seria identico.
+        # CDF por (par, COORTE), calculada uma vez. Recalcula-la por linha custaria uma
+        # varredura de dezenas de grupos por linha da cesta, e o resultado seria identico.
+        #
+        # SO AS COORTES ALCANCAVEIS. A comunidade e fixa dentro de um armazem, entao um par
+        # (armazem, data) tem no maximo tantas coortes quantas sao as faixas etarias — nao o
+        # produto cartesiano. Montar as 16 combinacoes para cada par gastaria memoria em
+        # vetores que nenhum sorteio daquele armazem pode alcancar.
         self.demand = DemandModel(demand)
         self._demand_cdf: dict[tuple, tuple] = {}
         for key, grupos in self._demand_groups_of.items():
+            wh = key[0]
             try:
-                self._demand_cdf[key] = self.demand.cumulative(grupos)
+                regiao = self.demand.region_of(wh)
             except DemandError as exc:
-                raise ReferenceError(
-                    f"{DEMAND_FILE}: {exc} (par {key})"
-                ) from exc
+                raise ReferenceError(f"{DEMAND_FILE}: {exc}") from exc
+            for banda, _teto in self.demand.age_bands:
+                coorte = f"{banda}|{regiao}"
+                if coorte not in self.demand.cohort_weights:
+                    raise ReferenceError(
+                        f"{DEMAND_FILE}: o armazem {wh!r} pode ter cliente da faixa "
+                        f"{banda!r}, mas a coorte {coorte!r} nao tem vetor de pesos."
+                    )
+                try:
+                    self._demand_cdf[key + (coorte,)] = self.demand.cumulative(grupos, coorte)
+                except DemandError as exc:
+                    raise ReferenceError(
+                        f"{DEMAND_FILE}: {exc} (par {key}, coorte {coorte})"
+                    ) from exc
 
         # (wh, order_date) -> linha do calendario.
         self._calendar: dict[tuple, dict] = {}
@@ -240,8 +258,8 @@ class Reference:
             )
         return grupos
 
-    def demand_cdf_of(self, wh: str, price_as_of: str) -> tuple:
-        return self._demand_cdf[(wh, price_as_of)]
+    def demand_cdf_of(self, wh: str, price_as_of: str, cohort: str) -> tuple:
+        return self._demand_cdf[(wh, price_as_of, cohort)]
 
     def positions_in_demand_group(self, wh: str, price_as_of: str, group: str) -> list[int]:
         return self._by_demand_group.get((wh, price_as_of, group), [])

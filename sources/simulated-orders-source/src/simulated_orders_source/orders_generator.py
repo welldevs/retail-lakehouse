@@ -9,9 +9,11 @@ preco, cliente ou CEP e fabricado aqui.
 O QUE E SORTEADO, E O QUE ISSO SIGNIFICA
 -----------------------------------------
     dia + armazem -> sub-seed proprio
-                  -> quais clientes pedem hoje (UNIFORME, sem reposicao)
+                  -> quantos clientes pedem hoje (taxa x sazonal x indice regional)
+                  -> quais clientes pedem hoje (UNIFORME, sem reposicao, entre os elegiveis)
+                  -> qual COORTE cada um deles e (faixa etaria x comunidade autonoma)
                   -> quantas linhas tem a cesta (triangular declarada)
-                  -> qual GRUPO DE DEMANDA (ponderado pelo perfil calibrado contra o MAPA)
+                  -> qual GRUPO DE DEMANDA (ponderado pelo perfil DAQUELA COORTE)
                   -> qual produto DENTRO do grupo (UNIFORME)
                   -> quantidade por linha (decrescente, derivada de quantity_max)
                   -> horario, janela de entrega e marcos (faixas declaradas)
@@ -160,12 +162,13 @@ def _order_id(wh: str, order_date: str, index: int) -> str:
     return f"ord_{wh}_{order_date.replace('-', '')}_{index:06d}"
 
 
-def _basket(rng, reference, premises, wh, price_as_of):
+def _basket(rng, reference, premises, wh, price_as_of, cohort):
     """Monta a cesta: linhas com produto real, preco real, quantidade sorteada.
 
     DOIS PASSOS, e a separacao entre eles e o que esta fase inteira introduziu:
 
-        1. GRUPO DE DEMANDA, ponderado pelo perfil calibrado contra o MAPA.
+        1. GRUPO DE DEMANDA, ponderado pelo perfil calibrado contra o MAPA — e, desde
+           `mapa_2025_v2`, pelo perfil DA COORTE do cliente que esta pedindo.
         2. PRODUTO DENTRO DO GRUPO, uniforme.
 
     O passo 2 continua uniforme de proposito: nenhuma fonte deste repo mede giro por SKU, e
@@ -180,7 +183,7 @@ def _basket(rng, reference, premises, wh, price_as_of):
     """
     catalog = reference.catalog_of(wh, price_as_of)
     grupos = reference.demand_groups_of(wh, price_as_of)
-    cumulative = reference.demand_cdf_of(wh, price_as_of)
+    cumulative = reference.demand_cdf_of(wh, price_as_of, cohort)
 
     low = premises.integer("basket_lines_min")
     high = premises.integer("basket_lines_max")
@@ -276,7 +279,15 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
             f"Nenhum pedido pode nascer antes do cliente."
         )
 
-    lines = _basket(rng, reference, premises, wh, price_as_of)
+    # A COORTE E RESOLVIDA NO DIA DO PEDIDO, e nao no export: a idade muda, e uma janela
+    # longa faz um cliente cruzar a fronteira de uma faixa. A conta e a diferenca de anos,
+    # que e a mesma convencao com que `birth_year` foi construido na Source de OLTP
+    # (`reference_year - idade`) — usar data completa aqui e ano la produziria duas idades
+    # para a mesma pessoa.
+    idade = int(order_date[:4]) - int(customer["birth_year"])
+    cohort = reference.demand.cohort_of(wh, idade)
+
+    lines = _basket(rng, reference, premises, wh, price_as_of, cohort)
     gross = _money(sum((line["unit_price"] * line["quantity"] for line in lines), Decimal("0")))
 
     placed_at = base_day + timedelta(
@@ -320,6 +331,10 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         {
             "customer_id": customer["customer_id"],
             "customer_ingestion_date": customer_version,
+            # Carimbada no evento pelo mesmo motivo de `demand_group`: o que importa e a
+            # faixa que valia NO MOMENTO DO PEDIDO. Deriva-la depois, no Silver, exigiria
+            # reimplementar os limites das faixas numa segunda linguagem.
+            "buyer_age_band": cohort.split("|", 1)[0],
             "province_code": customer["province_code"],
             "municipality_code": customer["municipality_code"],
             "postal_code": customer["postal_code"],
@@ -521,17 +536,32 @@ def generate(reference, premises, wh: str, order_date: str, seed: int) -> list[d
     rng = random.Random(day_seed(seed, wh, order_date))
     base_day = datetime.strptime(order_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-    # Elegiveis: quem ja existia no dia do pedido. Hoje sao todos, mas a base cresce e uma
-    # geracao futura pode acrescentar clientes que nao existiam nos dias ja gerados.
+    # ELEGIVEIS: DUAS CONDICOES, e a segunda nasceu na Fase 5.
+    #
+    #   1. ja existia no dia do pedido — a base cresce, e uma geracao futura pode
+    #      acrescentar clientes que nao existiam nos dias ja gerados;
+    #   2. tem `min_buyer_age` anos ou mais NO DIA DO PEDIDO.
+    #
+    # A segunda existe porque `silver_customer` e uma projecao fiel da POPULACAO residente
+    # (a idade vem da distribuicao provincial do INE, como o contrato da Source de OLTP
+    # declara), e populacao inclui criancas: 18,01% da base tinha menos de 18 anos, com
+    # idades a partir de zero. Enquanto a idade nao fazia nada isso era inofensivo. A partir
+    # do momento em que ela governa a demanda, deixa de ser — 18% da base entraria na faixa
+    # '-35 anos' do MAPA sendo crianca. Quem PODE pedir e premissa do dominio de pedidos, e
+    # mora em `order_premises_seed.csv`; a base de clientes nao foi tocada.
+    minima = premises.integer("min_buyer_age")
+    ano = int(order_date[:4])
     eligible = [
         customer
         for customer in reference.customers_of(wh)
         if reference.customer_version_at(customer["first_ingestion_date"], order_date)
+        and ano - int(customer["birth_year"]) >= minima
     ]
     if not eligible:
         raise GenerationError(
-            f"nenhum cliente de wh={wh!r} existia em {order_date}. A base de clientes comeca "
-            f"em {min(reference.customer_ingestion_dates)}."
+            f"nenhum cliente de wh={wh!r} existia em {order_date} com {minima} anos ou "
+            f"mais. A base de clientes comeca em "
+            f"{min(reference.customer_ingestion_dates)}."
         )
 
     # SAZONALIDADE ENTRA AQUI, NA TAXA DE PEDIDOS — nunca no mix. A distincao vem da
@@ -541,12 +571,24 @@ def generate(reference, premises, wh: str, order_date: str, seed: int) -> list[d
     # por ausencia de evidencia numerica e porque a janela cobre so agosto — mas o mecanismo
     # existe e tem teste que prova que um perfil nao neutro muda a saida.
     fator = reference.demand.seasonal_factor(base_day.month)
-    taxa = premises.number("daily_order_rate") * fator
+
+    # A INTENSIDADE REGIONAL ENTRA AQUI, ao lado da sazonalidade, e pelo mesmo motivo: ela
+    # e uma propriedade de QUANTO se compra, nao de O QUE se compra. O informe mede consumo
+    # per capita por comunidade — Cataluna 620,82 kg ou litro por pessoa e ano contra 505,86
+    # de Madrid — e nao publica frequencia de compra domestica, entao repartir a intensidade
+    # entre frequencia e tamanho de cesta seria inventar a reparticao. A plataforma escolheu
+    # frequencia, declarou a escolha em `region_frequency_basis`, e ja entrega o indice
+    # RENORMALIZADO sobre as comunidades servidas: a soma ponderada e 1, logo o total de
+    # pedidos da janela nao se move e o que muda e a reparticao entre armazens.
+    regional = reference.demand.frequency_index(wh)
+
+    taxa = premises.number("daily_order_rate") * fator * regional
     wanted = round(len(eligible) * taxa)
     if wanted <= 0:
         raise GenerationError(
             f"daily_order_rate={premises.number('daily_order_rate')} x fator sazonal "
-            f"{fator} sobre {len(eligible)} cliente(s) da zero pedido em {order_date}"
+            f"{fator} x indice regional {regional} sobre {len(eligible)} cliente(s) "
+            f"elegivel(is) da zero pedido em {order_date}"
         )
 
     # Sem reposicao: um cliente faz no maximo um pedido por dia. E uma simplificacao

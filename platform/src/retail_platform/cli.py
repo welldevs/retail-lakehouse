@@ -326,6 +326,15 @@ def _cmd_export_orders_reference(args) -> int:
     print(f"carry-forward .... {summary['carried_forward_rows']} par(es) (armazem, dia) "
           f"sem preco observado no proprio dia")
     print(f"premissas ........ sha256={summary['premises_sha256'][:16]}... (todas sinteticas)")
+    print(
+        f"demanda .......... {summary['demand_model_version']} — "
+        f"{summary['demand_groups']} grupos, {summary['demand_cohorts']} coortes, "
+        f"IPF em {summary['demand_ipf_iterations']} iteracao(oes)"
+    )
+    print(
+        f"elegiveis ........ {summary['eligible_customers']} cliente(s); "
+        f"{summary['below_min_buyer_age']} abaixo da idade minima de compra"
+    )
     for name, size in sorted(summary["bytes"].items()):
         print(f"  {name} ... {size} bytes")
     print("OK: referencia exportada.")
@@ -902,7 +911,7 @@ def _cmd_demand_reality_check(args) -> int:
         except DemandCheckError as exc:
             print(f"AVISO: {exc}")
 
-    write(render(atual, antes, args.seeds_dir), args.out)
+    write(render(atual, antes, args.seeds_dir, antes_nome=args.before), args.out)
     erro = calibration_error(atual, args.seeds_dir)
     if args.out != "-":
         print(f"reality check escrito em {args.out}")
@@ -1349,8 +1358,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="em vez de renderizar, congela a medicao atual sob este nome",
     )
     demand_check.add_argument(
-        "--before", default="before_mapa_2025_v1",
-        help="nome ou caminho do snapshot ANTES",
+        # O ANTES E SEMPRE O ESTADO IMEDIATAMENTE ANTERIOR, e nao o mais antigo que existe.
+        # `before_mapa_2025_v1` (mix uniforme, pre-calibracao) continua no disco e e citado
+        # no texto, mas usa-lo como padrao faria a pagina somar os efeitos de duas fases
+        # numa coluna so — e a queda de receita da correcao de preco seria lida como se
+        # fosse da camada de coorte.
+        "--before", default="before_mapa_2025_v2",
+        help="nome ou caminho do snapshot ANTES (padrao: o estado anterior a esta versao)",
     )
     demand_check.add_argument("--seeds-dir", default=os.path.join("platform", "dbt", "seeds"))
     demand_check.add_argument(

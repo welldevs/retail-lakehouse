@@ -1,0 +1,294 @@
+{
+  "cohorts": null,
+  "groups": {
+    "ACEITES_OLIVA": {
+      "kg_l": "2086.5305472140826",
+      "linhas": 584,
+      "linhas_sem_kg": 0,
+      "receita": "8608.60",
+      "unidades": "994"
+    },
+    "ACEITE_GIRASOL": {
+      "kg_l": "1009.3980457701208",
+      "linhas": 276,
+      "linhas_sem_kg": 0,
+      "receita": "2293.75",
+      "unidades": "461"
+    },
+    "AGUA": {
+      "kg_l": "21469.8035454122882",
+      "linhas": 3567,
+      "linhas_sem_kg": 0,
+      "receita": "10741.03",
+      "unidades": "6091"
+    },
+    "ARROZ": {
+      "kg_l": "1227.7916338508204",
+      "linhas": 957,
+      "linhas_sem_kg": 0,
+      "receita": "3030.51",
+      "unidades": "1667"
+    },
+    "BEBIDAS_ESPIRITUOSAS": {
+      "kg_l": "228.067448145329598",
+      "linhas": 188,
+      "linhas_sem_kg": 0,
+      "receita": "2566.35",
+      "unidades": "320"
+    },
+    "BOLLERIA_PASTELERIA": {
+      "kg_l": "2111.285717683747405",
+      "linhas": 3179,
+      "linhas_sem_kg": 0,
+      "receita": "17205.22",
+      "unidades": "5502"
+    },
+    "CAFES_INFUSIONES": {
+      "kg_l": "434.194435810005877",
+      "linhas": 1863,
+      "linhas_sem_kg": 529,
+      "receita": "9837.16",
+      "unidades": "3295"
+    },
+    "CARNE_CERDO": {
+      "kg_l": "1839.4272610283497",
+      "linhas": 1886,
+      "linhas_sem_kg": 0,
+      "receita": "13290.12",
+      "unidades": "3293"
+    },
+    "CARNE_CONEJO": {
+      "kg_l": "90.51313706086097",
+      "linhas": 68,
+      "linhas_sem_kg": 0,
+      "receita": "893.50",
+      "unidades": "125"
+    },
+    "CARNE_FRESCA_OTRAS": {
+      "kg_l": "525.69712809365990",
+      "linhas": 668,
+      "linhas_sem_kg": 0,
+      "receita": "4098.11",
+      "unidades": "1147"
+    },
+    "CARNE_OVINO_CAPRINO": {
+      "kg_l": "98.36371309906299",
+      "linhas": 202,
+      "linhas_sem_kg": 0,
+      "receita": "1868.21",
+      "unidades": "339"
+    },
+    "CARNE_POLLO": {
+      "kg_l": "2287.05863242766885",
+      "linhas": 2118,
+      "linhas_sem_kg": 0,
+      "receita": "14363.87",
+      "unidades": "3666"
+    },
+    "CARNE_TRANSFORMADA": {
+      "kg_l": "1857.314890746852860",
+      "linhas": 2369,
+      "linhas_sem_kg": 55,
+      "receita": "35342.16",
+      "unidades": "4016"
+    },
+    "CARNE_VACUNO": {
+      "kg_l": "648.9687906137533",
+      "linhas": 1014,
+      "linhas_sem_kg": 0,
+      "receita": "12820.40",
+      "unidades": "1711"
+    },
+    "CERVEZA": {
+      "kg_l": "6330.0423199140862",
+      "linhas": 2208,
+      "linhas_sem_kg": 0,
+      "receita": "11562.48",
+      "unidades": "3814"
+    },
+    "CHOCOLATES_CACAOS": {
+      "kg_l": "1054.67744988743742",
+      "linhas": 1726,
+      "linhas_sem_kg": 0,
+      "receita": "9481.02",
+      "unidades": "3025"
+    },
+    "CONSERVAS_PESCADO_MARISCO": {
+      "kg_l": "1119.937123169233645",
+      "linhas": 3567,
+      "linhas_sem_kg": 0,
+      "receita": "18328.30",
+      "unidades": "6180"
+    },
+    "FRUTAS_FRESCAS": {
+      "kg_l": "11174.95361778659445",
+      "linhas": 6946,
+      "linhas_sem_kg": 0,
+      "receita": "24589.12",
+      "unidades": "11996"
+    },
+    "FRUTAS_HORTALIZAS_TRANSFORMADAS": {
+      "kg_l": "3988.44947547549382",
+      "linhas": 6003,
+      "linhas_sem_kg": 0,
+      "receita": "18108.65",
+      "unidades": "10302"
+    },
+    "FRUTOS_SECOS": {
+      "kg_l": "1248.00870074813800",
+      "linhas": 3275,
+      "linhas_sem_kg": 0,
+      "receita": "11352.76",
+      "unidades": "5695"
+    },
+    "HARINAS_SEMOLAS": {
+      "kg_l": "638.7",
+      "linhas": 292,
+      "linhas_sem_kg": 0,
+      "receita": "739.01",
+      "unidades": "507"
+    },
+    "HORTALIZAS_FRESCAS": {
+      "kg_l": "6608.06144444554946",
+      "linhas": 10748,
+      "linhas_sem_kg": 1080,
+      "receita": "32794.82",
+      "unidades": "18626"
+    },
+    "HUEVOS": {
+      "kg_l": "222.59696488441855",
+      "linhas": 1011,
+      "linhas_sem_kg": 809,
+      "receita": "4631.20",
+      "unidades": "1744"
+    },
+    "LECHES_FERMENTADAS": {
+      "kg_l": "4561.30738946099680",
+      "linhas": 3940,
+      "linhas_sem_kg": 0,
+      "receita": "10881.59",
+      "unidades": "6813"
+    },
+    "LECHE_DESNATADA": {
+      "kg_l": "4199.548556117245",
+      "linhas": 756,
+      "linhas_sem_kg": 0,
+      "receita": "4967.50",
+      "unidades": "1260"
+    },
+    "LECHE_ENTERA": {
+      "kg_l": "6229.671232876713",
+      "linhas": 1023,
+      "linhas_sem_kg": 0,
+      "receita": "7000.93",
+      "unidades": "1761"
+    },
+    "LECHE_SEMIDESNATADA": {
+      "kg_l": "10368.0694377909",
+      "linhas": 1563,
+      "linhas_sem_kg": 0,
+      "receita": "11376.92",
+      "unidades": "2728"
+    },
+    "LEGUMBRES": {
+      "kg_l": "1251.2358485077897",
+      "linhas": 1245,
+      "linhas_sem_kg": 0,
+      "receita": "3396.20",
+      "unidades": "2171"
+    },
+    "MARISCOS_MOLUSCOS_CRUSTACEOS": {
+      "kg_l": "504.96226929599932",
+      "linhas": 591,
+      "linhas_sem_kg": 0,
+      "receita": "5753.44",
+      "unidades": "1024"
+    },
+    "MIEL": {
+      "kg_l": "97.6",
+      "linhas": 90,
+      "linhas_sem_kg": 0,
+      "receita": "618.40",
+      "unidades": "164"
+    },
+    "NO_FOOD": {
+      "kg_l": "9459.5974072874059310",
+      "linhas": 17655,
+      "linhas_sem_kg": 8850,
+      "receita": "109614.85",
+      "unidades": "30728"
+    },
+    "PAN": {
+      "kg_l": "2637.23256000309957",
+      "linhas": 4088,
+      "linhas_sem_kg": 0,
+      "receita": "9399.00",
+      "unidades": "7023"
+    },
+    "PASTAS": {
+      "kg_l": "1467.156555184052905",
+      "linhas": 1982,
+      "linhas_sem_kg": 0,
+      "receita": "5126.48",
+      "unidades": "3444"
+    },
+    "PATATAS": {
+      "kg_l": "5485.1877824122894",
+      "linhas": 2320,
+      "linhas_sem_kg": 0,
+      "receita": "9990.36",
+      "unidades": "3967"
+    },
+    "PESCADOS_CONGELADOS": {
+      "kg_l": "734.21274627655915",
+      "linhas": 906,
+      "linhas_sem_kg": 0,
+      "receita": "8214.10",
+      "unidades": "1577"
+    },
+    "PESCADO_FRESCO": {
+      "kg_l": "654.030517984178647",
+      "linhas": 637,
+      "linhas_sem_kg": 0,
+      "receita": "8196.55",
+      "unidades": "1086"
+    },
+    "PLATOS_PREPARADOS": {
+      "kg_l": "3802.099028276843468",
+      "linhas": 5436,
+      "linhas_sem_kg": 534,
+      "receita": "27551.47",
+      "unidades": "9436"
+    },
+    "QUESOS": {
+      "kg_l": "2909.15208252859367",
+      "linhas": 4803,
+      "linhas_sem_kg": 0,
+      "receita": "29657.24",
+      "unidades": "8251"
+    },
+    "SIN_BENCHMARK": {
+      "kg_l": "17415.153808517178745",
+      "linhas": 13928,
+      "linhas_sem_kg": 19,
+      "receita": "51021.46",
+      "unidades": "24221"
+    },
+    "VINO": {
+      "kg_l": "2474.93932897882422",
+      "linhas": 1546,
+      "linhas_sem_kg": 0,
+      "receita": "8846.40",
+      "unidades": "2716"
+    },
+    "ZUMOS": {
+      "kg_l": "1874.10344572244677",
+      "linhas": 1091,
+      "linhas_sem_kg": 0,
+      "receita": "2995.19",
+      "unidades": "1938"
+    }
+  },
+  "measured_at_utc": "2026-09-01T11:32:54Z",
+  "warehouses": null
+}

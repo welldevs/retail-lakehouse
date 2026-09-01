@@ -170,3 +170,38 @@ models:
         tests: [not_null]
       - name: currency
         tests: [not_null]
+
+  - name: mart_demand_cohort
+    description: >
+      GRAO (order_date, wh, buyer_age_band, demand_group). O que cada coorte de comprador
+      leva de cada grupo de demanda. O AGREGADO NAO MUDA em relacao a MART_BASKET_DAILY —
+      esse e o criterio de aceitacao do IPF que calibra o perfil por coorte — entao o valor
+      deste mart esta inteiramente na CONDICIONAL: comparar `share_within_band` da mesma
+      linha entre duas faixas etarias. ATENCAO: orders_in_cohort NAO e aditivo entre faixas
+      nem entre grupos, pelo mesmo motivo de orders_touching_category; linhas, unidades e
+      valor sao. A faixa vem carimbada no evento order_placed, e nao de dim_customer: e a
+      faixa que valia no momento do pedido, e foi ela que escolheu o vetor de pesos.
+    columns:
+      - name: order_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: buyer_age_band
+        description: "LT35 | 35_49 | 50_64 | GE65 — as quatro faixas do informe do MAPA."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['LT35', '35_49', '50_64', 'GE65']
+      - name: demand_group
+        tests: [not_null]
+      - name: orders_in_cohort
+        description: "NAO SOMA entre faixas nem entre grupos."
+        tests: [not_null]
+      - name: share_within_band
+        description: >
+          Fatia do grupo DENTRO da coorte naquele (dia, armazem). Denominador e a propria
+          coorte, e nao o total: e assim que a comparacao entre faixas isola a propensao do
+          tamanho da coorte.
+        tests: [not_null]
+      - name: currency
+        tests: [not_null]

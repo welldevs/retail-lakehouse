@@ -55,6 +55,7 @@ PREMISES_ROWS = {
     "basket_lines_max": "5",
     "basket_lines_min": "2",
     "basket_lines_mode": "3",
+    "min_buyer_age": "18",
 }
 
 
@@ -69,7 +70,7 @@ def premises_csv(extra: dict | None = None, label: str = "synthetic") -> str:
 
 
 def demand_seeds() -> dict:
-    """Os quatro seeds da calibracao, minimos, cobrindo os dois niveis 1 da fixture."""
+    """Os oito seeds da calibracao, minimos, cobrindo os dois niveis 1 da fixture."""
     return {
         "mapa_2025_benchmark_seed.csv": (
             "mapa_key,mapa_label,scope,use_as_weight,volume_share_pct,value_share_pct,"
@@ -95,10 +96,45 @@ def demand_seeds() -> dict:
             "channel_reference_pct,2.2,percent,observed,x\n"
             "channel_fresh_pct,1.1,percent,observed,x\n"
             "channel_rest_pct,2.8,percent,observed,x\n"
+            "cohort_dimensions,\"age,region\",rule,synthetic,x\n"
+            "cohort_independence,multiplicative,rule,synthetic,x\n"
+            "cohort_calibration,ipf,rule,synthetic,x\n"
+            "ipf_tolerance,0.000000001,proportion,synthetic,x\n"
+            "ipf_max_iterations,200,iterations,synthetic,x\n"
+            "region_frequency_basis,per_capita_volume,rule,synthetic,x\n"
+            "region_frequency_normalization,served_regions,rule,synthetic,x\n"
         ),
         "demand_seasonality_seed.csv": (
             "month,factor,label,rationale\n"
             + "".join(f"{m},1.0,synthetic,x\n" for m in range(1, 13))
+        ),
+        # Shares desiguais entre as faixas: com indice plano o perfil por coorte seria
+        # indistinguivel do agregado e a fixture nao exercitaria o IPF.
+        "demand_cohort_age_seed.csv": (
+            "mapa_key,age_band,population_share_pct,volume_share_pct,informe_page,"
+            "provenance,note\n"
+            "FRUTAS_FRESCAS,LT35,8.89,3.59,222,informe_chart,\n"
+            "FRUTAS_FRESCAS,35_49,30.33,20.91,222,informe_chart,\n"
+            "FRUTAS_FRESCAS,50_64,31.34,33.23,222,informe_chart,\n"
+            "FRUTAS_FRESCAS,GE65,29.44,42.27,222,informe_chart,\n"
+        ),
+        "demand_cohort_region_seed.csv": (
+            "mapa_key,ccaa_code,ccaa_label,population_share_pct,volume_share_pct,"
+            "informe_page,provenance,note\n"
+            "FRUTAS_FRESCAS,13,Comunidad de Madrid,13.86,13.36,224,informe_chart,\n"
+            "FRUTAS_FRESCAS,09,Cataluna,16.26,16.05,224,informe_chart,\n"
+        ),
+        "mapa_2025_region_seed.csv": (
+            "ccaa_code,ccaa_label,per_capita_kg_l,per_capita_eur,informe_section,"
+            "provenance,note\n"
+            "00,Total Espana,577.32,1874.75,3,informe_prose,\n"
+            "13,Comunidad de Madrid,505.86,1754.95,3,informe_prose,\n"
+            "09,Cataluna,620.82,2130.97,3,informe_prose,\n"
+        ),
+        "ine_ccaa_map_seed.csv": (
+            "province_code,province_name,ccaa_code,ccaa_label\n"
+            "28,Madrid,13,Comunidad de Madrid\n"
+            "08,Barcelona,09,Cataluna\n"
         ),
     }
 
@@ -113,7 +149,7 @@ create table silver_product_price (
 );
 create table silver_customer (
     ingestion_date date, customer_id varchar, wh varchar, province_code varchar,
-    municipality_code varchar, postal_code varchar
+    municipality_code varchar, postal_code varchar, birth_year integer
 );
 """
 
@@ -162,10 +198,21 @@ class Fixture:
             "insert into silver_product_price values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", linhas
         )
 
-    def add_customers(self, wh: str, dia: str, total: int = 4) -> None:
+    # Uma idade por faixa: mesmo com 4 clientes por armazem, nenhuma das quatro coortes
+    # daquela comunidade fica vazia, e o IPF tem massa em todas elas.
+    IDADES = (25, 42, 57, 71)
+
+    def add_customers(self, wh: str, dia: str, total: int = 4, ages=None) -> None:
+        idades = tuple(ages or self.IDADES)
+        provincia = "28" if wh == "mad1" else "08"
+        ano = int(dia[:4])
         self.con.executemany(
-            "insert into silver_customer values (?,?,?,?,?,?)",
-            [(dia, f"cust_{wh}_{i:06d}", wh, "28", "079", "28001") for i in range(total)],
+            "insert into silver_customer values (?,?,?,?,?,?,?)",
+            [
+                (dia, f"cust_{wh}_{i:06d}", wh, provincia, "079", "28001",
+                 ano - idades[i % len(idades)])
+                for i in range(total)
+            ],
         )
 
     def povoado(self, dias=("2026-08-24",)) -> "Fixture":
@@ -300,7 +347,7 @@ class ClientesTest(Base):
         self.fx.povoado()
         self.fx.con.execute(
             "insert into silver_customer values "
-            "(date '2026-08-24','cust_mad1_000000','bcn1','08','019','08001')"
+            "(date '2026-08-24','cust_mad1_000000','bcn1','08','019','08001',1990)"
         )
         with self.assertRaises(OrdersReferenceError) as caught:
             build(self.fx.con, "2026-08-24", "2026-08-24", seeds_dir=self.fx.seeds)
