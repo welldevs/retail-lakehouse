@@ -122,7 +122,10 @@ class TodaVariavelDeAmbienteEDeclarada(unittest.TestCase):
     Visto vermelho: apagar a linha de `KAFKA_ORDERS_TOPIC` do `.env.example` reprova.
     """
 
-    RAIZES = ("platform/src", "streamlit", "orchestration/airflow/dags", "scripts")
+    # `jobs/` entrou na Fase 7 junto com o job Spark, e a ausencia dele era uma brecha do
+    # tipo que este teste existe para nao ter: uma arvore de codigo que le ambiente e que a
+    # varredura nao alcanca nao produz falso negativo barulhento, produz silencio.
+    RAIZES = ("platform/src", "streamlit", "orchestration/airflow/dags", "scripts", "jobs")
 
     # Definidas pelo ambiente de execucao, nunca pelo repositorio.
     DO_SISTEMA = {"HOME", "PATH", "PWD", "USER", "SNOWFLAKE_HOME", "PYTHONPATH", "TZ"}

@@ -62,16 +62,50 @@ models:
       - name: rationale
         tests: [not_null]
 
+  - name: stock_premises
+    description: >
+      Passagem do seed stock_premises_seed para o object storage. GRAO: premise_key. A
+      POLITICA de estoque: quantos dias cobrir, quando repor, ate onde, e o prazo do
+      fornecedor. Todas 'synthetic' — nenhuma fonte deste repositorio mede estoque, e essa
+      ausencia e a razao de o dominio ter esperado ate a Fase 7.
+
+      O QUE NAO E SINTETICO e o numero que elas multiplicam: a demanda media diaria por
+      serie vem do consumo MEDIDO em silver_order_line. A estrutura vem do dado, a politica
+      vem daqui, e as duas ficam distinguiveis — mesma forma da base de clientes ancorada
+      na populacao do INE.
+
+      Separada de order_premises porque governa outro dominio: aquelas dizem o que um
+      cliente FAZ, estas o que o armazem TEM. Junta-las faria toda regeracao de pedidos
+      parecer mudanca de politica de estoque.
+    columns:
+      - name: premise_key
+        tests: [not_null, unique]
+      - name: value
+        tests: [not_null]
+      - name: label
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [synthetic]
+      - name: rationale
+        tests: [not_null]
+
   - name: order_premises
     description: >
       Passagem do seed order_premises_seed para o object storage — mesmo mecanismo de
-      warehouse_service_area. GRAO: premise_key. As 30 premissas DECLARADAS que o gerador
-      de pedidos consumiu: cadencia, cesta, taxas de excecao, duracoes entre marcos e o
-      limiar de SLA. Nenhuma e observada — nenhuma fonte deste repo mede cesta, cadencia
-      ou disponibilidade — e por isso `label` e 'synthetic' em todas as linhas, testado
-      com accepted_values e nao por convencao. Atravessa a fronteira ate o warehouse para
-      que MART_FULFILLMENT_SLA compare contra o MESMO 90 que o gerador usou, em vez de
-      contra uma copia do numero.
+      warehouse_service_area. GRAO: premise_key. As premissas DECLARADAS que o gerador de
+      pedidos consumiu: cadencia, cesta, taxas de excecao, duracoes entre marcos e o limiar
+      de SLA. Nenhuma e observada — nenhuma fonte deste repo mede cesta, cadencia ou
+      disponibilidade — e por isso `label` e 'synthetic' em todas as linhas, testado com
+      accepted_values e nao por convencao. Atravessa a fronteira ate o warehouse para que
+      MART_FULFILLMENT_SLA compare contra o MESMO limiar que o gerador usou, em vez de
+      contra uma copia do numero — copia que envelheceu de verdade na Fase 7, quando o
+      limiar caiu de 90 para 60.
+
+      TRES DELAS SAO DERIVADAS das outras, e assert_order_premises_are_internally_coherent
+      afere a derivacao: slot_lead_hours_min/max saem do ciclo declarado, e
+      sla_minutes_picking sai de sla_picking_percentile sobre a triangular da cesta.
     columns:
       - name: premise_key
         tests: [not_null, unique]

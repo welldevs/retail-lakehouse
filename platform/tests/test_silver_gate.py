@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from retail_platform.silver_gate import (  # noqa: E402
     ICEBERG_NODES,
+    ICEBERG_TABLES,
     ICEBERG_VAR,
     SOURCE_MODELS,
     plan,
@@ -49,8 +50,18 @@ METADADO = "s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/0
 
 class PlanoTest(unittest.TestCase):
     def test_com_tudo_no_lugar_nao_exclui_nada(self):
-        self.assertEqual(plan(TUDO, METADADO)[:1], ["--vars"])
-        self.assertNotIn("--exclude", plan(TUDO, METADADO))
+        completo = {chave: METADADO for chave, _, _ in ICEBERG_TABLES}
+        self.assertEqual(plan(TUDO, completo)[:1], ["--vars"])
+        self.assertNotIn("--exclude", plan(TUDO, completo))
+
+    def test_a_forma_antiga_com_uma_string_ainda_vale_para_a_projecao_viva(self):
+        """Ate a Fase 7 `plan` recebia um caminho so, porque so havia uma tabela Iceberg.
+        A string continua aceita e significa exatamente o que significava — e nada mais:
+        o ledger de estoque fica de fora, que e o correto para quem nao rodou o Spark."""
+        argumentos = plan(TUDO, METADADO)
+        self.assertIn(f'{ICEBERG_VAR}: "{METADADO}"',
+                      argumentos[argumentos.index("--vars") + 1])
+        self.assertIn("silver_stock_ledger", argumentos)
 
     def test_source_sem_dado_leva_todos_os_seus_modelos_junto(self):
         """Excluir o modelo e deixar o irmao que faz `ref()` nele seria trocar um erro por
@@ -70,6 +81,41 @@ class PlanoTest(unittest.TestCase):
             self.assertIn(no, argumentos)
         self.assertNotIn("--vars", argumentos)
 
+    def test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova(self):
+        """A propriedade que impede o Spark de entrar no caminho padrao do projeto.
+
+        Com a projecao viva de pe e o Spark NUNCA tendo rodado, o build sai com o ledger de
+        estoque de fora e todo o resto dentro. Numa maquina onde ninguem fez `make
+        stock-ledger` — que e o caso de qualquer clone novo — `make silver` constroi o
+        Silver inteiro sem Spark, sem JVM e sem imagem baixada.
+
+        Sem este teste a promessa seria um paragrafo de README, e paragrafo nao reprova.
+        """
+        argumentos = plan(TUDO, {"live_order_state": METADADO, "stock_ledger": None})
+        for no in ICEBERG_TABLES[1][2]:
+            self.assertIn(no, argumentos)
+        for no in ICEBERG_TABLES[0][2]:
+            self.assertNotIn(no, argumentos)
+        # e a projecao viva continua recebendo o caminho dela
+        self.assertIn(f'{ICEBERG_VAR}: "{METADADO}"',
+                      argumentos[argumentos.index("--vars") + 1])
+
+    def test_o_caso_inverso_tambem_vale_uma_tabela_nao_arrasta_a_outra(self):
+        """Spark rodou, plano de stream nao subiu. As duas tabelas sao independentes: um
+        portao que as tratasse junto excluiria o ledger por causa do Kafka."""
+        argumentos = plan(TUDO, {"live_order_state": None, "stock_ledger": METADADO})
+        for no in ICEBERG_TABLES[0][2]:
+            self.assertIn(no, argumentos)
+        for no in ICEBERG_TABLES[1][2]:
+            self.assertNotIn(no, argumentos)
+
+    def test_com_as_duas_tabelas_as_duas_vars_viajam_juntas(self):
+        argumentos = plan(TUDO, {chave: METADADO for chave, _, _ in ICEBERG_TABLES})
+        self.assertNotIn("--exclude", argumentos)
+        var = argumentos[argumentos.index("--vars") + 1]
+        for _, nome, _ in ICEBERG_TABLES:
+            self.assertIn(f'{nome}: "{METADADO}"', var)
+
     def test_este_e_o_defeito_de_2026_08_31(self):
         """A combinacao exata que reprovava: TODAS as sources com dado, catalogo fora.
 
@@ -79,7 +125,8 @@ class PlanoTest(unittest.TestCase):
         """
         argumentos = plan(TUDO, None)
         self.assertEqual(argumentos[0], "--exclude")
-        self.assertEqual(set(argumentos[1:]), set(ICEBERG_NODES))
+        esperado = {no for _, _, nos in ICEBERG_TABLES for no in nos}
+        self.assertEqual(set(argumentos[1:]), esperado)
 
     def test_prefixo_ausente_do_dicionario_conta_como_nao_aterrissado(self):
         """O lado seguro: excluir um modelo que poderia ser construido custa uma execucao;
@@ -110,13 +157,15 @@ class ModelosDeclaradosExistemTest(unittest.TestCase):
         for _, modelos in SOURCE_MODELS:
             for modelo in modelos:
                 self.assertIn(modelo, no_disco)
-        self.assertIn(ICEBERG_NODES[0], no_disco)
+        for _, _, nos in ICEBERG_TABLES:
+            self.assertIn(nos[0], no_disco)
 
     def test_todo_modelo_de_source_esta_atribuido_a_alguma_source(self):
         """O inverso, e e o que pega o modelo NOVO: quem cria um modelo de source e esquece
         de registra-lo aqui produz exatamente o defeito de 2026-08-31 — um modelo que o
         portao nao sabe excluir, num repositorio onde aquela source ainda nao aterrissou."""
-        declarados = {m for _, modelos in SOURCE_MODELS for m in modelos} | set(ICEBERG_NODES)
+        declarados = ({m for _, modelos in SOURCE_MODELS for m in modelos}
+                      | {n for _, _, nos in ICEBERG_TABLES for n in nos})
         # Modelos direto sob silver/ sao passagens de seed: nao dependem de RAW nenhum.
         for raiz, _, arquivos in os.walk(MODELS):
             if os.path.abspath(raiz) == os.path.abspath(MODELS):

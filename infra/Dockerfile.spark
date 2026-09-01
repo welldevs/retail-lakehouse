@@ -63,6 +63,6 @@ RUN set -eux; \
 #
 # `/repo/platform/src` e o mount que o servico `spark` do compose garante. A imagem e feita
 # para este repositorio — igual a do Airflow, que conhece `/opt/retail-lakehouse`.
-ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip:/repo/platform/src
+ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip:/repo:/repo/platform/src
 
 USER spark

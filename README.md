@@ -220,12 +220,18 @@ não efeito colateral de pipeline.
 │   ├── prove_stream_semantics.py          # reproduz a janela de duplicação e prova o replay
 │   ├── spike_iceberg_duckdb.py            # o experimento FECHADO, rodado antes do Marco 6
 │   ├── prove_iceberg_projection.py        # concorrência, fusão monotônica, snapshot isolation
+│   ├── spike_spark_iceberg.py             # o PORTÃO da Fase 7: o Spark lê o catálogo do pyiceberg?
 │   └── prove_warehouse_orders_tests.py    # injeta o defeito que cada teste diz pegar, no dado real
+├── jobs/spark/                         # o único código que roda fora do venv da plataforma
+│   ├── session.py                      # a sessão com o catálogo Iceberg; o spike importa daqui
+│   └── stock_ledger.py                 # saldo, ruptura e reposição — a forma que o SQL não expressa
 ├── infra/
 │   ├── docker-compose.yml              # MinIO + mc + Postgres + scheduler + webserver
-│   │                                   # + oltp-postgres e kafka (profile `stream`); o
-│   │                                   # catalogo Iceberg mora no proprio oltp-postgres
-│   └── Dockerfile.airflow              # imagem do orquestrador: duas runtimes
+│   │                                   # + oltp-postgres e kafka (profile `stream`), e
+│   │                                   # spark (profile `spark`); o catalogo Iceberg
+│   │                                   # mora no proprio oltp-postgres
+│   ├── Dockerfile.airflow              # imagem do orquestrador: duas runtimes
+│   └── Dockerfile.spark                # imagem do Spark: Iceberg + JDBC + S3FileIO, versões cravadas
 └── data/                               # scratch da extração, fora do versionamento
     ├── mercadona/                       # ingestion_date=…/wh=…/
     ├── ine/                             # ingestion_date=…/

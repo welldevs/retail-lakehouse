@@ -125,7 +125,7 @@ ORDERS_OVERWRITE       ?=
         orders-apply orders-apply-all orders-outbox orders-prove-atomicity \
         orders-projection-init orders-publish orders-project orders-lag \
         orders-replay orders-topic orders-prove-stream spike-iceberg \
-        spike-spark-iceberg spark-build \
+        spike-spark-iceberg spark-build stock-consumption stock-ledger \
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
@@ -224,6 +224,8 @@ help:
 	@echo "  spike-iceberg             experimento fechado: Iceberg + catalogo + DuckDB"
 	@echo "  spike-spark-iceberg       PORTAO: o Spark le/escreve o catalogo do pyiceberg?"
 	@echo "  spark-build               constroi a imagem do Spark (perfil spark)"
+	@echo "  stock-consumption         exporta o consumo observado do Silver p/ o catalogo"
+	@echo "  stock-ledger              o job Spark: saldo, ruptura e reposicao (perfil spark)"
 	@echo ""
 	@echo "projecao viva (Iceberg) — dois escritores na mesma tabela, um leitor:"
 	@echo "  iceberg-init              catalogo SQL + tabela live_order_state"
@@ -718,6 +720,23 @@ spike-spark-iceberg:
 
 spark-build:
 	@$(COMPOSE) --profile spark build spark
+
+# ---- estoque: o consumo observado vira saldo, e quem calcula e o Spark -------
+#
+# DOIS PASSOS, E O PRIMEIRO E PRE-REQUISITO DO SEGUNDO DE PROPOSITO. Rodar o job sobre um
+# consumo velho produziria um ledger plausivel e errado — a classe de defeito que nenhum
+# teste pega, porque o saldo continuaria fechando. O export e barato; deixa-lo opcional
+# economizaria segundos e custaria confianca.
+stock-consumption:
+	@$(PLATFORM_PY) -m retail_platform stock-consumption
+
+stock-ledger: stock-consumption
+	@docker ps --format '{{.Names}}' | grep -qx retail-oltp-postgres || { \
+	  echo "ERRO: o catalogo Iceberg mora no oltp-postgres, e ele nao esta de pe."; \
+	  echo "      O plano de stream nao sobe com \`make up\`. Rode: make stream-up"; \
+	  exit 2; }
+	@$(COMPOSE) --profile spark run --rm --no-deps spark \
+	  python3 jobs/spark/stock_ledger.py
 
 orders-prove-stream:
 	@$(PLATFORM_PY) scripts/prove_stream_semantics.py

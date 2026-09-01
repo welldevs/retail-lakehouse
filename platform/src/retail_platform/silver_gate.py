@@ -59,34 +59,74 @@ SOURCE_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
 )
 
-# O modelo da projecao viva e o teste que a compara com o lote. Os dois dependem do MESMO
-# caminho de metadado, entao entram e saem juntos — excluir so o modelo deixaria o teste
-# tentando `ref()` de algo que nao foi construido.
-ICEBERG_NODES = ("silver_live_order_state", "assert_live_projection_matches_batch_fold")
-ICEBERG_VAR = "live_order_state_metadata"
+# AS TABELAS ICEBERG, e os nos que morrem sem cada uma.
+#
+# Modelo e teste entram e saem JUNTOS: excluir so o modelo deixaria o teste tentando
+# `ref()` de algo que nao foi construido.
+#
+# POR QUE ISTO VIROU UMA LISTA NA FASE 7. Era um par de constantes, porque so havia a
+# projecao viva. Quando o ledger de estoque chegou, as opcoes eram um segundo par de
+# constantes com a mesma logica escrita de novo — que e como o portao tinha nascido
+# espalhado por seis arquivos — ou uma lista. O ganho pratico e que a terceira tabela
+# Iceberg, se existir, e uma linha aqui e nada mais.
+#
+# Cada entrada e (chave, var do dbt, nos). A CHAVE e o que o `resolve()` usa para pedir o
+# metadado; a VAR e como o dbt recebe o caminho.
+ICEBERG_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("live_order_state", "live_order_state_metadata", (
+        "silver_live_order_state", "assert_live_projection_matches_batch_fold",
+    )),
+    # O LEDGER DE ESTOQUE E ESCRITO PELO SPARK, que e opcional por decisao. Um repositorio
+    # onde ninguem rodou `make stock-ledger` constroi o Silver inteiro sem ele — e essa e
+    # a propriedade que faz o Spark nao entrar no caminho padrao do projeto.
+    ("stock_ledger", "stock_ledger_metadata", (
+        "silver_stock_ledger",
+        "assert_stock_ledger_conserves_the_balance",
+        "assert_stock_replenishment_respects_the_lead_time",
+    )),
+)
+
+# Compatibilidade com quem so precisa da projecao viva.
+ICEBERG_NODES = ICEBERG_TABLES[0][2]
+ICEBERG_VAR = ICEBERG_TABLES[0][1]
 
 
-def plan(landed: dict, iceberg_metadata: str | None) -> list[str]:
+def plan(landed: dict, iceberg_metadata) -> list[str]:
     """Argumentos do `dbt build`, dado o que foi observado. PURA: nao olha nada.
 
     `landed` mapeia prefixo da source -> se ha objeto aterrissado. Prefixo ausente do dicio-
     nario conta como NAO aterrissado, que e o lado seguro: excluir um modelo que poderia ter
     sido construido custa uma execucao; tentar construir um que nao pode custa o build.
+
+    `iceberg_metadata` mapeia chave de ICEBERG_TABLES -> caminho do metadado, ou None. Uma
+    string simples continua aceita e vale para a projecao viva, que era o unico caso ate a
+    Fase 7 — as DAGs e o Makefile chamam `build()`, nunca `plan()`, entao a forma antiga so
+    sobrevive por causa dos testes que a exercitam.
     """
+    if iceberg_metadata is None or isinstance(iceberg_metadata, str):
+        iceberg_metadata = {ICEBERG_TABLES[0][0]: iceberg_metadata}
+
     excluir: list[str] = []
     for prefixo, modelos in SOURCE_MODELS:
         if not landed.get(prefixo):
             excluir.extend(modelos)
-    if not iceberg_metadata:
-        excluir.extend(ICEBERG_NODES)
+
+    variaveis: dict[str, str] = {}
+    for chave, var, nos in ICEBERG_TABLES:
+        caminho = iceberg_metadata.get(chave)
+        if caminho:
+            variaveis[var] = caminho
+        else:
+            excluir.extend(nos)
 
     argumentos: list[str] = []
     if excluir:
         argumentos += ["--exclude", *excluir]
-    if iceberg_metadata:
+    if variaveis:
         # `--vars` como YAML inline. O caminho e uma URI s3:// com barras e dois-pontos,
         # entao vai entre aspas: sem elas o YAML le `s3:` como chave e o var chega vazio.
-        argumentos += ["--vars", f'{{{ICEBERG_VAR}: "{iceberg_metadata}"}}']
+        corpo = ", ".join(f'{var}: "{caminho}"' for var, caminho in sorted(variaveis.items()))
+        argumentos += ["--vars", f"{{{corpo}}}"]
     return argumentos
 
 
@@ -101,18 +141,27 @@ def has_landed(prefix: str, config=None) -> bool:
     return resposta.get("KeyCount", 0) > 0
 
 
-def iceberg_metadata() -> str | None:
-    """Caminho do metadado corrente, ou None se o catalogo nao responder.
+def iceberg_metadata() -> dict:
+    """Caminho do metadado corrente de cada tabela, ou None onde o catalogo nao responder.
 
-    Ausencia NAO e erro aqui: o plano de stream sobe sob demanda (`make stream-up`), e um
-    `make silver` num repositorio sem ele deve construir os outros 20 modelos em paz.
+    Ausencia NAO e erro aqui, e por dois motivos diferentes: o plano de stream sobe sob
+    demanda (`make stream-up`), e o Spark e opcional por decisao. Um `make silver` sem
+    nenhum dos dois deve construir todos os outros modelos em paz.
     """
+    saida: dict[str, str | None] = {}
     try:
         from .orders_projection import metadata_location
 
-        return metadata_location() or None
+        saida["live_order_state"] = metadata_location() or None
     except Exception:
-        return None
+        saida["live_order_state"] = None
+    try:
+        from .stock_ledger import metadata_location as estoque
+
+        saida["stock_ledger"] = estoque() or None
+    except Exception:
+        saida["stock_ledger"] = None
+    return saida
 
 
 def resolve(config=None) -> tuple[list[str], dict]:

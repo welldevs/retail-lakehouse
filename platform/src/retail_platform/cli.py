@@ -19,6 +19,8 @@
     retail-platform orders-replay         [--bootstrap --topic --group]
     retail-platform iceberg-init          [--warehouse]
     retail-platform iceberg-metadata      [--quiet]
+    retail-platform stock-consumption
+    retail-platform stock-metadata        {ledger|consumption}
     retail-platform orders-rebuild-projection [--root]
     retail-platform orders-reconcile      [--dsn]
 
@@ -666,6 +668,47 @@ def _cmd_iceberg_metadata(args) -> int:
     return EXIT_OK
 
 
+def _cmd_stock_consumption(args) -> int:
+    """Le o consumo OBSERVADO do Silver e o escreve em `operations.stock_consumption`.
+
+    E a ENTRADA do job de estoque em Spark. Ela atravessa como tabela Iceberg, e nao como
+    parquet lido direto, por uma razao medida: o Spark ja fala com o MinIO por um caminho —
+    o S3FileIO do Iceberg — e acrescentar o `hadoop-aws` mais o bundle do AWS SDK v1 para
+    ler parquet seria uma segunda integracao com o object storage, ~200 MB de jar, e o
+    proprio conjunto de modos de falha. Como efeito, a interop que justificou o Iceberg
+    passa a ser exercida pelo caminho de PRODUCAO e nao so por um experimento.
+    """
+    from .stock_ledger import StockLedgerError, export_consumption
+
+    try:
+        resumo = export_consumption()
+    except StockLedgerError as exc:
+        print(f"ERRO: {exc}")
+        return EXIT_FAILED
+    for chave in ("linhas", "series", "unidades", "de", "ate"):
+        print(f"{chave:.<18} {resumo[chave]}")
+    print(f"{'metadado':.<18} {resumo['metadata_location']}")
+    return EXIT_OK
+
+
+def _cmd_stock_metadata(args) -> int:
+    """Metadado corrente de uma tabela do dominio de estoque, ou vazio se ela nao existe.
+
+    AUSENCIA NAO E ERRO, ao contrario de `iceberg-metadata`. La a tabela e a projecao viva,
+    que o plano de stream cria; aqui o Spark e OPCIONAL — uma maquina onde ninguem rodou
+    `make stock-ledger` tem de construir o Silver em paz. Quem decide o que fazer com o
+    vazio e o `silver_gate`, num lugar so.
+    """
+    from .stock_ledger import CONSUMPTION_TABLE, LEDGER_TABLE, metadata_location
+
+    tabela = {"ledger": LEDGER_TABLE, "consumption": CONSUMPTION_TABLE}[args.table]
+    caminho = metadata_location(tabela)
+    if caminho:
+        print(caminho)
+        return EXIT_OK
+    return EXIT_FAILED
+
+
 def _cmd_orders_rebuild_projection(args) -> int:
     """A camada em LOTE do par: reconstroi live_order_state a partir do RAW.
 
@@ -1256,6 +1299,18 @@ def build_parser() -> argparse.ArgumentParser:
     ice_meta.add_argument("--quiet", action="store_true",
                           help="nao imprime o erro; so o codigo de saida importa")
     ice_meta.set_defaults(handler=_cmd_iceberg_metadata)
+
+    stock_cons = subparsers.add_parser(
+        "stock-consumption",
+        help="exporta o consumo observado do Silver para operations.stock_consumption",
+    )
+    stock_cons.set_defaults(handler=_cmd_stock_consumption)
+
+    stock_meta = subparsers.add_parser(
+        "stock-metadata", help="metadata_location de uma tabela de estoque (vazio se nao existe)"
+    )
+    stock_meta.add_argument("table", choices=["ledger", "consumption"])
+    stock_meta.set_defaults(handler=_cmd_stock_metadata)
 
     ice_rebuild = subparsers.add_parser(
         "orders-rebuild-projection",

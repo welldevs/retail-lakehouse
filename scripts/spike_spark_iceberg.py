@@ -72,51 +72,17 @@ def falhou(pergunta: str, exc: Exception) -> None:
 # ======================================================================================
 
 def sessao_spark():
-    """A sessao com o catalogo apontado para o MESMO Postgres do pyiceberg.
+    """A sessao vem de `jobs/spark/session.py`, e NAO de uma copia local.
 
-    Cada propriedade abaixo e uma escolha, nao um copia-e-cola:
-
-    `catalog-impl=JdbcCatalog` e o coracao do experimento. O `SqlCatalog` do pyiceberg
-    grava em duas tabelas (`iceberg_tables`, `iceberg_namespace_properties`) cujo formato
-    e o mesmo que o JdbcCatalog Java espera. Se a convencao divergir em qualquer detalhe,
-    e aqui que quebra.
-
-    `io-impl=S3FileIO` em vez de S3A: o pyiceberg gravou os caminhos como `s3://...` com o
-    PyArrowFileIO. O S3A do Hadoop pediria `s3a://` e nao acharia nada — o metadado ja
-    esta escrito e nao vai mudar de esquema para agradar o leitor.
-
-    `local[*]`: driver e executor no mesmo JVM. O que se demonstra e interoperabilidade e
-    forma do job, nao um cluster — e um cluster de mentira nao demonstraria nem uma coisa
-    nem outra.
+    A tentacao era congelar a configuracao aqui, para que a evidencia registrada
+    descrevesse exatamente o que foi medido. Seria pior: no dia em que a configuracao de
+    producao mudasse, este experimento continuaria APROVANDO uma configuracao que ninguem
+    usa. Importando de la, `make spike-spark-iceberg` vira conferencia viva do que o job
+    de estoque realmente usa.
     """
-    from pyspark.sql import SparkSession
+    from jobs.spark.session import sessao
 
-    jdbc = os.environ["ICEBERG_CATALOG_JDBC"]
-    endpoint = os.environ.get("S3_ENDPOINT", "http://minio:9000")
-    prefixo = f"spark.sql.catalog.{CATALOGO}"
-
-    return (
-        SparkSession.builder.appName("spike-spark-iceberg")
-        .master("local[*]")
-        .config("spark.sql.extensions",
-                "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-        .config(prefixo, "org.apache.iceberg.spark.SparkCatalog")
-        .config(f"{prefixo}.catalog-impl", "org.apache.iceberg.jdbc.JdbcCatalog")
-        .config(f"{prefixo}.uri", jdbc)
-        .config(f"{prefixo}.jdbc.user", os.environ.get("ICEBERG_CATALOG_USER", "oltp"))
-        .config(f"{prefixo}.jdbc.password", os.environ.get("ICEBERG_CATALOG_PASSWORD", "oltp"))
-        .config(f"{prefixo}.warehouse",
-                os.environ.get("ICEBERG_WAREHOUSE", "s3://retail-lakehouse/iceberg"))
-        .config(f"{prefixo}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
-        .config(f"{prefixo}.s3.endpoint", endpoint)
-        .config(f"{prefixo}.s3.path-style-access", "true")
-        .config(f"{prefixo}.s3.access-key-id", os.environ["AWS_ACCESS_KEY_ID"])
-        .config(f"{prefixo}.s3.secret-access-key", os.environ["AWS_SECRET_ACCESS_KEY"])
-        .config(f"{prefixo}.client.region", os.environ.get("AWS_REGION", "us-east-1"))
-        .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.ui.enabled", "false")
-        .getOrCreate()
-    )
+    return sessao("spike-spark-iceberg")
 
 
 def emite(ok: bool, pergunta: str, detalhe: str = "") -> None:

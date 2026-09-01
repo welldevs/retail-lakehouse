@@ -337,3 +337,79 @@ models:
           Nulo para pedido que nunca chegou a separacao — a mesma disciplina de silver_order
           e do OLTP. Preencher com o valor colocado faria a coluna responder outra pergunta
           com o mesmo nome.
+
+  - name: silver_stock_ledger
+    description: >
+      O SALDO DE ESTOQUE, lido da tabela Iceberg que o SPARK escreve — o terceiro escritor
+      do catalogo e o primeiro fora do Python. GRAO: (wh, source_product_id, stock_date),
+      uma linha por serie por dia da janela, inclusive nos dias sem venda: sem elas o saldo
+      pularia justamente os dias em que uma reposicao chega.
+
+      UNICO MODELO DO SILVER QUE NAO DERIVA DE UMA SOURCE. Estoque nao e observado em lugar
+      nenhum deste projeto; o ledger e CALCULADO a partir do consumo observado nos pedidos
+      mais a politica declarada em stock_premises. O consumo conta o produto ENTREGUE (uma
+      linha substituida tira do estoque do substituto), no instante da SEPARACAO, e ignora
+      linhas removidas e pedidos que nunca foram separados.
+
+      POR QUE SPARK. A forma: e uma soma corrida cujas ENTRADAS sao geradas por decisoes
+      tomadas a partir do proprio estado — saldo baixo emite ordem, a ordem chega dias
+      depois e muda o saldo seguinte. Window function le a partition mas nao escreve de
+      volta nela. Medido em spike_spark_iceberg S7b: a soma corrida em SQL diverge em 14 de
+      30 dias do caso e chega a -70 de saldo. NAO foi por volume: o gatilho de volume nao
+      disparou neste projeto e isso esta medido.
+
+      FICA FORA DO BUILD ENQUANTO A TABELA NAO EXISTIR, pelo portao de silver_gate. Nao e
+      tolerancia a falha: e o que mantem o Spark OPCIONAL — um clone novo constroi o Silver
+      inteiro sem JVM.
+
+      LIMITE DECLARADO: a ruptura deste ledger e independente do `removal_rate` do gerador,
+      que produz linhas "unavailable" a taxa fixa sem olhar saldo. Uma nao causa a outra.
+      Faze-las coerentes exigiria o gerador LER o ledger, invertendo a dependencia do
+      projeto. Gatilho: um gerador de segunda passada.
+    columns:
+      - name: wh
+        tests: [not_null]
+      - name: source_product_id
+        tests: [not_null]
+      - name: stock_date
+        tests: [not_null]
+      - name: opening_balance
+        tests: [not_null]
+      - name: closing_balance
+        description: >
+          Saldo no fim do dia. Nunca negativo: o que a demanda pediu e a prateleira nao
+          tinha vira units_short. Saldo negativo fecharia a soma e mentiria sobre o estoque.
+        tests: [not_null]
+      - name: units_short
+        description: >
+          RUPTURA. So pode ser maior que zero com closing_balance = 0 — e
+          assert_stock_ledger_conserves_the_balance verifica isso, porque um job que
+          ignorasse a demanda que nao cabe conservaria o saldo e reportaria ruptura zero
+          para sempre.
+        tests: [not_null]
+      - name: reorder_units
+        description: >
+          A reposicao e LANCAMENTO desta tabela, nao tabela separada: o grao ja e o dia, e
+          uma tabela de ordens ao lado exigiria juntar as duas para qualquer pergunta de
+          saldo.
+        tests: [not_null]
+      - name: reorder_eta
+        description: >
+          stock_date + supplier_lead_days, e
+          assert_stock_replenishment_respects_the_lead_time confere. Nula quando nao houve
+          ordem.
+      - name: mean_daily_demand
+        description: >
+          OBSERVADA: total consumido pela serie dividido pelos dias da JANELA — nao pelos
+          dias com venda. Dividir pelos dias com venda mediria "quanto sai quando sai", e um
+          produto vendido uma vez em nove dias receberia o mesmo estoque de um vendido todo
+          dia.
+        tests: [not_null]
+      - name: written_by
+        description: >
+          PROVENIENCIA. Sempre 'spark' nesta tabela, e vale a pena mesmo assim: e como uma
+          consulta descobre que existe um escritor fora do Python no catalogo — a
+          propriedade que justificou o Iceberg e que estava apenas afirmada.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [spark]}}
