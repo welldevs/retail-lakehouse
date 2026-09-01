@@ -140,8 +140,39 @@ models:
                 quote: false
       - name: seed
         description: >
-          A seed que reproduz esta particao. Junto de reference_path e ingestion_date, sao
-          as tres condicoes da garantia de reprodutibilidade.
+          A seed que reproduz esta particao. Junto de reference_path, ingestion_date e o
+          escopo do cadastro (min_customer_age, penetration_pct, allocation_rule), sao as
+          QUATRO condicoes da garantia de reprodutibilidade.
+        tests: [not_null]
+      - name: count_source
+        description: >
+          'reference' quando o tamanho da base veio da populacao adulta daquele armazem,
+          'cli' quando alguem passou --count. Sem esta coluna, uma base gerada com override
+          manual seria indistinguivel de uma derivada da populacao.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [reference, cli]
+      - name: min_customer_age
+        description: >
+          Idade minima para existir como titular de conta, lida da referencia. Nao e o
+          mesmo que order_premises.min_buyer_age: aquela governa quem PODE PEDIR, esta
+          governa quem EXISTE. A Fase 5 confundiu as duas e a base seguiu com 18,01% de
+          menores.
+        tests: [not_null]
+      - name: penetration_pct
+        description: >
+          A taxa que dimensionou a base, em percentual da populacao adulta servida. Viaja
+          aqui pela mesma razao da seed: muda-la troca as pessoas por tras dos mesmos ids.
+        tests: [not_null]
+      - name: allocation_rule
+        tests: [not_null]
+      - name: customer_target
+        description: >
+          Quantos clientes a referencia pedia para este armazem. Ao lado de
+          requested_count responde "a base tem o tamanho que a populacao pedia?" sem
+          refazer a conta.
         tests: [not_null]
       - name: declared_customer_rows
         tests: [not_null]

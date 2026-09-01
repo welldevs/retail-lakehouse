@@ -41,6 +41,22 @@ DE ONDE VEM CADA COISA (e o que foi medido antes de escrever isto)
     as queries aqui filtram por `is_latest_ingestion`, a coluna que os modelos expoem
     justamente para que ler o estado atual nao dependa de o consumidor lembrar de um
     `max(ingestion_date)`.
+  * A DISTRIBUICAO ETARIA ENTREGUE NAO E A DA POPULACAO. Ela e truncada em
+    `customer_premises.min_customer_age` e renormalizada por provincia. Isto nao e uma
+    liberdade nova deste arquivo: ele ja era uma distribuicao de amostragem derivada, ja
+    excluia dois rotulos agregados e ja renormalizava, e ja declarava as exclusoes no
+    cabecalho. O corte entra pelo mesmo mecanismo. O motivo esta medido: ate 2026-08-31 a
+    base tinha 18,01% de clientes com menos de 18 anos (3.602 de 20.000), com idade a partir
+    de zero — a Source entregava fielmente a populacao RESIDENTE, e um cadastro nao e um
+    censo. O share adulto e medido ANTES da truncagem e sobrevive em
+    `adult_share_by_province`: medi-lo depois devolveria 100% em toda provincia.
+  * QUANTOS CLIENTES CADA ARMAZEM TEM DEIXOU DE SER UM ARGUMENTO. Ate a Fase 5 eram 5.000
+    por armazem — o mesmo numero para AUFs que diferem por 4,6x em populacao (mad1 tem 7,10
+    milhoes de habitantes, svq1 tem 1,59). O cabecalho de `municipality_population_weights`
+    passa a trazer `customer_allocation`, derivada da populacao adulta de cada armazem vezes
+    a taxa de penetracao, e o `extract` da Source a le quando `--count` e omitido. O TOTAL e
+    consequencia, nao cota: acrescentar um municipio a area de servico acrescenta clientes em
+    vez de tira-los dos outros armazens.
   * Uma linha de populacao por municipio e garantia do modelo Silver, nao deste export.
     Ate 2026-08-27 nao era: o join por nome de `silver_ine_population_by_municipality`
     casava tambem o homonimo nacional (Torrent/Girona=182 junto de Torrent/Valencia=90.928,
@@ -53,6 +69,7 @@ DE ONDE VEM CADA COISA (e o que foi medido antes de escrever isto)
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -60,6 +77,23 @@ from datetime import datetime, timezone
 DEFAULT_SEEDS_DIR = os.path.join("platform", "dbt", "seeds")
 SERVICE_AREA_SEED = "warehouse_service_area_seed.csv"
 PROVINCE_MAP_SEED = "warehouse_province_map_seed.csv"
+CUSTOMER_PREMISES_SEED = "customer_premises_seed.csv"
+DEMAND_PROFILE_SEED = "demand_profile_seed.csv"
+
+# Premissas que ESTE export exige do seed de cadastro. Ausencia de qualquer uma reprova: um
+# default aqui produziria uma base dimensionada por um numero que ninguem declarou.
+REQUIRED_PREMISES = (
+    "min_customer_age",
+    "customer_penetration_source",
+    "customer_population_basis",
+    "customer_allocation",
+)
+
+# O UNICO ponteiro que este modulo sabe seguir. `customer_penetration_source` existe para que
+# a taxa nao seja copiada para dois lugares, mas seguir um ponteiro arbitrario faria o export
+# ler qualquer numero de qualquer seed. Ele aponta para aqui ou reprova.
+PENETRATION_POINTER = "demand_profile.channel_reference_pct"
+PENETRATION_PARAM = "channel_reference_pct"
 
 ADDRESS_CANDIDATES_FILE = "address_candidates.json"
 POPULATION_WEIGHTS_FILE = "municipality_population_weights.json"
@@ -140,6 +174,83 @@ def _write_json(path: str, payload, indent: int | None) -> int:
             os.unlink(temp_path)
         raise
     return len(blob)
+
+
+# --------------------------------------------------------------------------------
+# 0. Premissas do cadastro, e a taxa que elas apontam
+# --------------------------------------------------------------------------------
+
+def _premises(connection, seeds_dir: str) -> dict:
+    """As quatro premissas de `customer_premises_seed`, como dicionario de strings.
+
+    Lido do CSV pelo mesmo motivo que os outros seeds: `connect_lakehouse()` so enxerga
+    parquet sob `silver/`, e o modelo `customer_premises` mora la — mas ele so existe DEPOIS
+    de um `dbt build`, e este export precisa rodar antes de qualquer coisa. O CSV e a
+    fonte, o modelo e a projecao dela.
+    """
+    rows = _rows(
+        connection,
+        f"select premise_key, value from read_csv("
+        f"{_seed(seeds_dir, CUSTOMER_PREMISES_SEED)}, header = true, all_varchar = true)",
+    )
+    premises = {row["premise_key"]: row["value"] for row in rows}
+    missing = [key for key in REQUIRED_PREMISES if key not in premises]
+    if missing:
+        raise ReferenceExportError(
+            f"{CUSTOMER_PREMISES_SEED} sem a(s) premissa(s) {missing}. Sem elas a base seria "
+            f"dimensionada por um numero que ninguem declarou."
+        )
+    return premises
+
+
+def _min_customer_age(premises: dict) -> int:
+    raw = premises["min_customer_age"]
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ReferenceExportError(
+            f"min_customer_age nao e inteiro: {raw!r}"
+        ) from exc
+    if value < 0 or value > 120:
+        raise ReferenceExportError(f"min_customer_age fora de qualquer faixa util: {value}")
+    return value
+
+
+def _penetration_pct(connection, seeds_dir: str, premises: dict) -> float:
+    """A taxa de penetracao, SEGUINDO o ponteiro em vez de copiar o numero.
+
+    A taxa e a participacao do e-commerce no volume total de alimentacao (MAPA 2025, secao
+    3), e ela ja mora em `demand_profile_seed` com rotulo `observed`. Duas premissas
+    DECLARADAS a transformam num share de gente, e nenhuma e medida: que o comprador online
+    consome como a media, e que estes quatro armazens modelam o canal inteiro da AUF e nao um
+    operador dentro dele. Ver a linha `customer_penetration_source` do seed.
+    """
+    pointer = premises["customer_penetration_source"]
+    if pointer != PENETRATION_POINTER:
+        raise ReferenceExportError(
+            f"customer_penetration_source aponta para {pointer!r}, e este export so sabe "
+            f"seguir {PENETRATION_POINTER!r}. Seguir um ponteiro arbitrario faria a base ser "
+            f"dimensionada por qualquer numero de qualquer seed."
+        )
+    rows = _rows(
+        connection,
+        f"select value from read_csv({_seed(seeds_dir, DEMAND_PROFILE_SEED)}, "
+        f"header = true, all_varchar = true) where param_key = '{PENETRATION_PARAM}'",
+    )
+    if len(rows) != 1:
+        raise ReferenceExportError(
+            f"{DEMAND_PROFILE_SEED} tem {len(rows)} linha(s) para "
+            f"param_key='{PENETRATION_PARAM}', esperava exatamente 1."
+        )
+    try:
+        value = float(rows[0]["value"])
+    except (TypeError, ValueError) as exc:
+        raise ReferenceExportError(
+            f"{PENETRATION_PARAM} nao e numero: {rows[0]['value']!r}"
+        ) from exc
+    if not 0 < value <= 100:
+        raise ReferenceExportError(f"{PENETRATION_PARAM} fora de (0, 100]: {value}")
+    return value
 
 
 # --------------------------------------------------------------------------------
@@ -418,7 +529,14 @@ def _build_population_weights(connection, seeds_dir: str) -> dict:
 # 3. Distribuicao etaria por provincia
 # --------------------------------------------------------------------------------
 
-def _age_sql(province_map: str, fk_periodo: int, year: int) -> str:
+def _scoped_ages_cte(province_map: str, fk_periodo: int, year: int) -> str:
+    """CTE comum as duas consultas de idade: a piramide provincial INTEIRA, sem corte.
+
+    Compartilhada de proposito. O share adulto tem de ser medido sobre a piramide inteira, e a
+    distribuicao entregue a Source tem de ser a fatia adulta dela renormalizada — se cada
+    consulta montasse o proprio recorte, um dia elas divergiriam e o numerador de uma nao
+    seria mais o mesmo universo do denominador da outra.
+    """
     excluded = ", ".join(f"'{label}'" for label in EXCLUDED_AGE_LABELS)
     return f"""
     with province as (
@@ -438,19 +556,58 @@ def _age_sql(province_map: str, fk_periodo: int, year: int) -> str:
           and s.sex_label = '{SEX_BOTH_31304}'
           and s.age_label not in ({excluded})
           and s.population_value is not null
-    )
+    )"""
+
+
+def _adult_share_sql(province_map: str, fk_periodo: int, year: int, min_age: int) -> str:
+    """Fracao da populacao provincial com idade >= min_age, MEDIDA ANTES DE QUALQUER CORTE.
+
+    A ordem importa e e o defeito obvio deste calculo: medir o share depois de truncar a
+    piramide devolveria 100% em toda provincia — um numero plausivel, que nao reprovaria nada
+    e faria a base inteira ser dimensionada pela populacao total como se fosse adulta.
+    """
+    return f"""
+    {_scoped_ages_cte(province_map, fk_periodo, year)}
     select
-        p.province_code as province_code,
-        sc.age          as age,
-        sc.population_value
-            / sum(sc.population_value) over (partition by p.province_code) as proportion
+        p.province_code                                as province_code,
+        p.province_name                                as province_name,
+        sum(sc.population_value)                       as population_value,
+        sum(case when sc.age >= {min_age} then sc.population_value else 0 end)
+                                                       as adult_population_value,
+        sum(case when sc.age >= {min_age} then sc.population_value else 0 end)
+            / sum(sc.population_value)                 as adult_share
     from scoped sc
     join province p on sc.province_name = p.province_name
-    order by p.province_code, sc.age
+    group by 1, 2
+    order by 1
     """
 
 
-def _build_age_distribution(connection, seeds_dir: str) -> dict:
+def _age_sql(province_map: str, fk_periodo: int, year: int, min_age: int) -> str:
+    """A distribuicao entregue a Source: so as idades >= min_age, RENORMALIZADAS.
+
+    Truncar sem renormalizar entregaria um vetor que soma ~0,82 em vez de 1, e `rng.choices`
+    com `cum_weights` nao reclama disso — ele simplesmente nunca sortearia a cauda. O corte e
+    premissa desta plataforma (`customer_premises.min_customer_age`) e vai declarado no
+    cabecalho do arquivo, ao lado dos dois rotulos agregados que ja eram excluidos.
+    """
+    return f"""
+    {_scoped_ages_cte(province_map, fk_periodo, year)},
+    adult as (
+        select * from scoped where age >= {min_age}
+    )
+    select
+        p.province_code as province_code,
+        a.age           as age,
+        a.population_value
+            / sum(a.population_value) over (partition by p.province_code) as proportion
+    from adult a
+    join province p on a.province_name = p.province_name
+    order by p.province_code, a.age
+    """
+
+
+def _build_age_distribution(connection, seeds_dir: str, min_age: int) -> dict:
     province_map = _seed(seeds_dir, PROVINCE_MAP_SEED)
 
     chosen = connection.execute(
@@ -479,11 +636,31 @@ def _build_age_distribution(connection, seeds_dir: str) -> dict:
         ).fetchone()[0]
     )
 
-    rows = _rows(connection, _age_sql(province_map, fk_periodo, year))
-    if not rows:
+    # O SHARE ADULTO PRIMEIRO, sobre a piramide inteira, e so depois a truncagem.
+    shares = _rows(connection, _adult_share_sql(province_map, fk_periodo, year, min_age))
+    if not shares:
         raise ReferenceExportError(
             f"nenhuma linha de idade para year={year} fk_periodo={fk_periodo}. A grafia de "
             f"province_name do seed bate com a de silver_ine_population_series?"
+        )
+    degenerada = [s for s in shares if not 0 < float(s["adult_share"]) < 1]
+    if degenerada:
+        raise ReferenceExportError(
+            f"share adulto fora de (0, 1) em {[s['province_code'] for s in degenerada]}: "
+            f"a piramide provincial ja veio truncada, ou min_customer_age={min_age} nao "
+            f"deixou ninguem de fora. Medir o share depois do corte devolve sempre 100%."
+        )
+
+    rows = _rows(connection, _age_sql(province_map, fk_periodo, year, min_age))
+    if not rows:
+        raise ReferenceExportError(
+            f"nenhuma idade >= {min_age} para year={year} fk_periodo={fk_periodo}."
+        )
+    abaixo = [r for r in rows if int(r["age"]) < min_age]
+    if abaixo:
+        raise ReferenceExportError(
+            f"{len(abaixo)} linha(s) abaixo de min_customer_age={min_age} sobreviveram ao "
+            f"corte: {[r['province_code'] + '/' + str(r['age']) for r in abaixo[:5]]}"
         )
 
     header = connection.execute(
@@ -510,13 +687,126 @@ def _build_age_distribution(connection, seeds_dir: str) -> dict:
         "fk_tipo_dato": header[1],
         "sex_label": SEX_BOTH_31304,
         "excluded_age_labels": list(EXCLUDED_AGE_LABELS),
+        # A PREMISSA DO CORTE, no cabecalho e nao implicita nos dados. Quem ler este arquivo
+        # descobre que a distribuicao e adulta sem precisar inspecionar a menor idade
+        # presente, e a Source RECUSA a referencia se as duas coisas discordarem.
+        "min_customer_age": min_age,
+        "adult_share_by_province": [
+            {
+                "province_code": row["province_code"],
+                "province_name": row["province_name"],
+                "population_value": float(row["population_value"]),
+                "adult_population_value": float(row["adult_population_value"]),
+                "adult_share": float(row["adult_share"]),
+            }
+            for row in shares
+        ],
         "note": (
             "Idade por PROVINCIA usada como proxy: nao existe faixa etaria por municipio "
             "nas tabelas ingeridas por esta plataforma (29005 nao tem coluna de idade e "
             "31304 so tem provincia). Os rotulos agregados 'Total' e '85 y mas anos' sao "
-            "excluidos por se sobreporem as 101 idades simples."
+            "excluidos por se sobreporem as 101 idades simples. As linhas abaixo de "
+            "min_customer_age tambem sao excluidas, e o que resta e RENORMALIZADO para somar "
+            "1 por provincia: este arquivo e a distribuicao de amostragem do CADASTRO, nao "
+            "uma copia da piramide do INE. A piramide inteira sobrevive em "
+            "adult_share_by_province, que e onde o corte foi medido antes de ser aplicado."
         ),
         "rows": rows,
+    }
+
+
+# --------------------------------------------------------------------------------
+# 4. Quantos clientes cada armazem tem — e por que o total e consequencia
+# --------------------------------------------------------------------------------
+
+def _round_half_up(value: float) -> int:
+    """Arredondamento reproduzivel em SQL, e por isso nao e `round()`.
+
+    `round()` do Python arredonda 0,5 para o par mais proximo e o do DuckDB nao. O teste dbt
+    `assert_customer_base_follows_the_declared_population_allocation` refaz esta conta em SQL
+    e compara; com duas convencoes de desempate diferentes ele acusaria uma divergencia de um
+    cliente que nao e defeito de ninguem. `floor(x + 0.5)` e a mesma coisa dos dois lados.
+    """
+    return int(math.floor(value + 0.5))
+
+
+def _build_customer_allocation(
+    weights: dict, ages: dict, min_age: int, penetration_pct: float, pointer: str
+) -> dict:
+    """Alvo de clientes por armazem, derivado da populacao ADULTA que ele serve.
+
+        populacao municipal observada (29005)
+          x share adulto da provincia daquele municipio (31304, >= min_age)
+          x taxa de penetracao (MAPA 2025, secao 3)
+          = clientes daquele armazem
+
+    O TOTAL E CONSEQUENCIA, NAO COTA. A diferenca so aparece quando a area de servico muda:
+    com uma cota de 20.000 repartida, acrescentar um municipio TIRARIA clientes dos outros
+    armazens; assim, ele acrescenta clientes. Substitui a alocacao anterior, que era 5.000
+    por armazem — o mesmo numero para AUFs que diferem por 4,6x em populacao.
+
+    A conta e por MUNICIPIO e nao por armazem, ainda que hoje cada armazem caia numa provincia
+    so: multiplicar a populacao inteira do armazem por um unico share adulto presumiria isso.
+    Hoje as duas formas dao o mesmo inteiro; se um armazem passar a cruzar provincia, esta
+    continua certa e a outra passa a estar errada em silencio.
+    """
+    share_por_provincia = {
+        row["province_code"]: float(row["adult_share"])
+        for row in ages["adult_share_by_province"]
+    }
+
+    por_wh: dict = {}
+    for row in weights["rows"]:
+        provincia = row["province_code"]
+        if provincia not in share_por_provincia:
+            raise ReferenceExportError(
+                f"municipio {provincia}/{row['municipality_code']} sem share adulto da "
+                f"provincia {provincia}: a alocacao ficaria enviesada em silencio."
+            )
+        entrada = por_wh.setdefault(
+            row["wh"], {"population_total": 0, "adult_population": 0.0}
+        )
+        populacao = int(row["population_total"])
+        entrada["population_total"] += populacao
+        entrada["adult_population"] += populacao * share_por_provincia[provincia]
+
+    # Lista ORDENADA e nao dict: o cabecalho deste arquivo e lido por uma Source que nao pode
+    # depender de ordem de insercao de dicionario para nada, pela mesma razao de sempre.
+    linhas = []
+    for wh in sorted(por_wh):
+        entrada = por_wh[wh]
+        clientes = _round_half_up(entrada["adult_population"] * penetration_pct / 100.0)
+        if clientes < 1:
+            raise ReferenceExportError(
+                f"alocacao de {clientes} cliente(s) para wh={wh!r}: populacao adulta "
+                f"{entrada['adult_population']:.0f} vezes taxa {penetration_pct}% nao "
+                f"sustenta uma base."
+            )
+        linhas.append(
+            {
+                "wh": wh,
+                "population_total": entrada["population_total"],
+                "adult_population": entrada["adult_population"],
+                "customers": clientes,
+            }
+        )
+
+    return {
+        "rule": "per_warehouse_population",
+        "population_basis": "adult_resident_population",
+        "min_customer_age": min_age,
+        "penetration_pct": penetration_pct,
+        "penetration_source": pointer,
+        "penetration_note": (
+            "Participacao do e-commerce no volume total de alimentacao em 2025 (MAPA, secao "
+            "3), usada como taxa de CLIENTES sob duas premissas declaradas e nao medidas: o "
+            "comprador online consome como a media, e estes armazens modelam o canal inteiro "
+            "da AUF e nao um operador dentro dele."
+        ),
+        "served_population": sum(linha["population_total"] for linha in linhas),
+        "served_adult_population": sum(linha["adult_population"] for linha in linhas),
+        "total_customers": sum(linha["customers"] for linha in linhas),
+        "by_warehouse": linhas,
     }
 
 
@@ -554,6 +844,45 @@ def _assert_coverage(candidates: dict, weights: dict, ages: dict) -> None:
             f"provincia(s) sem distribuicao etaria: {faltando}"
         )
 
+    # A distribuicao entregue nao pode conter idade abaixo do corte declarado. E a mesma
+    # verificacao que a Source faz ao ler o arquivo; feita aqui, ela reprova o EXPORT em vez
+    # de reprovar a geracao quatro comandos depois.
+    minima = ages.get("min_customer_age")
+    if minima is None:
+        raise ReferenceExportError(
+            "province_age_distribution sem min_customer_age no cabecalho: a Source nao teria "
+            "como saber se a distribuicao ja e a do cadastro ou a da populacao inteira."
+        )
+    menor = min(int(row["age"]) for row in ages["rows"])
+    if menor < int(minima):
+        raise ReferenceExportError(
+            f"distribuicao etaria com idade {menor}, abaixo do min_customer_age={minima} "
+            f"declarado no proprio cabecalho."
+        )
+
+
+def _assert_allocation(weights: dict) -> None:
+    """A alocacao cobre todo armazem com peso populacional, e so eles.
+
+    Separada de `_assert_coverage` de proposito, e rodada DEPOIS dela. A cobertura dos tres
+    arquivos e pre-condicao da alocacao — uma provincia sem distribuicao etaria faz as duas
+    coisas falharem, e quem le o erro precisa da causa, nao da consequencia.
+    """
+    alocacao = weights.get("customer_allocation") or {}
+    com_alvo = {row["wh"] for row in alocacao.get("by_warehouse", [])}
+    com_peso = {row["wh"] for row in weights["rows"]}
+    sem_alvo = sorted(com_peso - com_alvo)
+    if sem_alvo:
+        raise ReferenceExportError(
+            f"armazem(ns) com peso populacional mas sem alvo de clientes: {sem_alvo}. O "
+            f"`extract` sem --count cairia num default para eles."
+        )
+    alvo_orfao = sorted(com_alvo - com_peso)
+    if alvo_orfao:
+        raise ReferenceExportError(
+            f"alvo de clientes para armazem(ns) sem nenhum municipio: {alvo_orfao}"
+        )
+
 
 def build(connection, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     """Monta os tres payloads a partir de uma conexao DuckDB ja aberta.
@@ -562,10 +891,24 @@ def build(connection, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     DuckDB reais, sem object storage e sem rede — e o unico jeito de o bug do join de
     municipio (que zerava Valencia) ser pego antes de rodar contra o Lakehouse.
     """
+    premises = _premises(connection, seeds_dir)
+    min_age = _min_customer_age(premises)
+    penetration = _penetration_pct(connection, seeds_dir, premises)
+
     candidates = _build_address_candidates(connection, seeds_dir)
     weights = _build_population_weights(connection, seeds_dir)
-    ages = _build_age_distribution(connection, seeds_dir)
+    ages = _build_age_distribution(connection, seeds_dir, min_age)
+    # COBERTURA ANTES DA ALOCACAO. A alocacao derivada de uma cobertura furada seria um numero
+    # plausivel calculado sobre um universo incompleto — e o erro apontaria para o sintoma.
     _assert_coverage(candidates, weights, ages)
+
+    # A alocacao mora no cabecalho do arquivo de PESOS, e nao num quarto arquivo: ela e a
+    # mesma populacao municipal daquele arquivo, somada por armazem e multiplicada por duas
+    # coisas. Um arquivo novo obrigaria a Source a casar duas fontes para a mesma verdade.
+    weights["customer_allocation"] = _build_customer_allocation(
+        weights, ages, min_age, penetration, premises["customer_penetration_source"]
+    )
+    _assert_allocation(weights)
     return {"candidates": candidates, "weights": weights, "ages": ages}
 
 
@@ -607,5 +950,6 @@ def export(config, out_dir: str, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
         "age_year": ages["year"],
         "age_fk_periodo": ages["fk_periodo"],
         "population_year": weights["population_year"],
+        "customer_allocation": weights["customer_allocation"],
         "bytes": written,
     }

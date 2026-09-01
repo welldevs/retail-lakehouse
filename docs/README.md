@@ -32,6 +32,15 @@ este link passará a servir o arquivo novo. O `sha256` acima é o que identifica
 usada; se ele deixar de bater, o benchmark em vigor não é o que os seeds descrevem, e a
 versão do modelo (`mapa_2025_v2`) precisa mudar junto.
 
+**O informe também dimensiona a base de clientes, e não só o mix.** A participação do
+e-commerce no volume de alimentação (2,2%, seção 3) é usada como taxa de penetração sobre a
+população adulta das quatro AUFs — é o único número observado deste repositório capaz de
+dimensionar um cadastro. Ele mora numa única linha
+(`demand_profile_seed.channel_reference_pct`), e `customer_premises_seed` **aponta** para ela
+em vez de copiá-la. Duas premissas declaradas fazem a transposição de share de volume para
+share de gente, e nenhuma delas é medida: que o comprador online consome como a média, e que
+estes quatro armazéns modelam o canal inteiro da AUF e não um operador dentro dele.
+
 **Achado de proveniência.** A folha de rosto do PDF diz *"Informe del consumo alimentario en
 España 2024"*, enquanto o corpo inteiro reporta o ano **2025** ("A cierre del año 2025…",
 "frente a los 26.823,4 millones del año 2024"). É resíduo de copiar-colar da edição anterior
@@ -87,11 +96,14 @@ assim hoje", que é metade da pergunta.
 |---|---|
 | `before_mapa_2025_v1.json` | o mix **uniforme**, antes de qualquer calibração |
 | `before_mapa_2025_v2.json` | o mix **calibrado no agregado**, antes da camada de coorte |
+| `before_customer_v2.json` | a base de **20.000 clientes iguais entre armazéns**, com 18,01% de menores, antes de a densidade existir |
 
-O padrão de `--before` é o **v2**, o estado imediatamente anterior. Usar o v1 como padrão
-faria a queda de receita da correção de preço da Fase 4 ser lida como se fosse da Fase 5:
-duas fases somadas numa coluna só. O v1 continua no disco e é citado no texto da página.
+O padrão de `--before` é o **mais recente**, o estado imediatamente anterior. Usar um antigo
+como padrão somaria os efeitos de várias fases numa coluna só — a queda de receita da correção
+de preço da Fase 4 seria lida como se fosse da Fase 6. Os anteriores continuam no disco e são
+citados no texto da página.
 
-O snapshot v2 registra `cohorts: null` — a janela que ele congela é anterior ao carimbo
-`buyer_age_band` existir. `null`, e não um objeto vazio: vazio seria indistinguível de "medi
-e não havia nada".
+Cada snapshot registra `null` para o que ainda não existia quando ele foi congelado, e não um
+objeto vazio: `cohorts: null` no v2 (anterior ao carimbo `buyer_age_band`), `channel: null` nos
+dois primeiros (anteriores à população servida entrar na medição). Vazio seria indistinguível
+de "medi e não havia nada".

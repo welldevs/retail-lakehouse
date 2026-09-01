@@ -73,7 +73,12 @@ OLTP_SOURCE_SRC       = $(OLTP_SOURCE_DIR)/src
 OLTP_DATA_ROOT       ?= data/oltp
 OLTP_REFERENCE_ROOT  ?= data/oltp-reference
 OLTP_REFERENCE        = $(OLTP_REFERENCE_ROOT)/ingestion_date=$(DATE)
-OLTP_CUSTOMERS_PER_WH ?= 200
+# VAZIO POR PADRAO, e isso e deliberado. Ate a Fase 5 este numero era 5.000 para os quatro
+# armazens — o mesmo para AUFs que diferem por 4,6x em populacao. Vazio, o `extract` usa o
+# alvo que `oltp-export-reference` derivou da populacao ADULTA de cada armazem vezes a taxa de
+# penetracao (customer_premises_seed). Definir a variavel continua funcionando e vira override
+# explicito, registrado como `count_source: cli` no manifesto.
+OLTP_CUSTOMERS_PER_WH ?=
 # Seed fixa por padrao, e nao aleatoria: a mesma data com a mesma referencia tem de
 # reproduzir a mesma particao. Passe SEED=... para gerar outra populacao sintetica.
 OLTP_SEED            ?= 20260827
@@ -166,7 +171,7 @@ help:
 	@echo "  callejero-refresh         os quatro acima + silver, em ordem"
 	@echo "  callejero-trigger         dispara a DAG sob demanda no Airflow e acompanha"
 	@echo ""
-	@echo "OLTP simulado (WH=$(WH) COUNT=$(OLTP_CUSTOMERS_PER_WH) SEED=$(OLTP_SEED)) —"
+	@echo "OLTP simulado (WH=$(WH) COUNT=$(or $(OLTP_CUSTOMERS_PER_WH),da referencia) SEED=$(OLTP_SEED)) —"
 	@echo "clientes sinteticos com endereco real; sem rede, derivado do Silver:"
 	@echo "  oltp-export-reference     materializa o Silver em $(OLTP_REFERENCE) (roda 1x, cobre os 4 wh)"
 	@echo "  oltp-extract              gera os clientes de $(WH) em $(OLTP_PARTITION)"
@@ -176,7 +181,9 @@ help:
 	@echo "  oltp-refresh              os quatro acima + silver, em ordem"
 	@echo "  oltp-refresh-all          os quatro wh, e silver uma vez no fim"
 	@echo "  oltp-trigger              dispara a DAG sob demanda no Airflow e acompanha"
-	@echo "  ...aumentar a base:       OLTP_CUSTOMERS_PER_WH=20000 OLTP_OVERWRITE=1 (aditivo:"
+	@echo "  ...o tamanho da base:     vem da referencia (populacao adulta x taxa), nao daqui."
+	@echo "                            OLTP_CUSTOMERS_PER_WH=N so para override explicito."
+	@echo "  ...aumentar a base:       OLTP_CUSTOMERS_PER_WH=N OLTP_OVERWRITE=1 (aditivo:"
 	@echo "                            os clientes que ja existem sao preservados)"
 	@echo ""
 	@echo "pedidos simulados (ORDERS_FROM=$(ORDERS_FROM) ORDERS_TO=$(ORDERS_TO) SEED=$(ORDERS_SEED)) —"
@@ -464,7 +471,7 @@ oltp-extract:
 	else \
 	  PYTHONPATH=$(OLTP_SOURCE_SRC) $(PYTHON) -m simulated_oltp_source extract \
 	    --reference $(OLTP_REFERENCE) --out $(OLTP_DATA_ROOT) --wh $(WH) --date $(DATE) \
-	    --count $(OLTP_CUSTOMERS_PER_WH) --seed $(OLTP_SEED) \
+	    $(if $(OLTP_CUSTOMERS_PER_WH),--count $(OLTP_CUSTOMERS_PER_WH),) --seed $(OLTP_SEED) \
 	    $(if $(OLTP_OVERWRITE),--overwrite,); \
 	fi
 

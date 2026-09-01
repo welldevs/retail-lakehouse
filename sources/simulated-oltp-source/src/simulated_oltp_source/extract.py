@@ -52,8 +52,14 @@ def run(args) -> int:
         os.makedirs(partition, exist_ok=True)
         previous = assert_writable(partition, args.overwrite)
         reference = load(args.reference)
+        # DE ONDE VEM O TAMANHO DA BASE. Sem --count, do alvo que a referencia derivou da
+        # populacao adulta daquele armazem; com --count, do operador. Os dois casos vao para o
+        # manifesto com a PROVENIENCIA junto: sem ela, uma base gerada com override manual
+        # seria indistinguivel de uma derivada da populacao seis meses depois.
+        count_source = "cli" if args.count is not None else "reference"
+        count = args.count if args.count is not None else reference.customer_target(args.wh)
         customers = generate(
-            reference, args.wh, args.count, args.seed, ingestion_date
+            reference, args.wh, count, args.seed, ingestion_date
         )
     except (PartitionError, ReferenceError, GenerationError) as exc:
         print(f"ERRO: {exc}")
@@ -91,7 +97,8 @@ def run(args) -> int:
         # A seed vive no manifesto e nao em cada registro: e constante para a particao
         # inteira. Sem ela registrada aqui, a geracao seria irreproduzivel.
         "config": {
-            "count": args.count,
+            "count": count,
+            "count_source": count_source,
             "seed": args.seed,
             "reference": os.path.normpath(args.reference),
         },
@@ -107,6 +114,15 @@ def run(args) -> int:
             "age_fk_periodo": reference.age_fk_periodo,
             "address_candidates": reference.candidate_count(),
             "orphan_tramos_excluded": reference.orphan_tramos_excluded,
+            # O CADASTRO NAO E A POPULACAO, e o manifesto registra por quanto. Sem estas
+            # quatro linhas, uma particao gerada com outra idade minima ou outra taxa seria
+            # indistinguivel desta — e as duas trocam as pessoas por tras dos mesmos ids.
+            "min_customer_age": reference.min_customer_age,
+            "customer_target": reference.customer_target(args.wh)
+            if reference.customer_allocation else None,
+            "allocation_rule": reference.allocation_rule,
+            "penetration_pct": reference.penetration_pct,
+            "penetration_source": reference.penetration_source,
         },
         "totals": {
             "customer_rows": len(customers),
@@ -141,8 +157,11 @@ def run(args) -> int:
           f"year={reference.population_year}")
     print(f"  idade .......... year={reference.age_year} "
           f"fk_periodo={reference.age_fk_periodo} (proxy provincial)")
+    print(f"  cadastro ....... idade >= {reference.min_customer_age}, "
+          f"taxa {reference.penetration_pct}% ({reference.allocation_rule})")
     print(f"seed ............. {args.seed}")
-    print(f"clientes ......... {len(customers)} em {municipalities_used} municipio(s)")
+    print(f"clientes ......... {len(customers)} em {municipalities_used} municipio(s) "
+          f"[count de {count_source}]")
     print(f"sem numero ....... {house_number_null} (numeracao inexistente no Callejero)")
     print(f"pseudovia ........ {pseudo_rows}")
     print(f"arquivo .......... {CUSTOMERS_FILE} ({size} bytes)")

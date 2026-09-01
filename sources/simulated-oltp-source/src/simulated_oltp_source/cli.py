@@ -30,7 +30,6 @@ from .partition import DEFAULT_WAREHOUSES
 
 DEFAULT_ROOT = "data/oltp"
 DEFAULT_REFERENCE = "data/oltp-reference"
-DEFAULT_COUNT = 200
 DEFAULT_SEED = 20260827
 
 EXIT_UNHANDLED = 3
@@ -64,8 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument(
         "--date", default=None, help="data da particao YYYY-MM-DD (padrao: hoje em UTC)"
     )
+    # SEM DEFAULT, e isso e a mudanca. Ate a Fase 5 o numero vinha da linha de comando e o
+    # Makefile passava 5.000 para os quatro armazens — o mesmo numero para AUFs que diferem
+    # por 4,6x em populacao. Omitir --count agora significa "use o alvo que a referencia
+    # derivou da populacao adulta daquele armazem", e a referencia REPROVA se nao tiver um.
+    # Um default aqui reintroduziria em silencio a base dimensionada por ninguem.
     extract_parser.add_argument(
-        "--count", type=int, default=DEFAULT_COUNT, help="clientes a gerar (padrao: 200)"
+        "--count",
+        type=int,
+        default=None,
+        help="clientes a gerar. Omitido, usa o alvo de customer_allocation da referencia "
+             "(populacao adulta do armazem x taxa de penetracao)",
     )
     extract_parser.add_argument(
         "--seed",

@@ -1,6 +1,6 @@
 # Contrato dos indicadores do painel
 
-**Gerado por `make dashboard-contract` em 2026-09-01 11:56:54 UTC.** Não editar à mão: este arquivo
+**Gerado por `make dashboard-contract` em 2026-09-01 13:20:39 UTC.** Não editar à mão: este arquivo
 é derivado de [`indicators.py`](indicators.py), que é onde a consulta e a explicação
 moram juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois
 divergem no primeiro ajuste de SQL — com o detalhe cruel de que a conferência
@@ -86,7 +86,7 @@ vigente.
 
 **Armadilhas ao reconstruir no Power BI**
 
-1. TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: receita/pedidos_separados = 95,78 e receita/pedidos_colocados = 91,69. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.
+1. TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: receita/pedidos_separados = 95,21 e receita/pedidos_colocados = 90,95. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.
 2. `net_amount_picked` e NULO para pedido que morreu antes da separacao, e `sum()` ignora nulo. Isso e correto e proposital: quem nunca foi separado nao contribui com zero, contribui com nada. No Power BI, um `SUM` sobre coluna nula faz o mesmo; um `COALESCE(...,0)` inventaria uma apuracao que nao houve.
 
 ```sql

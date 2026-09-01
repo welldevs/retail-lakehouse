@@ -63,7 +63,7 @@ INDICADORES: tuple[Indicador, ...] = (
         marts=("MART_ORDER_FUNNEL",),
         armadilhas=(
             "TICKET MEDIO tem dois denominadores possiveis e eles NAO sao equivalentes: "
-            "receita/pedidos_separados = 95,78 e receita/pedidos_colocados = 91,69. O "
+            "receita/pedidos_separados = 95,21 e receita/pedidos_colocados = 90,95. O "
             "segundo divide a receita de quem foi separado pelo total incluindo quem nunca "
             "chegou a separacao — mede uma coisa que nao existe. Use `orders_picked`.",
             "`net_amount_picked` e NULO para pedido que morreu antes da separacao, e `sum()` "

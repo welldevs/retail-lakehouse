@@ -17,7 +17,7 @@ datada de que os modelos rodaram; `make silver` e as suítes seguem rodando sem 
 | papel da sessão | `ACCOUNTADMIN` |
 | warehouse | `COMPUTE_WH` |
 | database | `RETAIL` |
-| capturado em | 2026-08-29 06:29:46 -07:00 |
+| capturado em | 2026-09-01 06:26:01 -07:00 |
 
 O papel acima é o da **captura**, não o do pipeline. Ler as três camadas de uma vez é
 justamente o que nenhum papel do projeto pode fazer — é essa a separação. O pipeline
@@ -34,41 +34,42 @@ existiam, estavam verificados, e nenhuma execução passava por eles.
 | schema | tabela | posse | linhas |
 |---|---|---|---|
 | GOLD | `DIM_CATEGORY` | `RETAIL_TRANSFORMER` | 151 |
-| GOLD | `DIM_CUSTOMER` | `RETAIL_TRANSFORMER` | 40,000 |
+| GOLD | `DIM_CUSTOMER` | `RETAIL_TRANSFORMER` | 573,652 |
 | GOLD | `DIM_DATE` | `RETAIL_TRANSFORMER` | 4,018 |
 | GOLD | `DIM_GEOGRAPHY` | `RETAIL_TRANSFORMER` | 699 |
-| GOLD | `DIM_PRODUCT` | `RETAIL_TRANSFORMER` | 4,978 |
+| GOLD | `DIM_PRODUCT` | `RETAIL_TRANSFORMER` | 5,002 |
 | GOLD | `DIM_WAREHOUSE` | `RETAIL_TRANSFORMER` | 4 |
-| GOLD | `FACT_INGESTION_RUN` | `RETAIL_TRANSFORMER` | 46 |
-| GOLD | `FACT_ORDER` | `RETAIL_TRANSFORMER` | 6,400 |
-| GOLD | `FACT_ORDER_EVENT` | `RETAIL_TRANSFORMER` | 44,456 |
-| GOLD | `FACT_ORDER_ITEM` | `RETAIL_TRANSFORMER` | 120,693 |
-| GOLD | `FACT_ORDER_PREMISE` | `RETAIL_TRANSFORMER` | 30 |
+| GOLD | `FACT_INGESTION_RUN` | `RETAIL_TRANSFORMER` | 58 |
+| GOLD | `FACT_ORDER` | `RETAIL_TRANSFORMER` | 91,788 |
+| GOLD | `FACT_ORDER_EVENT` | `RETAIL_TRANSFORMER` | 636,848 |
+| GOLD | `FACT_ORDER_ITEM` | `RETAIL_TRANSFORMER` | 1,726,833 |
+| GOLD | `FACT_ORDER_PREMISE` | `RETAIL_TRANSFORMER` | 31 |
 | GOLD | `FACT_POPULATION_MUNICIPALITY` | `RETAIL_TRANSFORMER` | 21,410 |
-| GOLD | `FACT_PRICE_CHANGE` | `RETAIL_TRANSFORMER` | 77,733 |
-| GOLD | `FACT_PRICE_SNAPSHOT` | `RETAIL_TRANSFORMER` | 94,863 |
-| MART | `MART_ASSORTMENT_DAILY` | `RETAIL_TRANSFORMER` | 3,272 |
-| MART | `MART_BASKET_DAILY` | `RETAIL_TRANSFORMER` | 2,375 |
-| MART | `MART_CUSTOMER_BASE` | `RETAIL_TRANSFORMER` | 20,000 |
+| GOLD | `FACT_PRICE_CHANGE` | `RETAIL_TRANSFORMER` | 129,483 |
+| GOLD | `FACT_PRICE_SNAPSHOT` | `RETAIL_TRANSFORMER` | 146,482 |
+| MART | `MART_ASSORTMENT_DAILY` | `RETAIL_TRANSFORMER` | 5,060 |
+| MART | `MART_BASKET_DAILY` | `RETAIL_TRANSFORMER` | 2,380 |
+| MART | `MART_CUSTOMER_BASE` | `RETAIL_TRANSFORMER` | 286,826 |
+| MART | `MART_DEMAND_COHORT` | `RETAIL_TRANSFORMER` | 2,622 |
 | MART | `MART_FULFILLMENT_SLA` | `RETAIL_TRANSFORMER` | 16 |
 | MART | `MART_MARKET_COVERAGE` | `RETAIL_TRANSFORMER` | 370 |
 | MART | `MART_ORDER_FUNNEL` | `RETAIL_TRANSFORMER` | 16 |
-| MART | `MART_PRICE_EVOLUTION` | `RETAIL_TRANSFORMER` | 94,863 |
+| MART | `MART_PRICE_EVOLUTION` | `RETAIL_TRANSFORMER` | 146,482 |
 | STAGE | `STG_CATEGORY` | `RETAIL_LOADER` | 151 |
-| STAGE | `STG_CUSTOMER` | `RETAIL_LOADER` | 40,000 |
+| STAGE | `STG_CUSTOMER` | `RETAIL_LOADER` | 573,652 |
 | STAGE | `STG_GEOGRAPHY` | `RETAIL_LOADER` | 699 |
-| STAGE | `STG_INGESTION_RUN` | `RETAIL_LOADER` | 46 |
-| STAGE | `STG_ORDER` | `RETAIL_LOADER` | 6,400 |
-| STAGE | `STG_ORDER_EVENT` | `RETAIL_LOADER` | 44,456 |
-| STAGE | `STG_ORDER_LINE` | `RETAIL_LOADER` | 120,693 |
-| STAGE | `STG_ORDER_PREMISE` | `RETAIL_LOADER` | 30 |
+| STAGE | `STG_INGESTION_RUN` | `RETAIL_LOADER` | 58 |
+| STAGE | `STG_ORDER` | `RETAIL_LOADER` | 91,788 |
+| STAGE | `STG_ORDER_EVENT` | `RETAIL_LOADER` | 636,848 |
+| STAGE | `STG_ORDER_LINE` | `RETAIL_LOADER` | 1,726,833 |
+| STAGE | `STG_ORDER_PREMISE` | `RETAIL_LOADER` | 31 |
 | STAGE | `STG_POPULATION_MUNICIPALITY` | `RETAIL_LOADER` | 21,410 |
-| STAGE | `STG_PRICE_CHANGE` | `RETAIL_LOADER` | 77,733 |
-| STAGE | `STG_PRODUCT_PRICE` | `RETAIL_LOADER` | 94,863 |
+| STAGE | `STG_PRICE_CHANGE` | `RETAIL_LOADER` | 129,483 |
+| STAGE | `STG_PRODUCT_PRICE` | `RETAIL_LOADER` | 146,482 |
 | STAGE | `STG_SERVICE_AREA` | `RETAIL_LOADER` | 370 |
 | STAGE | `STG_WAREHOUSE` | `RETAIL_LOADER` | 4 |
 
-Total no destino: **943,248 linhas**.
+Total no destino: **7,108,040 linhas**.
 
 ## Isolamento verificado papel a papel
 
@@ -99,11 +100,11 @@ destino não existir mais. Não substituem o warehouse enquanto ele viver.
 
 | WH | MUNICIPALITY_NAME | CUSTOMERS | MUNICIPALITY_POPULATION | CUSTOMERS_PER_10K_INHABITANTS | HAS_NO_CUSTOMERS |
 |---|---|---|---|---|---|
-| vlc1 | Emperador | 4 | 700.0 | 57.143 | False |
-| svq1 | Molares, Los | 20 | 3659.0 | 54.66 | False |
-| svq1 | Burguillos | 35 | 7448.0 | 46.992 | False |
-| svq1 | Villanueva del Río y Minas | 23 | 5073.0 | 45.338 | False |
-| svq1 | Santiponce | 35 | 8634.0 | 40.537 | False |
+| vlc1 | Domeño | 18 | 723.0 | 248.963 | False |
+| mad1 | Redueña | 7 | 288.0 | 243.056 | False |
+| mad1 | Batres | 48 | 1976.0 | 242.915 | False |
+| mad1 | Tielmes | 70 | 2964.0 | 236.167 | False |
+| bcn1 | Òrrius | 19 | 812.0 | 233.99 | False |
 
 ### `MART_PRICE_EVOLUTION`
 
@@ -119,18 +120,28 @@ destino não existir mais. Não substituem o warehouse enquanto ele viver.
 
 | SNAPSHOT_DATE | WH | CATEGORY_NAME | PRODUCTS | PRODUCTS_EXCLUSIVE_HERE | AVG_UNIT_PRICE |
 |---|---|---|---|---|---|
-| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
-| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
-| 2026-08-26 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
-| 2026-08-27 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
 | 2026-08-28 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
+| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
+| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
+| 2026-08-27 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
+| 2026-08-26 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
+
+### `MART_DEMAND_COHORT`
+
+| DEMAND_GROUP | PCT_LT35 | PCT_GE65 |
+|---|---|---|
+| VINO | 0.52 | 2.30 |
+| CARNE_CONEJO | 0.03 | 0.10 |
+| CARNE_OVINO_CAPRINO | 0.10 | 0.33 |
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 0.29 | 0.74 |
+| BEBIDAS_ESPIRITUOSAS | 0.10 | 0.23 |
 
 ### `MART_CUSTOMER_BASE`
 
 | CUSTOMER_ID | WH | MUNICIPALITY_NAME | POSTAL_CODE | AGE_BAND | SEX_LABEL |
 |---|---|---|---|---|---|
-| cust_bcn1_000000 | bcn1 | Hospitalet de Llobregat, L' | 08906 | 30-44 | Hombres |
-| cust_bcn1_000001 | bcn1 | Hospitalet de Llobregat, L' | 08904 | 00-17 | Hombres |
+| cust_bcn1_000000 | bcn1 | Hospitalet de Llobregat, L' | 08906 | 45-64 | Hombres |
+| cust_bcn1_000001 | bcn1 | Hospitalet de Llobregat, L' | 08904 | 18-29 | Hombres |
 | cust_bcn1_000002 | bcn1 | Badalona | 08913 | 45-64 | Mujeres |
 | cust_bcn1_000003 | bcn1 | Hospitalet de Llobregat, L' | 08902 | 45-64 | Mujeres |
 | cust_bcn1_000004 | bcn1 | Terrassa | 08224 | 65+ | Hombres |
@@ -139,35 +150,35 @@ destino não existir mais. Não substituem o warehouse enquanto ele viver.
 
 | ORDER_DATE | WH | ORDERS_PLACED | ORDERS_CONFIRMED | ORDERS_PICKED | ORDERS_DELIVERED | ORDERS_CANCELLED | ORDERS_RETURNED | DELIVERY_RATE |
 |---|---|---|---|---|---|---|---|---|
-| 2026-08-24 | bcn1 | 400 | 396 | 381 | 377 | 15 | 5 | 0.9425 |
-| 2026-08-24 | mad1 | 400 | 394 | 383 | 377 | 11 | 1 | 0.9425 |
-| 2026-08-24 | svq1 | 400 | 396 | 382 | 378 | 14 | 2 | 0.9450 |
-| 2026-08-24 | vlc1 | 400 | 391 | 381 | 379 | 10 | 6 | 0.9475 |
-| 2026-08-25 | bcn1 | 400 | 396 | 387 | 385 | 9 | 3 | 0.9625 |
-| 2026-08-25 | mad1 | 400 | 396 | 384 | 383 | 12 | 2 | 0.9575 |
-| 2026-08-25 | svq1 | 400 | 391 | 378 | 377 | 13 | 2 | 0.9425 |
-| 2026-08-25 | vlc1 | 400 | 391 | 378 | 375 | 13 | 4 | 0.9375 |
+| 2026-08-24 | bcn1 | 8494 | 8342 | 8092 | 8010 | 250 | 63 | 0.9430 |
+| 2026-08-24 | mad1 | 9333 | 9187 | 8892 | 8798 | 295 | 79 | 0.9427 |
+| 2026-08-24 | svq1 | 2206 | 2181 | 2123 | 2101 | 58 | 12 | 0.9524 |
+| 2026-08-24 | vlc1 | 2914 | 2879 | 2790 | 2760 | 89 | 18 | 0.9472 |
+| 2026-08-25 | bcn1 | 8494 | 8371 | 8110 | 8025 | 261 | 64 | 0.9448 |
+| 2026-08-25 | mad1 | 9333 | 9187 | 8920 | 8832 | 267 | 68 | 0.9463 |
+| 2026-08-25 | svq1 | 2206 | 2173 | 2115 | 2095 | 58 | 19 | 0.9497 |
+| 2026-08-25 | vlc1 | 2914 | 2863 | 2780 | 2756 | 83 | 25 | 0.9458 |
 
 ### `MART_FULFILLMENT_SLA`
 
 | ORDER_DATE | WH | SLA_MINUTES | MAX_PICKING_MINUTES | ORDERS_BREACHING_SLA | P50_MINUTES_TO_PICK | P90_MINUTES_TO_DELIVER | ORDERS_DELIVERED_BEFORE_SLOT | ORDERS_DELIVERED_WITHIN_SLOT | ORDERS_DELIVERED_AFTER_SLOT |
 |---|---|---|---|---|---|---|---|---|---|
-| 2026-08-24 | bcn1 | 90.000000 | 80 | 0 | 36.000 | 107.000 | 319 | 33 | 25 |
-| 2026-08-24 | mad1 | 90.000000 | 78 | 0 | 36.000 | 108.000 | 331 | 24 | 22 |
-| 2026-08-24 | svq1 | 90.000000 | 80 | 0 | 36.000 | 107.000 | 326 | 19 | 33 |
-| 2026-08-24 | vlc1 | 90.000000 | 78 | 0 | 36.000 | 109.000 | 320 | 31 | 28 |
-| 2026-08-25 | bcn1 | 90.000000 | 78 | 0 | 36.000 | 108.600 | 326 | 31 | 28 |
-| 2026-08-25 | mad1 | 90.000000 | 76 | 0 | 36.000 | 111.000 | 316 | 34 | 33 |
-| 2026-08-25 | svq1 | 90.000000 | 80 | 0 | 36.000 | 110.000 | 318 | 30 | 29 |
-| 2026-08-25 | vlc1 | 90.000000 | 76 | 0 | 35.000 | 110.600 | 327 | 28 | 20 |
+| 2026-08-24 | bcn1 | 90.000000 | 80 | 0 | 36.000 | 110.000 | 6764 | 677 | 569 |
+| 2026-08-24 | mad1 | 90.000000 | 80 | 0 | 36.000 | 110.000 | 7391 | 749 | 658 |
+| 2026-08-24 | svq1 | 90.000000 | 80 | 0 | 36.000 | 110.000 | 1763 | 195 | 143 |
+| 2026-08-24 | vlc1 | 90.000000 | 80 | 0 | 34.000 | 109.000 | 2337 | 231 | 192 |
+| 2026-08-25 | bcn1 | 90.000000 | 80 | 0 | 36.000 | 110.000 | 6777 | 678 | 570 |
+| 2026-08-25 | mad1 | 90.000000 | 80 | 0 | 34.000 | 110.000 | 7412 | 782 | 638 |
+| 2026-08-25 | svq1 | 90.000000 | 80 | 0 | 36.000 | 111.000 | 1733 | 186 | 176 |
+| 2026-08-25 | vlc1 | 90.000000 | 80 | 0 | 36.000 | 109.000 | 2329 | 229 | 198 |
 
 ### `MART_BASKET_DAILY`
 
 | ORDER_DATE | WH | CATEGORY_NAME | ORDERS_TOUCHING_CATEGORY | LINES_PLACED | LINES_SUBSTITUTED | REVENUE_PLACED | REVENUE_FULFILLED | SUBSTITUTION_RATE |
 |---|---|---|---|---|---|---|---|---|
-| 2026-08-25 | bcn1 | Marisco | 52 | 56 | 3 | 21017.23 | 24654.60 | 0.0536 |
-| 2026-08-24 | vlc1 | Marisco | 60 | 66 | 0 | 18038.74 | 18022.71 | 0.0000 |
-| 2026-08-24 | bcn1 | Marisco | 62 | 69 | 0 | 27523.45 | 16437.51 | 0.0000 |
-| 2026-08-26 | vlc1 | Marisco | 51 | 54 | 1 | 15654.76 | 15576.39 | 0.0185 |
-| 2026-08-25 | vlc1 | Marisco | 50 | 54 | 3 | 11958.40 | 13206.95 | 0.0556 |
+| 2026-08-24 | mad1 | Leche y bebidas vegetales | 5038 | 7505 | 305 | 54485.86 | 50718.44 | 0.0406 |
+| 2026-08-26 | mad1 | Leche y bebidas vegetales | 4925 | 7449 | 266 | 54128.21 | 50619.94 | 0.0357 |
+| 2026-08-25 | mad1 | Leche y bebidas vegetales | 4908 | 7376 | 273 | 53069.40 | 49792.89 | 0.0370 |
+| 2026-08-27 | mad1 | Leche y bebidas vegetales | 4992 | 7457 | 269 | 52938.63 | 49639.88 | 0.0361 |
+| 2026-08-26 | mad1 | Jamón serrano | 497 | 522 | 18 | 47565.86 | 45670.00 | 0.0345 |
 

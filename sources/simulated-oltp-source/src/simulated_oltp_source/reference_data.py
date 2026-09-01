@@ -54,6 +54,15 @@ WEIGHT_FIELDS = (
 )
 AGE_FIELDS = ("province_code", "age", "proportion")
 
+# Cabecalhos que a referencia PRECISA trazer desde que o cadastro deixou de ser uma projecao
+# da populacao residente. Ausencia significa referencia de schema antigo — gerada antes de
+# min_customer_age existir — e ela nao pode ser usada em silencio: produziria de novo uma base
+# com titular de conta recem-nascido, que e exatamente o defeito que o corte existe para
+# fechar. Ver CONTRACT.md secao 2.
+MIN_AGE_HEADER = "min_customer_age"
+ALLOCATION_HEADER = "customer_allocation"
+ALLOCATION_ROWS = "by_warehouse"
+
 
 class ReferenceError(Exception):
     """Referencia ausente, ilegivel, incompleta ou incoerente."""
@@ -107,6 +116,25 @@ class Reference:
         self.age_year = ages.get("year")
         self.age_reference_date = ages.get("reference_date")
         self.age_fk_periodo = ages.get("fk_periodo")
+
+        # A IDADE MINIMA E DA REFERENCIA, nao desta Source. Quem decide quem pode ter cadastro
+        # e a plataforma, em customer_premises_seed; aqui ela e lida, registrada no manifesto
+        # e RECONFERIDA — a distribuicao entregue nao pode conter idade abaixo dela.
+        self.min_customer_age = ages.get(MIN_AGE_HEADER)
+        allocation = weights.get(ALLOCATION_HEADER) or {}
+        self.customer_allocation = allocation
+        self.allocation_rule = allocation.get("rule")
+        self.penetration_pct = allocation.get("penetration_pct")
+        self.penetration_source = allocation.get("penetration_source")
+        self.served_population = allocation.get("served_population")
+        self.served_adult_population = allocation.get("served_adult_population")
+        # Dict de consulta, nunca iterado: a ordem de insercao nao influencia amostragem
+        # nenhuma, e a lista ordenada de onde ele vem esta preservada em customer_allocation.
+        self._targets = {
+            row["wh"]: int(row["customers"])
+            for row in allocation.get(ALLOCATION_ROWS, [])
+            if isinstance(row, dict) and "wh" in row and "customers" in row
+        }
         self.orphan_tramos_excluded = (candidates.get("excluded_rows") or {}).get(
             "no_street_or_pseudo_match"
         )
@@ -161,6 +189,24 @@ class Reference:
             )
         return indexes
 
+    def customer_target(self, wh: str) -> int:
+        """Quantos clientes este armazem deve ter, segundo a referencia.
+
+        E o que o `extract` usa quando `--count` e omitido. NAO ha default: um numero chutado
+        aqui produziria uma base dimensionada por ninguem, que e de onde vinham os 5.000 iguais
+        para AUFs que diferem por 4,6x em populacao.
+        """
+        alvo = self._targets.get(wh)
+        if alvo is None:
+            raise ReferenceError(
+                f"referencia sem alvo de clientes para wh={wh!r}. Armazens com alvo: "
+                f"{sorted(self._targets)}. Regere a referencia com "
+                f"`make oltp-export-reference`, ou passe --count explicitamente."
+            )
+        if alvo < 1:
+            raise ReferenceError(f"alvo de clientes invalido para wh={wh!r}: {alvo}")
+        return alvo
+
     def ages_of(self, province_code: str) -> tuple[list[int], list[float]]:
         entry = self._ages.get(province_code)
         if not entry:
@@ -168,6 +214,49 @@ class Reference:
                 f"referencia sem distribuicao etaria para a provincia {province_code!r}"
             )
         return entry
+
+
+def _require_customer_scope(directory: str, weights: dict, ages: dict) -> None:
+    """A referencia declara quem pode ter cadastro, e o conteudo dela tem de obedecer.
+
+    TRES coisas, e nenhuma delas e opcional:
+
+      1. `min_customer_age` no cabecalho da distribuicao etaria. Sem ele, esta Source nao tem
+         como distinguir "distribuicao do cadastro" de "distribuicao da populacao inteira", e
+         geraria de novo os 18,01% de menores de idade medidos em 2026-08-31 — 3.602 de
+         20.000, com idade a partir de zero.
+      2. Nenhuma idade abaixo dele nas linhas. O cabecalho e a promessa; isto e a conferencia.
+         Uma referencia truncada pela metade passaria no item 1 e falharia aqui.
+      3. `customer_allocation` no cabecalho dos pesos. Sem ela o `extract` sem --count nao tem
+         alvo, e cair num default seria voltar ao numero digitado a mao.
+
+    Referencia de schema antigo reprova com mensagem acionavel em vez de gerar em silencio —
+    a mesma disciplina do resto deste modulo.
+    """
+    age_path = os.path.join(directory, AGE_DISTRIBUTION_FILE)
+    minima = ages.get(MIN_AGE_HEADER)
+    if not isinstance(minima, int):
+        raise ReferenceError(
+            f"{age_path}: sem '{MIN_AGE_HEADER}' inteiro no cabecalho. Esta referencia foi "
+            f"gerada antes de o cadastro passar a excluir menores de idade; regere com "
+            f"`make oltp-export-reference`."
+        )
+    abaixo = sorted(
+        {int(row["age"]) for row in ages["rows"] if int(row["age"]) < minima}
+    )
+    if abaixo:
+        raise ReferenceError(
+            f"{age_path}: idade(s) {abaixo[:10]} abaixo do {MIN_AGE_HEADER}={minima} que o "
+            f"proprio cabecalho declara."
+        )
+
+    weights_path = os.path.join(directory, POPULATION_WEIGHTS_FILE)
+    allocation = weights.get(ALLOCATION_HEADER)
+    if not isinstance(allocation, dict) or not allocation.get(ALLOCATION_ROWS):
+        raise ReferenceError(
+            f"{weights_path}: sem '{ALLOCATION_HEADER}.{ALLOCATION_ROWS}' no cabecalho. E de "
+            f"la que sai quantos clientes cada armazem tem quando --count e omitido."
+        )
 
 
 def load(directory: str) -> Reference:
@@ -190,4 +279,5 @@ def load(directory: str) -> Reference:
     _require_fields(
         os.path.join(directory, AGE_DISTRIBUTION_FILE), ages["rows"], AGE_FIELDS
     )
+    _require_customer_scope(directory, weights, ages)
     return Reference(directory, candidates, weights, ages)

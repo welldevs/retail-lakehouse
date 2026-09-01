@@ -155,19 +155,21 @@ não efeito colateral de pipeline.
 │   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
 │   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
 │   │   ├── order_premises_seed.csv          # premissas do gerador de pedidos, TODAS `synthetic`
+│   │   ├── customer_premises_seed.csv       # quem EXISTE: idade mínima, denominador, alocação
 │   │   ├── ine_municipality_codes_seed.csv  # nome (Tempus3) -> código de município, 08/28/41/46
 │   │   └── ine_ambiguous_series_seed.csv    # série -> código oficial, para nomes homônimos na Espanha
 │   ├── dbt/macros/                     # generate_schema_name: GOLD/MART absolutos, sem prefixo
-│   ├── dbt/models/silver/              # target dev (duckdb) — 21 modelos
+│   ├── dbt/models/silver/              # target dev (duckdb) — 22 modelos
 │   │   ├── warehouse_province_map.sql   # passagem do seed para o object storage
 │   │   ├── warehouse_service_area.sql   # idem, para a área de atendimento
 │   │   ├── order_premises.sql           # idem, para as premissas — atravessa até o warehouse
+│   │   ├── customer_premises.sql        # idem, para as premissas de CADASTRO (outro domínio)
 │   │   ├── mercadona/                   # 4 modelos, grão por wh
 │   │   ├── ine_population/              # série de população por província E por município
 │   │   ├── ine_callejero/               # seções, núcleos, ruas — geografia oficial
 │   │   ├── simulated_oltp/              # clientes sintéticos + manifesto com a linhagem
 │   │   └── simulated_orders/            # o fold do log: evento, pedido, linha, manifesto
-│   ├── dbt/models/warehouse/           # target snowflake — 21 modelos, ligados por source()
+│   ├── dbt/models/warehouse/           # target snowflake — 22 modelos, ligados por source()
 │   │   ├── sources.yml                  # as 13 tabelas STAGE: a fronteira, declarada
 │   │   ├── gold/                        # 6 DIM + 8 FACT, SCD2 derivado da história
 │   │   └── mart/                        # 7 marts, grão no cabeçalho de cada um
@@ -391,21 +393,50 @@ make oltp-refresh-all          # mad1, bcn1, svq1, vlc1 (ou oltp-refresh WH=mad1
 `customers.json` byte a byte idêntico — inclusive sob `PYTHONHASHSEED` diferente, o que é
 verificado em subprocesso. `oltp-validate` não confere só checksum: relê a referência e
 prova, cliente a cliente, que o endereço bate com a linha de origem e que o município
-está na AUF certa. Base atual: **20.000 clientes** (5.000 por armazém), **5.000/5.000
-coerentes em cada um**, cobrindo 125 dos 128 municípios da AUF de `mad1`.
+está na AUF certa.
+
+**O tamanho da base não é digitado, é derivado.** Cada armazém recebe a própria população
+adulta vezes uma taxa de penetração; o total é consequência, não cota repartida:
+
+| wh | pop. servida | share adulto (INE 31304) | **clientes** |
+|---|---:|---:|---:|
+| mad1 | 7.104.034 | 82,393 % | **128.771** |
+| bcn1 | 5.277.804 | 82,247 % | **95.498** |
+| vlc1 | 1.885.230 | 82,689 % | **34.295** |
+| svq1 | 1.585.157 | 81,041 % | **28.262** |
+| | **15.852.225** | | **286.826** |
+
+Até a Fase 5 eram **5.000 por armazém** — o mesmo número para AUFs que diferem por 4,6× em
+população. Nada reprovava; a densidade simplesmente não existia, e densidade não aparece em
+nenhum total. Hoje `assert_customer_base_follows_the_declared_population_allocation` refaz a
+conta a partir do INE e compara.
+
+A taxa é **2,2 %**, a participação do e-commerce no volume de alimentação (MAPA 2025, seção
+3). Ela **não** é copiada para o domínio do cadastro: `customer_premises_seed` aponta para
+`demand_profile.channel_reference_pct`, onde foi medida. Duas premissas declaradas — e
+nenhuma medida — transformam um share de volume num share de gente: que o comprador online
+consome como a média, e que estes quatro armazéns modelam o **canal inteiro** da AUF e não um
+operador dentro dele.
+
+**Nenhum titular de conta é menor de idade**, em três camadas: a plataforma entrega a
+distribuição etária já truncada em 18 e renormalizada, a Source recusa uma referência cujas
+linhas contradigam o próprio cabeçalho, e `validate` recalcula a idade de cada cliente
+pousado. Ver a Fase 6 abaixo para o achado que criou essas três camadas.
 
 **Crescer a base é aditivo.** O gerador consome uma única `random.Random(seed)` em ordem
 fixa e nada antes do laço depende de `count`, então os primeiros N clientes de uma geração
 maior são byte a byte os mesmos de antes — verificado ponta a ponta (200 → 5.000 preservou
-os 200, sha256 conferidos):
+os 200, sha256 conferidos). `--count` continua existindo como **override explícito**, e o
+manifesto registra `count_source: "cli"` quando ele é usado:
 
 ```bash
-make oltp-refresh-all OLTP_CUSTOMERS_PER_WH=20000 OLTP_OVERWRITE=1
+make oltp-refresh-all OLTP_CUSTOMERS_PER_WH=1000 OLTP_OVERWRITE=1
 ```
 
 Vale com a **mesma seed, mesma referência e mesma data**. Trocar a data preserva a idade e
-desloca `birth_year`; trocar a seed troca as pessoas por trás dos mesmos ids. O manifesto
-registra as duas coisas em `history`, e é por isso que `DIM_CUSTOMER` é SCD2.
+desloca `birth_year`; trocar a seed troca as pessoas por trás dos mesmos ids — e trocar
+`min_customer_age`, a taxa ou a regra de alocação também. O manifesto registra as quatro
+coisas em `history`, e é por isso que `DIM_CUSTOMER` é SCD2.
 
 Modelo Silver (`silver_customer`, `silver_oltp_manifest`) e DAG entraram na Fase 2. Ver
 [CONTRACT.md](sources/simulated-oltp-source/CONTRACT.md) e
@@ -916,6 +947,10 @@ zero. Não é defeito da Source de OLTP: o contrato dela declara que a idade vem
 por construção assim que ela passou a governar a demanda. `min_buyer_age = 18` mora em
 `order_premises_seed.csv`; a base de clientes não foi tocada.
 
+> **Corrigido na origem na Fase 6.** Tratar isso como regra de *pedido* estava no domínio
+> errado: um cadastro não é um censo, e o titular de conta recém-nascido continuava
+> existindo. Ver [Densidade real da base de clientes](#densidade-real-da-base-de-clientes).
+
 ### Duas pontes, três recusas
 
 Usados: **idade** (`birth_year`, do INE 31304) e **comunidade autónoma** (`province_code`, do
@@ -954,12 +989,96 @@ E os quatro armazéns deixaram de ser cópias: **bcn1 coloca 1.436 pedidos contr
 mad1**, contra os 22,7% que o consumo per cápita das duas comunidades prevê. O índice é
 renormalizado sobre as comunidades servidas, então o total da janela não se move.
 
+> Estes números são o estado **desta** fase. Na Fase 6 a base deixou de ser igual entre
+> armazéns e a ordem se inverteu: a população de Madrid passou a dominar o índice de
+> intensidade da Cataluña.
+
 ### O que o informe não sustenta, e ficou registrado
 
 Sazonalidade mensal por categoria **não é extraível**: os gráficos mensais são imagens. O
 perfil sazonal é neutro por ausência de evidência, aplica-se à taxa de pedidos, e tem um par
 de testes que prova que o mecanismo funciona *e* que o perfil entregue está neutro. O gatilho
 para propor um perfil é a janela cobrir novembro e dezembro.
+
+## Densidade real da base de clientes
+
+A Fase 5 encontrou os menores de idade e os tratou **no domínio errado**: filtrou na hora do
+pedido e deixou o cadastro intacto, com o argumento de que `silver_customer` era uma projeção
+fiel da população residente. O argumento estava certo sobre o que a Source entrega e errado
+sobre o que um cadastro é — **uma base de clientes não é um censo**, e o titular de conta
+recém-nascido continuava existindo.
+
+Ao abrir isso, apareceu o segundo defeito, que ninguém tinha procurado: **a base era de 5.000
+clientes por armazém**, o mesmo número para AUFs que diferem por 4,6× em população. Nada
+reprovava. Os endereços eram reais, os totais fechavam, o manifesto batia. A única coisa
+errada era que a densidade não existia — e densidade não aparece em nenhum total.
+
+### O que passou a ser derivado
+
+```
+população municipal observada (INE 29005)
+  × share adulto da província (INE 31304, idades >= 18)   <- medido ANTES da truncagem
+  × taxa de penetração de 2,2 %                           <- MAPA 2025, seção 3
+  = clientes daquele armazém        (o total é consequência, não cota)
+```
+
+| | ANTES | DEPOIS |
+|---|---:|---:|
+| clientes | 20.000 | **286.826** |
+| menores de idade | 3.602 (**18,01%**) | **0** |
+| faixa de idade | 0 … 100 | 18 … 100 |
+| base elegível a pedir | 16.398 | 286.826 |
+| mad1 / svq1 | 1,00× | **4,56×** |
+
+`min_buyer_age` **continua existindo** e passou a descartar zero clientes. Isso é o invariante,
+não a redundância: se algum dia voltar a descartar alguém, uma das duas premissas se moveu sem
+a outra.
+
+### A prova que a taxa cria — e que não foi ajustada
+
+Se a base é 2,2 % das pessoas porque 2,2 % do volume de alimentação é online, então o modelo
+deveria produzir 2,2 % do consumo doméstico daquelas mesmas AUFs. Isso é conferível contra o
+próprio informe, e **nada foi calibrado para fechar**: a taxa entrou nesta fase, e
+`daily_order_rate` com o tamanho da cesta entraram na Fase 3, escolhidos sem nenhuma relação
+com ela.
+
+| escopo alimentar, janela de 4 dias | canal esperado | modelo | razão |
+|---|---:|---:|---:|
+| kg ou litro | 2.134.114 | 1.944.027 | **0,91×** |
+| receita (EUR) | 7.203.504 | 6.793.690 | **0,94×** |
+
+`NO_FOOD` fica fora do numerador: o per cápita do informe é de alimentação e bebidas e não
+cobre drogaria. A distância que sobra **não deve ser fechada** mexendo em `daily_order_rate` —
+nenhuma fonte deste repositório mede cadência de compra nem cesta online, então não há
+critério para decidir qual dos lados está errado. Enquanto for assim é uma **observação**, não
+um alvo.
+
+### O efeito colateral que inverteu a Fase 5
+
+| wh | clientes | pedidos na janela | índice regional |
+|---|---:|---:|---:|
+| mad1 | 128.771 | **37.332** | 0,89 |
+| bcn1 | 95.498 | 33.976 | 1,10 |
+| vlc1 | 34.295 | 11.656 | 1,05 |
+| svq1 | 28.262 | 8.824 | 0,96 |
+
+Na Fase 5, bcn1 liderava pelo consumo per cápita da Cataluña (620,82 contra 505,86 kg-L de
+Madrid). Agora a **população** de Madrid domina o índice e a ordem se inverte. É medição, não
+escolha: os dois efeitos existem e o maior venceu.
+
+O mix agregado continuou no alvo do MAPA — erro médio de **0,070 ponto**, contra 0,075 da Fase
+5 — e o IPF reconvergiu em 6 iterações apesar de a distribuição de coortes ter mudado (`LT35`
+deixou de conter crianças).
+
+### Onde a premissa mora
+
+| Seed | Papel |
+|---|---|
+| `customer_premises_seed.csv` | `min_customer_age`, o **ponteiro** para a taxa, o denominador populacional e a regra de alocação |
+
+Quatro linhas, todas `synthetic`. A única coisa observada em jogo — os 2,2 % — **não** está
+aqui: `customer_penetration_source` aponta para `demand_profile.channel_reference_pct`, onde
+foi medida. Copiar o número criaria dois lugares para mudá-lo.
 
 ## Warehouse analítico (Snowflake)
 
@@ -1151,10 +1270,10 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 992 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                    + 125 OLTP simulado + 148 pedidos + 343 plataforma
-make silver        # dbt build no DuckDB: 21 modelos + 9 seeds + 298 testes de dados
-make warehouse     # dbt build no Snowflake: 21 modelos + 149 testes de dados
+make test          # 1.055 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                      + 140 OLTP simulado + 163 pedidos + 376 plataforma
+make silver        # dbt build no DuckDB: 22 modelos + 14 seeds + 318 testes de dados
+make warehouse     # dbt build no Snowflake: 22 modelos + 157 testes de dados
 ```
 
 `make test` e `make silver` não leem nenhuma variável do Snowflake — é o que mantém a

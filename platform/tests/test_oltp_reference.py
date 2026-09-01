@@ -48,6 +48,22 @@ wh1,46,Valencia/València,250,València
 wh2,08,Barcelona,019,Barcelona
 """
 
+# As quatro premissas do cadastro. `min_customer_age` corta a piramide e
+# `customer_penetration_source` APONTA para o outro seed — o 2,2 nao aparece aqui, e um teste
+# abaixo prova que ele nao aparece.
+CUSTOMER_PREMISES_CSV = """premise_key,value,unit,label,rationale
+min_customer_age,18,years,synthetic,"Capacidade legal para contratar."
+customer_penetration_source,demand_profile.channel_reference_pct,reference,synthetic,"Ponteiro, nao copia."
+customer_population_basis,adult_resident_population,rule,synthetic,"O denominador e adulto."
+customer_allocation,per_warehouse_population,rule,synthetic,"O total e consequencia."
+"""
+
+# So a linha que este export le. O seed real tem 17 parametros; repetir todos aqui faria a
+# fixture envelhecer junto do modelo de demanda sem nenhum ganho.
+DEMAND_PROFILE_CSV = """param_key,value,unit,label,rationale
+channel_reference_pct,2.2,percent,observed,"E-commerce no volume de alimentacao, MAPA sec.3."
+"""
+
 SCHEMA = """
 create table silver_callejero_tramos (
     ingestion_date varchar, is_latest_ingestion boolean, section_code varchar, province_code varchar,
@@ -105,6 +121,8 @@ class OltpReferenceTestCase(unittest.TestCase):
         os.makedirs(self.seeds)
         self._seed("warehouse_service_area_seed.csv", SERVICE_AREA_CSV)
         self._seed("warehouse_province_map_seed.csv", PROVINCE_MAP_CSV)
+        self._seed("customer_premises_seed.csv", CUSTOMER_PREMISES_CSV)
+        self._seed("demand_profile_seed.csv", DEMAND_PROFILE_CSV)
 
         self.connection = duckdb.connect(":memory:")
         self.addCleanup(self.connection.close)
@@ -221,6 +239,206 @@ class OltpReferenceTestCase(unittest.TestCase):
         return build(self.connection, seeds_dir=self.seeds)
 
 
+class AlocacaoDeClientesTest(OltpReferenceTestCase):
+    """Quantos clientes cada armazem tem, e de onde esse numero vem.
+
+    Ate a Fase 5 eram 5.000 por armazem, digitados na linha de comando — o mesmo numero para
+    AUFs que diferem por 4,6x em populacao. Nada reprovava: os totais fechavam, os enderecos
+    eram reais, o manifesto batia. A unica coisa errada era que a densidade nao existia, e
+    densidade nao aparece em nenhum total.
+    """
+
+    # Fixture: wh1 = Torrent 90.928 + Valencia 800.215 = 891.143 habitantes; wh2 = Barcelona
+    # 1.660.122. A piramide tem 101 idades de valor igual, entao o share adulto e 83/101.
+    ADULT_SHARE = 83 / 101
+
+    def test_alocacao_deriva_da_populacao_adulta_por_armazem(self):
+        alocacao = self.build()["weights"]["customer_allocation"]
+        por_wh = {linha["wh"]: linha for linha in alocacao["by_warehouse"]}
+
+        self.assertEqual(por_wh["wh1"]["population_total"], 891143)
+        self.assertEqual(por_wh["wh2"]["population_total"], 1660122)
+        # 891.143 x 83/101 x 2,2% = 16.111,16 -> 16.111
+        self.assertEqual(por_wh["wh1"]["customers"], 16111)
+        # 1.660.122 x 83/101 x 2,2% = 30.013,69 -> 30.014
+        self.assertEqual(por_wh["wh2"]["customers"], 30014)
+        self.assertEqual(alocacao["total_customers"], 16111 + 30014)
+
+    def test_alocar_por_populacao_total_daria_outro_numero(self):
+        """O denominador ADULTO nao e decorativo: com o total, wh1 teria 1.494 a mais.
+
+        Sem este caso, trocar `adult_population` por `population_total` no export passaria em
+        todos os outros testes — as proporcoes entre armazens quase nao mudam, e o total
+        continuaria plausivel.
+        """
+        alocacao = self.build()["weights"]["customer_allocation"]
+        por_wh = {linha["wh"]: linha for linha in alocacao["by_warehouse"]}
+        pela_populacao_total = round(891143 * 0.022)
+        self.assertEqual(pela_populacao_total, 19605)
+        self.assertNotEqual(por_wh["wh1"]["customers"], pela_populacao_total)
+
+    def test_o_total_e_consequencia_e_nao_cota_repartida(self):
+        """Somar as partes tem de dar o total, e nenhuma parte pode ser um resto.
+
+        Com cota repartida, o ultimo armazem receberia `total - soma(os outros)` e absorveria
+        todo o arredondamento. Aqui cada armazem sai da propria populacao e o total e a soma.
+        """
+        alocacao = self.build()["weights"]["customer_allocation"]
+        self.assertEqual(
+            alocacao["total_customers"],
+            sum(linha["customers"] for linha in alocacao["by_warehouse"]),
+        )
+        self.assertEqual(
+            alocacao["served_population"],
+            sum(linha["population_total"] for linha in alocacao["by_warehouse"]),
+        )
+
+    def test_a_alocacao_e_uma_lista_ordenada_e_estavel(self):
+        """LISTA, e nao dict — e o `sorted()` e a segunda tranca, nao a primeira.
+
+        Honestidade sobre o que este caso prova e o que ele nao prova: `_population_sql` ja
+        devolve as linhas com `order by a.wh`, entao remover o `sorted()` do modulo NAO faria
+        este caso reprovar. O que ele protege de verdade e a forma — uma lista, que sobrevive
+        ao JSON com a ordem intacta — contra um dict, cuja iteracao do outro lado da fronteira
+        dependeria de ordem de insercao. O `sorted()` continua no modulo porque a garantia nao
+        deve depender de um `order by` numa consulta que pode ser reescrita.
+        """
+        primeira = self.build()["weights"]["customer_allocation"]
+        segunda = self.build()["weights"]["customer_allocation"]
+        self.assertIsInstance(primeira["by_warehouse"], list)
+        nomes = [linha["wh"] for linha in primeira["by_warehouse"]]
+        self.assertEqual(nomes, sorted(nomes))
+        self.assertEqual(
+            json.dumps(primeira, sort_keys=True), json.dumps(segunda, sort_keys=True)
+        )
+
+    def test_a_alocacao_nao_fica_na_beira_do_arredondamento(self):
+        """A margem que faz o arredondamento nao ser um cara-ou-coroa.
+
+        MEDIDO no Lakehouse real: duas execucoes de `export-oltp-reference` produzem
+        `adult_share` diferentes no ULTIMO BIT do double — 0,8224668719886548 contra
+        0,8224668719886545 — porque a agregacao paralela do DuckDB nao fixa a ordem da soma
+        de ponto flutuante. Isso nao e defeito deste modulo e nao propaga: os quatro alvos
+        saem identicos, e a base gerada a partir dos dois exports tem o mesmo sha256.
+
+        Mas so nao propaga porque nenhum dos quatro produtos cai perto de um `.5`. Se um dia
+        cair, o alvo passa a alternar entre dois inteiros de export para export, a base muda
+        de tamanho sem que nada tenha sido decidido, e o teste dbt
+        `assert_customer_base_follows_the_declared_population_allocation` — que tolera 1
+        cliente exatamente por causa disto — comeca a passar por sorte. Este caso e o aviso.
+
+        A margem mais apertada hoje e a de mad1: 128.770,524404, a 0,024 de um empate. Em
+        populacao isso e cerca de 135 residentes — se Madrid crescer ou encolher esse tanto na
+        proxima 29005, o alvo passa a alternar entre 128.770 e 128.771.
+        """
+        alocacao = self.build()["weights"]["customer_allocation"]
+        taxa = alocacao["penetration_pct"]
+        for linha in alocacao["by_warehouse"]:
+            exato = linha["adult_population"] * taxa / 100.0
+            distancia = abs((exato % 1.0) - 0.5)
+            self.assertGreater(
+                distancia, 1e-6,
+                f"{linha['wh']}: {exato} fica a {distancia} de um empate de arredondamento; "
+                f"o alvo passaria a alternar entre exports",
+            )
+
+    def test_a_taxa_vem_do_seed_de_demanda_e_nao_esta_repetida(self):
+        """Mudar `channel_reference_pct` tem de mudar a base — e o 2,2 nao pode estar em
+        customer_premises_seed, ou existiriam dois lugares para muda-lo."""
+        conteudo = open(
+            os.path.join(self.seeds, "customer_premises_seed.csv"), encoding="utf-8"
+        ).read()
+        self.assertNotIn("2.2", conteudo)
+
+        antes = self.build()["weights"]["customer_allocation"]["total_customers"]
+        self._seed(
+            "demand_profile_seed.csv",
+            DEMAND_PROFILE_CSV.replace("channel_reference_pct,2.2", "channel_reference_pct,4.4"),
+        )
+        depois = self.build()["weights"]["customer_allocation"]["total_customers"]
+        self.assertAlmostEqual(depois / antes, 2.0, places=3)
+
+    def test_ponteiro_para_outro_lugar_reprova(self):
+        self._seed(
+            "customer_premises_seed.csv",
+            CUSTOMER_PREMISES_CSV.replace(
+                "demand_profile.channel_reference_pct", "algum_outro_seed.qualquer_coisa"
+            ),
+        )
+        with self.assertRaises(ReferenceExportError) as erro:
+            self.build()
+        self.assertIn("aponta para", str(erro.exception))
+
+    def test_premissa_ausente_reprova(self):
+        self._seed(
+            "customer_premises_seed.csv",
+            "\n".join(
+                linha for linha in CUSTOMER_PREMISES_CSV.splitlines()
+                if not linha.startswith("min_customer_age")
+            ) + "\n",
+        )
+        with self.assertRaises(ReferenceExportError) as erro:
+            self.build()
+        self.assertIn("min_customer_age", str(erro.exception))
+
+    def test_seed_de_premissas_ausente_reprova_com_mensagem_acionavel(self):
+        os.remove(os.path.join(self.seeds, "customer_premises_seed.csv"))
+        with self.assertRaises(ReferenceExportError) as erro:
+            self.build()
+        self.assertIn("customer_premises_seed.csv", str(erro.exception))
+
+
+class IdadeAdultaTest(OltpReferenceTestCase):
+    """A distribuicao entregue e a do CADASTRO, nao a da populacao."""
+
+    def test_a_distribuicao_comeca_no_minimo_declarado(self):
+        ages = self.build()["ages"]
+        self.assertEqual(ages["min_customer_age"], 18)
+        self.assertEqual(min(int(row["age"]) for row in ages["rows"]), 18)
+        self.assertEqual(max(int(row["age"]) for row in ages["rows"]), 100)
+
+    def test_a_distribuicao_truncada_e_renormalizada_para_somar_um(self):
+        """Truncar sem renormalizar entregaria um vetor somando ~0,82.
+
+        E o modo de falha silencioso desta mudanca: `rng.choices` com `cum_weights` nao
+        reclama de um vetor que nao soma 1 — ele simplesmente nunca sorteia a cauda que falta.
+        """
+        rows = self.build()["ages"]["rows"]
+        por_provincia = {}
+        for row in rows:
+            por_provincia.setdefault(row["province_code"], 0.0)
+            por_provincia[row["province_code"]] += float(row["proportion"])
+        self.assertEqual(sorted(por_provincia), ["08", "46"])
+        for provincia, soma in por_provincia.items():
+            self.assertAlmostEqual(soma, 1.0, places=9, msg=f"provincia {provincia}")
+
+    def test_o_share_adulto_e_medido_antes_da_truncagem(self):
+        """Medir depois do corte devolveria 100% em toda provincia.
+
+        E um bug que nao reprovaria nada sozinho: 100% e um numero plausivel, e o efeito seria
+        dimensionar a base inteira pela populacao TOTAL como se ela fosse adulta.
+        """
+        shares = self.build()["ages"]["adult_share_by_province"]
+        self.assertEqual([s["province_code"] for s in shares], ["08", "46"])
+        for share in shares:
+            self.assertAlmostEqual(share["adult_share"], 83 / 101, places=9)
+            self.assertLess(share["adult_share"], 1.0)
+            self.assertEqual(share["population_value"], 101 * 100.0)
+            self.assertEqual(share["adult_population_value"], 83 * 100.0)
+
+    def test_piramide_ja_truncada_na_fonte_reprova(self):
+        """Se o Silver so tivesse adultos, o share sairia 1,0 e a base dobraria de tamanho
+        sem que nenhum total parecesse errado."""
+        self.connection.execute(
+            "delete from silver_ine_population_series where "
+            "cast(regexp_extract(age_label, '^(\\d+)', 1) as integer) < 18 "
+            "and age_label not in ('Total', '85 y más años')"
+        )
+        with self.assertRaises(ReferenceExportError) as erro:
+            self.build()
+        self.assertIn("share adulto fora de", str(erro.exception))
+
+
 class EnderecoTest(OltpReferenceTestCase):
     def test_o_nome_do_municipio_resolve_mesmo_quando_o_tramo_pendura_em_nucleo(self):
         """O bug de Valencia: o join por unit_code devolveria 0 linhas para o municipio."""
@@ -331,17 +549,28 @@ class IdadeTest(OltpReferenceTestCase):
         return self.build()["ages"]
 
     def test_os_agregados_sobrepostos_sao_excluidos(self):
-        """Sem isto a piramide sai 2,03x inflada, e nenhum teste da Source pegaria."""
+        """Sem isto a piramide sai 2,03x inflada, e nenhum teste da Source pegaria.
+
+        83 e nao 101 desde que o arquivo passou a entregar a distribuicao do CADASTRO: as
+        idades de 18 a 100 sao o que sobra das 101 simples depois do corte de
+        min_customer_age. Os dois rotulos agregados continuam fora pelo motivo de sempre, que
+        e outro — eles se SOBREPOEM as idades simples, nao sao um recorte delas.
+        """
         rows = self.payload()["rows"]
         por_provincia = [r for r in rows if r["province_code"] == "46"]
-        self.assertEqual(len(por_provincia), 101, "entraram rotulos alem das idades simples")
+        self.assertEqual(len(por_provincia), 83, "entraram rotulos alem das idades simples")
         self.assertEqual(max(r["age"] for r in por_provincia), 100)
 
     def test_o_balde_terminal_de_100_anos_permanece(self):
-        """'100 y mas anos' e idade simples legitima; so 'Total' e '85 y mas anos' saem."""
+        """'100 y mas anos' e idade simples legitima; so 'Total' e '85 y mas anos' saem.
+
+        O corte de idade minima nao pode virar desculpa para perder a cauda: um bug de
+        intervalo que cortasse tambem o topo passaria despercebido num teste que so olha o
+        piso, e o cadastro ficaria sem centenarios sem ninguem notar.
+        """
         idades = {r["age"] for r in self.payload()["rows"] if r["province_code"] == "46"}
         self.assertIn(100, idades)
-        self.assertEqual(idades, set(range(0, 101)))
+        self.assertEqual(idades, set(range(18, 101)))
 
     def test_proporcoes_somam_um_por_provincia(self):
         rows = self.payload()["rows"]

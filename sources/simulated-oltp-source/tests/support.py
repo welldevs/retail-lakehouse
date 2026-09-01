@@ -97,9 +97,42 @@ AGES = (
     + [{"province_code": "02", "age": age, "proportion": 0.5} for age in (40, 41)]
 )
 
+# A distribuicao entregue e a do CADASTRO: ja truncada e renormalizada pela plataforma. Todas
+# as idades da fixture estao acima do minimo de proposito — quem quiser exercitar a recusa
+# usa AGES_COM_MENOR abaixo, e ai a recusa e o comportamento em teste, nao um acidente.
+MIN_CUSTOMER_AGE = 18
+AGES_COM_MENOR = AGES + [{"province_code": "01", "age": 7, "proportion": 0.0}]
 
-def write_reference(directory: str, candidates=None, weights=None, ages=None) -> str:
-    """Escreve os tres arquivos de referencia. Devolve o diretorio."""
+# Alvos DIFERENTES entre si e diferentes do count padrao da fixture (50): so assim um teste
+# distingue "leu o alvo da referencia" de "usou o numero da linha de comando".
+CUSTOMER_TARGETS = {WH_A: 37, WH_B: 11}
+
+ALLOCATION = {
+    "rule": "per_warehouse_population",
+    "population_basis": "adult_resident_population",
+    "min_customer_age": MIN_CUSTOMER_AGE,
+    "penetration_pct": 2.2,
+    "penetration_source": "demand_profile.channel_reference_pct",
+    "served_population": 10500,
+    "served_adult_population": 8631.0,
+    "total_customers": 48,
+    "by_warehouse": [
+        {"wh": WH_A, "population_total": 10000, "adult_population": 8220.0, "customers": 37},
+        {"wh": WH_B, "population_total": 500, "adult_population": 411.0, "customers": 11},
+    ],
+}
+
+
+def write_reference(
+    directory: str, candidates=None, weights=None, ages=None,
+    allocation=..., min_customer_age=...,
+) -> str:
+    """Escreve os tres arquivos de referencia. Devolve o diretorio.
+
+    `allocation` e `min_customer_age` usam `...` como ausencia em vez de `None`: `None` e um
+    valor legitimo que os testes precisam poder injetar para provar que a Source recusa uma
+    referencia de schema antigo.
+    """
     os.makedirs(directory, exist_ok=True)
     payloads = {
         "address_candidates.json": {
@@ -113,6 +146,7 @@ def write_reference(directory: str, candidates=None, weights=None, ages=None) ->
             "population_ingestion_date": "2026-08-26",
             "population_year": 2025,
             "population_reference_date": "2024-12-31",
+            "customer_allocation": ALLOCATION if allocation is ... else allocation,
             "rows": WEIGHTS if weights is None else weights,
         },
         "province_age_distribution.json": {
@@ -122,9 +156,18 @@ def write_reference(directory: str, candidates=None, weights=None, ages=None) ->
             "reference_date": "2022-06-30",
             "fk_periodo": 27,
             "excluded_age_labels": ["Total", "85 y más años"],
+            "min_customer_age": (
+                MIN_CUSTOMER_AGE if min_customer_age is ... else min_customer_age
+            ),
             "rows": AGES if ages is None else ages,
         },
     }
+    for payload in payloads.values():
+        # Chave AUSENTE e diferente de chave nula: e assim que uma referencia de schema antigo
+        # se parece, e e esse caso que a Source tem de recusar.
+        for chave in ("customer_allocation", "min_customer_age"):
+            if chave in payload and payload[chave] is None:
+                payload.pop(chave)
     for name, payload in payloads.items():
         with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)

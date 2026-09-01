@@ -275,9 +275,21 @@ def _cmd_export_oltp_reference(args) -> int:
     print(f"enderecos ........ {summary['address_candidates']} candidatos "
           f"({summary['orphan_tramos_excluded']} tramo(s) orfao(s) excluido(s))")
     print(f"municipios ....... {summary['municipalities']}")
+    alocacao = summary["customer_allocation"]
     print(f"idades ........... {summary['age_rows']} linhas "
-          f"(year={summary['age_year']} fk_periodo={summary['age_fk_periodo']})")
+          f"(year={summary['age_year']} fk_periodo={summary['age_fk_periodo']}, "
+          f"idade >= {alocacao['min_customer_age']} renormalizada)")
     print(f"populacao ........ year={summary['population_year']}")
+    print(f"alocacao ......... {alocacao['rule']} sobre "
+          f"{alocacao['population_basis']}, taxa {alocacao['penetration_pct']}% "
+          f"({alocacao['penetration_source']})")
+    print(f"  populacao ...... {alocacao['served_population']:,} servida, "
+          f"{alocacao['served_adult_population']:,.0f} adulta")
+    for linha in alocacao["by_warehouse"]:
+        print(f"  {linha['wh']} ........... {linha['customers']:,} clientes "
+              f"({linha['adult_population']:,.0f} adultos)")
+    print(f"  total .......... {alocacao['total_customers']:,} clientes "
+          f"(consequencia da populacao, nao cota repartida)")
     for name, size in sorted(summary["bytes"].items()):
         print(f"  {name} ... {size} bytes")
     print("OK: referencia exportada.")

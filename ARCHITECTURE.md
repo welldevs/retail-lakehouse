@@ -695,7 +695,8 @@ retornar sucesso.
 STAGE reconferido contagem a contagem (146.240 linhas na entrega da fase); **102 testes
 dbt** no target `snowflake`, 0 erros; **215** no target `dev`, inalterados. O fechamento cruza os três
 caminhos: soma de `MART_MARKET_COVERAGE.customers` = `DIM_CUSTOMER` vigente = base do
-STAGE = **20.000**. `DIM_PRODUCT` tem 4.962 versões para 4.959 produtos (3 com mais de uma
+STAGE = **20.000** *(o número desta fase; a Fase 6 redimensionou a base pela população e ele
+é 286.826 hoje — o que importa aqui é as três somas continuarem iguais entre si)*. `DIM_PRODUCT` tem 4.962 versões para 4.959 produtos (3 com mais de uma
 versão, 7 marcados como identidade ambígua). E a lacuna de 08-17 a 08-23 aparece como sete
 dias com zero em `DIM_DATE` — que é exatamente o que o calendário completo e o
 `FACT_INGESTION_RUN` existem para tornar visível.
@@ -2053,6 +2054,12 @@ A correção mora onde a pergunta mora: `min_buyer_age = 18` em `order_premises_
 premissa do **domínio de pedidos**. A base de clientes não foi tocada e continua sendo o que
 o contrato dela diz que é.
 
+> **Este parágrafo estava errado, e a Fase 6 o desfez.** "A correção mora onde a pergunta
+> mora" pressupõe que a pergunta era *quem pode comprar*. Era também *quem pode existir*, e
+> essa segunda pergunta ficou sem resposta: o titular de conta recém-nascido continuou no
+> cadastro, só impedido de comprar. Um cadastro não é um censo. Ver
+> [Densidade real da base de clientes (Fase 6)](#densidade-real-da-base-de-clientes-fase-6).
+
 ### Duas pontes, e três recusas
 
 | corte do MAPA | o cliente tem? | veredito |
@@ -2128,6 +2135,10 @@ mad1**, 22,1% a mais, contra os 22,7% que o consumo per cápita das duas comunid
 quatro comunidades servidas, então o **total** da janela não se move — o que muda é a
 repartição.
 
+> Isto vale enquanto as bases dos armazéns são iguais. A Fase 6 as dimensionou pela população
+> e a ordem se inverteu: com 128.771 clientes contra 95.498, mad1 passou a colocar mais
+> pedidos que bcn1 apesar do índice menor. Os dois efeitos continuam existindo; o maior venceu.
+
 E a condicional, que é o produto da fase:
 
 | grupo | LT35 % | GE65 % | × |
@@ -2157,6 +2168,187 @@ E a condicional, que é o produto da fase:
 - `assert_buyer_age_band_is_stable_across_the_window` pega a janela regerada pela metade, e
   aceita aniversário: exige que a transição seja para a faixa **seguinte** e para frente no
   tempo.
+
+## Densidade real da base de clientes (Fase 6)
+
+A Fase 5 tratou os menores de idade **no domínio errado**. O achado era certo, a medição era
+certa, e a correção respondia metade da pergunta: `min_buyer_age` impede que uma criança
+*compre*, e não que ela *exista* como titular de conta. O argumento que sustentava a escolha —
+"`silver_customer` é uma projeção fiel da população residente, e o contrato da Source diz
+exatamente isso" — também era certo, e é justamente por isso que ele enganou: **a fidelidade
+da projeção não é a propriedade em questão.** Uma base de clientes não é um censo.
+
+### O segundo defeito, que ninguém tinha procurado
+
+Ao abrir o cadastro, apareceu o que estava ao lado: **5.000 clientes por armazém**, um número
+igual para AUFs que diferem por **4,6×** em população (mad1 tem 7,10 milhões de habitantes na
+sua área de serviço; svq1 tem 1,59).
+
+Nada reprovava. Os 216.591 endereços eram reais e verificados cliente a cliente contra o
+Callejero; os totais fechavam; `assert_customer_reconciles_with_manifest` batia; o grão era
+único. A única coisa errada era que a **densidade não existia** — e densidade, ao contrário de
+soma, não aparece em nenhum total. Foi preciso um teste que refizesse a conta a partir do INE
+para que ela virasse uma falha visível.
+
+### O modelo
+
+```
+população municipal observada (INE 29005, year=2025, ref 2024-12-31)
+  × share adulto da província do município (INE 31304, idades >= min_customer_age)
+  × taxa de penetração
+  = clientes daquele armazém
+```
+
+Três decisões, cada uma com um motivo que não é estético:
+
+**A conta é por município, não por armazém.** Hoje cada armazém cai numa província só, então
+as duas formas dão o mesmo inteiro. Multiplicar a população inteira do armazém por um único
+share adulto *presumiria* isso; a forma por município continua certa se um armazém passar a
+cruzar província, e a outra passa a estar errada em silêncio.
+
+**O share adulto é medido ANTES da truncagem.** Medi-lo depois devolve 100% em toda província
+— um número plausível, que não reprovaria nada, e cujo efeito seria dimensionar a base inteira
+pela população total como se ela fosse adulta. As duas consultas compartilham o mesmo CTE da
+pirâmide inteira para que o numerador de uma nunca deixe de ser o mesmo universo do
+denominador da outra.
+
+**O denominador é adulto, e não total.** A base é de adultos; distribuí-la por população total
+daria peso a quem não pode ter cadastro. Medido: contra a alocação por população total, svq1
+perderia 29 clientes e mad1 ganharia 16 — uma diferença de 0,15%, mas o denominador certo
+custa o mesmo que o errado.
+
+**O total é consequência, não cota.** Com uma cota de 20.000 repartida, acrescentar um
+município à área de serviço *tiraria* clientes dos outros armazéns. Assim, ele acrescenta.
+
+### A taxa, e as duas premissas que ela carrega
+
+2,2 % é a participação do e-commerce no volume total de alimentação em 2025 (informe, seção 3).
+É o **único número observado** disponível para dimensionar uma base de clientes neste
+repositório, e ele já existia: `demand_profile_seed.channel_reference_pct`, rotulado
+`observed` desde a Fase 4.
+
+`customer_premises_seed` **aponta** para ele em vez de copiá-lo, e o export só sabe seguir esse
+ponteiro — um ponteiro arbitrário faria a base ser dimensionada por qualquer número de qualquer
+seed. O teste dbt confere o ponteiro e reprova se ele mudar de destino.
+
+Duas premissas transformam um share de volume num share de gente, e **nenhuma é medida**:
+
+1. **O comprador online consome como a média.** Sob ela, 2,2 % do volume ↔ 2,2 % das pessoas.
+2. **Estes quatro armazéns modelam o canal online inteiro da AUF**, não um operador dentro
+   dele. Aplicar participação de mercado de um operador exigiria uma fonte não ingerida aqui.
+
+### Três camadas contra o menor de idade, e por que três
+
+| camada | onde | o que pega |
+|---|---|---|
+| a distribuição entregue já é adulta | `oltp_reference._age_sql` | o gerador não *pode* sortear 7 anos |
+| a referência é desconfiada | `reference_data._require_customer_scope` | referência de schema antigo, e truncagem pela metade — cabeçalho dizendo 18 com uma criança nas linhas |
+| o dado pousado é reconferido | `validate._check_minimum_age` | qualquer coisa que tenha escapado às duas primeiras |
+
+A do meio é a que existe por experiência: o cabeçalho é a **promessa**, e uma promessa sem
+conferência é o que produziu os 18,01% na primeira vez.
+
+### O que a fase mudou, medido
+
+| | ANTES | DEPOIS |
+|---|---:|---:|
+| clientes | 20.000 | 286.826 |
+| menores de idade | 3.602 (18,01%) | **0** |
+| faixa de idade | 0 … 100 | 18 … 100 |
+| base elegível a pedir | 16.398 | 286.826 |
+| pedidos na janela de 4 dias | 5.248 | 91.788 |
+| eventos | 36.596 | 636.848 |
+| erro médio contra o alvo do MAPA | 0,075 pt | **0,070 pt** |
+
+O erro contra o benchmark **melhorou** sem que a calibração fosse tocada: o IPF reconvergiu em
+6 iterações sobre uma distribuição de coortes diferente — `LT35` deixou de conter crianças — e
+o agregado ficou onde estava.
+
+### A prova de fechamento que a taxa criou
+
+Dimensionar a base como 2,2 % das pessoas *porque* 2,2 % do volume é online cria uma obrigação
+que nenhuma fase anterior tinha: o modelo deveria então produzir 2,2 % do consumo doméstico
+daquelas mesmas AUFs. Isso é conferível contra o próprio informe.
+
+| escopo alimentar, janela de 4 dias | canal esperado | modelo | razão |
+|---|---:|---:|---:|
+| kg ou litro | 2.134.114 | 1.944.027 | 0,91× |
+| receita (EUR) | 7.203.504 | 6.793.690 | 0,94× |
+
+**Nada foi ajustado para isso fechar.** A taxa entrou nesta fase; `daily_order_rate`,
+`basket_lines_*` e `quantity_max` entraram na Fase 3, escolhidos sem nenhuma relação com ela e
+sem nenhuma fonte que os medisse. As duas metades se encontram nessa tabela pela primeira vez.
+
+`NO_FOOD` fica fora do numerador: o per cápita do informe é de alimentação e bebidas e não
+cobre drogaria — somá-lo compararia dois universos e inflaria a razão sem que nada estivesse
+errado. `SIN_BENCHMARK` fica, porque são grupos alimentares que o informe não detalha mas que
+pertencem ao mesmo universo que o per cápita mede.
+
+A distância que sobra **não deve ser fechada** mexendo em `daily_order_rate`: nenhuma fonte
+deste repositório mede cadência de compra nem cesta online, então não existe critério para
+decidir qual dos dois lados está errado. Enquanto for assim, a razão é uma **observação**, não
+um alvo. **Gatilho:** uma fonte que meça frequência de compra doméstica ou ticket médio por
+canal transforma essa linha num teste.
+
+### O efeito colateral que inverteu a fase anterior
+
+| wh | clientes | pedidos | índice regional |
+|---|---:|---:|---:|
+| mad1 | 128.771 | 37.332 | 0,89 |
+| bcn1 | 95.498 | 33.976 | 1,10 |
+| vlc1 | 34.295 | 11.656 | 1,05 |
+| svq1 | 28.262 | 8.824 | 0,96 |
+
+A Fase 5 tinha bcn1 na frente pelo consumo per cápita da Cataluña. Agora a população de Madrid
+domina, e a ordem se inverte. Os dois efeitos continuam existindo e o maior venceu — o que é
+medição, não escolha, e é o tipo de coisa que só aparece quando as duas dimensões passam a ser
+observadas ao mesmo tempo.
+
+### Uma não-determinação medida, e o aviso que ela virou
+
+Duas execuções de `export-oltp-reference` produzem `adult_share` diferentes **no último bit do
+double** — 0,8224668719886548 contra 0,8224668719886545 — porque a agregação paralela do DuckDB
+não fixa a ordem da soma de ponto flutuante. Não é defeito do módulo e **não propaga**: os
+quatro alvos saem idênticos, e a base gerada a partir de dois exports diferentes tem o mesmo
+`sha256`.
+
+Mas só não propaga porque nenhum dos quatro produtos cai perto de um `.5`. A margem mais
+apertada é a de mad1: **128.770,524404**, a 0,024 de um empate — cerca de 135 residentes. Se
+Madrid crescer ou encolher esse tanto na próxima 29005, o alvo passa a alternar entre 128.770 e
+128.771 de export para export, a base muda de tamanho sem que nada tenha sido decidido, e o
+teste dbt (que tolera 1 cliente **exatamente por causa disto**) começa a passar por sorte.
+`test_a_alocacao_nao_fica_na_beira_do_arredondamento` existe para avisar antes disso.
+
+### O que ficou verificável
+
+- `assert_no_customer_is_a_minor` varre **todas** as `ingestion_date`, e não só a corrente: os
+  pedidos fixam `customer_ingestion_date` e o export resolve a versão mais recente de cada
+  cliente, então filtrar por `is_latest_ingestion` deixaria a porta dos fundos aberta. Lê o
+  limiar do seed **e** guarda um piso de 18 — medido: com o limiar em zero, a primeira metade
+  passa.
+- `assert_customer_base_follows_the_declared_population_allocation` refaz a alocação a partir
+  de `silver_ine_population_by_municipality` × o share adulto de `silver_ine_population_series`
+  e compara. É o teste que uma regeração uniforme reprova, e ele também confere o **ponteiro**
+  da taxa.
+- `--count` virou opcional e `count_source` entrou no manifesto. Sem isso, uma base gerada com
+  override manual seria indistinguível de uma derivada da população.
+- Quatro condições **não-aditivas** declaradas no CONTRACT, não três: seed, `ingestion_date`,
+  `min_customer_age`, e a taxa/regra de alocação. As quatro trocam as pessoas por trás dos
+  mesmos `customer_id`.
+- Regenerar o cadastro **obriga** a regenerar os pedidos. Não é mudança de lógica de Orders —
+  `assert_buyer_age_band_matches_the_customer_birth_year` reprova, e foi ele quem apontou isso
+  durante a fase. Nenhum arquivo do domínio de pedidos foi alterado.
+- **O plano de stream foi levado de volta à convergência**, e não só o lakehouse: o OLTP
+  transacional foi resetado e reaplicado (636.848 eventos, uma transação cada), o outbox foi
+  drenado para o Kafka e o sink Postgres consumiu o tópico inteiro — **39.751 duplicatas
+  descartadas por `sequence_no`**, que são os eventos do universo anterior sendo corretamente
+  rejeitados como mais velhos. `make orders-reconcile` fecha nos três caminhos, 91.788 pedidos.
+- **O sink Iceberg foi deliberadamente NÃO drenado**, e o motivo está escrito na própria
+  página de evidência. A tabela já estava no estado final: `orders-rebuild-projection` é o
+  segundo escritor e escreve direto do RAW, sem passar pelo tópico. Drenar os 628.848 eventos
+  restantes levaria ~9 horas de commits copy-on-write para descartar todos como
+  iguais-ou-mais-velhos, sem mudar uma linha. O que prova a convergência é `orders-reconcile`,
+  não o offset de um consumidor — e a página diz isso, em vez de deixar o lag parecer defeito.
 
 ## Fora de escopo
 

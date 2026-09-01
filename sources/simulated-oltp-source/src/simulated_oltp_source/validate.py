@@ -90,6 +90,59 @@ def _check_house_number(customer: dict, candidate: dict) -> str | None:
     return None
 
 
+def _check_minimum_age(customers: list, reference, ingestion_date: str) -> list:
+    """Nenhum titular de conta abaixo da idade minima que a referencia declara.
+
+    FATAL, e nao aviso de distribuicao. O que isto pega ja aconteceu: em 2026-08-31, 18,01%
+    da base tinha menos de 18 anos — 3.602 de 20.000, com idade a partir de zero, incluindo
+    titular de conta recem-nascido. Enquanto a idade nao fazia nada aquilo era inofensivo; a
+    partir do momento em que ela governa a demanda, 18% da base entra na faixa mais jovem do
+    benchmark sendo crianca e nada quebra.
+
+    A idade e reconstruida do jeito que o gerador a construiu — `ano(ingestion_date) -
+    birth_year` — e nao do relogio. Comparar com a data de hoje faria esta validacao mudar de
+    resposta sozinha com o passar do tempo, e uma particao imutavel comecaria a reprovar sem
+    que nada nela tivesse mudado.
+
+    A idade minima vem da REFERENCIA, nunca de uma constante deste arquivo: quem decide quem
+    pode ter cadastro e a plataforma, em customer_premises_seed.
+    """
+    minima = reference.min_customer_age
+    if not isinstance(minima, int):
+        return [
+            "referencia sem min_customer_age: nao ha contra o que conferir a idade dos "
+            "clientes desta particao"
+        ]
+    ano = int(str(ingestion_date)[:4])
+    menores: list[str] = []
+    sem_idade: list[str] = []
+    for customer in customers:
+        nascimento = customer.get("birth_year")
+        if not isinstance(nascimento, int):
+            sem_idade.append(f"{customer.get('customer_id')}: birth_year={nascimento!r}")
+            continue
+        idade = ano - nascimento
+        if idade < minima:
+            menores.append(f"{customer.get('customer_id')}: {idade} anos")
+
+    problemas = []
+    if menores:
+        problemas.append(
+            f"{len(menores)} cliente(s) abaixo de min_customer_age={minima} em "
+            f"{ingestion_date}: {menores[:10]}"
+        )
+    # SEPARADO dos menores, e nao somado a eles: um birth_year nulo nao e uma idade baixa,
+    # e uma idade que nao existe. Juntar os dois numa contagem so faria o relatorio afirmar
+    # que ha N criancas quando talvez nao haja nenhuma, e o operador iria procurar a coisa
+    # errada. Fatal do mesmo jeito — idade inverificavel nao pode passar.
+    if sem_idade:
+        problemas.append(
+            f"{len(sem_idade)} cliente(s) sem birth_year inteiro, entao a idade nao e "
+            f"verificavel: {sem_idade[:10]}"
+        )
+    return problemas
+
+
 def _check_reference(customers: list, reference, warehouse: str) -> tuple[list, list, int]:
     """Coerencia geoespacial de cada cliente contra a referencia. O coracao da validacao.
 
@@ -331,6 +384,11 @@ def run(args) -> int:
             f"referencia de outro snapshot do Callejero: manifesto={declared_reference} "
             f"arquivo={reference.callejero_ingestion_date}"
         )
+
+    ingestion_date = (manifest.get("partition") or {}).get("ingestion_date")
+    errors.extend(_check_minimum_age(customers, reference, ingestion_date))
+    print(f"cadastro ......... idade minima {reference.min_customer_age} "
+          f"(alvo da referencia: {reference.customer_allocation.get('rule')})")
 
     geo_errors, geo_warnings, aprovados = _check_reference(customers, reference, warehouse)
     errors.extend(geo_errors[:20])

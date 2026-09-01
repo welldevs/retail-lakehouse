@@ -116,3 +116,60 @@ class LoadTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CadastroTest(unittest.TestCase):
+    """A referencia declara quem pode ter cadastro, e a Source desconfia dela.
+
+    O que estes casos impedem ja aconteceu: em 2026-08-31 a base tinha 18,01% de clientes com
+    menos de 18 anos — 3.602 de 20.000, com idade a partir de zero. Uma referencia de schema
+    antigo, sem `min_customer_age`, reproduziria exatamente aquilo, e nenhum total quebraria.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _ref(self, **overrides) -> str:
+        return support.write_reference(os.path.join(self.tmp.name, "ref"), **overrides)
+
+    def test_expoe_a_idade_minima_e_a_taxa_declaradas(self):
+        reference = load(self._ref())
+        self.assertEqual(reference.min_customer_age, support.MIN_CUSTOMER_AGE)
+        self.assertEqual(reference.allocation_rule, "per_warehouse_population")
+        self.assertEqual(reference.penetration_pct, 2.2)
+        self.assertEqual(
+            reference.penetration_source, "demand_profile.channel_reference_pct"
+        )
+
+    def test_alvo_de_clientes_por_armazem(self):
+        reference = load(self._ref())
+        for wh, alvo in support.CUSTOMER_TARGETS.items():
+            self.assertEqual(reference.customer_target(wh), alvo)
+
+    def test_alvo_de_armazem_desconhecido_reprova_em_vez_de_chutar(self):
+        reference = load(self._ref())
+        with self.assertRaises(ReferenceError) as erro:
+            reference.customer_target("nao-existe")
+        self.assertIn("sem alvo de clientes", str(erro.exception))
+
+    def test_referencia_sem_idade_minima_reprova(self):
+        """Schema antigo: gerado antes de o cadastro deixar de ser a populacao."""
+        with self.assertRaises(ReferenceError) as erro:
+            load(self._ref(min_customer_age=None))
+        self.assertIn("min_customer_age", str(erro.exception))
+
+    def test_idade_abaixo_do_minimo_declarado_reprova(self):
+        """O cabecalho e a promessa; as linhas sao a conferencia.
+
+        Uma truncagem pela metade — o cabecalho dizendo 18, uma crianca sobrevivendo nas
+        linhas — passaria no teste do cabecalho e produziria menores de novo.
+        """
+        with self.assertRaises(ReferenceError) as erro:
+            load(self._ref(ages=support.AGES_COM_MENOR))
+        self.assertIn("abaixo do min_customer_age", str(erro.exception))
+
+    def test_referencia_sem_alocacao_reprova(self):
+        with self.assertRaises(ReferenceError) as erro:
+            load(self._ref(allocation=None))
+        self.assertIn("customer_allocation", str(erro.exception))

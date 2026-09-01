@@ -23,9 +23,16 @@ nada antes do laco depende de `count`, entao os primeiros N clientes de uma gera
 sao byte a byte os mesmos de antes — verificado ponta a ponta (200 -> 5.000 preservou os
 200). Por isso `overwrite` existe como parametro em vez de ser proibido: aumentar
 `customers_per_wh` nao invalida os clientes que ja existem. Condicoes: mesma seed, mesma
-referencia, mesma ingestion_date. O manifesto guarda a seed e o count de cada execucao
-anterior em `history`, para que uma regeracao com OUTRA seed — que troca as pessoas por
-tras dos mesmos ids — deixe rastro.
+referencia, mesma ingestion_date, e o MESMO ESCOPO DE CADASTRO — desde a Fase 6, a idade
+minima, a taxa de penetracao e a regra de alocacao entram na lista, porque as tres trocam as
+pessoas por tras dos mesmos ids tanto quanto a seed troca. O manifesto guarda todas em
+`config`/`reference`, e o `history` acumula as execucoes anteriores, para que uma regeracao
+deixe rastro.
+
+O TAMANHO DA BASE, POREM, NAO VEM MAIS DAQUI por padrao. `customers_per_wh` e nulo, e nesse
+caso o `extract` usa o alvo que `export-oltp-reference` derivou da populacao adulta de cada
+armazem. Preencher o parametro e override explicito, e o manifesto registra
+`count_source: "cli"`.
 """
 
 from __future__ import annotations
@@ -154,9 +161,14 @@ def extract(warehouse: str, ds: str, params: dict, **_) -> None:
         "--out", DATA_ROOT,
         "--wh", warehouse,
         "--date", ds,
-        "--count", str(params["customers_per_wh"]),
         "--seed", str(params["seed"]),
     ]
+    # --count SO quando alguem pede explicitamente. Omitido, a Source usa o alvo que
+    # `export-oltp-reference` derivou da populacao adulta daquele armazem — ver a docstring
+    # do parametro. Passar um numero aqui por padrao era o que fazia os quatro armazens
+    # nascerem do mesmo tamanho.
+    if params.get("customers_per_wh"):
+        argv.extend(["--count", str(params["customers_per_wh"])])
     if overwrite:
         argv.append("--overwrite")
 
@@ -225,12 +237,16 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     params={
-        "customers_per_wh": 5000,
+        # NULO, e nao um numero. O tamanho da base e derivado da populacao adulta de cada
+        # armazem pela taxa de penetracao declarada em customer_premises_seed, e vem no
+        # cabecalho da referencia. Preencher aqui e OVERRIDE explicito, registrado como
+        # `count_source: cli` no manifesto — nao o caminho normal.
+        "customers_per_wh": None,
         "seed": 20260827,
         # Regerar deliberadamente. Aumentar customers_per_wh com a MESMA seed e a MESMA
         # data e aditivo: os clientes existentes sao preservados byte a byte. Trocar a
-        # seed troca as pessoas por tras dos mesmos ids — o manifesto registra as duas
-        # coisas em `history`.
+        # seed troca as pessoas por tras dos mesmos ids — e trocar a idade minima, a taxa
+        # ou a regra de alocacao tambem. O manifesto registra tudo isso em `history`.
         "overwrite": False,
     },
     default_args={

@@ -202,3 +202,80 @@ class FalhaTest(ExtractTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TamanhoDaBaseTest(ExtractTestCase):
+    """Quantos clientes a particao tem, e quem decidiu isso.
+
+    Ate a Fase 5 quem decidia era a linha de comando, e o Makefile passava 5.000 para os
+    quatro armazens — o mesmo numero para AUFs que diferem por 4,6x em populacao. Nada
+    reprovava, porque densidade nao aparece em nenhum total.
+    """
+
+    def test_count_ausente_usa_o_alvo_da_referencia(self):
+        self.assertEqual(self.extract(count=None), EXIT_OK)
+        self.assertEqual(len(self.customers()), support.CUSTOMER_TARGETS[support.WH_A])
+        self.assertEqual(self.manifest()["config"]["count_source"], "reference")
+
+    def test_cada_armazem_recebe_o_proprio_alvo(self):
+        """O alvo e por armazem, e nao um numero global repartido.
+
+        Sem este caso, ler o alvo do PRIMEIRO armazem e aplica-lo a todos passaria no teste
+        acima — e a base voltaria a ser uniforme por outro caminho.
+        """
+        for wh in (support.WH_A, support.WH_B):
+            self.assertEqual(self.extract(wh=wh, count=None), EXIT_OK)
+            self.assertEqual(len(self.customers(wh)), support.CUSTOMER_TARGETS[wh])
+        self.assertNotEqual(
+            support.CUSTOMER_TARGETS[support.WH_A], support.CUSTOMER_TARGETS[support.WH_B]
+        )
+
+    def test_count_explicito_vence_o_alvo_e_deixa_rastro(self):
+        """O override continua possivel — e fica registrado como override.
+
+        Sem `count_source` no manifesto, uma base gerada a mao seria indistinguivel de uma
+        derivada da populacao seis meses depois, e a unica forma de descobrir seria refazer
+        a conta.
+        """
+        self.assertEqual(self.extract(count=9), EXIT_OK)
+        self.assertEqual(len(self.customers()), 9)
+        config = self.manifest()["config"]
+        self.assertEqual(config["count"], 9)
+        self.assertEqual(config["count_source"], "cli")
+
+    def test_o_manifesto_registra_o_escopo_do_cadastro(self):
+        """As quatro linhas que tornam duas particoes distinguiveis.
+
+        Trocar a idade minima ou a taxa troca as PESSOAS por tras dos mesmos customer_id. Sem
+        estas linhas, as duas particoes teriam o mesmo aspecto e a mesma contagem.
+        """
+        self.assertEqual(self.extract(count=None), EXIT_OK)
+        referencia = self.manifest()["reference"]
+        self.assertEqual(referencia["min_customer_age"], support.MIN_CUSTOMER_AGE)
+        self.assertEqual(referencia["customer_target"], support.CUSTOMER_TARGETS[support.WH_A])
+        self.assertEqual(referencia["allocation_rule"], "per_warehouse_population")
+        self.assertEqual(referencia["penetration_pct"], 2.2)
+        self.assertEqual(
+            referencia["penetration_source"], "demand_profile.channel_reference_pct"
+        )
+
+    def test_nenhum_cliente_gerado_e_menor_de_idade(self):
+        """O achado que abriu a fase, no ponto onde ele nascia.
+
+        A fixture tem idades de 30 a 41, entao o piso e folgado — o que este caso prova nao e
+        que ninguem tem 17 anos, e que a idade sai da distribuicao ENTREGUE, que ja e a do
+        cadastro. Se o gerador voltasse a ler a piramide inteira, ele reprovaria.
+        """
+        self.assertEqual(self.extract(count=None), EXIT_OK)
+        ano = 2026
+        idades = [ano - c["birth_year"] for c in self.customers()]
+        self.assertTrue(idades)
+        self.assertGreaterEqual(min(idades), support.MIN_CUSTOMER_AGE)
+
+    def test_referencia_sem_alvo_reprova_em_vez_de_cair_num_default(self):
+        reference = support.write_reference(
+            os.path.join(self.tmp.name, "ref-sem-alvo"), allocation=None
+        )
+        args = support.extract_args(reference, self.out, count=None)
+        self.assertEqual(silent(run, args), EXIT_FATAL)
+

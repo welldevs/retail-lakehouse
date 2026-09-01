@@ -68,9 +68,9 @@ data_tests:
 
 seeds:
   retail_lakehouse:
-    # SO NO DUCKDB. Os treze seeds alimentam modelos do Silver (warehouse_service_area,
-    # warehouse_province_map), o de-para de homonimo do INE, as premissas de Orders e os
-    # oito da calibracao de demanda — tudo do lado do lakehouse.
+    # SO NO DUCKDB. Os catorze seeds alimentam modelos do Silver (warehouse_service_area,
+    # warehouse_province_map), o de-para de homonimo do INE, as premissas de Orders, as
+    # de Customer e os oito da calibracao de demanda — tudo do lado do lakehouse.
     # A arvore do warehouse le exclusivamente `source()` sobre o STAGE e nao referencia
     # seed nenhum. Sem este guard, `dbt build --target snowflake` carregava os quatro para
     # dentro do Snowflake, onde ficavam sem funcao e sem quem os mantivesse em dia.
@@ -114,6 +114,19 @@ seeds:
       +column_types:
         premise_key: varchar
         value: decimal(18,6)
+        unit: varchar
+        label: varchar
+        rationale: varchar
+
+    customer_premises_seed:
+      # `value` VARCHAR e nao DECIMAL, ao contrario de order_premises_seed: esta coluna
+      # mistura um inteiro (18) com tres nomes de regra ("adult_resident_population",
+      # "per_warehouse_population") e um ponteiro para outro seed. Tipar como numero exigiria
+      # dois arquivos, e separar a idade minima das regras que a acompanham seria pior — o
+      # mesmo criterio que ja mantem demand_profile_seed.value como varchar.
+      +column_types:
+        premise_key: varchar
+        value: varchar
         unit: varchar
         label: varchar
         rationale: varchar

@@ -123,6 +123,40 @@ group by 1
 order by 1
 """
 
+# A POPULACAO QUE CADA ARMAZEM SERVE, e a janela em dias. Sao os dois numeros que faltam para
+# fechar o canal: o modelo produziu tanto volume; o informe diz quanto uma populacao daquele
+# tamanho consome por ano; a taxa diz que fracao disso e online. Sem medi-los aqui eles
+# teriam de ser escritos a mao nesta pagina, que e o que ela existe para nao fazer.
+CHANNEL_SQL = """
+with servida as (
+    select
+        a.wh                        as wh,
+        max(p.province_code)        as province_code,
+        sum(p.population_value)     as population_total
+    from silver_ine_population_by_municipality p
+    join warehouse_service_area a
+      on p.province_code = a.province_code
+     and p.municipality_code = a.municipality_code
+    where p.is_latest_ingestion
+      and p.sex_label = 'Total'
+      and p.year = (
+            select max(year) from silver_ine_population_by_municipality
+            where is_latest_ingestion
+          )
+    group by 1
+),
+janela as (
+    select count(distinct ingestion_date) as dias,
+           min(ingestion_date)            as primeiro,
+           max(ingestion_date)            as ultimo
+    from silver_order
+)
+select s.wh, s.province_code, cast(s.population_total as bigint) as population_total,
+       j.dias, cast(j.primeiro as varchar) as primeiro, cast(j.ultimo as varchar) as ultimo
+from servida s cross join janela j
+order by s.wh
+"""
+
 
 class DemandCheckError(Exception):
     """Nao ha o que medir, ou o snapshot pedido nao existe."""
@@ -176,6 +210,40 @@ def measure(connection, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> di
             for key, valor in sorted(grupos.items())
         },
         **_measure_cohorts(connection),
+        **_measure_channel(connection),
+    }
+
+
+def _measure_channel(connection) -> dict:
+    """Populacao servida por armazem e o tamanho da janela.
+
+    TOLERANTE pelo mesmo motivo de `_measure_cohorts`, e nao por generosidade: os snapshots
+    ANTES congelados em fases anteriores nao tem este bloco, e eles precisam continuar
+    legiveis. A ausencia e registrada como `None` — vazio seria indistinguivel de "medi e a
+    populacao servida e zero".
+    """
+    try:
+        resultado = connection.execute(CHANNEL_SQL)
+    except Exception:  # noqa: BLE001 - modelo ausente numa janela anterior a esta fase
+        return {"channel": None}
+    colunas = [d[0] for d in resultado.description]
+    linhas = [dict(zip(colunas, linha)) for linha in resultado.fetchall()]
+    if not linhas:
+        return {"channel": None}
+    return {
+        "channel": {
+            "dias": int(linhas[0]["dias"]),
+            "primeiro_dia": linhas[0]["primeiro"],
+            "ultimo_dia": linhas[0]["ultimo"],
+            "warehouses": [
+                {
+                    "wh": row["wh"],
+                    "province_code": row["province_code"],
+                    "population_total": int(row["population_total"]),
+                }
+                for row in linhas
+            ],
+        }
     }
 
 
@@ -603,6 +671,7 @@ def render(
         "saida; o gatilho para propor um perfil e a janela cobrir novembro e dezembro."
     )
     linhas.extend(_cohort_section(depois, antes))
+    linhas.extend(_channel_section(depois, seeds_dir, params))
     linhas.append("")
     linhas.append("## Fronteira que a calibracao nao atravessa")
     linhas.append("")
@@ -616,6 +685,143 @@ def render(
     )
     linhas.append("")
     return "\n".join(linhas) + "\n"
+
+
+def _channel_section(depois: dict, seeds_dir: str, params: dict) -> list[str]:
+    """A conta que so fecha depois que a base foi dimensionada pela populacao.
+
+    O ARGUMENTO CIRCULAR QUE ISTO QUEBRA. A base de clientes passou a ser 2,2% dos adultos
+    das quatro AUFs porque 2,2% do volume de alimentacao passa pelo e-commerce (MAPA, secao
+    3). Se essa transposicao — de share de volume para share de gente — fosse coerente com o
+    resto do modelo, o volume que os pedidos produzem teria de ser tambem 2,2% do consumo
+    domestico daquelas mesmas AUFs. Nao ha nenhuma garantia de que seja: `daily_order_rate` e
+    o tamanho da cesta foram declarados na Fase 3, sem nenhuma relacao com a taxa de
+    penetracao, e agora os tres se encontram pela primeira vez.
+
+    ESTA SECAO NAO E UM ALVO A PERSEGUIR. Fechar o gap mexendo em `daily_order_rate` seria
+    mover uma premissa para caber num resultado — e nenhuma fonte deste repositorio mede
+    cadencia de compra ou tamanho de cesta online, entao nao ha o que consultar para decidir
+    qual dos dois esta errado. O numero e medido, publicado e registrado como lacuna.
+    """
+    canal = depois.get("channel")
+    if not canal:
+        return [
+            "",
+            "## Fechamento do canal",
+            "",
+            "Nao medido: este snapshot foi congelado antes de a populacao servida entrar na "
+            "medicao.",
+        ]
+
+    regioes = demand_profile.load_region_reference(seeds_dir)
+    province_ccaa = demand_profile.load_province_ccaa(seeds_dir)
+    taxa = Decimal(str(params["channel_reference_pct"]))
+    dias = Decimal(canal["dias"])
+
+    # ESCOPO ALIMENTAR, e nao o total do modelo. O per capita do informe e de "alimentacion
+    # y bebidas" e NAO cobre drogaria; somar NO_FOOD do lado do modelo compararia dois
+    # universos diferentes e inflaria a razao sem que nada estivesse errado. SIN_BENCHMARK
+    # FICA: sao grupos alimentares que o informe simplesmente nao detalha, e eles pertencem ao
+    # mesmo universo que o per capita mede.
+    kg_medido = Decimal("0")
+    eur_medido = Decimal("0")
+    kg_no_food = Decimal("0")
+    eur_no_food = Decimal("0")
+    for chave, valor in depois["groups"].items():
+        if chave == demand_profile.NO_FOOD:
+            kg_no_food += Decimal(valor["kg_l"])
+            eur_no_food += Decimal(valor["receita"])
+            continue
+        kg_medido += Decimal(valor["kg_l"])
+        eur_medido += Decimal(valor["receita"])
+
+    linhas = ["", "## Fechamento do canal", ""]
+    linhas.append(
+        f"A base de clientes foi dimensionada como **{taxa}% dos adultos** das quatro AUFs, "
+        f"porque {taxa}% do volume de alimentacao passa pelo e-commerce. A pergunta que esta "
+        f"secao responde e se o modelo, depois disso, produz {taxa}% do consumo daquelas "
+        f"mesmas AUFs — ou se a taxa de penetracao e a cadencia de pedido, declaradas em "
+        f"fases diferentes e sem relacao uma com a outra, se contradizem."
+    )
+    linhas.append("")
+    linhas.append(
+        f"Janela medida: **{canal['dias']} dia(s)**, de {canal['primeiro_dia']} a "
+        f"{canal['ultimo_dia']}. O consumo do informe e anual e e dividido por 365."
+    )
+    linhas.append("")
+
+    linhas.append("| armazem | populacao servida | comunidade | kg-L/hab/ano | EUR/hab/ano |")
+    linhas.append("|---|---:|---|---:|---:|")
+    kg_alvo = Decimal("0")
+    eur_alvo = Decimal("0")
+    populacao_total = 0
+    for entrada in canal["warehouses"]:
+        ccaa = demand_profile.ccaa_of(province_ccaa, entrada["province_code"])
+        regiao = regioes[ccaa]
+        populacao = Decimal(entrada["population_total"])
+        populacao_total += entrada["population_total"]
+        kg_alvo += populacao * regiao["per_capita_kg_l"]
+        eur_alvo += populacao * (regiao["per_capita_eur"] or Decimal("0"))
+        linhas.append(
+            f"| {entrada['wh']} | {entrada['population_total']:,} | {regiao['ccaa_label']} "
+            f"| {regiao['per_capita_kg_l']} | {regiao['per_capita_eur']} |"
+        )
+    linhas.append(f"| **total** | **{populacao_total:,}** | | | |")
+    linhas.append("")
+
+    # Do consumo anual da populacao para o pedaco online da janela medida.
+    fator = taxa / Decimal("100") * dias / Decimal("365")
+    kg_alvo_janela = kg_alvo * fator
+    eur_alvo_janela = eur_alvo * fator
+
+    linhas.append("| dimensao | canal esperado | modelo | razao |")
+    linhas.append("|---|---:|---:|---:|")
+    for rotulo, medido, alvo in (
+        ("kg ou litro", kg_medido, kg_alvo_janela),
+        ("receita (EUR)", eur_medido, eur_alvo_janela),
+    ):
+        if medido is None or not alvo:
+            linhas.append(f"| {rotulo} | — | — | — |")
+            continue
+        razao = medido / alvo
+        linhas.append(
+            f"| {rotulo} | {_fmt(alvo, 0)} | {_fmt(medido, 0)} | **{_fmt(razao, 2)}x** |"
+        )
+    linhas.append("")
+    linhas.append(
+        f"O escopo dos dois lados e ALIMENTACAO. `{demand_profile.NO_FOOD}` fica de fora do "
+        f"numerador — {_fmt(kg_no_food, 0)} kg-L e {_fmt(eur_no_food, 2)} EUR na janela — "
+        f"porque o per capita do informe e de alimentacao e bebidas e nao cobre drogaria. "
+        f"Soma-lo compararia dois universos e inflaria a razao sem que nada estivesse errado. "
+        f"`SIN_BENCHMARK` FICA: sao grupos alimentares que o informe nao detalha, mas que "
+        f"pertencem ao mesmo universo que o per capita mede."
+    )
+    linhas.append("")
+    linhas.append(
+        "**Nenhum destes numeros foi ajustado para se aproximar do outro, e e isso que os "
+        "torna interessantes.** A taxa de penetracao entrou na Fase 6, ancorada no informe. "
+        "`daily_order_rate`, `basket_lines_*` e `quantity_max` entraram na Fase 3, escolhidos "
+        "sem nenhuma relacao com ela e sem nenhuma fonte que os medisse. As duas metades so "
+        "se encontram nesta tabela, e o resto entre elas e o que se ve acima."
+    )
+    linhas.append("")
+    linhas.append(
+        "A distancia que sobra NAO deve ser fechada mexendo em `daily_order_rate` ate a razao "
+        "virar 1,00: isso faria uma premissa caber num resultado sem que nada tivesse sido "
+        "medido, e nenhuma fonte deste repositorio mede cadencia de compra nem cesta online — "
+        "nao existe criterio para decidir qual dos lados esta errado. Enquanto for assim, esta "
+        "razao e uma OBSERVACAO, e nao um alvo. GATILHO: uma fonte que meca frequencia de "
+        "compra domestica ou ticket medio por canal transforma esta linha num teste."
+    )
+    linhas.append("")
+    linhas.append(
+        "Uma ressalva sobre o denominador, pela mesma razao que ela ja existe para a coorte: "
+        "o consumo per capita do informe e da populacao INTEIRA da comunidade, criancas "
+        "incluidas, enquanto os clientes sao adultos. Isso e correto aqui — o consumo de um "
+        "lar aparece no per capita de todos os seus membros — mas significa que a razao acima "
+        "nao pode ser lida como 'cada cliente compra X% do que deveria'."
+    )
+    return linhas
 
 
 def _cohort_section(depois: dict, antes: dict | None) -> list[str]:

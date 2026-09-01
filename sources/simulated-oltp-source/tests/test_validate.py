@@ -255,3 +255,48 @@ class ReferenciaTest(ValidateTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdadeMinimaTest(ValidateTestCase):
+    """A ultima camada, sobre o dado POUSADO.
+
+    As outras duas — o corte na distribuicao exportada e a recusa da referencia de schema
+    antigo — agem antes de o cliente existir. Esta age depois: ela relê a particao e refaz a
+    conta da idade. E a diferenca entre provar a regra sobre fixture e provar o resultado.
+    """
+
+    def test_menor_de_idade_na_particao_reprova(self):
+        self.rewrite_customers(
+            lambda customers: customers[0].update(birth_year=2020)  # 6 anos em 2026
+        )
+        codigo, saida = self.validate()
+        self.assertEqual(codigo, EXIT_FAILED)
+        self.assertIn("abaixo de min_customer_age", saida)
+        self.assertIn("6 anos", saida)
+
+    def test_birth_year_nao_inteiro_reprova_e_nao_e_contado_como_menor(self):
+        """`null` num campo obrigatorio nao pode virar 'idade desconhecida, deixa passar'.
+
+        E tambem nao pode ser somado a contagem de menores: um birth_year nulo nao e uma
+        idade baixa, e uma idade que nao existe. Juntar os dois faria o relatorio afirmar que
+        ha uma crianca na base quando nao ha nenhuma, e mandaria o operador procurar a coisa
+        errada.
+        """
+        self.rewrite_customers(lambda customers: customers[0].update(birth_year=None))
+        codigo, saida = self.validate()
+        self.assertEqual(codigo, EXIT_FAILED)
+        self.assertIn("sem birth_year inteiro", saida)
+        self.assertNotIn("abaixo de min_customer_age", saida)
+
+    def test_a_idade_e_do_ingestion_date_e_nao_do_relogio(self):
+        """Um cliente de 18 anos EM 2026 passa, e continua passando em qualquer execucao.
+
+        Se a validacao usasse `datetime.now()`, esta particao imutavel comecaria a reprovar
+        sozinha assim que o calendario virasse — sem nada nela ter mudado.
+        """
+        self.rewrite_customers(
+            lambda customers: customers[0].update(birth_year=2026 - support.MIN_CUSTOMER_AGE)
+        )
+        codigo, saida = self.validate()
+        self.assertEqual(codigo, EXIT_OK, saida)
+

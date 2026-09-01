@@ -10,7 +10,7 @@ import unittest
 
 from simulated_oltp_source import extract as extract_module
 from simulated_oltp_source import validate as validate_module
-from simulated_oltp_source.cli import DEFAULT_COUNT, EXIT_UNHANDLED, build_parser, main
+from simulated_oltp_source.cli import EXIT_UNHANDLED, build_parser, main
 
 from tests import support
 
@@ -22,7 +22,10 @@ class ParserTest(unittest.TestCase):
     def test_extract_liga_no_handler_de_extracao(self):
         args = self.parser.parse_args(["extract", "--reference", "ref", "--wh", "mad1"])
         self.assertIs(args.handler, extract_module.run)
-        self.assertEqual(args.count, DEFAULT_COUNT)
+        # `None` e nao um numero: omitir --count significa "use o alvo que a referencia
+        # derivou da populacao daquele armazem". Um default aqui reintroduziria a base
+        # dimensionada por quem digitou o comando.
+        self.assertIsNone(args.count)
         self.assertFalse(args.overwrite)
 
     def test_validate_liga_no_handler_de_validacao(self):

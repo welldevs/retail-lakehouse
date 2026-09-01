@@ -33,6 +33,35 @@ models:
       - name: is_home_municipality
         tests: [not_null]
 
+  - name: customer_premises
+    description: >
+      Passagem do seed customer_premises_seed para o object storage — mesmo mecanismo de
+      order_premises. GRAO: premise_key. As 4 premissas DECLARADAS que governam quem EXISTE
+      como titular de conta: idade minima, de onde vem a taxa de penetracao, qual populacao
+      e o denominador dela e como a contagem se reparte entre armazens. Dominio separado do
+      de order_premises de proposito — aquelas governam o que um cliente FAZ, estas governam
+      quem ele e. A Fase 5 errou por nao ter a separacao: tratou "recem-nascido nao pode
+      comprar" como regra de pedido e a base seguiu com 18,01% de menores.
+      A unica coisa observada em jogo, os 2,2% do e-commerce no volume de alimentacao, NAO
+      esta aqui: customer_penetration_source aponta para demand_profile.channel_reference_pct,
+      onde ela foi medida. Por isso `label` e 'synthetic' nas quatro linhas.
+    columns:
+      - name: premise_key
+        tests: [not_null, unique]
+      - name: value
+        tests: [not_null]
+      - name: label
+        description: >
+          Sempre 'synthetic'. As quatro linhas sao decisao desta plataforma; a medicao que
+          uma delas usa mora em outro seed e e apontada por nome, nunca copiada.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [synthetic]
+      - name: rationale
+        tests: [not_null]
+
   - name: order_premises
     description: >
       Passagem do seed order_premises_seed para o object storage — mesmo mecanismo de

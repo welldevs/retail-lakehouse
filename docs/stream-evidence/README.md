@@ -11,7 +11,7 @@ não podem cobrir é a **semântica** dos motores reais: que o Kafka preserva or
 chave, que o Postgres desfaz de verdade, que o Iceberg recusa um commit sobre
 snapshot velho. Isto aqui é o registro de que ela foi exercida contra eles.
 
-| capturado em | 2026-08-29 13:32:28 UTC |
+| capturado em | 2026-09-01 13:52:21 UTC |
 |---|---|
 
 ## Plano transacional — OLTP e outbox
@@ -24,47 +24,47 @@ inteira é desfeita.
 
 |  |  |
 |---|---|
-| pedidos em `orders` | 6,400 |
-| linhas em `order_line` | 120,693 |
-| eventos no `outbox` | 44,456 |
+| pedidos em `orders` | 91,788 |
+| linhas em `order_line` | 1,726,833 |
+| eventos no `outbox` | 636,848 |
 | ainda não publicados | 0 |
-| pedidos distintos no outbox | 6,400 |
-| primeira publicação | 2026-08-28 18:38:48.728269+00:00 |
-| última publicação | 2026-08-28 18:45:17.170144+00:00 |
+| pedidos distintos no outbox | 91,788 |
+| primeira publicação | 2026-09-01 13:48:03.320663+00:00 |
+| última publicação | 2026-09-01 13:49:00.746591+00:00 |
 
 ### Eventos no outbox, por tipo
 
 | event_type | eventos |
 |---|---|
-| `order_cancelled` | 196 |
-| `order_delivered` | 6,046 |
-| `order_delivery_failed` | 56 |
-| `order_dispatched` | 6,102 |
-| `order_line_removed` | 2,321 |
-| `order_line_substituted` | 4,670 |
-| `order_payment_authorized` | 6,298 |
-| `order_payment_failed` | 102 |
-| `order_picked` | 6,102 |
-| `order_picking_started` | 6,102 |
-| `order_placed` | 6,400 |
-| `order_returned` | 61 |
+| `order_cancelled` | 2,709 |
+| `order_delivered` | 86,803 |
+| `order_delivery_failed` | 878 |
+| `order_dispatched` | 87,681 |
+| `order_line_removed` | 32,830 |
+| `order_line_substituted` | 66,307 |
+| `order_payment_authorized` | 90,390 |
+| `order_payment_failed` | 1,398 |
+| `order_picked` | 87,681 |
+| `order_picking_started` | 87,681 |
+| `order_placed` | 91,788 |
+| `order_returned` | 702 |
 
 ### Estado replicado, por fold do OLTP
 
 | status do pedido | pedidos |
 |---|---|
-| `CANCELLED` | 196 |
-| `DELIVERED` | 5,985 |
-| `DELIVERY_FAILED` | 56 |
-| `PAYMENT_FAILED` | 102 |
-| `RETURNED` | 61 |
+| `CANCELLED` | 2,709 |
+| `DELIVERED` | 86,101 |
+| `DELIVERY_FAILED` | 878 |
+| `PAYMENT_FAILED` | 1,398 |
+| `RETURNED` | 702 |
 
 | status da linha | linhas |
 |---|---|
-| `fulfilled` | 108,194 |
-| `not_picked` | 5,508 |
-| `removed` | 2,321 |
-| `substituted` | 4,670 |
+| `fulfilled` | 1,550,082 |
+| `not_picked` | 77,614 |
+| `removed` | 32,830 |
+| `substituted` | 66,307 |
 
 ## Transporte — Kafka
 
@@ -81,12 +81,12 @@ Tópico `retail.orders.events.v1` em `localhost:9092`.
 
 | partição | low | high | mensagens |
 |---|---|---|---|
-| 0 | 0 | 11306 | 11,306 |
-| 1 | 0 | 11164 | 11,164 |
-| 2 | 0 | 11210 | 11,210 |
-| 3 | 0 | 11276 | 11,276 |
+| 0 | 0 | 170316 | 170,316 |
+| 1 | 0 | 170458 | 170,458 |
+| 2 | 0 | 170502 | 170,502 |
+| 3 | 0 | 170528 | 170,528 |
 
-Total no tópico: **44,956 mensagens**.
+Total no tópico: **681,804 mensagens**.
 
 A soma pode exceder a contagem de eventos do log, e isso é **correto**: a
 entrega do outbox para o broker é at-least-once por desenho, então uma queda
@@ -100,14 +100,22 @@ tópico no seu próprio ritmo, com offset próprio. É o ponto de desacoplamento
 sink Iceberg (~4min48s por passada, copy-on-write) não segura o sink Postgres
 (~14s), e nenhum dos dois perde mensagem por causa do outro.
 
+**Lag alto não é projeção atrasada quando a tabela foi reconstruída em lote.**
+`orders-rebuild-projection` é o SEGUNDO escritor: ele escreve o estado final
+direto do RAW, sem passar pelo tópico, e o offset do grupo de consumo não se
+move com isso. Depois de uma regeração, drenar o tópico pelo sink Iceberg
+reprocessaria centenas de milhares de eventos para descartar todos como
+iguais-ou-mais-velhos — o merge é monotônico. O que prova a convergência dos
+três caminhos é `make orders-reconcile`, e não o offset de um consumidor.
+
 **`orders-projector`**
 
 | partição | offset commitado | high | lag |
 |---|---|---|---|
-| 0 | 11306 | 11306 | 0 |
-| 1 | 11164 | 11164 | 0 |
-| 2 | 11210 | 11210 | 0 |
-| 3 | 11276 | 11276 | 0 |
+| 0 | 170316 | 170316 | 0 |
+| 1 | 170458 | 170458 | 0 |
+| 2 | 170502 | 170502 | 0 |
+| 3 | 170528 | 170528 | 0 |
 
 Lag total: **0**.
 
@@ -115,12 +123,12 @@ Lag total: **0**.
 
 | partição | offset commitado | high | lag |
 |---|---|---|---|
-| 0 | 11306 | 11306 | 0 |
-| 1 | 11164 | 11164 | 0 |
-| 2 | 11210 | 11210 | 0 |
-| 3 | 11276 | 11276 | 0 |
+| 0 | 19306 | 170316 | 151010 |
+| 1 | 11164 | 170458 | 159294 |
+| 2 | 11210 | 170502 | 159292 |
+| 3 | 11276 | 170528 | 159252 |
 
-Lag total: **0**.
+Lag total: **628,848**.
 
 ## Projeção — Iceberg
 
@@ -135,10 +143,10 @@ em vez de anedótica.
 |  |  |
 |---|---|
 | tabela | `projection.live_order_state` |
-| linhas | 6,400 |
-| snapshots | 105 |
-| snapshot corrente | 304920774543672206 |
-| metadado corrente | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00052-d31e1c3c-3de4-4394-8f8b-2006196c01e6.metadata.json` |
+| linhas | 91,788 |
+| snapshots | 184 |
+| snapshot corrente | 8579108754636027592 |
+| metadado corrente | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00184-a1b142f7-6986-43e0-804a-1c9b42c5f16c.metadata.json` |
 
 O caminho do metadado vem do **catálogo**, nunca de uma varredura do storage. O
 DuckDB recusa adivinhar qual metadado é o corrente — *"globbing the filesystem…
@@ -150,18 +158,17 @@ não commitado é exatamente o que uma leitura concorrente não pode fazer.
 
 | written_by | linhas |
 |---|---|
-| `rebuild` | 4,800 |
-| `stream` | 1,600 |
+| `rebuild` | 91,788 |
 
 ### Estado na projeção viva
 
 | status | pedidos |
 |---|---|
-| `CANCELLED` | 196 |
-| `DELIVERED` | 5,985 |
-| `DELIVERY_FAILED` | 56 |
-| `PAYMENT_FAILED` | 102 |
-| `RETURNED` | 61 |
+| `CANCELLED` | 2,709 |
+| `DELIVERED` | 86,101 |
+| `DELIVERY_FAILED` | 878 |
+| `PAYMENT_FAILED` | 1,398 |
+| `RETURNED` | 702 |
 
 ## Os três folds
 
@@ -178,11 +185,11 @@ evidência de transporte, não de correção — os dois compartilham o fold.
 
 | fonte | pedidos |
 |---|---|
-| `iceberg` | 6,400 |
-| `oltp` | 6,400 |
-| `silver` | 6,400 |
+| `iceberg` | 91,788 |
+| `oltp` | 91,788 |
+| `silver` | 91,788 |
 
-Comparados: **6,400 pedidos**.
+Comparados: **91,788 pedidos**.
 
 Resultado: **os três concordam em todos os pedidos comparados** — zero divergências, zero ausências.
 

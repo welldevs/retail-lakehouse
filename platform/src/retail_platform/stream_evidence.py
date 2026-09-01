@@ -273,6 +273,14 @@ def render(dados: dict) -> str:
             "sink Iceberg (~4min48s por passada, copy-on-write) não segura o sink Postgres",
             "(~14s), e nenhum dos dois perde mensagem por causa do outro.",
             "",
+            "**Lag alto não é projeção atrasada quando a tabela foi reconstruída em lote.**",
+            "`orders-rebuild-projection` é o SEGUNDO escritor: ele escreve o estado final",
+            "direto do RAW, sem passar pelo tópico, e o offset do grupo de consumo não se",
+            "move com isso. Depois de uma regeração, drenar o tópico pelo sink Iceberg",
+            "reprocessaria centenas de milhares de eventos para descartar todos como",
+            "iguais-ou-mais-velhos — o merge é monotônico. O que prova a convergência dos",
+            "três caminhos é `make orders-reconcile`, e não o offset de um consumidor.",
+            "",
         ]
         for grupo, lag in broker["lags"].items():
             linhas += [f"**`{grupo}`**", ""]
