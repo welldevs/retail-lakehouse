@@ -483,12 +483,43 @@ def build_producer(bootstrap: str = DEFAULT_BOOTSTRAP):
 
 @dataclass
 class ProjectResult:
+    """O resultado de consumir o topico.
+
+    `orders` E `sla_breaches` SAO CONTAGENS DISTINTAS, E ISSO CUSTOU UM DEFEITO. Ate a
+    Fase 7 eram inteiros somados lote a lote, e um pedido cujos eventos caem em lotes
+    diferentes era contado uma vez POR LOTE. Medido em 2026-09-01, consumindo 1.433.723
+    eventos: o consumidor imprimiu "SLA estourado 31.908" enquanto a projecao e o Silver
+    concordavam em 19.136.
+
+    Nada quebrou, e esse e o ponto — o numero era plausivel, tinha a ordem de grandeza certa
+    e o rotulo dizia outra coisa do que ele media ("escritas de pedidos estourados", nao
+    "pedidos estourados"). E a mesma classe do `orders_touching_category` que nao soma entre
+    categorias, e a unica que nenhum teste de contagem pega.
+
+    `applied`, `duplicates` e `batches` continuam somas: sao contagens de EVENTO, e evento
+    nao se repete entre lotes — quem se repete e o pedido.
+    """
+
     applied: int = 0
     duplicates: int = 0
-    orders: int = 0
     batches: int = 0
     gaps: list = field(default_factory=list)
-    sla_breaches: int = 0
+    order_ids: set = field(default_factory=set)
+    sla_breached_ids: set = field(default_factory=set)
+
+    @property
+    def orders(self) -> int:
+        """Pedidos DISTINTOS tocados."""
+        return len(self.order_ids)
+
+    @property
+    def sla_breaches(self) -> int:
+        """Pedidos DISTINTOS com o SLA de separacao estourado.
+
+        Tem de bater com `count_if(sla_breached)` na projecao e em `silver_order` — sao tres
+        folds independentes, e a concordancia deles e a verificacao.
+        """
+        return len(self.sla_breached_ids)
 
 
 def project_batch(projection, events, *, sla_minutes: int) -> ProjectResult:
@@ -518,8 +549,9 @@ def project_batch(projection, events, *, sla_minutes: int) -> ProjectResult:
         result.applied += 1
 
     projection.save(list(touched.values()))
-    result.orders = len(touched)
-    result.sla_breaches = sum(1 for s in touched.values() if s.get("sla_breached"))
+    result.order_ids.update(touched)
+    result.sla_breached_ids.update(
+        order_id for order_id, estado in touched.items() if estado.get("sla_breached"))
     return result
 
 
@@ -585,8 +617,10 @@ def _flush(projection, consumer, events, sla_minutes, total, strict) -> None:
 
     total.applied += batch.applied
     total.duplicates += batch.duplicates
-    total.orders += batch.orders
-    total.sla_breaches += batch.sla_breaches
+    # UNIAO, e nao soma: ver o docstring de ProjectResult. Somar contava o mesmo pedido uma
+    # vez por lote em que ele aparecesse.
+    total.order_ids |= batch.order_ids
+    total.sla_breached_ids |= batch.sla_breached_ids
     total.gaps.extend(batch.gaps)
     total.batches += 1
     if batch.gaps and strict:

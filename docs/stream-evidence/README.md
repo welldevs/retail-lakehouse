@@ -11,7 +11,7 @@ não podem cobrir é a **semântica** dos motores reais: que o Kafka preserva or
 chave, que o Postgres desfaz de verdade, que o Iceberg recusa um commit sobre
 snapshot velho. Isto aqui é o registro de que ela foi exercida contra eles.
 
-| capturado em | 2026-09-01 13:52:21 UTC |
+| capturado em | 2026-09-01 22:04:10 UTC |
 |---|---|
 
 ## Plano transacional — OLTP e outbox
@@ -24,47 +24,47 @@ inteira é desfeita.
 
 |  |  |
 |---|---|
-| pedidos em `orders` | 91,788 |
-| linhas em `order_line` | 1,726,833 |
-| eventos no `outbox` | 636,848 |
+| pedidos em `orders` | 206,523 |
+| linhas em `order_line` | 3,892,062 |
+| eventos no `outbox` | 1,433,723 |
 | ainda não publicados | 0 |
-| pedidos distintos no outbox | 91,788 |
-| primeira publicação | 2026-09-01 13:48:03.320663+00:00 |
-| última publicação | 2026-09-01 13:49:00.746591+00:00 |
+| pedidos distintos no outbox | 206,523 |
+| primeira publicação | 2026-09-01 21:56:09.143966+00:00 |
+| última publicação | 2026-09-01 21:58:21.171516+00:00 |
 
 ### Eventos no outbox, por tipo
 
 | event_type | eventos |
 |---|---|
-| `order_cancelled` | 2,709 |
-| `order_delivered` | 86,803 |
-| `order_delivery_failed` | 878 |
-| `order_dispatched` | 87,681 |
-| `order_line_removed` | 32,830 |
-| `order_line_substituted` | 66,307 |
-| `order_payment_authorized` | 90,390 |
-| `order_payment_failed` | 1,398 |
-| `order_picked` | 87,681 |
-| `order_picking_started` | 87,681 |
-| `order_placed` | 91,788 |
-| `order_returned` | 702 |
+| `order_cancelled` | 6,052 |
+| `order_delivered` | 195,419 |
+| `order_delivery_failed` | 1,983 |
+| `order_dispatched` | 197,402 |
+| `order_line_removed` | 74,754 |
+| `order_line_substituted` | 148,633 |
+| `order_payment_authorized` | 203,454 |
+| `order_payment_failed` | 3,069 |
+| `order_picked` | 197,402 |
+| `order_picking_started` | 197,402 |
+| `order_placed` | 206,523 |
+| `order_returned` | 1,630 |
 
 ### Estado replicado, por fold do OLTP
 
 | status do pedido | pedidos |
 |---|---|
-| `CANCELLED` | 2,709 |
-| `DELIVERED` | 86,101 |
-| `DELIVERY_FAILED` | 878 |
-| `PAYMENT_FAILED` | 1,398 |
-| `RETURNED` | 702 |
+| `CANCELLED` | 6,052 |
+| `DELIVERED` | 193,789 |
+| `DELIVERY_FAILED` | 1,983 |
+| `PAYMENT_FAILED` | 3,069 |
+| `RETURNED` | 1,630 |
 
 | status da linha | linhas |
 |---|---|
-| `fulfilled` | 1,550,082 |
-| `not_picked` | 77,614 |
-| `removed` | 32,830 |
-| `substituted` | 66,307 |
+| `fulfilled` | 3,497,011 |
+| `not_picked` | 171,664 |
+| `removed` | 74,754 |
+| `substituted` | 148,633 |
 
 ## Transporte — Kafka
 
@@ -81,12 +81,12 @@ Tópico `retail.orders.events.v1` em `localhost:9092`.
 
 | partição | low | high | mensagens |
 |---|---|---|---|
-| 0 | 0 | 170316 | 170,316 |
-| 1 | 0 | 170458 | 170,458 |
-| 2 | 0 | 170502 | 170,502 |
-| 3 | 0 | 170528 | 170,528 |
+| 0 | 0 | 528613 | 528,613 |
+| 1 | 0 | 528886 | 528,886 |
+| 2 | 0 | 528840 | 528,840 |
+| 3 | 0 | 529188 | 529,188 |
 
-Total no tópico: **681,804 mensagens**.
+Total no tópico: **2,115,527 mensagens**.
 
 A soma pode exceder a contagem de eventos do log, e isso é **correto**: a
 entrega do outbox para o broker é at-least-once por desenho, então uma queda
@@ -112,10 +112,10 @@ três caminhos é `make orders-reconcile`, e não o offset de um consumidor.
 
 | partição | offset commitado | high | lag |
 |---|---|---|---|
-| 0 | 170316 | 170316 | 0 |
-| 1 | 170458 | 170458 | 0 |
-| 2 | 170502 | 170502 | 0 |
-| 3 | 170528 | 170528 | 0 |
+| 0 | 528613 | 528613 | 0 |
+| 1 | 528886 | 528886 | 0 |
+| 2 | 528840 | 528840 | 0 |
+| 3 | 529188 | 529188 | 0 |
 
 Lag total: **0**.
 
@@ -123,12 +123,12 @@ Lag total: **0**.
 
 | partição | offset commitado | high | lag |
 |---|---|---|---|
-| 0 | 19306 | 170316 | 151010 |
-| 1 | 11164 | 170458 | 159294 |
-| 2 | 11210 | 170502 | 159292 |
-| 3 | 11276 | 170528 | 159252 |
+| 0 | 19306 | 528613 | 509307 |
+| 1 | 11164 | 528886 | 517722 |
+| 2 | 11210 | 528840 | 517630 |
+| 3 | 11276 | 529188 | 517912 |
 
-Lag total: **628,848**.
+Lag total: **2,062,571**.
 
 ## Projeção — Iceberg
 
@@ -143,10 +143,10 @@ em vez de anedótica.
 |  |  |
 |---|---|
 | tabela | `projection.live_order_state` |
-| linhas | 91,788 |
-| snapshots | 184 |
-| snapshot corrente | 8579108754636027592 |
-| metadado corrente | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00184-a1b142f7-6986-43e0-804a-1c9b42c5f16c.metadata.json` |
+| linhas | 206,523 |
+| snapshots | 414 |
+| snapshot corrente | 9005236305804095059 |
+| metadado corrente | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00414-b70ea7c6-a1a5-49e5-a2a1-23cd4e267046.metadata.json` |
 
 O caminho do metadado vem do **catálogo**, nunca de uma varredura do storage. O
 DuckDB recusa adivinhar qual metadado é o corrente — *"globbing the filesystem…
@@ -158,17 +158,17 @@ não commitado é exatamente o que uma leitura concorrente não pode fazer.
 
 | written_by | linhas |
 |---|---|
-| `rebuild` | 91,788 |
+| `rebuild` | 206,523 |
 
 ### Estado na projeção viva
 
 | status | pedidos |
 |---|---|
-| `CANCELLED` | 2,709 |
-| `DELIVERED` | 86,101 |
-| `DELIVERY_FAILED` | 878 |
-| `PAYMENT_FAILED` | 1,398 |
-| `RETURNED` | 702 |
+| `CANCELLED` | 6,052 |
+| `DELIVERED` | 193,789 |
+| `DELIVERY_FAILED` | 1,983 |
+| `PAYMENT_FAILED` | 3,069 |
+| `RETURNED` | 1,630 |
 
 ## Os três folds
 
@@ -185,11 +185,11 @@ evidência de transporte, não de correção — os dois compartilham o fold.
 
 | fonte | pedidos |
 |---|---|
-| `iceberg` | 91,788 |
-| `oltp` | 91,788 |
-| `silver` | 91,788 |
+| `iceberg` | 206,523 |
+| `oltp` | 206,523 |
+| `silver` | 206,523 |
 
-Comparados: **91,788 pedidos**.
+Comparados: **206,523 pedidos**.
 
 Resultado: **os três concordam em todos os pedidos comparados** — zero divergências, zero ausências.
 

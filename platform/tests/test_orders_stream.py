@@ -402,3 +402,68 @@ class TestPublisher(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContagemDistintaTest(unittest.TestCase):
+    """`orders` e `sla_breaches` contam PEDIDO, nao ESCRITA — e a diferenca ja mordeu.
+
+    O DEFEITO, medido em 2026-09-01. Os dois eram inteiros somados lote a lote, e um pedido
+    cujos eventos caem em lotes diferentes era contado uma vez por lote. Consumindo 1.433.723
+    eventos, o CLI imprimiu "SLA estourado 31.908" enquanto a projecao Iceberg e
+    `silver_order` concordavam em 19.136.
+
+    NADA QUEBROU, e e esse o ponto: o numero era plausivel, tinha a ordem de grandeza certa,
+    e o rotulo dizia outra coisa do que ele media. Nenhum teste de contagem pega isso —
+    quem pegou foram dois folds discordando, pela terceira vez neste projeto.
+    """
+
+    def _eventos_do_mesmo_pedido(self):
+        """Um pedido que estoura o SLA e CONTINUA avancando em lotes seguintes.
+
+        O quarto lote e o que reproduz o defeito, e ele nao e artificial: um pedido real tem
+        eventos depois da separacao (despacho, entrega, devolucao), e eles chegam ao
+        consumidor em lotes diferentes. A partir do `order_picked` o estado carrega
+        `sla_breached = true`, entao TODO lote seguinte que toque o pedido o reescreve
+        estourado — e a soma contava cada uma dessas escritas.
+        """
+        return [
+            [placed()],
+            [event("order_picking_started", seq=2, at="2026-08-27T08:00:00Z")],
+            [event("order_picked", seq=3, at="2026-08-27T09:30:00Z",
+                   payload={"picked_line_count": 2, "picked_amount": "10.00"})],
+            [event("order_dispatched", seq=4, at="2026-08-27T10:00:00Z")],
+        ]
+
+    def test_o_mesmo_pedido_em_tres_lotes_conta_UMA_vez(self):
+        from retail_platform.orders_stream import ProjectResult, _flush
+
+        projection = RecordingProjection()
+        total = ProjectResult()
+        for lote in self._eventos_do_mesmo_pedido():
+            _flush(projection, RecordingConsumer([]), lote, 30, total, True)
+
+        self.assertEqual(total.batches, 4, "quatro lotes, e isso e contagem de LOTE")
+        self.assertEqual(total.applied, 4, "quatro eventos, e evento nao se repete entre lotes")
+        self.assertEqual(total.orders, 1, "UM pedido, tocado em quatro lotes")
+        self.assertEqual(total.sla_breaches, 1, "UM pedido estourou, nao duas escritas")
+
+    def test_a_soma_ingenua_teria_dado_o_numero_errado(self):
+        """A prova de que o teste acima nao passa por acaso: pela regra antiga daria 2.
+
+        O pedido so ganha `sla_breached` no `order_picked` (terceiro lote) e continua
+        estourado no quarto — dois lotes com o estado estourado. A soma diria 2; a uniao diz
+        1, que e quantos pedidos existem. Em producao, com 1,43 milhao de eventos, essa
+        diferenca virou 31.908 contra 19.136.
+        """
+        from retail_platform.orders_stream import ProjectResult, _flush
+
+        projection = RecordingProjection()
+        total = ProjectResult()
+        soma_ingenua = 0
+        for lote in self._eventos_do_mesmo_pedido():
+            antes = total.sla_breaches
+            _flush(projection, RecordingConsumer([]), lote, 30, total, True)
+            del antes
+            soma_ingenua += 1 if total.sla_breaches else 0
+        self.assertEqual(soma_ingenua, 2, "a regra antiga contaria duas escritas")
+        self.assertEqual(total.sla_breaches, 1, "a nova conta um pedido")

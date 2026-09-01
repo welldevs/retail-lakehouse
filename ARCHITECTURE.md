@@ -42,7 +42,7 @@ bastante para mudar a resposta:
 | RAW selado | 81 partições · 2.221.069 registros |
 | `make silver` | 25 modelos, 16 seeds, 391 nós — **53 s** |
 | `make warehouse` | 24 modelos, 199 nós — **131 s** |
-| Suítes Python, offline | 1.093 |
+| Suítes Python, offline | 1.095 |
 
 **Nenhuma tecnologia distribuída é justificada por este volume, e isso é resultado e não
 premissa.** Os pedidos cresceram 32× desde que a Fase 3 os mediu (6.400 → 206.523), e o
