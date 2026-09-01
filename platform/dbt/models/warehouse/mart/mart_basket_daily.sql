@@ -10,8 +10,8 @@
 --
 -- ATENCAO AO QUE E ADITIVO E AO QUE NAO E — e o nome de cada coluna diz qual.
 -- `orders_touching_category` NAO SOMA entre categorias: um pedido com leite e pao conta
--- uma vez em cada, e somar as 151 categorias de um dia daria muito mais que os 1.600
--- pedidos daquele dia. Por isso o nome nao e `orders`. Linhas, unidades e valor SAO
+-- uma vez em cada, e somar as categorias de um dia daria muito mais que os pedidos
+-- daquele dia. Por isso o nome nao e `orders`. Linhas, unidades e valor SAO
 -- aditivos: cada linha pertence a exatamente uma categoria. Quem quiser contagem de
 -- pedidos por dia usa MART_ORDER_FUNNEL, que tem o grao certo para isso.
 --

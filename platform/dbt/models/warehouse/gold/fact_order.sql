@@ -1,6 +1,6 @@
 -- PEDIDO — ACCUMULATING SNAPSHOT, e este padrao so existe porque ha eventos.
 --
--- GRAO: order_id. 6.400 linhas. TIPO: synthetic (o pedido) sobre observed (quem compra,
+-- GRAO: order_id. TIPO: synthetic (o pedido) sobre observed (quem compra,
 --       o que se compra, quanto custa e onde mora).
 --
 -- POR QUE ACCUMULATING SNAPSHOT E NAO FATO TRANSACIONAL. Uma linha por pedido que se
@@ -11,19 +11,20 @@
 -- pergunta "o que o log de eventos comprou que a fotografia nao compraria".
 --
 -- NULL AQUI SIGNIFICA "NAO ALCANCADO", NUNCA "DESCONHECIDO". Um pedido cancelado tem
--- picked_at nulo porque a separacao nao aconteceu; para os 6.400 pedidos desta janela,
--- todos terminais, nulo significa "nunca aconteceu e nunca vai acontecer". Quando a janela
+-- picked_at nulo porque a separacao nao aconteceu; enquanto todos os pedidos da janela
+-- forem terminais, nulo significa "nunca aconteceu e nunca vai acontecer". Quando a janela
 -- passar a conter pedidos em voo, nulo passara a significar tambem "ainda nao" — e a
 -- coluna `is_terminal` e o que distingue os dois casos sem adivinhacao.
 --
 -- CUSTOMER_SK RESOLVE A VERSAO VIGENTE NA DATA DO PEDIDO, que e literalmente o que
 -- dim_customer.sql ja mandava fazer e ate aqui nenhum fato fazia. E o que finalmente faz o
--- SCD2 pagar por si: DIM_CUSTOMER tem 40.000 linhas (duas geracoes, 08-24 e 08-27) e os
--- pedidos de 08-24 a 08-26 apontam para a primeira, os de 08-27 para a segunda.
+-- SCD2 pagar por si: DIM_CUSTOMER tem duas geracoes (08-24 e 08-27), e os pedidos
+-- anteriores a 08-27 apontam para a primeira versao do cliente, os de 08-27 em diante
+-- para a segunda.
 --
 -- MEDIDO, E O NUMERO IMPORTA: a versao resolvida por este range join coincide com
 -- `customer_ingestion_date` — que a Source gravou no proprio evento order_placed — nos
--- 6.400 casos. Sao dois caminhos independentes (a escolha do gerador em Python e uma
+-- TODOS os casos. Sao dois caminhos independentes (a escolha do gerador em Python e uma
 -- juncao por intervalo em SQL) chegando ao mesmo lugar, e um teste dbt vigia a coincidencia
 -- em vez de confiar nela.
 --
@@ -75,7 +76,7 @@ select
 
     o.order_status,
     o.is_terminal,
-    -- DELIVERED nao e terminal: uma devolucao ainda pode vir depois. 61 dos 6.046 pedidos
+    -- DELIVERED nao e terminal: uma devolucao ainda pode vir depois. Parte dos pedidos
     -- entregues viraram RETURNED, e e por isso que o funil se apoia em marco e nao em
     -- status (ver mart_order_funnel).
     o.last_event_type,

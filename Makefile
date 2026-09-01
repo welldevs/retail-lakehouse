@@ -102,9 +102,26 @@ ORDERS_REFERENCE_ROOT  ?= data/orders-reference
 ORDERS_REFERENCE        = $(ORDERS_REFERENCE_ROOT)/ingestion_date=$(ORDERS_TO)
 # A JANELA E DECLARADA, e nao derivada de "hoje". Quem sabe de quando ate quando os pedidos
 # existem e quem opera; adivinhar produziria uma base de fatos diferente a cada execucao.
-# Medido em 2026-08-28: os 4 armazens tem catalogo de 08-24 a 08-27.
+#
+# O FIM DA JANELA E UM TETO EXTERNO: 2026-09-01 e ate onde o catalogo observado da Mercadona
+# alcanca nos quatro armazens. Nao e um numero escolhido.
+#
+# O COMECO VEM DE UMA EXIGENCIA DA MEDICAO, e nao de gosto. A janela precisa ser MAIOR que
+# `opening_days_of_demand` (7) do seed de estoque — senao o estoque inicial cobre o periodo
+# inteiro e a ruptura e zero POR CONSTRUCAO, que foi exatamente o que a primeira execucao do
+# ledger acusou com 4 dias. De 08-24 a 09-01 sao 9 dias de pedido, e o ledger enxerga 10
+# (a separacao de um pedido colocado tarde cai no dia seguinte). 10 > 7.
+#
+# UM CICLO DE REPOSICAO FECHA NESSA JANELA, DOIS NAO. Com cobertura de 7 dias, ponto em 3 e
+# prazo de 2, a primeira ordem sai por volta do dia 5 e chega no 7; a segunda cairia fora.
+# Isso fica declarado em vez de corrigido: a alternativa seria baixar a cobertura ate caber
+# dois ciclos, e escolher uma premissa pelo que ela faz com o grafico e o que este projeto
+# recusa. `assert_stock_window_can_exercise_replenishment` guarda o limite que importa.
+#
+# Medido em 2026-09-01: os 4 armazens tem catalogo de 08-24 a 09-01, com o dia 30 AUSENTE —
+# esse dia gera preco `carried_forward`, que era um caminho declarado e nunca exercido.
 ORDERS_FROM            ?= 2026-08-24
-ORDERS_TO              ?= 2026-08-27
+ORDERS_TO              ?= 2026-09-01
 ORDERS_SEED            ?= 20260828
 # AQUI ingestion_date E A DATA DO PEDIDO, nao o dia da extracao.
 ORDERS_PARTITION        = $(ORDERS_DATA_ROOT)/ingestion_date=$(ORDERS_DATE)/wh=$(WH)
@@ -126,6 +143,7 @@ ORDERS_OVERWRITE       ?=
         orders-projection-init orders-publish orders-project orders-lag \
         orders-replay orders-topic orders-prove-stream spike-iceberg \
         spike-spark-iceberg spark-build stock-consumption stock-ledger \
+        spark-evidence freeze freeze-check \
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
@@ -226,6 +244,9 @@ help:
 	@echo "  spark-build               constroi a imagem do Spark (perfil spark)"
 	@echo "  stock-consumption         exporta o consumo observado do Silver p/ o catalogo"
 	@echo "  stock-ledger              o job Spark: saldo, ruptura e reposicao (perfil spark)"
+	@echo "  spark-evidence            roda o ledger nos DOIS motores e publica os dois tempos"
+	@echo "  freeze                    sela a captura do RAW (docs/FREEZE.md + seed)"
+	@echo "  freeze-check              rele o RAW e reprova se a captura selada mudou"
 	@echo ""
 	@echo "projecao viva (Iceberg) — dois escritores na mesma tabela, um leitor:"
 	@echo "  iceberg-init              catalogo SQL + tabela live_order_state"
@@ -729,6 +750,28 @@ spark-build:
 # economizaria segundos e custaria confianca.
 stock-consumption:
 	@$(PLATFORM_PY) -m retail_platform stock-consumption
+
+# ---- freeze: a disciplina vira verificacao ------------------------------------
+#
+# "Nao mexa no RAW depois de fechar" foi respeitado por ATENCAO ate a Fase 7, e atencao nao
+# reprova build nenhum — as tres ultimas revisoes de documentacao existiram porque uma
+# regeracao mudou numeros ja escritos e nada avisou.
+#
+# `freeze` sela; `freeze-check` confere. O selo cobre o DADO (path, sha256, bytes, records
+# de cada arquivo declarado) e NAO a execucao: incluir run_id e timestamps faria um re-land
+# de dado identico quebrar o selo, e alarme que dispara sem causa e pior que nenhum alarme.
+freeze:
+	@$(PLATFORM_PY) -m retail_platform freeze
+
+freeze-check:
+	@$(PLATFORM_PY) -m retail_platform freeze-check
+
+SPARK_EVIDENCE ?= docs/spark-evidence/README.md
+# A EVIDENCIA RODA OS DOIS MOTORES e publica os dois tempos, seja qual for o vencedor. Ela
+# existe para sustentar uma afirmacao NEGATIVA — "o Spark nao foi adotado por desempenho" —
+# e negativa sem benchmark e a mesma doenca do numero copiado a mao, com o sinal trocado.
+spark-evidence:
+	@$(PLATFORM_PY) -m retail_platform spark-evidence --out $(SPARK_EVIDENCE)
 
 stock-ledger: stock-consumption
 	@docker ps --format '{{.Names}}' | grep -qx retail-oltp-postgres || { \

@@ -58,3 +58,49 @@ seeds:
           repete dentro desse escopo, embora 18 nomes se repitam na Espanha inteira
           entre provincias diferentes (ex. "Arroyomolinos" em Madrid e Caceres).
         tests: [not_null, unique]
+
+  - name: stock_premises_seed
+    description: >
+      A POLITICA de estoque, em dias de demanda: cobertura inicial, ponto de reposicao,
+      nivel alvo e prazo do fornecedor. Todas 'synthetic' — nenhuma fonte deste repositorio
+      mede estoque, e essa ausencia e a razao de o dominio so existir desde a Fase 7.
+
+      O que NAO e sintetico e o numero que elas multiplicam: a demanda media diaria por
+      serie vem do consumo MEDIDO em silver_order_line. A politica vem daqui, a escala vem
+      do dado. Ver assert_stock_premises_are_internally_coherent, que cruza as quatro entre
+      si — ponto de reposicao maior que o prazo, nivel alvo maior que o ponto, e cobertura
+      inicial maior que o ponto.
+    columns:
+      - name: premise_key
+        tests: [not_null, unique]
+      - name: value
+        tests: [not_null]
+      - name: label
+        tests: [not_null]
+      - name: rationale
+        tests: [not_null]
+
+  - name: frozen_capture_seed
+    description: >
+      O SELO DA CAPTURA, uma linha por particao do RAW. DERIVADO: escrito por `make freeze`,
+      junto de docs/FREEZE.md, a partir da mesma coleta — nao editar a mao.
+
+      `content_sha256` cobre a lista ORDENADA de (path, sha256, bytes, records) declarada no
+      manifesto da particao. Ficam deliberadamente de fora run_id, timestamps e history: sao
+      metadados de EXECUCAO, e inclui-los faria um re-land de dado byte-identico quebrar o
+      selo. Alarme que dispara sem causa treina quem revisa a ignora-lo — mesma razao pela
+      qual o CONTRACT do painel carrega o sha256 da origem e nao a data da geracao.
+
+      PODE ESTAR VAZIO, e vazio significa "ainda nao selado" — o estado de um clone novo.
+      assert_raw_matches_the_frozen_capture trata isso como nada a guardar; a partir do
+      primeiro selo ele passa a cobrar. Nao existe um terceiro estado.
+
+      A verificacao COMPLETA e `make freeze-check`, que rele o object storage. O teste dbt
+      cobre a parte que roda sem rede extra: particao aterrissada depois do fechamento.
+    columns:
+      - name: source
+        tests: [not_null]
+      - name: partition_key
+        tests: [not_null]
+      - name: content_sha256
+        tests: [not_null]

@@ -447,6 +447,51 @@ SPECS: list[dict] = [
             order by premise_key
         """,
     },
+    {
+        "name": "STG_STOCK_PREMISE",
+        "grain": "(premise_key)",
+        "sql": """
+            -- A POLITICA DE ESTOQUE, separada das premissas de pedido de proposito: aquelas
+            -- governam o que um cliente FAZ, estas o que o armazem TEM. MART_STOCK_HEALTH
+            -- compara cobertura contra `reorder_point_days`, e o numero tem de ser o MESMO
+            -- que o job Spark usou — nao uma copia dele numa var do dbt.
+            select *
+            from stock_premises
+            order by premise_key
+        """,
+    },
+    {
+        "name": "STG_STOCK_LEDGER",
+        "grain": "(wh, source_product_id, stock_date)",
+        "sql": """
+            -- O UNICO RECORTE QUE NAO VEM DE UMA SOURCE. Estoque nao e observado em lugar
+            -- nenhum deste projeto: este ledger e CALCULADO pelo job Spark a partir do
+            -- consumo medido nos pedidos mais a politica declarada. `written_by` viaja para
+            -- que quem consultar o warehouse descubra isso sem abrir documentacao —
+            -- a mesma disciplina que faz o Silver nunca inventar moeda.
+            --
+            -- NAO E FILTRADO POR JANELA aqui: o ledger ja nasce com o recorte dos pedidos,
+            -- porque o consumo que o alimenta veio deles. Um filtro a mais criaria dois
+            -- lugares onde a janela mora.
+            select
+                wh,
+                source_product_id,
+                stock_date,
+                opening_balance,
+                units_received,
+                units_demanded,
+                units_fulfilled,
+                units_short,
+                closing_balance,
+                reorder_units,
+                reorder_eta,
+                mean_daily_demand,
+                days_of_cover,
+                written_by
+            from silver_stock_ledger
+            order by wh, source_product_id, stock_date
+        """,
+    },
 ]
 
 

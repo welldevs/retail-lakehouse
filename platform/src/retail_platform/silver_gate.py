@@ -56,6 +56,9 @@ SOURCE_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
     ("simulated_orders", (
         "silver_order_event", "silver_order", "silver_order_line", "silver_orders_manifest",
+        # O teste do selo le `silver_orders_manifest`; sem particao de pedido aterrissada ele
+        # tentaria `ref()` de algo que nao foi construido — mesmo motivo dos nos do Iceberg.
+        "assert_raw_matches_the_frozen_capture",
     )),
 )
 
@@ -83,6 +86,7 @@ ICEBERG_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "silver_stock_ledger",
         "assert_stock_ledger_conserves_the_balance",
         "assert_stock_replenishment_respects_the_lead_time",
+        "assert_stock_window_can_exercise_replenishment",
     )),
 )
 

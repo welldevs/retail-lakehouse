@@ -6,7 +6,7 @@ juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois diverg
 no primeiro ajuste de SQL — com o detalhe cruel de que a conferência continuaria
 passando, porque ninguém lê um SQL e um texto lado a lado procurando desacordo.
 
-Deriva de `indicators.py` sha256 `b08375c8dcc569a282bc8580364d4ed9cc3b45aee14380c78aacb95572cd0c1b`. O cabeçalho traz o hash da origem e
+Deriva de `indicators.py` sha256 `889338bb5ccab785d64951fe3eebb4eee0482c465ddfcc43237cba1b181e9c36`. O cabeçalho traz o hash da origem e
 **não** a data da geração: assim regerar um contrato em dia não muda um byte, e
 `git diff --exit-code streamlit/CONTRACT.md` depois de `make dashboard-contract`
 é a conferência de que os dois não divergiram.
@@ -72,6 +72,11 @@ vigente.
 - **F. Base e cobertura**
   - [Base de clientes](#base_clientes)
   - [Cobertura municipal](#cobertura_municipal)
+- **G. Estoque e reposicao**
+  - [Cobertura de estoque por categoria](#cobertura_estoque)
+  - [Ruptura: unidades e series afetadas](#ruptura_estoque)
+  - [Reposicao: ordens disparadas](#reposicao_estoque)
+  - [Giro diario por categoria](#giro_estoque)
 - [O que o painel NÃO exibe](#o-que-o-painel-não-exibe)
 
 ## A. Comercial
@@ -715,6 +720,137 @@ select wh as armazem, province_name as provincia,
             order by 1
 ```
 
+## G. Estoque e reposicao
+
+<a id="cobertura_estoque"></a>
+### Cobertura de estoque por categoria
+
+| | |
+|---|---|
+| Chave | `cobertura_estoque` |
+| Pergunta | Quantos dias de demanda o estoque de cada categoria ainda cobre? |
+| Grão da fonte | `(stock_date, wh, category_id) — uma linha por categoria de nivel 2, por dia` |
+| Tipo do dado | derivado: consumo observado, politica sintetica |
+| Marts | `MART_STOCK_HEALTH` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. SALDO NAO SOMA ENTRE DIAS. `closing_units` de segunda mais o de terca nao e o estoque da semana — e o mesmo estoque contado duas vezes. Somar entre PRODUTOS dentro do dia esta certo; somar num eixo de tempo nunca esta. E a primeira coisa que um BI vai tentar.
+2. AS DUAS COBERTURAS RESPONDEM PERGUNTAS DIFERENTES e o painel publica as duas de proposito. `days_of_cover` e a razao das somas: quantos dias o estoque DA CATEGORIA cobre a demanda dela. `days_of_cover_typical_product` e a media das razoes: quantos dias o produto TIPICO cobre. A segunda e sempre maior, porque produto de giro baixo tem cobertura enorme e domina a media.
+3. COBERTURA E RAZAO, ENTAO NAO SE MEDIA de novo. Tirar `avg(days_of_cover)` sobre categorias produz a media de uma media e nao corresponde a nenhum estoque real.
+
+```sql
+select stock_date as dia, wh as armazem, category_name as categoria,
+                   sum(closing_units) as unidades_em_estoque,
+                   round(sum(closing_units) / nullif(sum(units_demanded), 0), 2)
+                       as dias_de_cobertura,
+                   round(avg(days_of_cover_typical_product), 2)
+                       as cobertura_do_produto_tipico,
+                   sum(product_days) as pares_produto_dia
+            from RETAIL.MART.MART_STOCK_HEALTH
+            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            group by 1, 2, 3
+            order by dias_de_cobertura asc nulls last
+```
+
+<a id="ruptura_estoque"></a>
+### Ruptura: unidades e series afetadas
+
+| | |
+|---|---|
+| Chave | `ruptura_estoque` |
+| Pergunta | Quanto a demanda pediu que a prateleira nao tinha, e em quantos produtos? |
+| Grão da fonte | `(stock_date, wh, category_id)` |
+| Tipo do dado | derivado: consumo observado, politica sintetica |
+| Marts | `MART_STOCK_HEALTH` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. AS DUAS UNIDADES NAO SE SUBSTITUEM. `units_short` diz QUANTO faltou; `series_with_shortfall` diz em quantos (produto, dia) faltou alguma coisa. Um produto popular faltando 500 unidades e 500 produtos faltando 1 sao problemas operacionais diferentes com o mesmo `units_short`. Publique os dois.
+2. `fill_rate` E NULO QUANDO NAO HOUVE DEMANDA, e nao 1. Uma categoria sem pedido no dia nao teve 100% de atendimento — nao teve pedido. Um BI que converta esse nulo em 1 sobe a media de atendimento com dias em que nada aconteceu.
+3. ESTA RUPTURA E INDEPENDENTE DAS LINHAS `unavailable` DO PEDIDO. O gerador remove linhas a uma taxa FIXA sorteada, sem olhar saldo; este ledger calcula falta a partir do saldo. Uma nao causa a outra, e cruza-las como se causassem produziria uma correlacao inventada. Gatilho para unificar: um gerador de segunda passada que releia o saldo do dia anterior.
+
+```sql
+select stock_date as dia, wh as armazem, category_name as categoria,
+                   sum(units_demanded) as unidades_pedidas,
+                   sum(units_fulfilled) as unidades_atendidas,
+                   sum(units_short) as unidades_em_falta,
+                   sum(series_with_shortfall) as produtos_com_falta,
+                   sum(product_days) as produtos_no_dia,
+                   round(sum(units_fulfilled) / nullif(sum(units_demanded), 0), 4)
+                       as taxa_de_atendimento
+            from RETAIL.MART.MART_STOCK_HEALTH
+            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            group by 1, 2, 3
+            having sum(units_demanded) > 0
+            order by unidades_em_falta desc
+```
+
+<a id="reposicao_estoque"></a>
+### Reposicao: ordens disparadas
+
+| | |
+|---|---|
+| Chave | `reposicao_estoque` |
+| Pergunta | Quantas ordens de compra a politica disparou, e de quantas unidades? |
+| Grão da fonte | `(stock_date, wh, category_id)` |
+| Tipo do dado | derivado: consumo observado, politica sintetica |
+| Marts | `MART_STOCK_HEALTH` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. ORDEM EMITIDA NAO E ORDEM CHEGADA. Ela chega `supplier_lead_days` dias depois, e uma ordem emitida perto do fim da janela NUNCA aparece como chegada — o pedido em transito no fim do periodo e propriedade real de qualquer ledger. Comparar ordens com chegadas no mesmo periodo e a leitura errada mais provavel deste indicador.
+2. A POLITICA E SINTETICA E ESTA DECLARADA. `reorder_point_days`, `reorder_target_days` e `supplier_lead_days` vem de um seed, nao de negociacao com fornecedor nenhum. O numero de ordens e consequencia direta deles.
+3. UMA ORDEM EM ABERTO POR VEZ, por politica min-max classica. Sem essa trava um produto em ruptura emitiria uma ordem por dia enquanto a primeira ainda estivesse a caminho, e a chegada em cascata produziria um pico de estoque que nenhuma operacao real teria.
+
+```sql
+select stock_date as dia, wh as armazem, category_name as categoria,
+                   sum(replenishment_orders) as ordens_emitidas,
+                   sum(reorder_units) as unidades_pedidas_ao_fornecedor,
+                   sum(product_days) as produtos_no_dia,
+                   round(sum(replenishment_orders) / nullif(sum(product_days), 0), 4)
+                       as fracao_de_produtos_repondo
+            from RETAIL.MART.MART_STOCK_HEALTH
+            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            group by 1, 2, 3
+            having sum(replenishment_orders) > 0
+            order by ordens_emitidas desc
+```
+
+<a id="giro_estoque"></a>
+### Giro diario por categoria
+
+| | |
+|---|---|
+| Chave | `giro_estoque` |
+| Pergunta | Quantas vezes por dia o estoque de cada categoria se renova? |
+| Grão da fonte | `(stock_date, wh, category_id)` |
+| Tipo do dado | derivado: consumo observado, politica sintetica |
+| Marts | `MART_STOCK_HEALTH` |
+| Eixo de data | sim |
+
+**Armadilhas ao reconstruir no Power BI**
+
+1. NAO E GIRO ANUALIZADO, e nao multiplique por 365. A janela tem poucos dias, e anualizar projetaria um comportamento sazonal que ninguem observou — o proprio gerador nao tem efeito de dia da semana, porque `daily_order_rate` e fixo.
+2. O DENOMINADOR E O SALDO MEDIO DO DIA (abertura + fechamento) / 2, e nao o fechamento. Usar o fechamento faz o giro explodir para infinito no dia em que a prateleira zera — que e justamente o dia mais interessante.
+3. GIRO ALTO NAO E BOM POR SI. Ele sobe tanto quando a demanda cresce quanto quando o estoque encolhe; leia-o ao lado da cobertura e da ruptura, senao uma prateleira quase vazia parece eficiencia.
+
+```sql
+select stock_date as dia, wh as armazem, category_name as categoria,
+                   round(avg(turnover_daily), 4) as giro_diario,
+                   sum(units_fulfilled) as unidades_vendidas,
+                   sum(opening_units) as saldo_abertura,
+                   sum(closing_units) as saldo_fechamento,
+                   sum(units_short) as unidades_em_falta
+            from RETAIL.MART.MART_STOCK_HEALTH
+            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            group by 1, 2, 3
+            order by giro_diario desc nulls last
+```
+
 ## O que o painel NÃO exibe
 
 Uma lista de ausências declaradas vale mais que um indicador inventado. Cada item
@@ -727,11 +863,13 @@ Nenhuma fonte deste repositorio tem custo. A API da Mercadona expoe preco de ven
 
 **Gatilho:** Uma fonte de custo por produto. Sem ela, qualquer margem e inventada.
 
-### Estoque, ruptura, giro, cobertura de estoque
+### Estoque OBSERVADO, e a ligacao entre ruptura e linha indisponivel
 
-Nao existe fato de estoque na plataforma — esta escrito no CONTRACT da source da Mercadona. As taxas de substituicao e remocao sao PREMISSA declarada, nao consequencia de um saldo. E por isso que o motivo registrado e `unavailable` e nao `out_of_stock`.
+O grupo G publica saldo, ruptura, giro e cobertura desde a Fase 7 — mas eles sao CALCULADOS, nunca observados: um job Spark deriva o saldo do consumo medido nos pedidos mais uma politica declarada em seed. Continua nao existindo fonte de estoque neste repositorio, e esta escrito no CONTRACT da source da Mercadona.
 
-**Gatilho:** Uma fonte de saldo ou movimento de estoque.
+A consequencia concreta, que importa ao ler o grupo G: a ruptura do ledger e INDEPENDENTE das linhas removidas do pedido. O gerador remove linha a uma taxa FIXA sorteada, com motivo `unavailable` e nao `out_of_stock` justamente porque nao havia saldo quando ele foi escrito. Uma nao causa a outra, e cruzar as duas produziria uma correlacao inventada.
+
+**Gatilho:** Para saldo real: uma fonte de estoque ou movimento. Para ligar as duas rupturas sem fonte nova: um gerador de SEGUNDA PASSADA, que releia o saldo do dia anterior antes de decidir a remocao. Isso inverteria a dependencia atual (hoje pedido gera estoque) e criaria um ciclo entre os dois dominios — nao e barato, e por isso esta declarado aqui em vez de aproximado.
 
 ### Recompra, LTV, coorte, receita por cliente, RFM
 

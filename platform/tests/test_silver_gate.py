@@ -43,6 +43,7 @@ from retail_platform.silver_gate import (  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DAGS = os.path.join(REPO, "orchestration", "airflow", "dags")
 MODELS = os.path.join(REPO, "platform", "dbt", "models", "silver")
+TESTES = os.path.join(REPO, "platform", "dbt", "tests")
 
 TUDO = {prefixo: True for prefixo, _ in SOURCE_MODELS}
 METADADO = "s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00052-x.json"
@@ -145,20 +146,30 @@ class PlanoTest(unittest.TestCase):
 
 
 class ModelosDeclaradosExistemTest(unittest.TestCase):
-    def test_todo_modelo_citado_pelo_portao_existe_no_disco(self):
+    def test_todo_NO_citado_pelo_portao_existe_no_disco(self):
         """Um nome errado aqui nao reprova nada: o dbt ignora `--exclude` de um no
-        inexistente, e o modelo que se queria excluir e construido assim mesmo."""
+        inexistente, e o no que se queria excluir e construido assim mesmo.
+
+        A VARREDURA INCLUI `tests/`, E ISSO ERA UMA BRECHA ATE A FASE 7. O portao sempre
+        excluiu TESTES junto com modelos — `assert_live_projection_matches_batch_fold` esta
+        la desde o Marco 6 — mas esta conferencia so olhava `models/`, e so o PRIMEIRO no de
+        cada tabela Iceberg. Um typo no nome de um teste passaria: o dbt ignoraria o
+        `--exclude`, o teste rodaria contra um modelo que nao foi construido, e o erro
+        apareceria como falha de compilacao tres passos adiante da causa.
+        """
         no_disco = {
             os.path.splitext(arquivo)[0]
-            for _, _, arquivos in os.walk(MODELS)
+            for raiz in (MODELS, TESTES)
+            for _, _, arquivos in os.walk(raiz)
             for arquivo in arquivos if arquivo.endswith(".sql")
         }
-        self.assertTrue(no_disco, f"nenhum modelo encontrado em {MODELS}")
+        self.assertTrue(no_disco, f"nenhum arquivo .sql em {MODELS} nem em {TESTES}")
         for _, modelos in SOURCE_MODELS:
             for modelo in modelos:
                 self.assertIn(modelo, no_disco)
         for _, _, nos in ICEBERG_TABLES:
-            self.assertIn(nos[0], no_disco)
+            for no in nos:
+                self.assertIn(no, no_disco, f"o portao cita `{no}`, que nao existe")
 
     def test_todo_modelo_de_source_esta_atribuido_a_alguma_source(self):
         """O inverso, e e o que pega o modelo NOVO: quem cria um modelo de source e esquece

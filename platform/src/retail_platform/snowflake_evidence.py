@@ -106,8 +106,9 @@ AMOSTRAS = {
         "from {db}.MART.MART_ORDER_FUNNEL order by order_date, wh limit 8"
     ),
     # sla_minutes, max_picking_minutes e orders_breaching_sla na mesma linha de proposito:
-    # o zero de violacoes so e legivel ao lado do limiar declarado (90) e do maximo
-    # observado (80). Separados, o zero pareceria uma operacao impecavel.
+    # uma contagem de violacoes so e legivel ao lado do limiar declarado e do maximo
+    # possivel. Separada, ela nao diz se mede a operacao ou a aritmetica do seed — que foi
+    # exatamente o defeito de tres fases que a Fase 7 corrigiu.
     "MART_FULFILLMENT_SLA": (
         "select order_date, wh, sla_minutes, max_picking_minutes, orders_breaching_sla, "
         "p50_minutes_to_pick, p90_minutes_to_deliver, orders_delivered_before_slot, "
@@ -118,6 +119,18 @@ AMOSTRAS = {
         "select order_date, wh, category_name, orders_touching_category, lines_placed, "
         "lines_substituted, revenue_placed, revenue_fulfilled, substitution_rate "
         "from {db}.MART.MART_BASKET_DAILY order by revenue_fulfilled desc limit 5"
+    ),
+    # AS CATEGORIAS COM MENOS COBERTURA, e nao as primeiras por data: uma amostra de estoque
+    # que mostrasse prateleiras cheias nao seria evidencia de nada. As duas leituras de
+    # cobertura viajam juntas porque a diferenca entre elas — razao das somas contra media
+    # das razoes — e a armadilha central deste mart. `stock_label` esta na linha para que
+    # ninguem leia ruptura calculada como ruptura medida.
+    "MART_STOCK_HEALTH": (
+        "select stock_date, wh, category_name, closing_units, units_demanded, "
+        "units_short, series_with_shortfall, fill_rate, days_of_cover, "
+        "days_of_cover_typical_product, replenishment_orders, stock_label "
+        "from {db}.MART.MART_STOCK_HEALTH where units_demanded > 0 "
+        "order by days_of_cover asc nulls last limit 8"
     ),
 }
 

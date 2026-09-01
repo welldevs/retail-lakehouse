@@ -253,4 +253,4 @@ cross-validado contra ~305 mil linhas reais das 4 províncias e contra geografia
 (prefixo de província sempre correto, núcleos de València batendo com o CEP conhecido
 da área). Execução `make callejero-refresh` completa (extract → validate --strict →
 land → verify-landing → silver) contra os arquivos de produção das 4 províncias — ver
-[README.md da raiz](../../README.md#terceira-source-callejero-do-ine).
+[DECISIONS.md](../../DECISIONS.md#terceira-source-callejero-do-ine).

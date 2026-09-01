@@ -144,6 +144,18 @@ create table order_premises (
     premise_key varchar, value decimal(18,6), unit varchar, label varchar,
     rationale varchar
 );
+create table stock_premises (
+    premise_key varchar, value decimal(18,6), unit varchar, label varchar,
+    rationale varchar
+);
+create table silver_stock_ledger (
+    wh varchar, source_product_id varchar, stock_date date,
+    opening_balance bigint, units_received bigint, units_demanded bigint,
+    units_fulfilled bigint, units_short bigint, closing_balance bigint,
+    reorder_units bigint, reorder_eta date,
+    mean_daily_demand decimal(12,4), days_of_cover decimal(12,4),
+    written_by varchar
+);
 """
 
 
@@ -288,6 +300,19 @@ def popular(con):
         insert into order_premises values
             ('sla_minutes_picking',77.0,'minutes','synthetic','Limiar de alerta.'),
             ('basket_lines_max',40.0,'lines','synthetic','Maior cesta possivel.')
+    """)
+    con.execute("""
+        insert into stock_premises values
+            ('opening_days_of_demand',7.0,'days','synthetic','Cobertura inicial.'),
+            ('supplier_lead_days',2.0,'days','synthetic','Prazo do fornecedor.')
+    """)
+    # O CASO-ARMADILHA DESTA TABELA e o DIA DE RUPTURA: `units_short > 0` com
+    # `closing_balance = 0`, que e a unica combinacao legitima. Se o recorte perdesse uma das
+    # duas colunas, o parquet continuaria valido e o mart contaria ruptura sem saldo zerado.
+    con.execute("""
+        insert into silver_stock_ledger values
+            ('wh1','p1','2026-08-26',100,0,30,30,0,70,0,null,10.0,7.0,'spark'),
+            ('wh1','p1','2026-08-27',70,0,80,70,10,0,120,'2026-08-29',10.0,0.0,'spark')
     """)
 
 

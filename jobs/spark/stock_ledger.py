@@ -6,7 +6,7 @@
 POR QUE ESTE JOB EXISTE EM SPARK, E POR QUE NAO E POR VOLUME.
 
 O gatilho de volume NAO disparou neste projeto, e isso esta medido: o candidato natural —
-o self-join de cesta, 18,3 milhoes de pares — roda em 0,9 s e 0,94 GB num no de DuckDB.
+o self-join de cesta, 37,9 milhoes de pares — roda em 1,45 s e 2,31 GB num no de DuckDB.
 Inflar dado para justificar um motor seria o defeito que este repositorio passou seis fases
 cacando. Entao o Spark entra por outra porta, e ela ja estava aberta.
 

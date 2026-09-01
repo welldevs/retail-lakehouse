@@ -83,9 +83,10 @@ models:
 
   - name: mart_order_funnel
     description: >
-      GRAO (order_date, wh) — 16 linhas. O funil se apoia em MARCO ALCANCADO, nunca em
-      order_status, e a diferenca e medida: contar order_status = 'DELIVERED' da 5.985
-      entregas, contar delivered_at is not null da 6.046. Sao os 61 pedidos devolvidos,
+      GRAO (order_date, wh) — uma linha por armazem por dia. O funil se apoia em MARCO
+      ALCANCADO, nunca em order_status, e a diferenca foi medida em 2026-06: contar
+      order_status = 'DELIVERED' dava 5.985 entregas, contar delivered_at is not null dava
+      6.046. Eram os 61 pedidos devolvidos daquela captura,
       que tambem foram entregues. Marco e monotonico; status nao e. As colunas de SAIDA
       (cancelados, devolvidos) nao somam com as etapas — elas vivem num bloco proprio.
     columns:
@@ -206,3 +207,71 @@ models:
         tests: [not_null]
       - name: currency
         tests: [not_null]
+
+  - name: mart_stock_health
+    description: >
+      GRAO (stock_date, wh, category_id) — categoria de nivel 2, o mesmo eixo de
+      MART_ASSORTMENT_DAILY e MART_BASKET_DAILY, para que as tres se comparem sem conversao.
+      Por produto seriam ~17 mil linhas por armazem por dia, o que nao e painel.
+
+      TIRA QUATRO ITENS DE "FORA DE ALCANCE" — ruptura, giro, cobertura e reposicao — e o
+      gatilho declarado la ("uma fonte de saldo ou movimento de estoque") NAO foi cumprido.
+      Continua nao existindo fonte de estoque; o que mudou e que o saldo passou a ser
+      CALCULADO. Por isso a coluna `stock_label` viaja com valor 'synthetic' em toda linha:
+      ler ruptura daqui como medicao de campo e o mesmo erro de ler densidade de simulacao
+      como penetracao de mercado.
+
+      ADITIVIDADE E A ARMADILHA DESTE MART, e maior aqui que nos outros: saldo nao soma entre
+      dias, cobertura e razao e nao se media, e ruptura tem duas unidades que nao se
+      substituem. Cada coluna diz qual e o caso.
+
+      LIMITE DECLARADO: a ruptura aqui e INDEPENDENTE das linhas `unavailable` do pedido — o
+      gerador remove linha a taxa fixa sorteada, sem olhar saldo. Uma nao causa a outra.
+    columns:
+      - name: stock_date
+        tests: [not_null]
+      - name: wh
+        tests: [not_null]
+      - name: product_days
+        description: >
+          Quantos pares (produto, dia) a linha agrega. E o denominador de qualquer leitura por
+          produto — sem ele, series_with_shortfall nao tem escala.
+        tests: [not_null]
+      - name: units_short
+        description: "Aditiva. Quanto faltou, em unidades."
+        tests: [not_null]
+      - name: series_with_shortfall
+        description: >
+          Em quantos (produto, dia) faltou alguma coisa. NAO substitui units_short: um produto
+          popular faltando 500 unidades e 500 produtos faltando 1 sao problemas operacionais
+          diferentes com o mesmo units_short.
+        tests: [not_null]
+      - name: fill_rate
+        description: >
+          NULO quando nao houve demanda, e nao 1. "Nada foi pedido" nao e "tudo foi atendido",
+          e a diferenca some se o zero virar 100%.
+      - name: closing_units
+        description: >
+          SEMI-ADITIVO: nao some entre dias. E a primeira coisa que um BI vai tentar num eixo
+          de tempo, e o resultado e o mesmo estoque contado varias vezes.
+        tests: [not_null]
+      - name: days_of_cover
+        description: >
+          A RAZAO DAS SOMAS: quantos dias o estoque da categoria cobre a demanda dela.
+          Diferente de days_of_cover_typical_product, que e a media das razoes.
+      - name: days_of_cover_typical_product
+        description: >
+          A MEDIA DAS RAZOES: quantos dias o produto TIPICO cobre. Sempre maior que
+          days_of_cover, porque produto de giro baixo tem cobertura enorme e domina a media.
+          As duas estao publicadas porque respondem perguntas diferentes.
+      - name: turnover_daily
+        description: >
+          Saidas sobre saldo MEDIO do dia, nao sobre o fechamento — com o fechamento o giro
+          explode para infinito no dia em que a prateleira zera, que e o dia mais
+          interessante. NAO e anualizado: a janela tem poucos dias e anualizar projetaria
+          sazonalidade que ninguem observou.
+      - name: stock_label
+        description: "Sempre 'synthetic'. O rotulo viaja com o numero, como no Silver."
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [synthetic]}}

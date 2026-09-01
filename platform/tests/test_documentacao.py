@@ -88,6 +88,158 @@ class LinksRelativosTest(unittest.TestCase):
         )
 
 
+class ReferenciaPorNomeDeSecaoTest(unittest.TestCase):
+    """`[DOC.md § "Titulo"](DOC.md)` tem de apontar para um titulo que existe la.
+
+    POR QUE ISTO NAO ERA COBERTO. `LinksRelativosTest` confere que o ARQUIVO existe, e todas
+    estas referencias apontam para arquivos que existem — entao ela passava. O que ninguem
+    conferia era o RÓTULO: a secao nomeada podia ter sido renomeada, ou ter mudado de
+    arquivo, e o link continuaria "valido" levando o leitor ao documento errado.
+
+    Isso deixou de ser hipotetico na Fase 7, quando 17 secoes de narrativa mudaram de
+    ARCHITECTURE.md para DECISIONS.md. Cinco referencias precisaram ser redirecionadas — e
+    duas outras pareceram quebradas ate eu descobrir que meu proprio verificador so olhava
+    titulos de nivel 2. O teste olha TODOS os niveis.
+
+    A COMPARACAO E POR PREFIXO de proposito: as referencias abreviam ("Fase 2" aponta para
+    "Fase 2: camada analitica no Snowflake"). Exigir o titulo inteiro obrigaria a repetir
+    frases longas dentro do texto corrido, e a abreviacao nao introduz ambiguidade — nao ha
+    duas secoes cujo titulo comece igual.
+    """
+
+    PADRAO = re.compile(r'\[([A-Za-z_.\/-]*\.md) § "([^"]+)"\]')
+
+    def _titulos(self, caminho: pathlib.Path) -> set[str]:
+        try:
+            texto = caminho.read_text(encoding="utf-8")
+        except OSError:
+            return set()
+        return {
+            linha.lstrip("#").strip()
+            for linha in texto.split("\n")
+            if re.match(r"^#{1,6}\s", linha)
+        }
+
+    def test_toda_secao_citada_por_nome_existe_no_documento_citado(self):
+        problemas = []
+        for caminho in _versionados("*.md"):
+            try:
+                texto = caminho.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for alvo, titulo in self.PADRAO.findall(texto):
+                destino = (caminho.parent / alvo).resolve()
+                if not destino.exists():
+                    # LinksRelativosTest ja cobre arquivo ausente; aqui so o rotulo.
+                    continue
+                titulos = self._titulos(destino)
+                if not any(t == titulo or t.startswith(titulo) or titulo in t
+                           for t in titulos):
+                    problemas.append(
+                        f"{caminho.relative_to(RAIZ)} cita "
+                        f'{alvo} § "{titulo}", que nao existe la'
+                    )
+        self.assertEqual(problemas, [], "\n" + "\n".join(problemas))
+
+
+class TetoDeLinhasTest(unittest.TestCase):
+    """README e ARCHITECTURE nao podem voltar a crescer sem limite.
+
+    O TAMANHO E, POR SI, UM QUESTIONAMENTO DE COMPLEXIDADE. Antes da Fase 7 o README tinha
+    1.435 linhas e o ARCHITECTURE 2.475, e boa parte era a MESMA explicacao em dois lugares,
+    envelhecendo em ritmos diferentes. A narrativa foi para DECISIONS.md e os dois cairam
+    para menos da metade.
+
+    O TETO NAO E UMA META ESTETICA, e o numero nao foi escolhido por gosto: e o tamanho de
+    hoje com uma folga estreita. O efeito pretendido nao e forcar cortes — e fazer com que
+    CRESCER seja uma decisao, e nao um acumulo. Quem precisar de mais espaco muda o numero
+    aqui, e essa mudanca aparece no diff.
+
+    ONDE O TEXTO DEVE IR quando o teto apertar: historia para DECISIONS.md, escopo futuro
+    para BACKLOG.md, e detalhe de uma Source para o README dela.
+    """
+
+    TETOS = {
+        "README.md": 700,
+        "ARCHITECTURE.md": 700,
+    }
+
+    def test_nenhum_documento_de_estado_passa_do_teto(self):
+        for nome, teto in self.TETOS.items():
+            with self.subTest(nome):
+                linhas = len((RAIZ / nome).read_text(encoding="utf-8").splitlines())
+                self.assertLessEqual(
+                    linhas, teto,
+                    f"{nome} tem {linhas} linhas (teto {teto}). Historia vai para "
+                    f"DECISIONS.md, escopo futuro para BACKLOG.md.",
+                )
+
+    def test_os_quatro_documentos_de_raiz_existem_e_tem_papel_distinto(self):
+        """A estrutura que o projeto declara: estado, historia, escopo, execucao."""
+        for nome in ("README.md", "ARCHITECTURE.md", "DECISIONS.md", "BACKLOG.md"):
+            with self.subTest(nome):
+                self.assertTrue((RAIZ / nome).exists(), f"{nome} nao existe")
+
+
+class AncorasResolvemTest(unittest.TestCase):
+    """`](#secao)` e `](DOC.md#secao)` tem de apontar para um titulo que existe.
+
+    POR QUE ISTO E SEPARADO DE `LinksRelativosTest`. Aquela confere que o ARQUIVO existe, e
+    um link com ancora quebrada aponta para um arquivo que existe — entao ela passa, e o
+    leitor cai no topo do documento sem saber que errou de lugar. Um indice inteiro pode
+    apodrecer assim sem nenhum teste reclamar, e foi o risco concreto da Fase 7, quando 17
+    secoes mudaram de arquivo e um indice novo nasceu com 11 ancoras.
+
+    A REGRA DE SLUG E A DO GITHUB, e uma versao anterior deste verificador estava ERRADA:
+    ela colapsava espacos repetidos, e o GitHub nao colapsa. Isso produziu cinco falsos
+    positivos num documento correto — um verificador errado custa mais caro que verificador
+    nenhum, porque ensina a ignorar o resultado.
+    """
+
+    @staticmethod
+    def _slug(titulo: str) -> str:
+        texto = titulo.lower()
+        texto = re.sub(r"[^\w\s-]", "", texto, flags=re.UNICODE)
+        return texto.strip().replace(" ", "-")
+
+    def _titulos(self, caminho: pathlib.Path) -> set[str]:
+        """Titulos MAIS ancoras HTML explicitas.
+
+        `streamlit/CONTRACT.md` e gerado e usa `<a id="chave"></a>` antes de cada indicador,
+        porque a chave do indicador e mais estavel que o titulo dele. Um verificador que so
+        olhasse cabecalho reprovaria 22 ancoras corretas — e verificador que reprova o certo
+        e pior que verificador nenhum, porque ensina a ignorar o resultado. Ja aconteceu
+        neste projeto, com um slug que colapsava espacos repetidos e o GitHub nao colapsa.
+        """
+        try:
+            texto = caminho.read_text(encoding="utf-8")
+        except OSError:
+            return set()
+        cabecalhos = {self._slug(linha.lstrip("#").strip())
+                      for linha in texto.split("\n") if re.match(r"^#{1,6}\s", linha)}
+        explicitas = set(re.findall(r'<a\s+id="([^"]+)"', texto))
+        return cabecalhos | explicitas
+
+    def test_toda_ancora_aponta_para_um_titulo_existente(self):
+        padrao = re.compile(r"\]\(([^)\s]*)#([^)\s]+)\)")
+        problemas = []
+        for caminho in _versionados("*.md"):
+            try:
+                texto = caminho.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for alvo, ancora in padrao.findall(texto):
+                if alvo.startswith(("http://", "https://")):
+                    continue
+                destino = caminho if not alvo else (caminho.parent / alvo).resolve()
+                if not destino.exists():
+                    continue  # arquivo ausente e assunto de LinksRelativosTest
+                if ancora not in self._titulos(destino):
+                    problemas.append(
+                        f"{caminho.relative_to(RAIZ)} -> {alvo or caminho.name}#{ancora}")
+        self.assertEqual(problemas, [], "\n" + "\n".join(problemas))
+
+
 class SemLixoVersionadoTest(unittest.TestCase):
     """Um log de execucao commitado por engano nao atrapalha nada, e por isso fica anos.
 

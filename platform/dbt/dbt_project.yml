@@ -77,6 +77,33 @@ seeds:
     # ficavam sem funcao e sem quem os mantivesse em dia.
     +enabled: "{{ target.type == 'duckdb' }}"
 
+    frozen_capture_seed:
+      # POR QUE ESTE PRECISA DECLARAR TIPO, e o motivo e diferente dos outros. Ele nasce
+      # VAZIO — so cabecalho — porque "ainda nao selado" e um estado legitimo, o de qualquer
+      # clone novo. Sem linha para inferir, o dbt-duckdb tipa toda coluna como INTEGER, e o
+      # teste que le o seed quebra com "replace(INTEGER, ...)" — um erro sobre o tipo, tres
+      # passos longe da causa, que e a AUSENCIA de dado.
+      #
+      # Um seed vazio nao pode mudar o schema. Declarar os tipos faz o estado nao-selado se
+      # comportar exatamente como o selado, so que sem linhas.
+      #
+      # E `+full_refresh` PORQUE A SEQUENCIA NORMAL QUEBRAVA SEM ELE. Quem roda `make silver`
+      # antes de `make freeze` — que e a ordem natural — criava a tabela a partir do CSV
+      # VAZIO; o dbt entao reutiliza o schema existente, e a carga seguinte, ja com o selo,
+      # morria em "Could not convert string 'ine_callejero' to INTEGER". O erro fala de tipo
+      # e a causa e o estado anterior da tabela, o que e o pior tipo de mensagem.
+      #
+      # Semanticamente e o certo, e nao um contorno: o selo e SUBSTITUIDO inteiro por
+      # `make freeze`, nunca acrescentado. Uma tabela que so pode ser trocada por completo
+      # nao tem por que ser carregada incrementalmente.
+      +full_refresh: true
+      +column_types:
+        source: varchar
+        partition_key: varchar
+        files: integer
+        records: bigint
+        bytes: bigint
+        content_sha256: varchar
     warehouse_province_map_seed:
       # Sem isto, a inferencia de tipo do dbt-duckdb le "08"/"079" como inteiro e come o
       # zero a esquerda (08 -> 8) — os codigos do INE nao sao numeros, sao identificadores.

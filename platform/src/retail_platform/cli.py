@@ -21,6 +21,9 @@
     retail-platform iceberg-metadata      [--quiet]
     retail-platform stock-consumption
     retail-platform stock-metadata        {ledger|consumption}
+    retail-platform spark-evidence        [--out --sem-spark]
+    retail-platform freeze                [--page --seed]
+    retail-platform freeze-check          [--seed]
     retail-platform orders-rebuild-projection [--root]
     retail-platform orders-reconcile      [--dsn]
 
@@ -709,6 +712,71 @@ def _cmd_stock_metadata(args) -> int:
     return EXIT_FAILED
 
 
+def _cmd_freeze(args) -> int:
+    """Sela a captura: escreve docs/FREEZE.md e o seed que o teste le."""
+    from .freeze import (FreezeError, capture_id, collect, escrever_pagina,
+                         escrever_seed)
+
+    try:
+        registros = collect()
+    except FreezeError as exc:
+        print(f"ERRO: {exc}")
+        return EXIT_FAILED
+    pagina = escrever_pagina(registros, args.page)
+    seed = escrever_seed(registros, args.seed)
+    print(f"capture_id ....... {capture_id(registros)}")
+    print(f"particoes ........ {len(registros)}")
+    print(f"registros ........ {sum(r['records'] for r in registros)}")
+    print(f"pagina ........... {os.path.relpath(pagina)}")
+    print(f"seed ............. {os.path.relpath(seed)}")
+    return EXIT_OK
+
+
+def _cmd_freeze_check(args) -> int:
+    """Rele o RAW e compara com o selo. Sai 1 em QUALQUER diferenca.
+
+    Este e o verbo que transforma a disciplina "nao mexa no RAW depois de fechar" em
+    verificacao. Sem ele, a promessa vale enquanto ninguem esquecer.
+    """
+    from .freeze import FreezeError, capture_id, collect, comparar, ler_seed
+
+    try:
+        selado = ler_seed(args.seed)
+        atual = collect()
+    except FreezeError as exc:
+        print(f"ERRO: {exc}")
+        return EXIT_FAILED
+
+    problemas = comparar(selado, atual)
+    print(f"selado ........... {capture_id(selado)}  ({len(selado)} particoes)")
+    print(f"atual ............ {capture_id(atual)}  ({len(atual)} particoes)")
+    if problemas:
+        print()
+        print(f"RECUSADO ({len(problemas)} diferenca(s)) — a captura selada MUDOU:")
+        for problema in problemas[:20]:
+            print(f"  - {problema}")
+        if len(problemas) > 20:
+            print(f"  ... e mais {len(problemas) - 20}")
+        return EXIT_FAILED
+    print()
+    print("OK: a captura esta intacta, byte a byte, contra o selo.")
+    return EXIT_OK
+
+
+def _cmd_spark_evidence(args) -> int:
+    """Roda o job de estoque nos DOIS motores e escreve a comparacao, favoravel ou nao."""
+    from .spark_evidence import collect, write
+
+    dados = collect(rodar_spark=not args.sem_spark)
+    destino = write(dados, args.out)
+    print(f"escrito em ....... {os.path.relpath(destino)}")
+    for nome in ("catalogo", "nao_gatilho", "python", "spark"):
+        secao = dados.get(nome, {})
+        estado = f"ERRO: {secao['erro'][:80]}" if "erro" in secao else "observado"
+        print(f"{nome:.<18} {estado}")
+    return EXIT_OK
+
+
 def _cmd_orders_rebuild_projection(args) -> int:
     """A camada em LOTE do par: reconstroi live_order_state a partir do RAW.
 
@@ -1299,6 +1367,26 @@ def build_parser() -> argparse.ArgumentParser:
     ice_meta.add_argument("--quiet", action="store_true",
                           help="nao imprime o erro; so o codigo de saida importa")
     ice_meta.set_defaults(handler=_cmd_iceberg_metadata)
+
+    frz = subparsers.add_parser(
+        "freeze", help="sela a captura: docs/FREEZE.md + o seed que o teste le")
+    frz.add_argument("--page", default="docs/FREEZE.md")
+    frz.add_argument("--seed", default="platform/dbt/seeds/frozen_capture_seed.csv")
+    frz.set_defaults(handler=_cmd_freeze)
+
+    frz_ck = subparsers.add_parser(
+        "freeze-check", help="rele o RAW e compara com o selo; sai 1 em qualquer diferenca")
+    frz_ck.add_argument("--seed", default="platform/dbt/seeds/frozen_capture_seed.csv")
+    frz_ck.set_defaults(handler=_cmd_freeze_check)
+
+    spk_ev = subparsers.add_parser(
+        "spark-evidence",
+        help="roda o ledger nos dois motores e escreve docs/spark-evidence/README.md",
+    )
+    spk_ev.add_argument("--out", default="docs/spark-evidence/README.md")
+    spk_ev.add_argument("--sem-spark", action="store_true",
+                        help="so o lado Python; a pagina declara a ausencia do outro")
+    spk_ev.set_defaults(handler=_cmd_spark_evidence)
 
     stock_cons = subparsers.add_parser(
         "stock-consumption",

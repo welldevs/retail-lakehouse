@@ -230,7 +230,7 @@ models:
 
   - name: fact_order
     description: >
-      ACCUMULATING SNAPSHOT. Grao order_id — 6.400 linhas. Uma linha por pedido que se
+      ACCUMULATING SNAPSHOT. Grao order_id. Uma linha por pedido que se
       preenche conforme ele avanca: onze marcos e as duracoes entre eles. E o padrao que
       so existe porque ha eventos — uma fotografia de estado diria ONDE o pedido esta,
       nunca QUANTO TEMPO levou para chegar la. NULL num marco significa "nao alcancado",
@@ -364,3 +364,60 @@ models:
                 values: [synthetic]
       - name: rationale
         tests: [not_null]
+
+  - name: fact_stock_ledger
+    description: >
+      PERIODIC SNAPSHOT — o terceiro padrao de fato do warehouse. FACT_ORDER_EVENT e
+      transacional (uma linha por evento), FACT_ORDER e accumulating (uma linha que se
+      preenche), e este e o estado de uma prateleira num dia. Grao (stock_date, wh,
+      source_product_id), com linha inclusive nos dias sem venda — que e onde a reposicao
+      chega.
+
+      TIPO: synthetic (a politica de cobertura) sobre observed (o consumo, que veio dos
+      pedidos, que vieram do catalogo real). Nenhuma fonte deste projeto mede estoque: o
+      ledger e CALCULADO por um job Spark, e `written_by` = 'spark' viaja ate aqui.
+
+      A JANELA E UM DIA MAIOR que a de FACT_ORDER porque o consumo e datado pela SEPARACAO,
+      e um pedido colocado tarde no ultimo dia e separado no dia seguinte.
+    columns:
+      - name: date_key
+        tests: [not_null]
+      - name: stock_date
+        tests: [not_null]
+      - name: wh
+        description: >
+          Chave natural de DIM_WAREHOUSE, sem surrogate: o armazem nao versiona e `wh` e
+          parametro real da API da Mercadona.
+        tests: [not_null]
+      - name: source_product_id
+        tests: [not_null]
+      - name: product_sk
+        description: >
+          Versao do produto VIGENTE NA DATA do saldo, resolvida por range join como
+          FACT_ORDER_ITEM faz. Apontar para a versao corrente faria o saldo do primeiro dia
+          carregar o atributo do ultimo.
+      - name: opening_balance
+        description: >
+          SEMI-ADITIVO: soma entre produtos e armazens, NAO soma entre dias. Somar saldo de
+          segunda com o de terca conta o mesmo estoque duas vezes.
+        tests: [not_null]
+      - name: closing_balance
+        description: "SEMI-ADITIVO, mesma ressalva de opening_balance. Nunca negativo."
+        tests: [not_null]
+      - name: units_short
+        description: >
+          RUPTURA, aditiva. O que a demanda pediu e a prateleira nao tinha. Nunca virou saldo
+          negativo — a invariante e verificada no Silver, antes de chegar aqui.
+        tests: [not_null]
+      - name: days_of_cover
+        description: >
+          NAO ADITIVA em eixo nenhum: e uma razao. A media dela sobre produtos e uma media de
+          razoes, e nao a razao das somas — MART_STOCK_HEALTH publica as duas leituras lado a
+          lado exatamente porque a diferenca confunde.
+      - name: written_by
+        description: >
+          PROVENIENCIA ate o Gold. Sempre 'spark': e como uma consulta ao warehouse descobre
+          que existe um escritor fora do Python no lakehouse.
+        tests:
+          - not_null
+          - accepted_values: {arguments: {values: [spark]}}

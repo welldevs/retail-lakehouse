@@ -17,12 +17,18 @@ em [sources/ine-population-source/](sources/ine-population-source/), a do Callej
 [sources/simulated-orders-source/](sources/simulated-orders-source/) — com seu próprio
 contrato físico (`CONTRACT.md`) e **zero dependências de runtime**. Esta plataforma as
 consome pelo contrato físico — nunca importando o código de nenhuma delas. Ver
-[ARCHITECTURE.md § "Segunda source: população do INE"](ARCHITECTURE.md) para por que são
+[DECISIONS.md § "Segunda source: população do INE"](DECISIONS.md) para por que são
 pacotes irmãos, não uma abstração compartilhada.
 
 As decisões de arquitetura estão em [ARCHITECTURE.md](ARCHITECTURE.md), com a data de
-adoção de Snowflake, Kafka e Iceberg — e o gatilho de **Spark**, a única ainda ausente, que
-continua sem disparar porque nada aqui excede um nó.
+adoção de Snowflake, Kafka, Iceberg e **Spark**. O caso do Spark é o mais instrutivo dos
+quatro: o gatilho declarado para ele — *"partição que o DuckDB não segura"* — **nunca
+disparou, e isso está medido** (37,9 M pares de cesta em 1,45 s e 2,31 GB num nó, sobre a
+janela final). Ele entrou por duas
+outras razões: é o primeiro escritor do catálogo Iceberg fora do Python, e a forma do job
+que ele carrega — uma soma corrida realimentada pelo próprio estado — não é expressável em
+SQL. [`make spark-evidence`](docs/spark-evidence/README.md) publica o mesmo job nos dois
+motores, **inclusive quando o Python puro ganha**.
 
 ## Camadas
 
@@ -51,7 +57,7 @@ cada source cai dentro do escopo, e por isso ela se move sozinha: era 3,85% na F
 9,95% na Fase 3, sem ninguém afrouxar o recorte. A população do INE é nacional e entrega
 1,8%; os pedidos e os clientes nascem dentro das quatro AUFs e entregam ~100%, e a Fase 6
 multiplicou os dois por 14× e 14×. Sem Orders, o recorte é 19,2%. Ver
-[ARCHITECTURE.md § "Fase 2"](ARCHITECTURE.md).
+[DECISIONS.md § "Fase 2"](DECISIONS.md).
 
 ## Requisitos
 
@@ -61,46 +67,31 @@ Python 3.12, Docker com Compose v2. `make venv` cria o ambiente da plataforma.
 
 ```bash
 cp .env.example .env && make secrets   # chaves aleatórias; o compose recusa subir sem elas
-
-make up            # sobe o MinIO e cria os buckets (só o plano de dados)
-make venv          # cria platform/.venv e instala a plataforma
-make daily         # Mercadona: extract -> validate -> land -> verify-landing -> silver
-make ine-refresh   # INE população: mesma cadeia, sob demanda — ver "Segunda source" abaixo
-make callejero-refresh  # INE Callejero: sem API, incorpora arquivos já baixados — ver "Terceira source"
-make oltp-export-reference && make oltp-refresh-all  # clientes sintéticos — ver "Quarta source"
-make stream-up && make orders-apply-all  # log -> OLTP + outbox — ver "OLTP e outbox" abaixo
-make orders-publish && make orders-project  # outbox -> Kafka -> read model
-make orders-rebuild-projection && make orders-reconcile  # o 2o escritor, e os 3 folds
-make warehouse-refresh  # recorte -> Snowflake -> DIM/FACT/MART — ver "Warehouse analítico"
-make test          # suite de cada Source + da plataforma, tudo sem rede
-make status        # containers e contagem de objetos nos buckets
-
-make airflow       # Postgres + scheduler + webserver em :8080 (admin/admin)
-make query         # consulta o Silver
+make venv                              # cria platform/.venv e instala a plataforma
+make up                                # MinIO + buckets. NÃO sobe Kafka, Spark nem Airflow
+make daily                             # extract -> validate -> land -> verify -> silver
+make test                              # todas as suítes, sem rede
+make help                              # todos os alvos, um por linha
 ```
 
-`make up` sobe **apenas** o MinIO: o Airflow custa ~2 GB de RAM e não é necessário para
-iterar num modelo dbt ou rodar `make daily`/`make ine-refresh`/`make callejero-refresh` à
-mão. O OLTP de pedidos também não sobe aí — vive sob o profile `stream` do compose e só
-existe depois de `make stream-up`.
+A sequência completa, do zero até o painel, está em **[Do zero até o painel](#do-zero-até-o-painel)**.
+
+`make up` sobe **apenas** o plano de dados. O Airflow custa ~2 GB de RAM e não é necessário
+para iterar num modelo dbt; o OLTP e o Kafka vivem sob o profile `stream`, e o Spark sob o
+profile `spark`. Nenhum dos três sobe sozinho, e **nada do caminho padrão depende deles** —
+`silver_gate.py` tira do build o que depende de uma tabela que não existe, e há teste
+provando que `make silver` fica verde numa árvore onde o Spark nunca rodou.
 
 `make daily`, `make ine-refresh` e `make callejero-refresh` são **idempotentes**: uma
 partição já completa não é reextraída (é imutável, mesma guarda `_SUCCESS` nas três), e
 objetos já aterrissados com o checksum esperado são pulados, não reenviados.
 
 Alvos individuais aceitam `DATE=` e `WH=` (Mercadona), `DATE=` e `TABLES=` (INE população),
-ou `DATE=`, `CALLEJERO_IN=` e `CALLEJERO_PROVINCES=` (INE Callejero):
-
-```bash
-make land DATE=2026-08-16 WH=mad1
-make verify-landing DATE=2026-08-16
-make ine-land DATE=2026-08-16
-make callejero-land DATE=2026-08-16 CALLEJERO_IN=temp CALLEJERO_PROVINCES=08,28,41,46
-```
+ou `DATE=`, `CALLEJERO_IN=` e `CALLEJERO_PROVINCES=` (INE Callejero).
 
 **Espaço em disco.** `data/` é scratch de extração e nada nunca é apagado sozinho — uma
 partição do INE ocupa entre 264 e 384 MB. Depois de `land` + `verify-landing`, o object
-storage é a verdade e a cópia local é redundante:
+storage é a verdade:
 
 ```bash
 make data-usage                                          # quanto cada source ocupa
@@ -209,7 +200,7 @@ não efeito colateral de pipeline.
 │   ├── contract.py                     # o gerador; não importa nada que conecte
 │   ├── connection.py                   # sessão RETAIL_READER + `use secondary roles none`
 │   ├── smoke.py                        # roda o app de verdade e exige zero exceção
-│   └── app.py                          # a interface, 6 grupos + "Fora de alcance"
+│   └── app.py                          # a interface, 7 grupos + "Fora de alcance"
 ├── scripts/                            # cada um tem alvo no Makefile; nenhum roda sozinho
 │   ├── derive_warehouse_province_map.py   # deriva o seed de província/município do Callejero
 │   ├── derive_warehouse_service_area.py   # deriva a AUF de cada armazém do AUF_mun.xlsx do INE
@@ -289,107 +280,28 @@ composta.
 `name_seen_before` marca os ids novos cujo `display_name` já existia na partição anterior
 (6 casos medidos) como fila de revisão, em vez de tratá-los em silêncio como produto novo.
 
-## Segunda source: população do INE
+## As cinco Sources
 
-[sources/ine-population-source/](sources/ine-population-source/) extrai séries de
-população da API pública Tempus3 do INE — hoje **duas granularidades**, mesmo mecanismo
-genérico de fetch (só muda o `table_id`, configurado fora da Source): **por província**
-(`31304`, com idade+sexo) e **por município** (`29005`, só sexo, sem idade — extensão
-adicionada para dar densidade real por município, já que "Valencia" em `31304` é a
-província inteira, 2,6 milhões de habitantes, não a cidade). O cruzamento com os dados de
-retail por armazém (mad1/bcn1/vlc1/svq1 = Madrid/Barcelona/Valência/Sevilha) **existe desde
-a Fase 2**, em `MART_MARKET_COVERAGE` — clientes por 10 mil habitantes, município a
-município —, e desde a Fase 6 é essa mesma população que **dimensiona** a base de clientes,
-e não só a compara. Ver
-[ARCHITECTURE.md § "Extensão: população por município (Fase A)"](ARCHITECTURE.md) para o porquê
-de estender esta Source em vez de criar uma quarta, e por que faixa etária por município
-ficou de fora desta rodada.
+Cada uma é um pacote Python **congelado**, com `dependencies = []`, contrato físico próprio
+(`CONTRACT.md`) e README próprio. A plataforma as consome pelo contrato em disco — nunca
+importando o código de nenhuma delas. **O porquê de cada decisão está em
+[DECISIONS.md](DECISIONS.md);** aqui está o que cada uma entrega e como rodar.
 
-Pacote irmão da Mercadona Catalog Source, não uma extensão dela — mesmo padrão (frozen,
-`dependencies = []`, contrato físico próprio), estruturalmente independente porque as duas
-fontes não têm nada em comum além de serem sources deste monorepo. Ver
-[CONTRACT.md](sources/ine-population-source/CONTRACT.md) e
-[README.md](sources/ine-population-source/README.md) da source para os detalhes.
+| Source | O que entrega | Real ou sintético | Como rodar |
+|---|---|---|---|
+| [`mercadona-catalog-source`](sources/mercadona-catalog-source/) | Catálogo e preço por armazém e dia, da API pública da Mercadona | **observado** | `make extract validate land verify-landing WH=mad1` |
+| [`ine-population-source`](sources/ine-population-source/) | População por província (com idade e sexo) e por município (só sexo), da API Tempus3 do INE | **observado** | `make ine-refresh` |
+| [`ine-callejero-source`](sources/ine-callejero-source/) | Seções censitárias, unidades populacionais, ruas e tramos — com CEP e faixa de numeração | **observado** (download manual semestral) | `make callejero-refresh` |
+| [`simulated-oltp-source`](sources/simulated-oltp-source/) | Base de clientes, ancorada na população real do município e no endereço real do tramo | **sintético sobre geografia observada** | `make oltp-export-reference && make oltp-refresh-all` |
+| [`simulated-orders-source`](sources/simulated-orders-source/) | **Log de eventos** de pedido — não fotografia de estado | **sintético sobre catálogo e clientes observados** | `make orders-export-reference && make orders-refresh-all` |
 
-**Sem cron.** Ao contrário do DAG diário da Mercadona, `ine_population_on_demand` tem
-`schedule=None` — o INE publica de forma irregular (às vezes meses entre atualizações), e
-um cron fixo daria uma garantia de frescor que a fonte não tem. Dispare com
-`make ine-trigger` (Airflow) ou `make ine-refresh` (direto, sem orquestrador).
+**A distinção real/sintético não é rodapé.** Ela viaja no dado: `label = 'synthetic'` em toda
+premissa, `stock_label` em cada linha do mart de estoque, e a lista *Fora de alcance* do
+painel diz o que **não** dá para perguntar. Uma plataforma que mistura os dois sem rótulo
+convida a ler densidade de simulação como penetração de mercado.
 
-Aterrissa nos **mesmos buckets** `retail-raw`/`retail-lakehouse`, com seu próprio prefixo
-(`ine_population_api/`) — nenhum bucket novo foi necessário. Os modelos Silver
-(`silver_ine_population_series` e `silver_ine_population_by_municipality`) ficam de fora
-do `dbt build` automaticamente enquanto essa source não tiver aterrissado nada (`make
-silver` confere com `retail-platform has-data` antes de decidir), para que um clone novo
-do repositório — ou o dia a dia de quem só opera a Mercadona — não quebre por causa de
-uma source que ainda não rodou.
-
-**O nome do município não é chave.** A tabela 29005 traz só o nome por extenso, e o
-payload é nacional (~8.200 municípios): 18 nomes se repetem entre províncias diferentes,
-com texto idêntico. Três afetam as 4 províncias desta plataforma — Arroyomolinos, El Molar
-e Torrent — e um join por nome traria junto a série homônima de Cáceres, Tarragona e
-Girona. A desambiguação vem do **código oficial do INE**, obtido série a série via
-`VALORES_SERIE/{COD}` e materializado em `ine_ambiguous_series_seed`
-([scripts/derive_ambiguous_series.py](scripts/derive_ambiguous_series.py)); o invariante
-"uma série por município, sexo e ano" é garantido por teste dbt. Ver
-[ARCHITECTURE.md § "Fanout de homônimo no Silver de população"](ARCHITECTURE.md).
-
-## Terceira source: Callejero do INE
-
-[sources/ine-callejero-source/](sources/ine-callejero-source/) incorpora **geografia
-oficial do INE** — seções censitárias, unidades populacionais (núcleos), ruas, pseudovias
-e tramos de via com **código postal** — para os municípios dos 4 warehouses. Junto com
-`warehouse_province_map` (seed, abaixo), é o que permite ir de
-`warehouse → província → município` (já existia) até
-`warehouse → município → distrito/seção → rua → CEP`.
-
-**Sem API.** Diferente das outras duas sources, o Callejero só é distribuído pelo INE
-para download manual, semestral. `extract` não faz nenhuma requisição de rede — incorpora
-arquivos que já foram baixados e colocados num diretório local (`--in`), preservando os
-bytes originais (ISO-8859-1, sem conversão). Mesmo assim é um pacote irmão completo:
-`dependencies = []`, contrato físico próprio, particionado só por `ingestion_date` (sem
-eixo de warehouse nem de província). Ver
-[CONTRACT.md](sources/ine-callejero-source/CONTRACT.md) — inclui o layout de coluna de
-cada arquivo, medido contra os dados reais, já que o INE não anexa documentação de layout
-ao download.
-
-**Os 5 arquivos do download são incorporados**, inclusive `TRAM` (tramos de via) — a
-única das 5 tabelas que carrega **código postal**, ligando num só registro seção
-censitária + entidade/núcleo + via ou pseudovia + CEP + faixa de numeração. É o que
-fecha `warehouse → município → rua → CEP` e, onde o núcleo do INE tiver granularidade
-(só em Valencia, entre os 4 warehouses — Madrid/Barcelona/Sevilla capital são uma
-entidade única sem subdivisão), também `→ bairro/pedania`.
-
-Dispare com `make callejero-trigger` (Airflow) ou `make callejero-refresh` (direto), com
-os arquivos já baixados em `CALLEJERO_IN` (default: `temp/` na raiz). Mesma lógica de
-`has-data` das outras sources: os 5 modelos `silver_callejero_*` ficam de fora do
-`dbt build` até que algo tenha sido aterrissado.
-
-**`warehouse_province_map`** (`platform/dbt/seeds/warehouse_province_map_seed.csv`) é o
-seed que resolve `wh → província/município` com códigos oficiais do INE — derivado do
-Callejero durante o desenvolvimento (ver
-[scripts/derive_warehouse_province_map.py](scripts/derive_warehouse_province_map.py)),
-não gerado por esta source em tempo de execução. A source do Callejero **não sabe que
-warehouses existem** — produz geografia pura do INE; a união com `warehouse_province_map`
-acontece via `JOIN` no Silver/Gold, nunca dentro da source.
-
-**`warehouse_service_area`** (`platform/dbt/seeds/warehouse_service_area_seed.csv`)
-responde uma pergunta diferente: não "onde o armazém fica" (1 município), mas "quais
-municípios vizinhos fazem parte da mesma região funcional" — ex. Albal, Alaquàs, Mislata
-para `vlc1`. Fonte: [Áreas Urbanas Funcionais do
-INE](https://www.ine.es/ss/Satellite?L=es_ES&c=INESeccion_C&p=1254735110672&pagename=ProductosYServicios/PYSLayout&param1=PYSDetalleFichaSeccionUA&param3=1259944561392&cid=1259947044694)
-(AUF, metodologia oficial única — ≥15% da população empregada comuta pra cidade-núcleo),
-não uma lista inventada. Derivado e cross-validado município a município contra o
-Callejero real (cada código confirmado contra `SECC`, cada nome vindo do `UP`) em
-[scripts/derive_warehouse_service_area.py](scripts/derive_warehouse_service_area.py).
-**Limitação conhecida**: a AUF oficial de Madrid tem 38 municípios fora das províncias
-já baixadas (Ávila/Guadalajara/Toledo) e a de Barcelona tem 2 (Tarragona) — ficam de
-fora da área derivada aqui, porque não há Callejero landado pra cruzar. Sevilla e
-Valencia estão 100% contidas na própria província, sem essa lacuna.
-
-**Os quatro seeds derivados têm procedência executável.** O CSV versionado é a verdade do
-repositório; o script é *como* ele foi obtido, e cada um tem alvo — sem isso, "de onde saiu
-este CSV" só se responde lendo o docstring de um arquivo que ninguém sabe que existe.
+**Os quatro seeds derivados** têm alvo no Makefile e reproduzem byte a byte — um artefato
+versionado sem comando que o gere é indistinguível de um número digitado:
 
 ```bash
 make seed-province-map         # wh -> província/município, reconferido contra o Callejero
@@ -398,744 +310,49 @@ make seed-municipality-codes   # nome (Tempus3) -> código oficial    [rede: API
 make seed-ambiguous-series     # série -> código, para homônimo      [rede: API do INE]
 ```
 
-Rodados em 2026-09-01, os quatro reproduziram o CSV versionado **byte a byte** — inclusive
-os dois que consultam a API do INE ao vivo. Não é um alvo do pipeline: a fonte de cada um
-muda uma vez por semestre ou nunca.
+## Do zero até o painel
 
-## Quarta source: OLTP simulado (Customers)
-
-[sources/simulated-oltp-source/](sources/simulated-oltp-source/) é a primeira source
-**derivada**: em vez de trazer dado de fora, consome o Silver que as três anteriores
-produziram e gera **clientes sintéticos com endereço real**. Cada cliente nasce numa via
-real de um município real, com o CEP real daquele tramo, num município que pertence de
-fato à Área Urbana Funcional do seu armazém — nenhum CEP, município ou via é inventado.
-
-```
-warehouse → município ponderado pela população municipal observada (INE 29005)
-          → tramo UNIFORME entre os candidatos válidos daquele município
-          → número da casa dentro da faixa real, respeitando a paridade
-          → sexo pela proporção municipal observada; idade pela provincial (proxy)
-```
-
-A escolha do tramo é uniforme de propósito: **não existe população por rua** em nenhuma
-fonte ingerida aqui, e ponderar tramos inventaria uma distribuição que ninguém mediu.
-
-**Como uma Source FROZEN lê o Lakehouse sem quebrar a fronteira.** Ela não lê. A
-plataforma materializa antes o que a Source precisa em três JSON planos
-(`make oltp-export-reference`), e a Source os consome só com a stdlib — mesmo precedente
-do `extract --in <dir>` do Callejero, um nível antes na cadeia. Nenhum lado importa o
-código do outro.
+O caminho padrão **não** exige Kafka, Iceberg nem Spark. Os dois planos opcionais sobem sob
+demanda, e o que depende deles sai do build sozinho — `silver_gate.py` decide isso num lugar
+só, e há teste provando que `make silver` fica verde sem nenhum dos dois.
 
 ```bash
-make oltp-export-reference     # uma vez, depois de callejero-refresh e ine-refresh
-make oltp-refresh-all          # mad1, bcn1, svq1, vlc1 (ou oltp-refresh WH=mad1)
-```
-
-**Reprodutível por seed**: mesma referência + mesma seed + mesma data produzem
-`customers.json` byte a byte idêntico — inclusive sob `PYTHONHASHSEED` diferente, o que é
-verificado em subprocesso. `oltp-validate` não confere só checksum: relê a referência e
-prova, cliente a cliente, que o endereço bate com a linha de origem e que o município
-está na AUF certa.
-
-**O tamanho da base não é digitado, é derivado.** Cada armazém recebe a própria população
-adulta vezes uma taxa de penetração; o total é consequência, não cota repartida:
-
-| wh | pop. servida | share adulto (INE 31304) | **clientes** |
-|---|---:|---:|---:|
-| mad1 | 7.104.034 | 82,393 % | **128.771** |
-| bcn1 | 5.277.804 | 82,247 % | **95.498** |
-| vlc1 | 1.885.230 | 82,689 % | **34.295** |
-| svq1 | 1.585.157 | 81,041 % | **28.262** |
-| | **15.852.225** | | **286.826** |
-
-Até a Fase 5 eram **5.000 por armazém** — o mesmo número para AUFs que diferem por 4,6× em
-população. Nada reprovava; a densidade simplesmente não existia, e densidade não aparece em
-nenhum total. Hoje `assert_customer_base_follows_the_declared_population_allocation` refaz a
-conta a partir do INE e compara.
-
-A taxa é **2,2 %**, a participação do e-commerce no volume de alimentação (MAPA 2025, seção
-3). Ela **não** é copiada para o domínio do cadastro: `customer_premises_seed` aponta para
-`demand_profile.channel_reference_pct`, onde foi medida. Duas premissas declaradas — e
-nenhuma medida — transformam um share de volume num share de gente: que o comprador online
-consome como a média, e que estes quatro armazéns modelam o **canal inteiro** da AUF e não um
-operador dentro dele.
-
-**Nenhum titular de conta é menor de idade**, em três camadas: a plataforma entrega a
-distribuição etária já truncada em 18 e renormalizada, a Source recusa uma referência cujas
-linhas contradigam o próprio cabeçalho, e `validate` recalcula a idade de cada cliente
-pousado. Ver a Fase 6 abaixo para o achado que criou essas três camadas.
-
-**Crescer a base é aditivo.** O gerador consome uma única `random.Random(seed)` em ordem
-fixa e nada antes do laço depende de `count`, então os primeiros N clientes de uma geração
-maior são byte a byte os mesmos de antes — verificado ponta a ponta (200 → 5.000 preservou
-os 200, sha256 conferidos). `--count` continua existindo como **override explícito**, e o
-manifesto registra `count_source: "cli"` quando ele é usado:
-
-```bash
-make oltp-refresh-all OLTP_CUSTOMERS_PER_WH=1000 OLTP_OVERWRITE=1
-```
-
-Vale com a **mesma seed, mesma referência e mesma data**. Trocar a data preserva a idade e
-desloca `birth_year`; trocar a seed troca as pessoas por trás dos mesmos ids — e trocar
-`min_customer_age`, a taxa ou a regra de alocação também. O manifesto registra as quatro
-coisas em `history`, e é por isso que `DIM_CUSTOMER` é SCD2.
-
-Modelo Silver (`silver_customer`, `silver_oltp_manifest`) e DAG entraram na Fase 2. Ver
-[CONTRACT.md](sources/simulated-oltp-source/CONTRACT.md) e
-[ARCHITECTURE.md § "Quarta source"](ARCHITECTURE.md).
-
-## Quinta source: pedidos simulados (log de eventos)
-
-```bash
-make orders-export-reference ORDERS_FROM=2026-08-24 ORDERS_TO=2026-08-27
-make orders-refresh-all      ORDERS_FROM=2026-08-24 ORDERS_TO=2026-08-27
-```
-
-Segunda source derivada, e a **primeira que entrega um log em vez de uma fotografia**. A
-regra de ouro, deslocada um nível: **o pedido é inventado; quem compra, o que se compra,
-quanto custa e onde mora não.** Cliente vem de `silver_customer`, produto e preço vêm de
-`silver_product_price` do mesmo armazém na mesma data.
-
-### A partição não contém estado, e isso é deliberado
-
-```
-data/orders/ingestion_date=2026-08-24/wh=mad1/
-├── order_events.jsonl      NDJSON, uma linha por evento
-├── _manifest.json
-└── _SUCCESS
-```
-
-Não existe `orders.json` ao lado: duas representações da mesma verdade divergem. O estado do
-pedido é o **fold** dos seus eventos, e o fold mora no Silver (`silver_order`).
-
-### Por que o fold não é trivial
-
-Substituição e remoção de linha alteram a cesta **depois** da colocação, então o valor final
-não é derivável do evento `order_placed`. Medido na janela de 2026-08-24 a 08-27, sobre
-120.693 linhas:
-
-| Mecanismo | Linhas | Efeito no valor |
-|---|---|---|
-| cumprida sem alteração | 108.194 | 0,00 |
-| substituída | 4.670 | +10.318,99 |
-| removida | 2.321 | −15.153,72 |
-| nunca separada (pedido morreu antes) | 5.508 | não entra: `net_amount` é nulo |
-
-Se o fold fosse trivial, o log seria um carimbo de data. Um teste dbt **invertido**
-(`assert_order_fold_is_not_trivial`) reprova quando nenhuma cesta muda.
-
-### `ingestion_date` é a data do PEDIDO, não a do evento
-
-Todo evento de um pedido fica na partição do dia em que ele foi colocado, mesmo atravessando
-a meia-noite — medido: **10,3% dos eventos**. Particionar por data do evento deixaria a
-partição impossível de fechar. O Silver expõe as duas colunas (`ingestion_date` e
-`event_date`), porque as duas perguntas são legítimas.
-
-### Acrescentar um dia é aditivo
-
-Cada `(armazém, dia)` deriva a própria semente de `sha256("<seed>|<wh>|<dia>")`, então gerar
-`D+1` deixa a partição de `D` **byte a byte idêntica**. O que **não** é aditivo: outra seed,
-outra referência, ou outra tabela de premissas — as três estão em `history`.
-
-### Premissas: sintéticas, declaradas, sem default
-
-Nenhuma fonte deste repo mede venda, cesta, cadência ou disponibilidade. Toda premissa vive
-em `platform/dbt/seeds/order_premises_seed.csv`, é rotulada `synthetic` — outro rótulo
-**reprova o export** — e seu `sha256` viaja até o manifesto. Uma chave ausente reprova a
-geração: um default escondido no gerador seria uma premissa não declarada.
-
-### Ao medir valor, olhe a cauda
-
-O `unit_price` da fonte cobre quatro ordens de grandeza (mediana 2,25; máximo 3.663,00 —
-marisco congelado e presunto ibérico vendidos por peso). Medido: **9 das 4.670 substituições
-respondem por 42% do valor substituído**. Média aritmética de cesta é dominada por punhado de
-linha; use mediana ou percentil.
-
-Modelos Silver: `silver_order_event`, `silver_order`, `silver_order_line`,
-`silver_orders_manifest`. DAG: `simulated_orders_events`. Ver
-[CONTRACT.md](sources/simulated-orders-source/CONTRACT.md) e
-[ARCHITECTURE.md § "Fase 3"](ARCHITECTURE.md).
-
-## OLTP e outbox: o evento nasce na transação
-
-```bash
-make stream-up                    # sobe o oltp-postgres e cria as três tabelas
-make orders-apply-all             # replica o log da janela: 44.456 eventos
-make orders-outbox PARTITION=data/orders/ingestion_date=2026-08-27/wh=mad1
-make orders-prove-atomicity       # injeta falha e prova que os dois lados caem juntos
-```
-
-O log de eventos já existe em disco e no RAW. O que este plano acrescenta não é transporte:
-é **o evento passar a nascer dentro da transação que muda o pedido**. Essa é a diferença
-entre um outbox e um *dual-write* — duas escritas separadas podem discordar, uma transação
-não pode.
-
-### A propriedade, dita com precisão
-
-Para todo evento: **ou a mudança de estado e a linha do outbox são visíveis, ou nenhuma das
-duas é.** Nunca uma sem a outra.
-
-`make orders-prove-atomicity` prova isso **nas duas direções**, e a injeção é no banco — um
-trigger que levanta exceção no `insert` — não no código:
-
-| Injeção | O que não pode sobreviver | Por que a direção importa |
-|---|---|---|
-| o `insert` no `outbox` explode | nenhum pedido, nenhuma linha | o estado avançaria sem ninguém saber |
-| o `insert` em `orders` explode | **nenhuma linha de outbox** | senão o broker publicaria um evento que nunca aconteceu |
-
-A segunda é a que se esquece. Verificado injetando o dual-write no applier: a primeira prova
-continua passando, a segunda reprova.
-
-### O outbox reconstitui o log byte a byte
-
-`outbox.event_json` guarda a **linha canônica do log, verbatim**. As colunas do envelope
-existem para rotear, e quatro `CHECK` amarram cada uma ao próprio JSON — uma linha não
-consegue ser roteada sob uma chave que discorda do payload que carrega.
-
-Reordenando as linhas do outbox pela ordem canônica e recompondo o arquivo, o `sha256` bate
-com o manifesto da partição. **16 de 16.** Contar linhas não provaria isso; reproduzir os
-bytes prova.
-
-### Três guardas independentes
-
-| Guarda | Recusa |
-|---|---|
-| `outbox.event_id` UNIQUE | reaplicar o mesmo evento — o replay **pula**, não falha |
-| `orders.last_sequence_no` | evento fora de ordem |
-| `orders.status` em `from_states` | transição inválida |
-
-A segunda é o que torna `key = order_id` uma exigência do broker, e não uma preferência: se
-o OLTP aceitasse evento fora de ordem, preservar ordem por pedido não compraria nada.
-
-**Uma transação por evento**, não por pedido nem por partição — é o único recorte que
-corresponde ao que um OLTP de verdade faz. 44.456 transações em 85 s.
-
-### O que dois folds independentes acharam um no outro
-
-Replicar o mesmo log por um caminho completamente diferente — incremental e transacional,
-em vez de window function sobre o log inteiro — e comparar os dois estados achou **dois
-defeitos no Silver** que nenhum teste pegava, porque os dois eram internamente coerentes:
-
-1. **`net_amount` respondia duas perguntas com o mesmo nome.** 298 pedidos morrem antes da
-   separação; o Silver dizia nulo (*"não houve separação"*), o OLTP dizia o valor colocado
-   (*"quanto ainda vale"*). Corrigido no OLTP.
-2. **O Silver afirmava separação que o log nunca declarou.** `line_status` era
-   `else 'fulfilled'` — inclusive nas **5.508 linhas** dos 298 pedidos cancelados ou com
-   pagamento recusado. `order_picked` é o único evento que declara separação, e ele não
-   ocorre neles. O vocabulário passou a ser
-   `placed | fulfilled | substituted | removed | not_picked`, idêntico nos dois lados.
-
-Depois da correção os dois folds concordam em tudo: **6.400 pedidos × 7 atributos** e
-**120.693 linhas × 6 atributos**, zero divergências.
-
-Nenhum dos dois apareceria com mais um teste no Silver — o teste que os pegaria teria de
-conhecer a resposta certa. O que os achou foi uma segunda implementação independente do
-mesmo fold.
-
-### O que isto habilitou
-
-O gatilho literal do Kafka — *"CDC de um OLTP"* — passou a existir aqui. O transporte está
-logo abaixo.
-
-## Transporte: Kafka, replay e consumo idempotente
-
-```bash
-make stream-up                    # OLTP + broker + read model
-make orders-apply-all             # log -> OLTP + outbox
-make orders-publish               # outbox -> topico (at-least-once, por desenho)
-make orders-project               # topico -> live_order_state (idempotente)
-make orders-replay                # rebobina o grupo; NAO apaga a projecao
-make orders-prove-stream          # as seis provas
-```
-
-Isto é *transporte + replay + semântica de entrega + consumo idempotente*, e não "subir um
-broker e publicar mensagens". Contar mensagens prova que algo trafegou; não prova que
-trafegou intacto, nem o que acontece quando alguém morre no meio, nem que reprocessar é
-seguro.
-
-### A semântica é at-least-once, e o lado em que se erra foi escolhido
-
-Marcar `published_at` no Postgres e receber o ack do Kafka são duas escritas em dois
-sistemas, e não existe transação entre eles:
-
-| Ordem | Morrer no meio produz | |
-|---|---|---|
-| publicar → ack → marcar | **duplicata** | escolhido |
-| marcar → publicar | **perda** | recusado |
-
-Perder é irreversível; duplicar é absorvível. Por isso o consumidor é idempotente **por
-obrigação, não por elegância**.
-
-`enable.idempotence=true` **não** cobre isso — ele elimina duplicata de *retry dentro da
-sessão do produtor*. A duplicata de o processo morrer entre o ack e o commit do outbox é do
-desenho, não do transporte. `make orders-prove-stream` **reproduz essa janela**: devolve 500
-linhas do outbox para a fila, republica, e o tópico passa a ter mais mensagens que o log tem
-eventos (44.456 → 44.956).
-
-### Deduplicação sem conjunto que cresce
-
-O consumidor não guarda um conjunto de `event_id`. Compara `sequence_no` com o que já está
-no read model:
-
-| Comparação | Verdito |
-|---|---|
-| `seq <= last` | duplicata — descarta |
-| `seq == last + 1` | aplica |
-| `seq > last + 1` | **buraco — para** |
-
-É **limitado por construção** (um inteiro por pedido), sem política de expiração — e toda
-política de expiração é uma janela em que a duplicata volta a passar. E só funciona porque a
-ordem por chave é garantida: uma duplicata sempre chega *depois* do original. É isso que faz
-`key = order_id` virar peça de carga em vez de configuração.
-
-**Buraco é perda.** Avançar o offset por cima tornaria a perda permanente e invisível.
-
-### O offset é commitado depois da escrita
-
-`enable.auto.commit` é **false**: o commit automático anda no timer, não na escrita, e
-entrega at-most-once sem ninguém escolher. A ordem é escrever → commitar a projeção →
-commitar o offset. **At-least-once na entrega, efeito exactly-once na projeção.**
-
-Nenhum teste de contagem enxerga essa ordem — ela é asserida contra duplos que gravam um
-**diário compartilhado**.
-
-### As seis provas
-
-| # | Prova | Resultado |
-|---|---|---|
-| 1 | Transporte fiel — o tópico relido reproduz o sha256 dos manifestos | **16/16** |
-| 2 | Ordem por chave — 1 partição por pedido, repetição sempre depois do original | 6.400 pedidos |
-| 3 | At-least-once é real — a janela de duplicação é reproduzida | 44.456 → 44.956 |
-| 4 | Consumo idempotente — as duplicatas não mexem na projeção | digest igual |
-| 5 | Replay — rebobinar e reprocessar o tópico inteiro | 0 aplicados, digest igual |
-| 6 | Buraco é recusado, duplicata é descartada | as duas |
-
-Mais: os três folds independentes — Silver (window function), OLTP (transacional) e projeção
-(streaming) — concordam em **6.400 pedidos, zero divergências**. E o plano inteiro
-reconstruído de volumes vazios produz o **mesmo digest**.
-
-### Um achado que ficou registrado três fases, e a distinção que o corrigiu
-
-**A premissa `sla_minutes_picking = 90` não podia disparar.** `basket_lines_max ×
-minutes_per_line_picked = 40 × 2 = 80 min`: o limiar de alerta estava **acima do teto
-aritmético** da separação. O mecanismo funcionava e estava testado; nenhuma cesta possível o
-alcançava.
-
-Ficou registrado porque a regra do projeto é recusar ajuste de premissa até a saída agradar —
-e a regra está certa. O que faltava era a distinção: *mexer numa premissa para melhorar um
-número* é uma coisa; *tornar duas premissas mutuamente coerentes* é outra. Um alerta acima do
-máximo possível não é um resultado indesejado, é um modelo internamente contraditório.
-
-Corrigido na Fase 7. O limiar passou a ser **derivado** de uma política declarada
-(`sla_picking_percentile`) sobre a distribuição da cesta, e
-[`assert_order_premises_are_internally_coherent`](platform/dbt/tests/assert_order_premises_are_internally_coherent.sql)
-afere a **derivação**, nunca o resultado — não há nele nenhuma asserção sobre quantos alertas
-disparam. Quem no futuro ajustar o número para consertar um KPI derruba um teste, inclusive
-com um valor plausível: trocar 60 por 75 reprova.
-
-**A distribuição uniforme entre partições é artefato da chave.** 1.600 pedidos em cada
-partição, exatamente 100 dentro de cada (armazém, dia). Não é mérito do particionador: o
-índice sequencial denso de `order_id` faz os bits baixos do murmur2 formarem um sistema
-completo de resíduos. Com `order_id` esparso o equilíbrio viraria estatístico.
-
-### O que isto habilitou
-
-`live_order_state` passou a existir, e é ela que ganha um **segundo escritor** logo abaixo —
-o gatilho do Iceberg, literal.
-
-## Projeção viva em Iceberg: dois escritores, um leitor
-
-```bash
-make spike-iceberg                # o experimento fechado, ANTES de tudo isto existir
-make iceberg-init                 # catalogo SQL no Postgres + live_order_state
-make orders-rebuild-projection --through 2026-08-26   # escritor 2: o lote
-make orders-project-iceberg       # escritor 1: o streaming, na MESMA tabela
-make orders-reconcile             # Iceberg x Silver x OLTP; sai 1 se divergirem
-make orders-prove-projection      # concorrencia, fusao monotonica, snapshot isolation
-```
-
-O gatilho do Iceberg era *"um segundo engine precisar **escrever** a mesma tabela"*, e agora
-`live_order_state` tem dois escritores por desenho, com o DuckDB lendo enquanto os dois
-escrevem. **Disparou por concorrência, não por volume** — neste volume um parquet reescrito
-com `os.replace` atômico serviria.
-
-### O experimento fechado veio primeiro
-
-O plano registrou "o DuckDB pode não ler o catálogo SQL do pyiceberg" como a premissa mais
-frágil. `make spike-iceberg` respondeu nove perguntas contra o stack de verdade **antes de
-uma linha da projeção existir**, e duas respostas mudaram o desenho:
-
-**O DuckDB lê pelo `metadata_location`, e só por ele.** Ele recusa descobrir sozinho qual é o
-metadado corrente — *"globbing the filesystem ... is considered unsafe and could result in
-reading uncommitted data"*. O atalho (`unsafe_enable_version_guessing`) foi medido, funciona,
-e foi recusado. Quem sabe é o **catálogo**: `make silver` pergunta a ele e passa a resposta
-como var.
-
-**O experimento reprovou a minha asserção, não o Iceberg.** Exigi que duas escritas
-concorrentes "sobrevivessem" e recebi `CommitFailedException` — que é o controle otimista
-funcionando. Se passasse calado, seria lost update.
-
-### Retry não basta: a fusão é monotônica
-
-Recarregar e tentar de novo resolve o conflito de **commit** e ainda assim perde dado: se o
-outro escritor já gravou o pedido no `sequence_no` 7 e a nossa tentativa carrega o 5, o retry
-cego escreve o 5 por cima. **O commit passa, a tabela regride, nada reprova.**
-
-Por isso cada tentativa relê o estado das chaves afetadas e descarta as próprias linhas que
-não avançam — a mesma guarda de `last_sequence_no` que protege o OLTP e o consumidor, agora
-protegendo a escrita concorrente. É a terceira vez que o mesmo invariante paga.
-
-### O par lambda, medido
-
-| | Pedidos | Tempo |
-|---|---|---|
-| Lote — 12 partições, 33.349 eventos | 4.800 | **3,2 s** |
-| Streaming — o tópico inteiro por cima | 1.600 | 60 s |
-
-`written_by` na tabela: **`{rebuild: 4800, stream: 1600}`** — proveniência consultável, não
-afirmação sobre log. O streaming descartou 33.849 eventos como duplicata porque o lote já os
-tinha trazido ao estado final, e a dedup do consumidor reconheceu isso lendo o estado que o
-**outro** escritor gravou.
-
-### Quatro caminhos, um digest
-
-O read model tem quatro produções independentes, todas com o mesmo `d769f727f805736a…`:
-Postgres; Iceberg só streaming; Iceberg lote + streaming; e a reconstrução do zero de volumes
-vazios. **Dois motores de armazenamento diferentes com digest byte a byte igual.**
-
-### O que o acordo entre os dois escritores não prova
-
-`orders-rebuild-projection` e `orders-project` compartilham o fold. Concordarem mostra que não
-se atropelam — não que estão certos. A correção vem de `orders-reconcile`, que compara com
-`silver_order`: window function em SQL sobre o log inteiro, sem uma linha em comum com as
-outras duas. **Três folds independentes, 6.400 pedidos, zero divergências** — e o mesmo
-invariante virou teste dbt, porque verificação que só roda quando alguém lembra é hábito, não
-verificação.
-
-### `make stream-evidence`
-
-A metade em streaming é dívida declarada: `make test` roda sem rede, então broker, OLTP e
-Iceberg só existem enquanto `make stream-up` estiver de pé. Os duplos em memória cobrem a
-**forma** do código — a ordem da transação, o protocolo de dedup, a construção do SQL; o que
-eles não podem cobrir é a **semântica** dos motores reais.
-
-[`docs/stream-evidence/README.md`](docs/stream-evidence/README.md) registra os três planos e
-os três folds concordando em 6.400 pedidos, com data e nenhum número escrito à mão. É
-tolerante a plano desligado de propósito: cada seção ausente aparece como **ausência
-declarada**, nunca como zero — *"o outbox tem 0 eventos"* e *"o OLTP não respondeu"* cabem na
-mesma célula de tabela e significam coisas opostas.
-
-```bash
-make stream-evidence
-```
-
-### O custo do copy-on-write, medido
-
-O sink Iceberg processou o tópico em **4min48s** contra **14s** do Postgres. O `upsert` do
-pyiceberg é copy-on-write: cada lote reescreve os arquivos de dados, e a guarda monotônica lê
-a tabela antes de cada tentativa.
-
-Não foi otimizado, e o motivo é que os dois sinks respondem perguntas diferentes: o Postgres é
-o read model de baixa latência, o Iceberg é o que aceita dois escritores e guarda história.
-**Gatilho para mexer**: a projeção sair da ordem de 10⁴ linhas.
-
-## Pedidos no warehouse: o fato transacional que faltava
-
-```bash
-make warehouse-refresh        # export -> load -> dbt (agora com 4 STAGE e 4 FACT novos)
+# 1. plano de dados
+make up                       # MinIO + Postgres + Airflow. NÃO sobe Kafka nem Spark
+make daily                    # extract -> validate -> land -> verify -> silver
+make ine-refresh callejero-refresh
+make oltp-export-reference && make oltp-refresh-all
+make orders-export-reference && make orders-refresh-all
+make silver && make test
+
+# 2. calibração da demanda, contra o MAPA 2025
+make demand-check-mapping     # 444 trincas do catálogo, uma regra cada, zero default
+make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS + propensão por coorte
+
+# 3. plano de stream (opcional) — OLTP, outbox, Kafka, projeção Iceberg
+make stream-up
+make orders-apply-all         # log -> OLTP + outbox, na MESMA transação
+make orders-publish           # outbox -> tópico, at-least-once por desenho
+make orders-project           # tópico -> live_order_state, idempotente
+make orders-rebuild-projection PROJECTION_RESET=1   # o SEGUNDO escritor, em lote
+make orders-reconcile         # três folds independentes; sai 1 se divergirem
+make orders-prove-atomicity orders-prove-stream orders-prove-projection
+
+# 4. plano de estoque (opcional) — o job Spark
+make spike-spark-iceberg      # o PORTÃO: o Spark lê o catálogo do pyiceberg?
+make stock-ledger             # consumo observado -> saldo, ruptura e reposição
+make spark-evidence           # os dois motores, e os dois tempos
+
+# 5. warehouse e painel
+make warehouse-refresh        # export -> load -> dbt no Snowflake
 make warehouse-prove-tests    # injeta o defeito que cada teste diz pegar e exige o vermelho
+make dashboard                # http://localhost:8501
+
+# 6. fechar
+make freeze                   # sela a captura do RAW
+make freeze-check             # e confere que ela não mudou
 ```
 
-| Camada | Objetos novos |
-|---|---|
-| STAGE | `STG_ORDER` · `STG_ORDER_LINE` · `STG_ORDER_EVENT` · `STG_ORDER_PREMISE` — 6.400 pedidos quando a Fase 3 mediu; **91.788** desde que a Fase 6 redimensionou a base de clientes |
-| GOLD | `FACT_ORDER` · `FACT_ORDER_ITEM` · `FACT_ORDER_EVENT` · `FACT_ORDER_PREMISE` |
-| MART | `MART_ORDER_FUNNEL` · `MART_FULFILLMENT_SLA` · `MART_BASKET_DAILY` · `MART_DEMAND_COHORT` *(Fase 5)* |
-
-`FACT_ORDER` é **accumulating snapshot** — uma linha por pedido que se preenche conforme ele
-avança, com onze marcos e as durações entre eles. O padrão só existe porque há eventos: uma
-fotografia de estado diria *onde* o pedido está, nunca *quanto tempo levou para chegar lá*.
-
-### Um timestamp 56 milhões de anos no futuro, com 166 nós verdes por cima
-
-A primeira carga pôs **todo** timestamp no ano **56.648.666**: o DuckDB anota a unidade só no
-`LogicalType` moderno do parquet e deixa o `ConvertedType` legado em `NONE`; o Snowflake cai
-no legado e assume milissegundos onde havia microssegundos.
-
-**Nada reprovou.** A reconferência da carga compara contagem de linhas, e ela estava certa.
-Os 166 nós do dbt construíram em verde — as durações viraram números grandes, não erros. O
-grão continuou único. E o teste de funil passou, porque um funil é feito de
-`count_if(marco is not null)` e "não nulo" continua exato com o instante deslocado. Quem
-apontou foi ler **80.000.060 minutos de separação** num mart.
-
-Só apareceu agora porque era a primeira vez que um `TIMESTAMP` cruzava a fronteira — até
-então o recorte só tinha `DATE`, que viaja como `date32` sem ambiguidade de unidade.
-
-A correção é `use_logical_type = true`. O que ficou é o teste que ancora cada marco contra
-`order_date`, que chegou por outro caminho: comparar marcos **entre si** passaria alegremente,
-porque todos estavam deslocados pelo mesmo fator.
-
-### O SCD2 finalmente paga por si
-
-Até aqui `DIM_CUSTOMER` e `DIM_PRODUCT` eram SCD2 sem nenhum fato apontando para uma versão.
-`FACT_ORDER` resolve a versão de cliente vigente na data do pedido; `FACT_ORDER_ITEM` resolve
-**duas** versões de produto — a do pedido e a do cumprido, que diferem nas 4.670 linhas
-substituídas.
-
-E a versão resolvida pelo *range join* coincide com a que a Source gravou no evento
-`order_placed` nos **6.400** pedidos — dois caminhos que não se tocam. Virou teste.
-
-### O funil se apoia em marco, e 61 pedidos provam por quê
-
-Um pedido devolvido tem status `RETURNED` — **e foi entregue**. Contar
-`order_status = 'DELIVERED'` dá **5.985**; contar `delivered_at is not null` dá **6.046**.
-Marco é monotônico, status não é.
-
-### Dois defeitos de modelo, achados pelo warehouse e corrigidos na Fase 7
-
-**`sla_minutes_picking = 90` era inalcançável por construção**: `basket_lines_max` (40) ×
-`minutes_per_line_picked` (2) dá teto de 80. Zero violações — não porque a operação fosse boa,
-mas porque as premissas não se cruzavam.
-
-**A janela de entrega quase nunca era cumprida, e o desvio era para CEDO**: medido em
-2026-09-01, **84% das entregas chegavam antes de a janela abrir**, porque `slot_lead_hours`
-sorteava 2–24 h contra um ciclo que nunca passa de 8,5 h.
-
-Os dois eram contradições internas do seed, não resultados indesejados — e é essa distinção
-que autorizou a correção. As três premissas passaram a ser derivadas das outras linhas do
-mesmo seed. O mart continua publicando `sla_minutes`, `max_picking_minutes` e
-`orders_breaching_sla` lado a lado, e `orders_delivered_before_slot` separado de
-`orders_delivered_after_slot`: chegar cedo e chegar tarde são problemas **opostos**, e "fora
-da janela" não diz qual dos dois é. Foi essa separação que tornou o defeito visível.
-
-Nos dois casos, mexer no seed até o número melhorar seria ajustar a entrada até a saída
-agradar. As premissas atravessam a fronteira em `FACT_ORDER_PREMISE` justamente para que o
-mart meça contra **o mesmo número** que gerou as durações, e não contra uma cópia.
-
-### Cada teste foi visto vermelho
-
-`make warehouse-prove-tests` injeta, no dado real, o defeito que cada um dos cinco testes diz
-pegar; exige o vermelho; desfaz; exige o verde de volta; e confere uma sentinela no fim. Só
-toca GOLD e MART, que são inteiramente reconstruíveis a partir do STAGE.
-
-Depois do que aconteceu com os timestamps, um teste verde que nunca foi visto vermelho não é
-evidência de nada.
-
-## Calibração da demanda contra o MAPA 2025
-
-`docs/Informe comsumo 2025_.pdf` — o Informe del Consumo Alimentario en España do Ministerio
-de Agricultura, Pesca y Alimentación — passou a servir de **benchmark** para a distribuição de
-demanda da cesta sintética. Não é uma fonte que a plataforma ingere: é referência externa,
-usada só como alvo de distribuição.
-
-```bash
-make demand-check-mapping     # 444 trincas do catalogo, uma regra cada, zero default
-make demand-reality-check SNAPSHOT=before_mapa_2025_v2   # congela o ANTES
-make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS + propensao por coorte
-```
-
-### O achado que abriu a fase não era de demanda
-
-"Marisco y pescado" tinha 3,38% das unidades e **22,82% da receita**, com preço médio pago de
-27,09 € num catálogo cujo produto mais caro custava 24,05 €. O RAW explicou: quando
-`selling_method = 1` e `unit_size` é nulo, a API devolve `unit_price = reference_price × 99`
-— o teto do seletor de peso, não um preço de consumo. **12 produtos em 4.939 produziam 23% da
-receita**, e nenhum dos 947 testes reprovava.
-
-O campo que corrige — `min_bunch_amount` — sempre esteve no RAW e o Silver o descartava.
-`silver_product_price` ganhou `purchasable_unit_price` ao lado do valor cru, que permanece
-intacto.
-
-### A cadeia, com preço fora do caminho da demanda
-
-```
-grupo de demanda   <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
-produto no grupo   <- UNIFORME (nenhuma fonte mede giro por SKU)
-quantidade / preço <- inalterado / observado
-valor do pedido    <- consequência, nunca objetivo
-```
-
-**Volume e valor divergem de propósito**: no MAPA, mariscos são 0,81% do volume e 2,88% do
-valor. Um simulador que os igualasse estaria errado.
-
-**O que o benchmark NÃO calibra:** `daily_order_rate`, `basket_lines_*`, `quantity_max`. O
-MAPA mede consumo doméstico do residente, não pedido de loja online. Essas continuam
-`synthetic`.
-
-### Configuração versionada, zero hardcode
-
-| Seed | Papel |
-|---|---|
-| `mapa_2025_benchmark_seed.csv` | 64 linhas do informe, com seção citada em cada uma; 39 pesáveis cobrindo 86,12% do volume doméstico |
-| `demand_category_mapping_seed.csv` | 128 regras `(l1, l2, l3)` com `*` como coringa; a mais específica vence |
-| `demand_profile_seed.csv` | `demand_model_version`, share alimentar, limiar de cobertura, bases de canal |
-| `demand_seasonality_seed.csv` | 12 meses, **neutros** — e o motivo escrito em cada linha |
-| `demand_cohort_age_seed.csv` | 39 grupos × 4 faixas etárias, com a página do informe em cada linha |
-| `demand_cohort_region_seed.csv` | 39 grupos × 4 comunidades servidas |
-| `mapa_2025_region_seed.csv` | consumo e gasto per cápita das 17 comunidades + média nacional |
-| `ine_ccaa_map_seed.csv` | província → comunidade autónoma; província não mapeada **levanta** |
-
-O perfil resolvido viaja como quinto arquivo de referência (`demand_profile.json`) para a
-Source, que continua **FROZEN**: ela recebe pesos, não regras.
-
-### Resultado medido na mesma janela
-
-| dimensão | ANTES | DEPOIS |
-|---|---:|---:|
-| receita | 821.121,93 | 583.154,43 |
-| EUR/kg | 6,49 | 4,04 |
-| MARISCOS, % do volume | 11,44 | 0,43 (alvo 0,43) |
-| FRUTAS_FRESCAS, % do volume | 3,11 | 9,51 (alvo 9,17) |
-
-Erro absoluto médio contra o alvo: **0,098 ponto**. A queda de 29% na receita é a correção
-funcionando — 23% dela eram os 12 produtos com preço de teto de API.
-
-## Perfil de consumo do cliente (`mapa_2025_v2`)
-
-A calibração acima é **agregada**: até aqui, um cliente de 22 anos em Sevilha e um de 78 em
-Barcelona sorteavam da mesma distribuição. A `v2` troca `P(grupo)` por `P(grupo | coorte)`.
-
-### O achado, outra vez, não era de demanda
-
-**18,01% dos clientes tinham menos de 18 anos** — 3.602 de 20.000, com idades a partir de
-zero. Não é defeito da Source de OLTP: o contrato dela declara que a idade vem da distribuição
-*populacional* do INE, e é isso que ela entrega. O que faltava declarado era a diferença entre
-**residente** e **quem coloca um pedido** — inofensiva enquanto a idade não fazia nada, errada
-por construção assim que ela passou a governar a demanda. `min_buyer_age = 18` mora em
-`order_premises_seed.csv`; a base de clientes não foi tocada.
-
-> **Corrigido na origem na Fase 6.** Tratar isso como regra de *pedido* estava no domínio
-> errado: um cadastro não é um censo, e o titular de conta recém-nascido continuava
-> existindo. Ver [Densidade real da base de clientes](#densidade-real-da-base-de-clientes).
-
-### Duas pontes, três recusas
-
-Usados: **idade** (`birth_year`, do INE 31304) e **comunidade autónoma** (`province_code`, do
-Callejero) — as duas únicas em que um atributo observado do cliente coincide com um corte
-publicado do informe.
-
-Recusados: **ciclo de vida do lar** e **nível socioeconómico**, que são os cortes mais ricos
-do MAPA mas exigiriam inventar composição familiar e renda no cliente; e **sexo**, que o
-cliente tem mas o informe só publica para consumo extradoméstico. Gatilho registrado: ingerir
-lares por província do INE abre o primeiro.
-
-### O agregado não se move — é o critério de aceitação
-
-Um *iterative proportional fitting* garante que a média dos pesos por coorte, ponderada pela
-distribuição real de coortes entre os pedidos, reproduza os pesos agregados da `v1`.
-Convergência em 6 iterações, desvio 1,0×10⁻¹⁰. **Procurar o efeito da fase num total não
-encontra nada**: ele está inteiro na condicional.
-
-| | ANTES (v1) | DEPOIS (v2) |
-|---|---:|---:|
-| pedidos | 6.400 | **5.248** (−18,0%) |
-| receita (EUR) | 583.154,43 | 481.201,94 (−17,5%) |
-| **EUR por kg** | 4,04 | **4,06** (+0,5%) |
-
-As duas primeiras caem pelos menores de idade; a terceira fica parada, e é ela que prova que o
-mix não se moveu.
-
-| grupo | LT35 % | GE65 % | × |
-|---|---:|---:|---:|
-| VINO | 0,50 | 2,44 | 4,89 |
-| MARISCOS_MOLUSCOS_CRUSTACEOS | 0,25 | 0,80 | 3,16 |
-| PASTAS | 2,34 | 0,94 | 0,40 |
-| ARROZ | 1,40 | 0,44 | 0,31 |
-
-E os quatro armazéns deixaram de ser cópias: **bcn1 coloca 1.436 pedidos contra 1.176 de
-mad1**, contra os 22,7% que o consumo per cápita das duas comunidades prevê. O índice é
-renormalizado sobre as comunidades servidas, então o total da janela não se move.
-
-> Estes números são o estado **desta** fase. Na Fase 6 a base deixou de ser igual entre
-> armazéns e a ordem se inverteu: a população de Madrid passou a dominar o índice de
-> intensidade da Cataluña.
-
-### O que o informe não sustenta, e ficou registrado
-
-Sazonalidade mensal por categoria **não é extraível**: os gráficos mensais são imagens. O
-perfil sazonal é neutro por ausência de evidência, aplica-se à taxa de pedidos, e tem um par
-de testes que prova que o mecanismo funciona *e* que o perfil entregue está neutro. O gatilho
-para propor um perfil é a janela cobrir novembro e dezembro.
-
-## Densidade real da base de clientes
-
-A Fase 5 encontrou os menores de idade e os tratou **no domínio errado**: filtrou na hora do
-pedido e deixou o cadastro intacto, com o argumento de que `silver_customer` era uma projeção
-fiel da população residente. O argumento estava certo sobre o que a Source entrega e errado
-sobre o que um cadastro é — **uma base de clientes não é um censo**, e o titular de conta
-recém-nascido continuava existindo.
-
-Ao abrir isso, apareceu o segundo defeito, que ninguém tinha procurado: **a base era de 5.000
-clientes por armazém**, o mesmo número para AUFs que diferem por 4,6× em população. Nada
-reprovava. Os endereços eram reais, os totais fechavam, o manifesto batia. A única coisa
-errada era que a densidade não existia — e densidade não aparece em nenhum total.
-
-### O que passou a ser derivado
-
-```
-população municipal observada (INE 29005)
-  × share adulto da província (INE 31304, idades >= 18)   <- medido ANTES da truncagem
-  × taxa de penetração de 2,2 %                           <- MAPA 2025, seção 3
-  = clientes daquele armazém        (o total é consequência, não cota)
-```
-
-| | ANTES | DEPOIS |
-|---|---:|---:|
-| clientes | 20.000 | **286.826** |
-| menores de idade | 3.602 (**18,01%**) | **0** |
-| faixa de idade | 0 … 100 | 18 … 100 |
-| base elegível a pedir | 16.398 | 286.826 |
-| mad1 / svq1 | 1,00× | **4,56×** |
-
-`min_buyer_age` **continua existindo** e passou a descartar zero clientes. Isso é o invariante,
-não a redundância: se algum dia voltar a descartar alguém, uma das duas premissas se moveu sem
-a outra.
-
-### A prova que a taxa cria — e que não foi ajustada
-
-Se a base é 2,2 % das pessoas porque 2,2 % do volume de alimentação é online, então o modelo
-deveria produzir 2,2 % do consumo doméstico daquelas mesmas AUFs. Isso é conferível contra o
-próprio informe, e **nada foi calibrado para fechar**: a taxa entrou nesta fase, e
-`daily_order_rate` com o tamanho da cesta entraram na Fase 3, escolhidos sem nenhuma relação
-com ela.
-
-| escopo alimentar, janela de 4 dias | canal esperado | modelo | razão |
-|---|---:|---:|---:|
-| kg ou litro | 2.134.114 | 1.944.027 | **0,91×** |
-| receita (EUR) | 7.203.504 | 6.793.690 | **0,94×** |
-
-`NO_FOOD` fica fora do numerador: o per cápita do informe é de alimentação e bebidas e não
-cobre drogaria. A distância que sobra **não deve ser fechada** mexendo em `daily_order_rate` —
-nenhuma fonte deste repositório mede cadência de compra nem cesta online, então não há
-critério para decidir qual dos lados está errado. Enquanto for assim é uma **observação**, não
-um alvo.
-
-### O efeito colateral que inverteu a Fase 5
-
-| wh | clientes | pedidos na janela | índice regional |
-|---|---:|---:|---:|
-| mad1 | 128.771 | **37.332** | 0,89 |
-| bcn1 | 95.498 | 33.976 | 1,10 |
-| vlc1 | 34.295 | 11.656 | 1,05 |
-| svq1 | 28.262 | 8.824 | 0,96 |
-
-Na Fase 5, bcn1 liderava pelo consumo per cápita da Cataluña (620,82 contra 505,86 kg-L de
-Madrid). Agora a **população** de Madrid domina o índice e a ordem se inverte. É medição, não
-escolha: os dois efeitos existem e o maior venceu.
-
-O mix agregado continuou no alvo do MAPA — erro médio de **0,070 ponto**, contra 0,075 da Fase
-5 — e o IPF reconvergiu em 6 iterações apesar de a distribuição de coortes ter mudado (`LT35`
-deixou de conter crianças).
-
-### Onde a premissa mora
-
-| Seed | Papel |
-|---|---|
-| `customer_premises_seed.csv` | `min_customer_age`, o **ponteiro** para a taxa, o denominador populacional e a regra de alocação |
-
-Quatro linhas, todas `synthetic`. A única coisa observada em jogo — os 2,2 % — **não** está
-aqui: `customer_penetration_source` aponta para `demand_profile.channel_reference_pct`, onde
-foi medida. Copiar o número criaria dois lugares para mudá-lo.
 
 ## Warehouse analítico (Snowflake)
 
@@ -1200,8 +417,8 @@ make warehouse-ddl   # imprime o DDL do STAGE sem conectar em nada (derivado do 
 
 ## Painel estratégico (Streamlit sobre o MART)
 
-Bancada de **conferência** dos indicadores antes de reconstruí-los no Power BI. 16
-indicadores em 6 grupos, lendo só o `MART`.
+Bancada de **conferência** dos indicadores antes de reconstruí-los no Power BI. 22
+indicadores em 7 grupos, lendo só o `MART`.
 
 ```bash
 make dashboard-venv       # 1x: streamlit/pandas/altair (extra, fora da imagem do Airflow)
@@ -1428,3 +645,31 @@ Dentro da rede do compose o endpoint do MinIO é `minio:9000`, não `localhost:9
 compose sobrescreve `S3_ENDPOINT` para os serviços do Airflow, e isso funciona porque
 `config.load_dotenv()` **não** sobrepõe variável já presente no ambiente — o `.env` é
 default de desenvolvimento, não autoridade.
+
+## O que muda numa máquina nova
+
+**O RAW deste projeto não é reproduzível, e prometer que fosse seria falso.** A API da
+Mercadona é viva, o Callejero é um download manual semestral, e a URL do MAPA aponta para
+"últimos datos". Rodar a extração amanhã produz outra captura — e isso não é defeito, é a
+natureza de fontes públicas.
+
+O que **é** garantido: tudo a jusante é determinístico **dada a mesma RAW**. Os mesmos
+manifestos produzem o mesmo Silver, o mesmo warehouse e os mesmos marts.
+
+Daí sai a regra de onde cada número pode morar, e ela vale para quem for editar a
+documentação:
+
+| Natureza do número | Onde pode morar |
+|---|---|
+| Estrutural — grão, invariante, razão por construção | README, ARCHITECTURE |
+| Propriedade **desta captura** — contagens, percentuais medidos | página gerada, ou datado explicitamente |
+
+Numa máquina nova o operador roda `make freeze`, que sela **a captura dele** em
+[`docs/FREEZE.md`](docs/FREEZE.md) com um `capture_id`. A partir daí `make freeze-check`
+reprova se qualquer partição selada mudar — e o teste passa a guardar a captura dele, não a
+que gerou os números publicados aqui.
+
+**Três coisas exigem download ou credencial e não sobem sozinhas:** os arquivos do Callejero
+(`temp/`), a conta Snowflake (`.env.snowflake`, chave RSA fora do repositório) e o informe do
+MAPA em PDF. Sem eles o caminho padrão ainda roda — o que some é a camada analítica e a
+calibração, e cada ausência é declarada onde apareceria.

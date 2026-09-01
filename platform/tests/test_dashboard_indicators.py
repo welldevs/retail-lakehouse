@@ -231,30 +231,42 @@ class ContractEmSincroniaTest(unittest.TestCase):
 
 
 class ContagemNaProsaTest(unittest.TestCase):
-    """O ARCHITECTURE diz quantos indicadores o painel tem. Esse numero e copiado a mao, e
-    ja errou: dizia 16 quando eram 18, e 19 consultas quando eram 21.
+    """A documentacao diz quantos indicadores o painel tem. Esse numero e copiado a mao, e
+    ja errou tres vezes: dizia 16 quando eram 18, 19 consultas quando eram 21 — e, na Fase 7,
+    o README dizia 16 quando eram 22, porque este teste so vigiava o ARCHITECTURE.
 
-    Nao vale automatizar toda contagem escrita em prosa — a maioria delas o remedio foi
-    parar de escrever. Esta fica porque a frase perde o sentido sem o numero, e porque
-    acrescentar um indicador e justamente o momento em que ninguem lembra do ARCHITECTURE.
+    A TERCEIRA VEZ E A LICAO: guardar UM arquivo nao guarda a frase, guarda o arquivo. A
+    mesma contagem morava em dois documentos e so um tinha teste — entao o outro apodreceu
+    exatamente como se teste nenhum existisse. Agora os dois entram pela mesma lista, e
+    acrescentar um terceiro documento com a frase e uma linha aqui.
+
+    Nao vale automatizar toda contagem escrita em prosa — na maioria delas o remedio foi
+    parar de escrever o numero. Esta fica porque a frase perde o sentido sem ele, e porque
+    acrescentar um indicador e justamente o momento em que ninguem lembra da documentacao.
     """
 
-    def _arquitetura(self) -> str:
+    DOCUMENTOS = ("ARCHITECTURE.md", "README.md")
+
+    def _texto(self, nome: str) -> str:
         raiz = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        with open(os.path.join(raiz, "ARCHITECTURE.md"), encoding="utf-8") as arquivo:
+        with open(os.path.join(raiz, nome), encoding="utf-8") as arquivo:
             return arquivo.read()
 
-    def test_o_numero_de_indicadores_no_architecture_confere(self):
-        texto = self._arquitetura()
+    def test_o_numero_de_indicadores_confere_em_todo_documento_que_o_cita(self):
         grupos = len({indicador.grupo for indicador in I.INDICADORES})
-        self.assertIn(
-            f"{len(I.INDICADORES)} indicadores em {grupos} grupos", texto,
-            "ARCHITECTURE.md descreve outro numero de indicadores/grupos",
-        )
+        frase = f"{len(I.INDICADORES)}\nindicadores em {grupos} grupos"
+        frase_linha = f"{len(I.INDICADORES)} indicadores em {grupos} grupos"
+        for nome in self.DOCUMENTOS:
+            with self.subTest(nome):
+                texto = self._texto(nome)
+                self.assertTrue(
+                    frase in texto or frase_linha in texto,
+                    f"{nome} descreve outro numero de indicadores/grupos",
+                )
 
     def test_o_numero_de_consultas_no_architecture_confere(self):
         total = len(I.INDICADORES) + 3  # FRESCOR, JANELA, ARMAZENS
-        self.assertIn(f"as {total} consultas", self._arquitetura())
+        self.assertIn(f"as {total} consultas", self._texto("ARCHITECTURE.md"))
 
 
 class ForaDeAlcanceTest(unittest.TestCase):

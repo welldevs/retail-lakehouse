@@ -41,22 +41,40 @@ sources:
           38 linhas que distinguem "nao houve preco" de "nao houve observacao". Sem elas
           qualquer serie temporal interpola as lacunas em silencio. As tres sources com
           eixo de armazem entram por `union all by name`; orders declara EVENTOS, e o
-          mapeamento para `declared_rows` respeita isso (44.456, nao 6.400).
+          mapeamento para `declared_rows` respeita isso: o manifesto declara EVENTOS, e o
+          fold declara PEDIDOS — dois numeros diferentes para a mesma particao.
       - name: STG_ORDER
         description: >
-          O fold, grao order_id — 6.400 linhas, 4 dias x 4 armazens. Sem filtro de ultima
+          O fold, grao order_id — uma linha por pedido da janela. Sem filtro de ultima
           ingestao: cada ingestion_date e um dia de operacao, nao uma reingestao.
       - name: STG_ORDER_LINE
         description: >
-          Grao (order_id, line_no) — 120.693 linhas. Carrega o produto PEDIDO e o produto
+          Grao (order_id, line_no). Carrega o produto PEDIDO e o produto
           CUMPRIDO lado a lado; sem os dois a substituicao desapareceria.
       - name: STG_ORDER_EVENT
         description: >
-          O log inteiro, grao event_id — 44.456 linhas. Unica tabela do STAGE com corpo
+          O log inteiro, grao event_id. Unica tabela do STAGE com corpo
           semiestruturado (`payload_json`, VARCHAR): e a ORIGEM do fold, carregada para
           que a auditoria nao precise voltar ao RAW.
       - name: STG_ORDER_PREMISE
         description: >
-          As 30 premissas declaradas que o gerador consumiu, todas rotuladas 'synthetic'.
+          As premissas declaradas que o gerador consumiu, todas rotuladas 'synthetic'.
           Existem aqui para que MART_FULFILLMENT_SLA meca contra o MESMO limiar que
-          produziu as duracoes, em vez de contra uma copia do numero.
+          produziu as duracoes, em vez de contra uma copia do numero — copia que
+          envelheceu de verdade na Fase 7, quando o limiar caiu de 90 para 60.
+      - name: STG_STOCK_PREMISE
+        description: >
+          A politica de estoque: cobertura inicial, ponto de reposicao, nivel alvo e prazo
+          do fornecedor. Todas 'synthetic'. Separada de STG_ORDER_PREMISE porque governa
+          outro dominio — aquelas dizem o que um cliente FAZ, estas o que o armazem TEM.
+      - name: STG_STOCK_LEDGER
+        description: >
+          O SALDO DE ESTOQUE, grao (wh, source_product_id, stock_date). Unica tabela do
+          STAGE que nao vem de uma Source: estoque nao e observado em lugar nenhum deste
+          projeto, e este ledger e CALCULADO por um job Spark a partir do consumo medido
+          nos pedidos mais a politica declarada. `written_by` = 'spark' viaja junto para
+          que quem consultar o warehouse descubra isso sem abrir documentacao.
+
+          A JANELA E UM DIA MAIOR que a de STG_ORDER, e a diferenca e real: o consumo e
+          datado pela SEPARACAO, e um pedido colocado tarde no ultimo dia e separado no dia
+          seguinte. Igualar as duas exigiria descartar consumo observado.

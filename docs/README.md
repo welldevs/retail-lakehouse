@@ -81,11 +81,18 @@ bastante para admiti-las e estreita o bastante para pegar um dígito trocado.
 
 Nenhum número destas páginas é escrito à mão. Refaça-as em vez de editá-las.
 
-| diretório | gerado por |
-|---|---|
-| `docs/demand-evidence/` | `make demand-reality-check` |
-| `docs/warehouse-evidence/` | `make warehouse-evidence` |
-| `docs/stream-evidence/` | `make stream-evidence` |
+| diretório | gerado por | o que a página prova |
+|---|---|---|
+| `docs/demand-evidence/` | `make demand-reality-check` | a cesta gerada bate com o alvo do MAPA, coorte a coorte |
+| `docs/warehouse-evidence/` | `make warehouse-evidence` | posse, volume e isolamento de papel no destino |
+| `docs/stream-evidence/` | `make stream-evidence` | a semântica dos motores reais — broker, OLTP, Iceberg |
+| `docs/spark-evidence/` | `make spark-evidence` | o mesmo job nos dois motores, **inclusive quando o Python puro ganha** |
+| `docs/FREEZE.md` | `make freeze` | o selo da captura: partição, `content_sha256`, `capture_id` |
+
+**`docs/spark-evidence/` é a única que existe para sustentar uma afirmação NEGATIVA** — "o
+Spark não foi adotado por desempenho". Uma negativa sem benchmark é a mesma doença do número
+copiado à mão, com o sinal trocado, então a página publica os dois tempos lado a lado seja
+qual for o vencedor.
 
 Os `before_*.json` de `docs/demand-evidence/` são a exceção: não são gerados a cada
 execução, são **snapshots congelados**. Depois de `orders-refresh-all --overwrite` o estado

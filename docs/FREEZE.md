@@ -1,0 +1,155 @@
+# A captura selada
+
+**Gerado por `make freeze`.** Não editar à mão.
+
+**`capture_id` = `cec10cb5931f284f463a68ccc707c7612da1bab81caf4d41936a7a7f0ec568ef`**
+
+Selado em 2026-09-01 · 81 partições · 2.221.069 registros · 2.29 GB
+
+## O que este selo é, e o que ele não é
+
+**O RAW deste projeto não é reproduzível, e prometer que fosse seria falso.** A API
+da Mercadona é viva, o Callejero é um download manual semestral, e a URL do MAPA
+aponta para "últimos datos". Rodar a extração amanhã produz outra captura — e isso
+não é defeito, é a natureza de fontes públicas.
+
+O que **é** garantido: tudo a jusante é determinístico **dada a mesma RAW**. O
+`capture_id` é o nome dessa condição. Numa máquina nova, o operador roda `make
+freeze` e sela a captura **dele**; `make freeze-check` passa a guardar a dele.
+
+**O selo cobre os dados, não a execução.** Cada `content_sha256` é o hash da lista
+ordenada de `(path, sha256, bytes, records)` declarada no manifesto da partição.
+Ficam deliberadamente de fora `run_id`, `started_at_utc`, `finished_at_utc`,
+`duration_seconds` e `history`: incluí-los faria um re-land de dado byte-idêntico
+quebrar o selo, e um alarme que dispara sem causa é pior que nenhum alarme — a mesma
+razão pela qual o `CONTRACT.md` do painel carrega o sha256 da origem e não a data da
+geração.
+
+## Como conferir
+
+```bash
+make freeze-check   # relê o RAW e compara com este selo; sai 1 em qualquer diferença
+```
+
+Alterar um único byte de uma partição selada reprova. Acrescentar uma partição nova
+também — porque uma janela que cresce depois do fechamento invalida todo número já
+publicado sobre ela.
+
+## Resumo por source
+
+| Source | Partições | Registros | GB |
+|---|---|---|---|
+| `ine_callejero` | 1 | 0 | 0.107 |
+| `ine_population_api` | 2 | 57.168 | 0.632 |
+| `mercadona_catalog_api` | 34 | 156.526 | 0.261 |
+| `simulated_oltp` | 8 | 573.652 | 0.244 |
+| `simulated_orders` | 36 | 1.433.723 | 1.049 |
+
+## Partições
+
+### `ine_callejero`
+
+| Partição | Arquivos | Registros | Bytes | `content_sha256` |
+|---|---|---|---|---|
+| `ingestion_date=2026-08-25` | 20 | 0 | 115.055.278 | `53303b8291e02de0522590cf…` |
+
+### `ine_population_api`
+
+| Partição | Arquivos | Registros | Bytes | `content_sha256` |
+|---|---|---|---|---|
+| `ingestion_date=2026-08-25` | 1 | 16.377 | 276.503.711 | `51e94f4025b549255e7d9e75…` |
+| `ingestion_date=2026-08-26` | 2 | 40.791 | 401.854.695 | `1c1b0242d8612311da85dc53…` |
+
+### `mercadona_catalog_api`
+
+| Partição | Arquivos | Registros | Bytes | `content_sha256` |
+|---|---|---|---|---|
+| `ingestion_date=2026-08-15/wh=mad1` | 152 | 4.626 | 8.291.070 | `be9fe527ac04ded015f1a92b…` |
+| `ingestion_date=2026-08-16/wh=mad1` | 152 | 4.625 | 8.289.262 | `97f0a6c9f70a61129989a8dc…` |
+| `ingestion_date=2026-08-24/wh=bcn1` | 152 | 4.613 | 8.271.003 | `9bce6ac490e5752f7ed14189…` |
+| `ingestion_date=2026-08-24/wh=mad1` | 152 | 4.607 | 8.261.218 | `42fef19720f726408ecece0c…` |
+| `ingestion_date=2026-08-24/wh=svq1` | 152 | 4.584 | 8.220.172 | `18bd3ad8d95211d7536a5d58…` |
+| `ingestion_date=2026-08-24/wh=vlc1` | 152 | 4.625 | 8.290.964 | `f8e8495bd2ce7b668948043f…` |
+| `ingestion_date=2026-08-25/wh=bcn1` | 152 | 4.613 | 8.271.201 | `f185cc568b0cfd72920ed28d…` |
+| `ingestion_date=2026-08-25/wh=mad1` | 152 | 4.600 | 8.248.869 | `b035b74207cf3fe530b26a7a…` |
+| `ingestion_date=2026-08-25/wh=svq1` | 152 | 4.584 | 8.220.743 | `28d44888348a0f9617b34ba1…` |
+| `ingestion_date=2026-08-25/wh=vlc1` | 152 | 4.626 | 8.293.194 | `3fd2fa5eb0fbbc0a2bf10bd0…` |
+| `ingestion_date=2026-08-26/wh=bcn1` | 152 | 4.614 | 8.273.128 | `f4b846f6dc9e1ac3dcabd43b…` |
+| `ingestion_date=2026-08-26/wh=mad1` | 152 | 4.599 | 8.247.044 | `641722745aa5561ad43bcd7e…` |
+| `ingestion_date=2026-08-26/wh=svq1` | 152 | 4.581 | 8.215.578 | `0b554c2f139704202259e0b0…` |
+| `ingestion_date=2026-08-26/wh=vlc1` | 152 | 4.632 | 8.304.306 | `00e1a7c3e3dfa8d21967e550…` |
+| `ingestion_date=2026-08-27/wh=bcn1` | 152 | 4.615 | 8.275.766 | `94fafec13b7cd66dbb5f8943…` |
+| `ingestion_date=2026-08-27/wh=mad1` | 152 | 4.596 | 8.241.953 | `77e3fe224ae9da4814d6cf43…` |
+| `ingestion_date=2026-08-27/wh=svq1` | 152 | 4.578 | 8.210.424 | `709a0be0492dcec77f43f737…` |
+| `ingestion_date=2026-08-27/wh=vlc1` | 152 | 4.637 | 8.314.036 | `7a06c40f64ac7da14f053929…` |
+| `ingestion_date=2026-08-28/wh=bcn1` | 152 | 4.617 | 8.279.390 | `29da276d4cececebf5b95270…` |
+| `ingestion_date=2026-08-28/wh=mad1` | 152 | 4.595 | 8.240.953 | `a5607703c7be020d68a4fde3…` |
+| `ingestion_date=2026-08-28/wh=svq1` | 152 | 4.575 | 8.204.985 | `721f187a2116e54b24502d77…` |
+| `ingestion_date=2026-08-28/wh=vlc1` | 152 | 4.637 | 8.314.527 | `b2fb51ec14708b10f6092ce3…` |
+| `ingestion_date=2026-08-29/wh=bcn1` | 152 | 4.605 | 8.258.513 | `3a035e08f27b6db38abd8abe…` |
+| `ingestion_date=2026-08-29/wh=mad1` | 152 | 4.578 | 8.211.236 | `e1e5bd23202d99b90e6ffdba…` |
+| `ingestion_date=2026-08-29/wh=svq1` | 152 | 4.568 | 8.193.625 | `017cacb76c314d77b117a060…` |
+| `ingestion_date=2026-08-29/wh=vlc1` | 152 | 4.623 | 8.290.218 | `18d259b23fb6e99a199b04c8…` |
+| `ingestion_date=2026-08-31/wh=bcn1` | 152 | 4.613 | 8.276.438 | `666d785d481677ce6ea8e771…` |
+| `ingestion_date=2026-08-31/wh=mad1` | 152 | 4.579 | 8.212.886 | `e7853628997639bd4bcc55e1…` |
+| `ingestion_date=2026-08-31/wh=svq1` | 152 | 4.575 | 8.206.632 | `c60b5de02b4d952333b62906…` |
+| `ingestion_date=2026-08-31/wh=vlc1` | 152 | 4.624 | 8.292.313 | `68471f5ab640475ecd435217…` |
+| `ingestion_date=2026-09-01/wh=bcn1` | 152 | 4.611 | 8.275.004 | `0012209916d59b605ea51702…` |
+| `ingestion_date=2026-09-01/wh=mad1` | 152 | 4.578 | 8.212.463 | `f7ae8969b6e0b8c33d8284dc…` |
+| `ingestion_date=2026-09-01/wh=svq1` | 152 | 4.569 | 8.196.880 | `21b17c6b4aaaafd14d01182c…` |
+| `ingestion_date=2026-09-01/wh=vlc1` | 152 | 4.624 | 8.293.505 | `43736b3528d2a03afc1bf260…` |
+
+### `simulated_oltp`
+
+| Partição | Arquivos | Registros | Bytes | `content_sha256` |
+|---|---|---|---|---|
+| `ingestion_date=2026-08-24/wh=bcn1` | 1 | 95.498 | 43.747.339 | `a3425aaed8d9b45e7256714d…` |
+| `ingestion_date=2026-08-24/wh=mad1` | 1 | 128.771 | 58.463.729 | `8e18ce6e123c03a44993c618…` |
+| `ingestion_date=2026-08-24/wh=svq1` | 1 | 28.262 | 12.909.452 | `3c1624b836b434fa4b5b6011…` |
+| `ingestion_date=2026-08-24/wh=vlc1` | 1 | 34.295 | 15.996.658 | `921181cfc6a49756bd9dd3a2…` |
+| `ingestion_date=2026-08-27/wh=bcn1` | 1 | 95.498 | 43.747.339 | `c1bff1e87428431f6d12fca4…` |
+| `ingestion_date=2026-08-27/wh=mad1` | 1 | 128.771 | 58.463.729 | `4247632c8dd600a2f1fb60b8…` |
+| `ingestion_date=2026-08-27/wh=svq1` | 1 | 28.262 | 12.909.452 | `c96f27f0b89bf0e96fb22157…` |
+| `ingestion_date=2026-08-27/wh=vlc1` | 1 | 34.295 | 15.996.658 | `5429e82115fb6692da8dfe0e…` |
+
+### `simulated_orders`
+
+| Partição | Arquivos | Registros | Bytes | `content_sha256` |
+|---|---|---|---|---|
+| `ingestion_date=2026-08-24/wh=bcn1` | 1 | 59.075 | 46.311.736 | `00925c187d224c218ab485f0…` |
+| `ingestion_date=2026-08-24/wh=mad1` | 1 | 64.822 | 51.223.354 | `5a475d6b5dc3283b69736772…` |
+| `ingestion_date=2026-08-24/wh=svq1` | 1 | 15.353 | 11.947.281 | `1a388eea948fc3bd6487ccb2…` |
+| `ingestion_date=2026-08-24/wh=vlc1` | 1 | 20.242 | 15.953.201 | `891a77bbb0d4f17cea2d8721…` |
+| `ingestion_date=2026-08-25/wh=bcn1` | 1 | 58.942 | 46.283.120 | `c6cac35eb96b2e69bb479ff8…` |
+| `ingestion_date=2026-08-25/wh=mad1` | 1 | 64.985 | 51.027.385 | `c959bf200331eed2c445915e…` |
+| `ingestion_date=2026-08-25/wh=svq1` | 1 | 15.362 | 11.941.508 | `26cc85dc49097a4ab95e89dc…` |
+| `ingestion_date=2026-08-25/wh=vlc1` | 1 | 20.093 | 15.709.071 | `402bdd678d36069bbba3c226…` |
+| `ingestion_date=2026-08-26/wh=bcn1` | 1 | 58.920 | 46.403.951 | `d94a27ebc7eeee3e440490c9…` |
+| `ingestion_date=2026-08-26/wh=mad1` | 1 | 64.868 | 50.985.118 | `92eee756ea73af8a49507e5d…` |
+| `ingestion_date=2026-08-26/wh=svq1` | 1 | 15.350 | 12.093.038 | `c0be97f8e32a9a7528ef8b30…` |
+| `ingestion_date=2026-08-26/wh=vlc1` | 1 | 20.291 | 15.972.130 | `8b91ec87aeae39e7e8078d87…` |
+| `ingestion_date=2026-08-27/wh=bcn1` | 1 | 59.090 | 46.232.832 | `0f5fd47455e4cf923e8a9d40…` |
+| `ingestion_date=2026-08-27/wh=mad1` | 1 | 64.793 | 50.919.909 | `2d058af0457888f70c3894e8…` |
+| `ingestion_date=2026-08-27/wh=svq1` | 1 | 15.285 | 11.896.370 | `7a4f20891721861f0c842524…` |
+| `ingestion_date=2026-08-27/wh=vlc1` | 1 | 20.260 | 15.921.635 | `6d2b885e10fb267f5525664e…` |
+| `ingestion_date=2026-08-28/wh=bcn1` | 1 | 59.057 | 46.343.414 | `a4a713a109228a9a956ed458…` |
+| `ingestion_date=2026-08-28/wh=mad1` | 1 | 64.667 | 51.030.061 | `6b90d3dbe321f322eaf0cac6…` |
+| `ingestion_date=2026-08-28/wh=svq1` | 1 | 15.419 | 12.099.876 | `46ca8e88ffea2174d36da3b1…` |
+| `ingestion_date=2026-08-28/wh=vlc1` | 1 | 20.245 | 15.854.502 | `76275f97b98c8c3e4c2b381e…` |
+| `ingestion_date=2026-08-29/wh=bcn1` | 1 | 59.205 | 46.298.688 | `9e2217cdfe5ed5b8f4b0220d…` |
+| `ingestion_date=2026-08-29/wh=mad1` | 1 | 64.680 | 50.895.475 | `0d9ee515cc8c606db6614e0f…` |
+| `ingestion_date=2026-08-29/wh=svq1` | 1 | 15.315 | 11.980.755 | `b48de55924ee4407d14b03fc…` |
+| `ingestion_date=2026-08-29/wh=vlc1` | 1 | 20.191 | 15.727.123 | `7e42ad76c2fbfcbe28a9e998…` |
+| `ingestion_date=2026-08-30/wh=bcn1` | 1 | 58.959 | 46.410.568 | `96188226c5c99012920eb0d0…` |
+| `ingestion_date=2026-08-30/wh=mad1` | 1 | 64.617 | 50.873.527 | `6f09fc638cbdc809cbad43fe…` |
+| `ingestion_date=2026-08-30/wh=svq1` | 1 | 15.429 | 12.078.695 | `65af7350f80df5b49f00e554…` |
+| `ingestion_date=2026-08-30/wh=vlc1` | 1 | 20.268 | 15.900.618 | `f30554e123b99eb1aba8ef51…` |
+| `ingestion_date=2026-08-31/wh=bcn1` | 1 | 59.043 | 46.486.800 | `ce8d93d5911d84637dd01952…` |
+| `ingestion_date=2026-08-31/wh=mad1` | 1 | 64.676 | 50.839.299 | `e3484d6950a3ccf6d71afa57…` |
+| `ingestion_date=2026-08-31/wh=svq1` | 1 | 15.412 | 12.096.913 | `74204b6eb1b010223a156897…` |
+| `ingestion_date=2026-08-31/wh=vlc1` | 1 | 20.244 | 15.915.506 | `646dffbc44e1749e85100038…` |
+| `ingestion_date=2026-09-01/wh=bcn1` | 1 | 58.826 | 46.327.018 | `f3d5a8f67db689a1cde5bead…` |
+| `ingestion_date=2026-09-01/wh=mad1` | 1 | 64.532 | 50.766.376 | `b01b40423fa85d16ce65743d…` |
+| `ingestion_date=2026-09-01/wh=svq1` | 1 | 15.137 | 11.803.911 | `569354addfaf5a2e51f28ec3…` |
+| `ingestion_date=2026-09-01/wh=vlc1` | 1 | 20.070 | 15.736.340 | `3f34d2daae10e579a9a32009…` |
+
