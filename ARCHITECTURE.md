@@ -59,10 +59,10 @@ L1  RAW           partição byte-idêntica no object storage, sha256 conferido 
     │         fusão monotônica: o que não avança `last_sequence_no` cai       │
     └──────────────────────────────────────────────────────────────────────────┘
 L2  Silver        parquet tipado + 1 modelo temporal          · DuckDB
-                  s3://retail-lakehouse/silver/…                3.796.213 linhas · 44 MB
+                  s3://retail-lakehouse/silver/…                7.098.881 linhas · 205 MB
 ─────────────────── fronteira física: COPY INTO, nunca ref() ───────────────────
 L3  Stage         espelho 1:1 de um RECORTE do Silver         · Snowflake
-                  RETAIL.STAGE.STG_*                            10% do Silver
+                  RETAIL.STAGE.STG_*                            3.327.809 linhas (46,9%)
 L4  Gold          DIM_* / FACT_* conformados, SCD2            · dbt-snowflake
 L5  Mart          MART_*, grão declarado por tabela           · dbt-snowflake
 ```
@@ -94,7 +94,7 @@ sem reescrita. É isso que torna as trocas abaixo configuração, e não projeto
 | **Iceberg** | Isolamento de snapshot entre escritores concorrentes, time travel, interop entre engines | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 6). O gatilho que disparou foi o literal — *"um segundo engine precisar escrever a mesma tabela"*: `live_order_state` é escrita pelo consumidor em streaming e pela reconstrução em lote, com o DuckDB lendo enquanto os dois escrevem. **Disparou por CONCORRÊNCIA, não por volume** — neste volume um parquet com `os.replace` atômico serviria. Precedido por `make spike-iceberg`, um experimento fechado que mediu catálogo, upsert, conflito, isolamento e leitura pelo DuckDB antes de a projeção existir. O gatilho antigo (`dim_product` SCD2 por `MERGE`) continua sem disparar: o SCD2 é derivado da história completa, não acumulado. |
 | **Kafka** | Transporte de eventos, replay, ponto de desacoplamento | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 5). O gatilho que disparou foi o literal — *"CDC de um OLTP"*: o evento nasce na transação que muda o pedido (Marco 4) e um consumidor stateful mantém um read model abaixo do lote. Ficou provada a **semântica de transporte**: at-least-once demonstrado reproduzindo a janela de duplicação, consumo idempotente sem conjunto que cresce, buraco recusado, replay sem efeito, 16 sha256 reproduzidos. **Não** ficou provado, e está escrito: que alguém precise da latência, e que o broker seja a origem — o log canônico continua nascendo em disco. |
 | **Spark** | Processamento acima de um nó | 8 MB por partição. A JVM sobe em mais tempo do que o job roda, e nenhum shuffle real é exercitado. | Partição que o DuckDB não segura em memória, ou join pesado entre múltiplas sources. | `dbt-spark` sobre os mesmos modelos. |
-| **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe 10% do Silver, não o Silver inteiro. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
+| **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe um recorte por escopo, não o Silver inteiro — a razão medida saiu de 3,85% para 46,9% entre a Fase 2 e a Fase 6 sem nenhuma regra mudar, porque ela é função de quais sources cabem no escopo. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
 | **Airflow** | Retry, exit codes, pools, SLA, histórico de execução | — | **Adotado.** Pesado para um job diário de 4 min, e assumido com essa consciência: o valor está no contrato operacional (o pool de 1 slot e o tratamento de exit code não têm equivalente em cron). | — |
 
 ## Quatro restrições medidas que moldaram o desenho
@@ -631,11 +631,25 @@ de endereço do Callejero, que serve ao gerador de clientes, não ao analista. A
 pagar armazenamento por 27× o dado útil.
 
 **A razão NÃO é uma propriedade do pipeline, e dizer "oscila em torno de 5%" foi um erro
-de leitura que a Fase 3 desfez.** Medido em 2026-08-29, com Orders no destino: o Silver tem
-4.087.507 linhas e atravessam **406.855 — 9,95%**. A razão dobrou, e não porque o recorte
-tenha ficado mais frouxo: ela é função de **quanto de cada source cai dentro do escopo**. A
-população do INE é nacional e entrega 1,8%; os pedidos são gerados dentro das quatro AUFs
-por construção e entregam ~100%. Sem Orders, o recorte continua em 6,0%.
+de leitura que a Fase 3 desfez.** Ela é função de **quanto de cada source cai dentro do
+escopo** — e como as sources crescem em ritmos diferentes, a razão se move sozinha, sem
+ninguém tocar no recorte:
+
+| medido em | Silver | atravessa | razão | o que mudou |
+|---|---:|---:|---:|---|
+| 2026-08-27 (Fase 2) | 3.796.213 | 146.240 | **3,85%** | só catálogo, população e clientes |
+| 2026-08-29 (Fase 3) | 4.087.507 | 406.855 | **9,95%** | Orders entrou, e nasce dentro das AUFs |
+| 2026-09-01 (Fase 6) | 7.098.881 | 3.327.809 | **46,9%** | clientes ×14 e pedidos ×14, ambos 100% no escopo |
+
+O que continua fixo é o denominador que **não** atravessa: `silver_ine_population_series`
+tem 3.094.992 linhas nacionais das quais 1,8% estão no escopo, e o Callejero tem 517 mil de
+resolução de endereço que servem ao gerador, não ao analista. Sem Orders o recorte é 19,2%.
+
+**Ler 46,9% como "o recorte afrouxou" é o mesmo erro que ler 5% como propriedade.** Nenhuma
+regra mudou desde a Fase 2: escopo geográfico, última ingestão, dedup de grão. O que mudou
+foi a proporção entre uma source nacional que quase não entra e duas sintéticas que entram
+inteiras — e é exatamente por isso que o número sai de `make warehouse-evidence` e não deste
+parágrafo.
 
 O número de qualquer momento sai de `make warehouse-evidence`, não deste parágrafo. O que
 **não** muda com o tempo é a estrutura da decisão: o recorte é escopo geográfico + última

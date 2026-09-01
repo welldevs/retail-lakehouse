@@ -238,7 +238,7 @@ help:
 	@echo "  demand-check-mapping      confere as 444 trincas do catalogo contra o de-para"
 	@echo ""
 	@echo "warehouse analitico (Snowflake, DB=$(SNOWFLAKE_DATABASE)) —"
-	@echo "recebe um recorte do Silver (~5% das linhas), nunca o Silver inteiro:"
+	@echo "recebe um RECORTE do Silver por escopo geografico, nunca o Silver inteiro:"
 	@echo "  warehouse-bootstrap       database, schemas, papeis e grants (1x, ACCOUNTADMIN)"
 	@echo "  warehouse-export          recorta o Silver para parquet em $(SNOWFLAKE_STAGE_DIR)"
 	@echo "  warehouse-ddl             imprime o DDL do STAGE (sem conectar em nada)"
@@ -758,10 +758,12 @@ stream-evidence:
 
 # ---- warehouse analitico (Snowflake) -----------------------------------------
 # O Snowflake e o QUARTO consumidor que nao alcanca o Lakehouse — os outros tres sao as
-# Sources FROZEN. Nao recebe o Silver inteiro: recebe um RECORTE de ~5% das linhas
-# (cresce a cada ingestao; o numero do momento sai de `make warehouse-evidence`), porque
-# 81,5% do Silver e populacao NACIONAL com 1,8% de conteudo
-# no escopo das 4 provincias. Ver platform/src/retail_platform/snowflake_export.py.
+# Sources FROZEN. Nao recebe o Silver inteiro: recebe um RECORTE por ESCOPO GEOGRAFICO.
+# A razao nao e propriedade do recorte e nao para quieta — 3,85% na Fase 2, 46,9% na Fase 6,
+# sem nenhuma regra mudar: ela e funcao de quais sources cabem no escopo. A populacao do INE
+# e NACIONAL e entrega 1,8%; clientes e pedidos nascem dentro das 4 AUFs e entregam ~100%.
+# O numero do momento sai de `make warehouse-evidence`, nunca deste comentario.
+# Ver platform/src/retail_platform/snowflake_export.py.
 #
 #   make warehouse-export   (Silver -> parquet local; nao fala com o Snowflake)
 #   make warehouse-load     (PUT em stage interno + COPY INTO + reconferencia)

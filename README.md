@@ -45,10 +45,13 @@ L4  Gold       DIM_* / FACT_* conformados, SCD2 da história
 L5  Mart       MART_*, com o grão declarado em cada tabela
 ```
 
-O Snowflake **não** recebe o Silver inteiro: atravessam 406.855 das 4.087.507 linhas
-(**9,95%**). A razão não é propriedade do pipeline — é função de quanto de cada source cai
-dentro do escopo. A população do INE é nacional e entrega 1,8%; os pedidos nascem dentro das
-quatro AUFs e entregam ~100%. Ver [ARCHITECTURE.md § "Fase 2"](ARCHITECTURE.md).
+O Snowflake **não** recebe o Silver inteiro: atravessam 3.327.809 das 7.098.881 linhas
+(**46,9%** em 2026-09-01). A razão **não é propriedade do pipeline** — é função de quanto de
+cada source cai dentro do escopo, e por isso ela se move sozinha: era 3,85% na Fase 2 e
+9,95% na Fase 3, sem ninguém afrouxar o recorte. A população do INE é nacional e entrega
+1,8%; os pedidos e os clientes nascem dentro das quatro AUFs e entregam ~100%, e a Fase 6
+multiplicou os dois por 14× e 14×. Sem Orders, o recorte é 19,2%. Ver
+[ARCHITECTURE.md § "Fase 2"](ARCHITECTURE.md).
 
 ## Requisitos
 
