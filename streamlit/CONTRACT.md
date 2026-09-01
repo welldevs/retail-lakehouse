@@ -6,7 +6,7 @@ juntas. Editar aqui cria o segundo lugar onde o indicador vive, e os dois diverg
 no primeiro ajuste de SQL — com o detalhe cruel de que a conferência continuaria
 passando, porque ninguém lê um SQL e um texto lado a lado procurando desacordo.
 
-Deriva de `indicators.py` sha256 `d9237b3474b9db3944b8a382f2c701cf0f85ebc2e67dcfd4bfd743deb6a2ec85`. O cabeçalho traz o hash da origem e
+Deriva de `indicators.py` sha256 `b08375c8dcc569a282bc8580364d4ed9cc3b45aee14380c78aacb95572cd0c1b`. O cabeçalho traz o hash da origem e
 **não** a data da geração: assim regerar um contrato em dia não muda um byte, e
 `git diff --exit-code streamlit/CONTRACT.md` depois de `make dashboard-contract`
 é a conferência de que os dois não divergiram.
@@ -337,8 +337,8 @@ select 1 as ordem, 'Colocado -> pagamento' as etapa,
 
 **Armadilhas ao reconstruir no Power BI**
 
-1. CHEGAR CEDO E CHEGAR TARDE SAO PROBLEMAS OPOSTOS, e uma taxa unica de 'aderencia' apaga qual deles esta acontecendo. Medido: das 6.046 entregas, 5.166 chegam ANTES de a janela abrir, 471 dentro, 409 depois. A taxa de aderencia de 8% convida a concluir 'a operacao atrasa', que e o inverso do fato.
-2. A causa e aritmetica e esta nas premissas: `slot_lead_hours` sorteia o inicio da janela entre 2h e 24h depois da colocacao, enquanto a soma dos marcos entrega em ~4,6h. As duas premissas foram declaradas separadamente e nunca conciliadas. Registrado, nao corrigido — mexer no seed para a taxa melhorar seria ajustar a entrada ate a saida agradar.
+1. CHEGAR CEDO E CHEGAR TARDE SAO PROBLEMAS OPOSTOS, e uma taxa unica de 'aderencia' apaga qual deles esta acontecendo. Publique sempre a direcao: uma adesao baixa convida a concluir 'a operacao atrasa', e ja foi medido neste projeto o caso oposto — em 2026-09-01, 84% das entregas chegavam ANTES de a janela abrir.
+2. ESSA MEDICAO DE 2026-09-01 ERA DEFEITO DE MODELO, e nao da operacao: `slot_lead_hours` sorteava o inicio da janela entre 2h e 24h depois da colocacao, enquanto a soma dos marcos entregava em no maximo 8,5h. As duas premissas eram DECLARADAS SEPARADAMENTE e nunca conciliadas. Corrigido na Fase 7: `slot_lead_hours_*` passou a ser DERIVADO do ciclo declarado no mesmo seed (1h a 8h, contra 2h a 24h), e o teste `assert_order_premises_are_internally_coherent` afere a DERIVACAO — nunca a adesao, para que ninguem ajuste o numero ate o KPI agradar.
 3. No Power BI, publique as TRES contagens. Se um unico indicador for exigido, use 'entregas fora da janela' com o detalhe de direcao ao lado.
 
 ```sql

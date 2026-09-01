@@ -1,4 +1,4 @@
--- GRAO: (order_date, wh) — 16 linhas.
+-- GRAO: (order_date, wh) — uma linha por armazem por dia da janela.
 --
 -- PERGUNTA QUE RESPONDE: quanto tempo cada etapa leva, e quantos pedidos estouram o
 -- limiar DECLARADO de separacao.
@@ -10,27 +10,41 @@
 -- pedido conheceu — sem reprovar nada, porque zero violacao contra o limiar errado tem
 -- exatamente a aparencia de zero contra o certo.
 --
--- ACHADO QUE FICA REGISTRADO EM VEZ DE CORRIGIDO: `sla_minutes_picking` = 90 e INALCANCAVEL
--- por construcao. A separacao leva `minutes_per_line_picked` (2) x numero de linhas, e
--- `basket_lines_max` e 40 — teto de 80 minutos. Medido na janela: p50 = 36, p90 = 62,
--- MAXIMO = 80,00. Zero violacoes, e nao porque a operacao seja boa: porque as tres
--- premissas nao se cruzam. Baixar o limiar ate o alerta acender seria adaptar a premissa ao
--- resultado desejado, que e o oposto de verificar. Por isso o mart carrega `sla_minutes`,
--- `max_picking_minutes` e `orders_breaching_sla` LADO A LADO — quem le ve 90, ve 80 e ve 0,
--- e entende o zero em vez de comemora-lo. Gatilho para mexer: `basket_lines_max` x
--- `minutes_per_line_picked` passar de `sla_minutes_picking`.
+-- DOIS ACHADOS QUE FICARAM REGISTRADOS AQUI POR TRES FASES, E FORAM CORRIGIDOS NA FASE 7.
+-- O texto abaixo conta os dois porque o motivo de eles terem demorado tanto vale mais que
+-- a correcao.
 --
--- SEGUNDO ACHADO, DA MESMA FAMILIA E TAMBEM REGISTRADO EM VEZ DE CORRIGIDO: a janela de
--- entrega prometida quase nunca e a janela em que a entrega acontece — e o desvio e para
--- CEDO, nao para tarde. Medido nas 6.046 entregas: 5.166 chegam ANTES de a janela abrir,
--- 471 dentro, 409 depois. Mediana de 4,6h entre colocacao e entrega contra 12,8h ate o
--- inicio da janela.
+-- PRIMEIRO. `sla_minutes_picking` valia 90 e era INALCANCAVEL por construcao: a separacao
+-- leva `minutes_per_line_picked` (2) x numero de linhas, e `basket_lines_max` e 40 — teto
+-- de 80 minutos. Medido em 2026-06 na janela de entao: p50 = 36, p90 = 62, MAXIMO = 80,00,
+-- ZERO violacoes. E nao porque a operacao fosse boa: porque as tres premissas nao se
+-- cruzavam.
 --
--- A causa e aritmetica e esta nas premissas: `slot_lead_hours` sorteia o inicio da janela
--- entre 2h e 24h depois da colocacao, enquanto a soma dos marcos entrega em ~4,6h. As duas
--- premissas foram declaradas separadamente e nunca foram conciliadas. Nao e defeito do
--- warehouse — o numero atravessou fielmente — e mexer no seed para a taxa "melhorar" seria
--- ajustar a entrada ate a saida agradar.
+-- SEGUNDO. A janela de entrega prometida quase nunca era a janela em que a entrega
+-- acontecia — e o desvio era para CEDO, nao para tarde. Medido em 2026-09-01 sobre 86.803
+-- entregas: 73.124 (84%) chegavam ANTES de a janela abrir. A causa era aritmetica e estava
+-- nas premissas: `slot_lead_hours` sorteava o inicio da janela entre 2h e 24h depois da
+-- colocacao, enquanto a soma dos marcos entregava em no maximo 8,5h.
+--
+-- POR QUE ELES FICARAM REGISTRADOS TANTO TEMPO, E O QUE MUDOU. A regra que este projeto
+-- segue e recusar ajuste de premissa ate a saida agradar, e ela esta certa. O que faltava
+-- era a distincao: mexer numa premissa para melhorar um numero e uma coisa; tornar duas
+-- premissas MUTUAMENTE COERENTES e outra. Uma janela que abre 24h depois de um pedido que o
+-- proprio modelo entrega em no maximo 8,5h nao e um resultado indesejado — e um modelo
+-- internamente contraditorio. O mesmo vale para um alerta acima do teto aritmetico. Sob a
+-- regra antiga, os dois eram intocaveis; sob a distincao, os dois eram defeito de modelo.
+--
+-- COMO A CORRECAO SE PROTEGE DE VIRAR O QUE ELA RECUSA. As tres premissas passaram a ser
+-- DERIVADAS das outras linhas do mesmo seed, e `assert_order_premises_are_internally_coherent`
+-- afere a DERIVACAO — nunca o resultado. Nao ha nele nenhuma assercao sobre quanto deu a
+-- adesao. Quem no futuro ajustar `slot_lead_hours_*` ou `sla_minutes_picking` para consertar
+-- um KPI derruba um teste, inclusive com um valor que caiba na faixa plausivel: medido, trocar
+-- o limiar de 60 por 75 reprova.
+--
+-- O QUE O MART CONTINUA FAZENDO IGUAL: carrega `sla_minutes`, `max_picking_minutes` e
+-- `orders_breaching_sla` LADO A LADO. Antes isso servia para entender um zero estrutural;
+-- agora serve para o leitor ver contra que limiar a contagem foi feita. A razao nao mudou —
+-- um numero de violacoes sem o limiar ao lado nao e conferivel.
 --
 -- O QUE MUDA AQUI E O QUE SE PUBLICA. `orders_delivered_within_slot` sozinho diz 8% e deixa
 -- quem le concluir "a operacao atrasa", que e o oposto do que acontece. Chegar cedo e
@@ -47,7 +61,7 @@
 with sla as (
 
     -- `max(case when ...)` e nao `where premise_key = ...`: um filtro que nao casa devolve
-    -- ZERO linhas, e o cross join abaixo esvaziaria o mart inteiro — 16 linhas viram 0 e
+    -- ZERO linhas, e o cross join abaixo esvaziaria o mart inteiro — o mart vira 0 linhas e
     -- nenhum teste de not_null reprova sobre tabela vazia. Com o max(), a CTE devolve
     -- SEMPRE uma linha; se a premissa sumir do seed, a coluna vira nula e o teste
     -- not_null em sla_minutes reprova, que e o comportamento que se quer.
@@ -96,7 +110,9 @@ select
     count(f.delivered_within_slot)                          as orders_with_slot_outcome,
     count_if(f.delivered_within_slot)                       as orders_delivered_within_slot,
     -- Cedo e tarde separados de proposito: sao problemas operacionais opostos, e
-    -- "fora da janela" nao diz qual deles esta acontecendo. Medido: 5.166 cedo, 409 tarde.
+    -- "fora da janela" nao diz qual deles esta acontecendo. O desequilibrio entre os dois
+    -- e o que denunciou a incoerencia das premissas em 2026-09-01: 73.124 cedo contra 84
+    -- por cento do total. Estas duas colunas sao o instrumento que tornou isso visivel.
     count_if(f.delivered_at is not null
              and f.delivered_at < f.delivery_slot_start)    as orders_delivered_before_slot,
     count_if(f.delivered_at is not null

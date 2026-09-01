@@ -189,13 +189,31 @@ class TestFoldIsPure(unittest.TestCase):
 
     def test_the_declared_sla_comes_from_the_seed_not_from_a_constant(self):
         """Mesma disciplina da var `currency`: a premissa viaja junto do numero. Uma
-        constante neste modulo poderia divergir do que o gerador declarou."""
+        constante neste modulo poderia divergir do que o gerador declarou.
+
+        ESTE TESTE JA FOI A SEGUNDA COPIA QUE ELE EXISTE PARA IMPEDIR. Ate a Fase 7 ele
+        afirmava `assertEqual(read_sla_minutes(seeds), 90)` — um 90 cravado, dentro do teste
+        cuja tese e que o 90 nao pode ser cravado em lugar nenhum. Quando o seed caiu para 60,
+        por o limiar antigo estar acima do teto aritmetico da separacao, foi este teste que
+        reprovou, e a reprovacao estava CERTA pelo motivo errado: nada havia quebrado no
+        codigo, so a copia tinha envelhecido.
+        """
         # A suite roda com CWD em `platform/`; o default do modulo e relativo a RAIZ do
         # repositorio, que e de onde o Makefile invoca o CLI. Resolver a partir do arquivo de
         # teste confere o CONTEUDO do seed sem depender de onde o unittest foi chamado.
         seeds = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)))), "platform", "dbt", "seeds")
-        self.assertEqual(read_sla_minutes(seeds), 90)
+
+        # O VALOR VEM DO SEED, POR UM CAMINHO INDEPENDENTE. Ler o CSV com `csv` puro nao e
+        # duplicar a leitura: `read_sla_minutes` e quem tem de achar a linha certa, converter
+        # e falhar bem, e e isso que esta sob teste. Comparar contra o proprio arquivo afere
+        # o TRAJETO — que era a tese — sem afirmar nada sobre o numero, que e premissa e pode
+        # mudar por decisao de dominio a qualquer momento.
+        import csv
+        with open(os.path.join(seeds, "order_premises_seed.csv"), encoding="utf-8") as f:
+            declarado = {linha["premise_key"]: linha["value"] for linha in csv.DictReader(f)}
+        self.assertEqual(read_sla_minutes(seeds), int(float(declarado["sla_minutes_picking"])))
+
         # E o default continua sendo o mesmo diretorio que as outras pontes da plataforma.
         from retail_platform.oltp_reference import DEFAULT_SEEDS_DIR as PONTE
         from retail_platform.orders_stream import DEFAULT_SEEDS_DIR as STREAM

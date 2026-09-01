@@ -1189,6 +1189,12 @@ nenhum teste pegava. O terceiro fold não achou defeito novo, e isso também é 
 
 ### Dois achados que valem mais escritos que corrigidos
 
+> **Superado na Fase 7.** Os dois achados abaixo deixaram de estar apenas registrados: as
+> premissas foram conciliadas. O texto fica como estava porque a razão de eles terem
+> sobrevivido três fases é o que importa — faltava a distinção entre *ajustar uma premissa
+> até a saída agradar*, que se recusa, e *tornar duas premissas mutuamente coerentes*, que é
+> correção de modelo. Ver a Fase 7 e `assert_order_premises_are_internally_coherent`.
+
 **1. A premissa `sla_minutes_picking = 90` é inalcançável por construção.** O consumidor
 calcula o tempo de separação e marca `sla_breached` — o mecanismo funciona e está testado.
 Mas `basket_lines_max × minutes_per_line_picked = 40 × 2 = 80 min`, e a maior separação
@@ -1476,6 +1482,12 @@ Marco é monotônico; status não é. Um funil é por definição uma contagem d
 **alcançadas**, então a coluna certa é o instante.
 
 ### Dois achados registrados em vez de corrigidos
+
+> **Superado na Fase 7.** Os dois achados abaixo deixaram de estar apenas registrados: as
+> premissas foram conciliadas. O texto fica como estava porque a razão de eles terem
+> sobrevivido três fases é o que importa — faltava a distinção entre *ajustar uma premissa
+> até a saída agradar*, que se recusa, e *tornar duas premissas mutuamente coerentes*, que é
+> correção de modelo. Ver a Fase 7 e `assert_order_premises_are_internally_coherent`.
 
 **`sla_minutes_picking = 90` é inalcançável por construção.** A separação leva
 `minutes_per_line_picked` (2) × número de linhas, e `basket_lines_max` é 40 — teto de 80. p50

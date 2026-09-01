@@ -708,13 +708,24 @@ Mais: os três folds independentes — Silver (window function), OLTP (transacio
 (streaming) — concordam em **6.400 pedidos, zero divergências**. E o plano inteiro
 reconstruído de volumes vazios produz o **mesmo digest**.
 
-### Dois achados que ficaram registrados em vez de corrigidos
+### Um achado que ficou registrado três fases, e a distinção que o corrigiu
 
-**A premissa `sla_minutes_picking = 90` não pode disparar.** `basket_lines_max ×
-minutes_per_line_picked = 40 × 2 = 80 min`, e a maior separação em 6.400 pedidos foi
-exatamente 80,00. O mecanismo do alerta funciona e está testado; o limiar não é alcançável.
-Não foi ajustado: adaptar uma premissa declarada até a verificação acender é o oposto de
-verificar.
+**A premissa `sla_minutes_picking = 90` não podia disparar.** `basket_lines_max ×
+minutes_per_line_picked = 40 × 2 = 80 min`: o limiar de alerta estava **acima do teto
+aritmético** da separação. O mecanismo funcionava e estava testado; nenhuma cesta possível o
+alcançava.
+
+Ficou registrado porque a regra do projeto é recusar ajuste de premissa até a saída agradar —
+e a regra está certa. O que faltava era a distinção: *mexer numa premissa para melhorar um
+número* é uma coisa; *tornar duas premissas mutuamente coerentes* é outra. Um alerta acima do
+máximo possível não é um resultado indesejado, é um modelo internamente contraditório.
+
+Corrigido na Fase 7. O limiar passou a ser **derivado** de uma política declarada
+(`sla_picking_percentile`) sobre a distribuição da cesta, e
+[`assert_order_premises_are_internally_coherent`](platform/dbt/tests/assert_order_premises_are_internally_coherent.sql)
+afere a **derivação**, nunca o resultado — não há nele nenhuma asserção sobre quantos alertas
+disparam. Quem no futuro ajustar o número para consertar um KPI derruba um teste, inclusive
+com um valor plausível: trocar 60 por 75 reprova.
 
 **A distribuição uniforme entre partições é artefato da chave.** 1.600 pedidos em cada
 partição, exatamente 100 dentro de cada (armazém, dia). Não é mérito do particionador: o
@@ -874,18 +885,22 @@ Um pedido devolvido tem status `RETURNED` — **e foi entregue**. Contar
 `order_status = 'DELIVERED'` dá **5.985**; contar `delivered_at is not null` dá **6.046**.
 Marco é monotônico, status não é.
 
-### Dois achados registrados em vez de corrigidos
+### Dois defeitos de modelo, achados pelo warehouse e corrigidos na Fase 7
 
-**`sla_minutes_picking = 90` é inalcançável por construção**: `basket_lines_max` (40) ×
-`minutes_per_line_picked` (2) dá teto de 80, e o máximo medido é exatamente 80. Zero
-violações — não porque a operação seja boa, mas porque as premissas não se cruzam. O mart
-publica `sla_minutes`, `max_picking_minutes` e `orders_breaching_sla` lado a lado, para que o
-zero seja legível.
+**`sla_minutes_picking = 90` era inalcançável por construção**: `basket_lines_max` (40) ×
+`minutes_per_line_picked` (2) dá teto de 80. Zero violações — não porque a operação fosse boa,
+mas porque as premissas não se cruzavam.
 
-**A janela de entrega quase nunca é cumprida, e o desvio é para CEDO**: das 6.046 entregas,
-**5.166 chegam antes de a janela abrir**, 471 dentro, 409 depois. O mart separa
-`orders_delivered_before_slot` de `orders_delivered_after_slot`, porque chegar cedo e chegar
-tarde são problemas **opostos** e "fora da janela" não diz qual dos dois é.
+**A janela de entrega quase nunca era cumprida, e o desvio era para CEDO**: medido em
+2026-09-01, **84% das entregas chegavam antes de a janela abrir**, porque `slot_lead_hours`
+sorteava 2–24 h contra um ciclo que nunca passa de 8,5 h.
+
+Os dois eram contradições internas do seed, não resultados indesejados — e é essa distinção
+que autorizou a correção. As três premissas passaram a ser derivadas das outras linhas do
+mesmo seed. O mart continua publicando `sla_minutes`, `max_picking_minutes` e
+`orders_breaching_sla` lado a lado, e `orders_delivered_before_slot` separado de
+`orders_delivered_after_slot`: chegar cedo e chegar tarde são problemas **opostos**, e "fora
+da janela" não diz qual dos dois é. Foi essa separação que tornou o defeito visível.
 
 Nos dois casos, mexer no seed até o número melhorar seria ajustar a entrada até a saída
 agradar. As premissas atravessam a fronteira em `FACT_ORDER_PREMISE` justamente para que o

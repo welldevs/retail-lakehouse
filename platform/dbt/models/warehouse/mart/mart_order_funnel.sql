@@ -1,14 +1,16 @@
--- GRAO: (order_date, wh) — 16 linhas, 4 dias x 4 armazens.
+-- GRAO: (order_date, wh) — uma linha por armazem por dia da janela.
 --
 -- PERGUNTA QUE RESPONDE: de cada 100 pedidos colocados num armazem num dia, quantos foram
 -- confirmados, separados, despachados e entregues — e por onde escaparam os que nao foram.
 --
 -- O FUNIL SE APOIA EM MARCO, NUNCA EM STATUS, e esta e a decisao que faz a tabela ser
 -- verdadeira. `order_status` guarda o estado ATUAL do pedido, que e o do ULTIMO evento.
--- Um pedido devolvido tem status RETURNED — e foi entregue. Medido nesta janela: contar
--- `order_status = 'DELIVERED'` da 5.985 entregas; contar `delivered_at is not null` da
--- 6.046. Sao os 61 pedidos devolvidos, e um funil montado sobre status os perderia na
--- etapa de entrega, produzindo uma taxa de entrega 1% menor que a real sem nada reprovar.
+-- Um pedido devolvido tem status RETURNED — e foi entregue. Medido em 2026-06, na janela
+-- de entao: contar `order_status = 'DELIVERED'` dava 5.985 entregas; contar
+-- `delivered_at is not null` dava 6.046. A diferenca eram os 61 pedidos devolvidos, e um
+-- funil montado sobre status os perderia na etapa de entrega, produzindo uma taxa de
+-- entrega 1% menor que a real sem nada reprovar. A DATA importa: a contagem e daquela
+-- captura e nao volta a valer; o que continua valendo e a razao de a coluna ser o instante.
 --
 -- Marco e monotonico: uma vez alcancado, nao volta atras. Status nao e. Um funil e por
 -- definicao uma contagem de etapas ALCANCADAS, entao a coluna certa e o instante.

@@ -3,12 +3,15 @@
 -- GRAO: premise_key. TIPO: synthetic — e a coluna `label` afirma isso em toda linha.
 --
 -- IRMA DIRETA DE FACT_INGESTION_RUN, e pelo mesmo motivo: metadado promovido a fato de
--- proposito, porque sem ele o mart a jusante nao tem como ser honesto. La eram 38 linhas
--- que distinguem "nao houve preco" de "nao houve observacao"; aqui sao 30 que distinguem
--- "nenhum pedido violou o SLA" de "o SLA foi medido contra o numero errado".
+-- proposito, porque sem ele o mart a jusante nao tem como ser honesto. La distinguem-se
+-- "nao houve preco" de "nao houve observacao"; aqui, "nenhum pedido violou o SLA" de
+-- "o SLA foi medido contra o numero errado".
 --
--- MART_FULFILLMENT_SLA conta violacoes de `sla_minutes_picking`. Esse 90 tem dono: o seed
--- que o gerador leu, cujo sha256 esta no manifesto de cada particao do RAW. Reescreve-lo
+-- MART_FULFILLMENT_SLA conta violacoes de `sla_minutes_picking`. Esse limiar tem dono: o
+-- seed que o gerador leu, cujo sha256 esta no manifesto de cada particao do RAW. E o valor
+-- dele MUDA — na Fase 7 caiu de 90 para 60, porque 90 estava acima do teto aritmetico da
+-- separacao e o alerta era inexercivel. Cravar o numero aqui teria transformado essa
+-- correcao num defeito silencioso. Reescreve-lo
 -- como var do dbt criaria a segunda copia que diverge na primeira edicao — e nada
 -- reprovaria, porque contar zero violacao contra o limiar errado tem exatamente a mesma
 -- aparencia de contar zero contra o certo.

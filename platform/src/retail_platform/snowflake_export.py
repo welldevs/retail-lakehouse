@@ -432,7 +432,8 @@ SPECS: list[dict] = [
         "name": "STG_ORDER_PREMISE",
         "grain": "(premise_key)",
         "sql": """
-            -- 30 LINHAS QUE IMPEDEM UM MART MEDIR CONTRA UM LIMIAR QUE NINGUEM USOU.
+            -- AS PREMISSAS DECLARADAS, QUE IMPEDEM UM MART MEDIR CONTRA UM LIMIAR QUE
+            -- NINGUEM USOU. Sem contagem nesta linha de proposito: o seed cresce.
             -- Irma direta de STG_INGESTION_RUN: metadado, nao medida, promovido porque sem
             -- ele o mart a jusante nao tem como ser honesto.
             --

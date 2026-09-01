@@ -4,10 +4,10 @@
 --
 -- POR QUE AS PREMISSAS PRECISAM ATRAVESSAR ATE O WAREHOUSE. `sla_minutes_picking` e o
 -- limiar contra o qual MART_FULFILLMENT_SLA conta violacoes, e e a MESMA premissa que o
--- gerador consumiu para produzir as duracoes. Se o warehouse guardasse esse 90 numa var
--- do dbt, existiriam dois lugares onde a premissa mora — e o dia em que alguem editar o
--- seed e nao a var, o mart passa a medir contra um limiar que nenhum pedido conheceu, sem
--- reprovar nada. A var `currency` e o caso oposto e por isso continua sendo var: a
+-- gerador consumiu para produzir as duracoes. Se o warehouse guardasse esse limiar numa
+-- var do dbt, existiriam dois lugares onde a premissa mora — e o dia em que alguem editar
+-- o seed e nao a var, o mart passa a medir contra um limiar que nenhum pedido conheceu,
+-- sem reprovar nada. Isso deixou de ser hipotetico na Fase 7: o limiar caiu de 90 para 60. A var `currency` e o caso oposto e por isso continua sendo var: a
 -- Mercadona nao declara moeda em campo nenhum, entao a premissa nao tem outra casa.
 --
 -- NAO PERTENCE A simulated_orders/. Aquela pasta contem o que e derivado do RAW da

@@ -1,32 +1,33 @@
 premise_key,value,unit,label,rationale
 daily_order_rate,0.08,proportion,synthetic,"Fracao da base ELEGIVEL de clientes que faz um pedido num dia. Nenhuma fonte deste repo mede cadencia de compra; 0.08 equivale a ~1 pedido a cada 12,5 dias por cliente elegivel. 'Elegivel' passou a significar algo na Fase 5: ver min_buyer_age."
 min_buyer_age,18,years,synthetic,"Idade minima, NO DIA DO PEDIDO, para um cliente poder colocar um pedido. Medido em 2026-08-31: 18,01% dos clientes tinham menos de 18 anos (3.602 de 20.000), com age_at_ingestion indo de 0 a 100 — ha titulares de conta recem-nascidos. Isso NAO e defeito da Source de OLTP: o contrato dela declara que a idade vem da distribuicao POPULACIONAL provincial do INE, e e isso que ela entrega. O que nunca foi declarado e a diferenca entre residente e quem coloca um pedido, e ela so passou a importar quando a idade comecou a governar a demanda (Fase 5). A base de clientes continua uma projecao fiel da populacao; quem PODE pedir e premissa do dominio de pedidos, e mora aqui."
-basket_lines_min,3,lines,synthetic,"Menor cesta possivel. Nenhuma fonte deste repo mede composicao de cesta."
-basket_lines_mode,14,lines,synthetic,"Moda da distribuicao triangular do numero de linhas por pedido."
-basket_lines_max,40,lines,synthetic,"Maior cesta possivel."
-quantity_max,4,units,synthetic,"Quantidade maxima por linha. Distribuicao decrescente: 1 e o caso dominante."
-substitution_rate,0.04,proportion,synthetic,"Fracao das linhas trocadas por outro produto durante a separacao. NAO deriva de estoque: nao existe fato de estoque nesta plataforma."
-removal_rate,0.02,proportion,synthetic,"Fracao das linhas removidas por indisponibilidade durante a separacao. Mesma ressalva de substitution_rate."
-payment_failure_rate,0.015,proportion,synthetic,"Fracao dos pedidos cujo pagamento e recusado."
-cancellation_rate,0.03,proportion,synthetic,"Fracao dos pedidos cancelados antes da separacao."
-delivery_failure_rate,0.01,proportion,synthetic,"Fracao das entregas que falham na porta."
-return_rate,0.008,proportion,synthetic,"Fracao dos pedidos entregues que sofrem devolucao parcial."
-order_hour_min,7,hour,synthetic,"Primeira hora UTC em que um pedido pode ser colocado."
-order_hour_max,22,hour,synthetic,"Ultima hora UTC em que um pedido pode ser colocado."
+basket_lines_min,3,lines,synthetic,Menor cesta possivel. Nenhuma fonte deste repo mede composicao de cesta.
+basket_lines_mode,14,lines,synthetic,Moda da distribuicao triangular do numero de linhas por pedido.
+basket_lines_max,40,lines,synthetic,Maior cesta possivel.
+quantity_max,4,units,synthetic,Quantidade maxima por linha. Distribuicao decrescente: 1 e o caso dominante.
+substitution_rate,0.04,proportion,synthetic,Fracao das linhas trocadas por outro produto durante a separacao. NAO deriva de estoque: nao existe fato de estoque nesta plataforma.
+removal_rate,0.02,proportion,synthetic,Fracao das linhas removidas por indisponibilidade durante a separacao. Mesma ressalva de substitution_rate.
+payment_failure_rate,0.015,proportion,synthetic,Fracao dos pedidos cujo pagamento e recusado.
+cancellation_rate,0.03,proportion,synthetic,Fracao dos pedidos cancelados antes da separacao.
+delivery_failure_rate,0.01,proportion,synthetic,Fracao das entregas que falham na porta.
+return_rate,0.008,proportion,synthetic,Fracao dos pedidos entregues que sofrem devolucao parcial.
+order_hour_min,7,hour,synthetic,Primeira hora UTC em que um pedido pode ser colocado.
+order_hour_max,22,hour,synthetic,Ultima hora UTC em que um pedido pode ser colocado.
 slot_hours,2,hours,synthetic,"Duracao da janela de entrega. Janela e promessa comercial numa grade fixa, nunca rota: o Callejero nao tem coordenada."
-slot_lead_hours_min,2,hours,synthetic,"Menor antecedencia entre a colocacao e o inicio da janela de entrega."
-slot_lead_hours_max,24,hours,synthetic,"Maior antecedencia entre a colocacao e o inicio da janela de entrega."
-minutes_to_payment_min,1,minutes,synthetic,"Menor intervalo entre order_placed e a decisao de pagamento."
-minutes_to_payment_max,12,minutes,synthetic,"Maior intervalo entre order_placed e a decisao de pagamento."
-minutes_to_cancel_min,3,minutes,synthetic,"Menor intervalo entre a confirmacao e um cancelamento."
-minutes_to_cancel_max,180,minutes,synthetic,"Maior intervalo entre a confirmacao e um cancelamento."
-minutes_to_picking_min,20,minutes,synthetic,"Menor intervalo entre a confirmacao e o inicio da separacao."
-minutes_to_picking_max,240,minutes,synthetic,"Maior intervalo entre a confirmacao e o inicio da separacao."
-minutes_per_line_picked,2,minutes,synthetic,"Tempo de separacao por linha da cesta. Multiplica o numero de linhas."
-minutes_to_dispatch_min,10,minutes,synthetic,"Menor intervalo entre order_picked e o despacho."
-minutes_to_dispatch_max,60,minutes,synthetic,"Maior intervalo entre order_picked e o despacho."
-minutes_to_delivered_min,15,minutes,synthetic,"Menor intervalo entre o despacho e a entrega. NAO e tempo de rota: nao ha coordenada nem adjacencia no Callejero."
-minutes_to_delivered_max,120,minutes,synthetic,"Maior intervalo entre o despacho e a entrega. Mesma ressalva."
-minutes_to_return_min,60,minutes,synthetic,"Menor intervalo entre a entrega e a devolucao."
-minutes_to_return_max,2880,minutes,synthetic,"Maior intervalo entre a entrega e a devolucao."
-sla_minutes_picking,90,minutes,synthetic,"Limiar de alerta do consumidor em streaming: pedido parado em PICKING acima disto gera alerta de SLA."
+slot_lead_hours_min,1,hours,synthetic,"Menor antecedencia entre a colocacao e o inicio da janela de entrega. DERIVADA, nao escolhida: ceil(ciclo_minimo/60), onde o ciclo e a soma das cinco etapas declaradas neste mesmo seed entre order_placed e order_delivered (pagamento + inicio da separacao + minutes_per_line_picked x basket_lines_min + despacho + entrega). Em 2026-09-01 isso da 52 min, logo 1h. Valia 2h, e o par (2h, 24h) contradizia a propria cadeia: medido sobre 86.803 pedidos entregues, 73.124 (84%) chegavam ANTES de a janela abrir. Isso nao era resultado ruim, era modelo internamente contraditorio — prometer para depois do que ja foi entregue. Ver assert_order_premises_are_internally_coherent."
+slot_lead_hours_max,8,hours,synthetic,"Maior antecedencia entre a colocacao e o inicio da janela de entrega. DERIVADA: floor(ciclo_maximo/60) pela mesma soma, com basket_lines_max no lugar do min — 512 min, logo 8h. Valia 24h contra um ciclo que nunca passa de 8,5h: a promessa era impossivel de cumprir por construcao, e slot_adherence_rate media a aritmetica deste seed em vez da operacao. CONSEQUENCIA DECLARADA ANTES DE MEDIR: a adesao deixa de ser 8,5% fixos e passa a variar. O numero que sair e reportado, nunca alvo."
+minutes_to_payment_min,1,minutes,synthetic,Menor intervalo entre order_placed e a decisao de pagamento.
+minutes_to_payment_max,12,minutes,synthetic,Maior intervalo entre order_placed e a decisao de pagamento.
+minutes_to_cancel_min,3,minutes,synthetic,Menor intervalo entre a confirmacao e um cancelamento.
+minutes_to_cancel_max,180,minutes,synthetic,Maior intervalo entre a confirmacao e um cancelamento.
+minutes_to_picking_min,20,minutes,synthetic,Menor intervalo entre a confirmacao e o inicio da separacao.
+minutes_to_picking_max,240,minutes,synthetic,Maior intervalo entre a confirmacao e o inicio da separacao.
+minutes_per_line_picked,2,minutes,synthetic,Tempo de separacao por linha da cesta. Multiplica o numero de linhas.
+minutes_to_dispatch_min,10,minutes,synthetic,Menor intervalo entre order_picked e o despacho.
+minutes_to_dispatch_max,60,minutes,synthetic,Maior intervalo entre order_picked e o despacho.
+minutes_to_delivered_min,15,minutes,synthetic,Menor intervalo entre o despacho e a entrega. NAO e tempo de rota: nao ha coordenada nem adjacencia no Callejero.
+minutes_to_delivered_max,120,minutes,synthetic,Maior intervalo entre o despacho e a entrega. Mesma ressalva.
+minutes_to_return_min,60,minutes,synthetic,Menor intervalo entre a entrega e a devolucao.
+minutes_to_return_max,2880,minutes,synthetic,Maior intervalo entre a entrega e a devolucao.
+sla_minutes_picking,60,minutes,synthetic,"Limiar de alerta do consumidor em streaming: pedido parado em PICKING acima disto gera alerta de SLA. DERIVADO de sla_picking_percentile sobre a distribuicao declarada da cesta: floor(triangular_p90(basket_lines_min, basket_lines_max+1, basket_lines_mode)) x minutes_per_line_picked = floor(30,87) x 2 = 60. O +1 nao e detalhe: o gerador sorteia com rng.triangular(low, high+1, mode) e trunca. Valia 90 — ACIMA do teto aritmetico de 80 (basket_lines_max x minutes_per_line_picked), entao nenhuma cesta possivel o alcancava e orders_breaching_sla era estruturalmente zero."
+sla_picking_percentile,0.90,proportion,synthetic,"A POLITICA por tras do limiar de separacao, declarada como linha propria para que o limiar seja derivado e nao escolhido: alerta-se sobre os 10% de cestas mais longas. Sem esta linha, sla_minutes_picking seria um numero livre entre a separacao modal (28 min) e o teto (80 min), e ajusta-lo ate orders_breaching_sla ficar bonito seria indistinguivel de calibra-lo. Mexer aqui e mexer numa POLITICA visivel; mexer no limiar direto derruba um teste."

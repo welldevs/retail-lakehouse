@@ -286,7 +286,7 @@ def popular(con):
     """)
     con.execute("""
         insert into order_premises values
-            ('sla_minutes_picking',90.0,'minutes','synthetic','Limiar de alerta.'),
+            ('sla_minutes_picking',77.0,'minutes','synthetic','Limiar de alerta.'),
             ('basket_lines_max',40.0,'lines','synthetic','Maior cesta possivel.')
     """)
 
@@ -507,10 +507,16 @@ class PremissaTest(RecorteCase):
 
     def test_o_limiar_de_sla_chega_como_decimal_e_nao_como_float(self):
         """`date_diff(...) > value` num limiar que existe para ser comparado nao pode
-        depender de arredondamento binario."""
+        depender de arredondamento binario.
+
+        O 77 do fixture NAO e o valor do seed, e isso e deliberado: um fixture que copia a
+        premissa real vira documentacao acidental dela, e depois apodrece junto — foi o que
+        aconteceu com o 90 que morava aqui, mantido depois de o seed cair para 60. O que
+        este teste afere e o TIPO na travessia, nunca o valor.
+        """
         rows = {r["premise_key"]: r for r in self.rows("STG_ORDER_PREMISE")}
         valor = rows["sla_minutes_picking"]["value"]
-        self.assertEqual(str(valor), "90.000000")
+        self.assertEqual(str(valor), "77.000000")
 
 
 class ContagemNuncaEFloatTest(RecorteCase):

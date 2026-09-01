@@ -105,13 +105,14 @@ models:
 
   - name: mart_fulfillment_sla
     description: >
-      GRAO (order_date, wh) — 16 linhas. p50/p90 por etapa, sobre os pedidos que
-      ALCANCARAM cada marco (percentile_cont ignora nulo, e nulo aqui significa "a etapa
-      nao aconteceu"). ACHADO REGISTRADO EM VEZ DE CORRIGIDO: sla_minutes_picking = 90 e
-      inalcancavel por construcao — basket_lines_max (40) x minutes_per_line_picked (2)
-      da teto de 80, e o maximo medido e exatamente 80,00. Zero violacoes, e nao porque a
-      operacao seja boa. Por isso sla_minutes, max_picking_minutes e orders_breaching_sla
-      viajam lado a lado: quem le ve 90, ve 80 e ve 0, e entende o zero.
+      GRAO (order_date, wh) — uma linha por armazem por dia. p50/p90 por etapa, sobre os
+      pedidos que ALCANCARAM cada marco (percentile_cont ignora nulo, e nulo aqui significa
+      "a etapa nao aconteceu"). ACHADO CORRIGIDO NA FASE 7: sla_minutes_picking valia 90 e
+      era inalcancavel por construcao — basket_lines_max (40) x minutes_per_line_picked (2)
+      da teto de 80. Zero violacoes, e nao porque a operacao fosse boa. Agora o limiar e
+      DERIVADO de sla_picking_percentile sobre a triangular declarada da cesta. sla_minutes,
+      max_picking_minutes e orders_breaching_sla continuam viajando lado a lado, porque uma
+      contagem de violacoes sem o limiar ao lado nao e conferivel.
     columns:
       - name: order_date
         tests: [not_null]
@@ -131,12 +132,12 @@ models:
         tests: [not_null]
       - name: slot_adherence_rate
         description: >
-          8% na janela, e o desvio e para CEDO. Medido nas 6.046 entregas: 5.166 chegam
-          ANTES de a janela abrir, 471 dentro, 409 depois — mediana de 4,6h ate a entrega
-          contra 12,8h ate o inicio da janela. E aritmetica das premissas
-          (slot_lead_hours 2-24h contra ~4,6h de ciclo), declaradas separadamente e nunca
-          conciliadas. Registrado, nao corrigido: mexer no seed para a taxa melhorar seria
-          ajustar a entrada ate a saida agradar.
+          Fracao das entregas dentro da janela prometida. NAO leia esta taxa sozinha:
+          chegar cedo e chegar tarde sao problemas opostos e ela colapsa os dois. Medido em
+          2026-09-01, antes da correcao da Fase 7: 84% das entregas chegavam ANTES de a
+          janela abrir, porque slot_lead_hours sorteava 2-24h contra um ciclo de no maximo
+          8,5h. Era defeito de modelo, nao de operacao. Com as premissas conciliadas a taxa
+          passou a VARIAR; o numero que sair e reportado, nunca alvo.
         tests: [not_null]
       - name: orders_delivered_before_slot
         description: >

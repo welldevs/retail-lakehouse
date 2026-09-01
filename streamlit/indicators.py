@@ -330,14 +330,18 @@ INDICADORES: tuple[Indicador, ...] = (
         marts=("MART_FULFILLMENT_SLA",),
         armadilhas=(
             "CHEGAR CEDO E CHEGAR TARDE SAO PROBLEMAS OPOSTOS, e uma taxa unica de "
-            "'aderencia' apaga qual deles esta acontecendo. Medido: das 6.046 entregas, "
-            "5.166 chegam ANTES de a janela abrir, 471 dentro, 409 depois. A taxa de "
-            "aderencia de 8% convida a concluir 'a operacao atrasa', que e o inverso do fato.",
-            "A causa e aritmetica e esta nas premissas: `slot_lead_hours` sorteia o inicio da "
-            "janela entre 2h e 24h depois da colocacao, enquanto a soma dos marcos entrega em "
-            "~4,6h. As duas premissas foram declaradas separadamente e nunca conciliadas. "
-            "Registrado, nao corrigido — mexer no seed para a taxa melhorar seria ajustar a "
-            "entrada ate a saida agradar.",
+            "'aderencia' apaga qual deles esta acontecendo. Publique sempre a direcao: uma "
+            "adesao baixa convida a concluir 'a operacao atrasa', e ja foi medido neste "
+            "projeto o caso oposto — em 2026-09-01, 84% das entregas chegavam ANTES de a "
+            "janela abrir.",
+            "ESSA MEDICAO DE 2026-09-01 ERA DEFEITO DE MODELO, e nao da operacao: "
+            "`slot_lead_hours` sorteava o inicio da janela entre 2h e 24h depois da "
+            "colocacao, enquanto a soma dos marcos entregava em no maximo 8,5h. As duas "
+            "premissas eram DECLARADAS SEPARADAMENTE e nunca conciliadas. Corrigido na Fase "
+            "7: `slot_lead_hours_*` passou a ser DERIVADO do ciclo declarado no mesmo seed "
+            "(1h a 8h, contra 2h a 24h), e o teste "
+            "`assert_order_premises_are_internally_coherent` afere a DERIVACAO — nunca a "
+            "adesao, para que ninguem ajuste o numero ate o KPI agradar.",
             "No Power BI, publique as TRES contagens. Se um unico indicador for exigido, use "
             "'entregas fora da janela' com o detalhe de direcao ao lado.",
         ),
