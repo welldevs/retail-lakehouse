@@ -157,7 +157,7 @@ boa.
   volta na partition que lê.
 - **Evidência.** `make spike-spark-iceberg`, 18 perguntas, rodado **antes** de qualquer linha
   da fase, com os dois desfechos declarados de antemão. O gatilho de volume foi **medido e
-  não disparou**: 37,9 M pares de cesta em 1,45 s e 2,31 GB num nó. E S7b roda a mesma entrada
+  não disparou**: 37,9 M pares de cesta em ~1,5 s e ~2,4 GB num nó. E S7b roda a mesma entrada
   pela soma corrida em SQL: ela diverge em 14 de 30 dias e chega a −70 de saldo.
 - **Trade-off.** Uma JVM, uma imagem e um perfil de compose a mais. Contido por construção: o
   Spark é **opcional** — `make silver` roda verde numa árvore onde ele nunca rodou, e isso é
@@ -2077,6 +2077,317 @@ teste dbt (que tolera 1 cliente **exatamente por causa disto**) começa a passar
   restantes levaria ~9 horas de commits copy-on-write para descartar todos como
   iguais-ou-mais-velhos, sem mudar uma linha. O que prova a convergência é `orders-reconcile`,
   não o offset de um consumidor — e a página diz isso, em vez de deixar o lag parecer defeito.
+
+## Fase 7: o fechamento — o portão sobre o Iceberg, o estoque, o selo, e os três defeitos que ela achou
+
+**Data: 2026-09-01.** Esta fase foi conduzida contra
+[`AI_ENGINEERING_CONSTRAINTS.md`](AI_ENGINEERING_CONSTRAINTS.md), escrito por quem opera o
+projeto antes de a fase começar. Ele proíbe adotar tecnologia para aumentar a contagem de
+tecnologias, exige que cada uma tenha responsabilidade explícita e evidência de necessidade, e
+põe a preferência do agente como **último** critério de decisão. O que segue é o registro de
+como cada decisão sobreviveu — ou não — a esse texto.
+
+### O portão era sobre o Iceberg, não sobre o Spark
+
+A afirmação mais frágil do repositório não era o Spark: era uma cláusula do próprio
+ARCHITECTURE. O Iceberg foi adotado na Fase 3 com **duas** justificativas — commit atômico com
+concorrência otimista, e **interop entre engines**. A primeira estava provada desde então. A
+segunda estava **afirmada e nunca demonstrada**, por quatro fases, porque os dois escritores
+eram Python usando a mesma biblioteca.
+
+`make spike-spark-iceberg` é um experimento fechado, no molde de `make spike-iceberg`, rodado
+**antes de existir uma linha desta fase**. São **18 perguntas** em um arquivo
+(`scripts/spike_spark_iceberg.py`), divididas em cinco etapas — leitura, escrita, concorrente,
+forma, limpeza. O **objetivo principal era a interoperabilidade**: o catálogo é um `SqlCatalog`
+do pyiceberg, e o Spark precisa abri-lo como `org.apache.iceberg.jdbc.JdbcCatalog`.
+
+**Os dois desfechos foram declarados antes de rodar**, e os dois eram aceitáveis:
+
+| resultado | consequência declarada |
+|---|---|
+| verde | a interop deixa de ser afirmação; o Spark entra; o resto da fase segue |
+| vermelho | o Spark **não** entra **e** a cláusula de interop é **apagada** da justificativa do Iceberg no ARCHITECTURE. O que sobra — commit atômico e concorrência otimista — continua provado e continua bastando |
+
+Deu **verde, 18/18**. O Spark lê `projection.live_order_state` com a **mesma contagem** que o
+pyiceberg (91.788 na janela intermediária), cria e escreve uma tabela que o pyiceberg lê de
+volta, e o conflito otimista **entre motores diferentes** completa o ciclo inteiro que a seção
+4 das restrições exige: detectar → recarregar → reaplicar → retry, sem `metadata_location`
+adivinhado, sem reconstrução manual de metadado, sem overwrite cego, e com `seq` velho **não**
+sobrescrevendo `seq` novo. Duas perguntas (H5, H6) existem só para conferir que o experimento
+**não** tocou a produção: contagem de linhas e schema do catálogo intactos depois dele.
+
+Dois detalhes técnicos que valem o registro. O `iceberg_tables` que o pyiceberg cria é
+exatamente o schema V1 do `JdbcCatalog` do Java — é isso que faz os dois se enxergarem sem
+tradução. E o `io-impl` é `S3FileIO`, não S3A: o pyiceberg gravou caminhos `s3://` com o
+`PyArrowFileIO`, e o S3A exigiria `s3a://`. O efeito colateral é que a imagem não carrega
+`hadoop-aws` mais o bundle da AWS SDK v1 — cerca de 200 MB que não entraram.
+
+### A forma que o SQL não expressa, medida: S7b
+
+A pergunta S7b é a que transformou a segunda justificativa do Spark em número. Ela roda a
+**mesma entrada** pela soma corrida que o SQL sabe fazer — `sum(...) over (partition by ... order by ...)`
+— e compara com o laço.
+
+O saldo de estoque não é uma soma corrida: é uma soma corrida cujas **entradas são geradas por
+decisões tomadas a partir do próprio estado**. O saldo cai abaixo do ponto de reposição, uma
+ordem é emitida, ela chega `lead_time` dias depois e muda o saldo seguinte, que decide se há
+nova ordem. Window function **lê** a partition inteira e não **escreve** de volta nela.
+
+Medido no caso de teste de 30 dias: a soma corrida em SQL **diverge em 14 dos 30 dias** e
+chega a **−70 de saldo** — um estoque negativo que nenhuma operação teria. Depois disso a
+justificativa deixou de ser um parágrafo.
+
+### O que a medição publica contra o Spark
+
+`make spark-evidence` roda o **mesmo laço** nos dois motores. A função é *importada* de
+`jobs/spark/stock_ledger.py` pelos dois caminhos — não é uma reimplementação aproximada — então
+o que varia é só quem itera sobre os grupos: um `for` num processo, ou o Spark distribuindo. Se
+fossem duas implementações, a comparação mediria a habilidade de quem escreveu cada uma.
+
+As **sete métricas saem idênticas**, e sem essa igualdade a comparação de tempo não
+significaria nada, porque os dois lados estariam medindo coisas diferentes: 173.970 linhas ·
+17.397 séries · 6.315.644 de demanda · 6.310.606 atendidos · 5.038 de ruptura · 17.397 ordens
+emitidas · 17.357 chegadas.
+
+| execução | Python puro | Spark (job) | Spark com JVM e container | razão |
+|---|---:|---:|---:|---:|
+| a primeira, no Marco F | 17,3 s | 54,8 s | 60,3 s | ~3,2× |
+| a publicada em [`docs/spark-evidence/`](docs/spark-evidence/README.md) | 16,6 s | 54,1 s | 58,9 s | ~3,3× |
+
+**As duas estão aqui de propósito, e a divergência entre elas é parte do achado.** Relógio de
+parede não é reprodutível: o número muda de execução para execução, e o primeiro par foi
+sobrescrito pela regeração seguinte antes de chegar a um commit — só o segundo tem artefato no
+repositório. O que **não** muda é a afirmação: nas duas execuções o Python puro é **~3× mais
+rápido**, e o tempo do Spark **inclui** a subida da JVM sem desconto, porque quem roda o job
+paga esse custo.
+
+É a regra do próprio projeto aplicada a ela mesma — número medido mora em página gerada, a
+prosa carrega a magnitude e não o decimal.
+
+**O gatilho de volume não disparou, e isso também está medido.** O ARCHITECTURE declara o
+gatilho do Spark como *"partição que o DuckDB não segura em memória"*. O candidato natural é o
+self-join de cesta — todo par de produtos comprados juntos, a base de qualquer análise de
+afinidade: **37.899.395 pares, 8.789.258 distintos, em ~1,5 s e ~2,4 GB** num nó de DuckDB. A
+janela final **dobrou** esse número em relação à intermediária (18,3 M pares) e o tempo
+continuou em segundos, o que torna a afirmação mais forte e não mais fraca.
+
+**`written_by` é o que faz "três escritores" ser fato consultável** em vez de frase de
+documentação: `platform` e `rebuild` são Python, `spark` é a JVM. A propriedade que justificou o
+Iceberg desde a Fase 3 só deixou de ser afirmação quando essa lista ganhou um nome que não é
+Python.
+
+### A conclusão, e o que ela não é
+
+**O Spark não foi adotado por desempenho.** Neste volume ele perde, o número está publicado, e
+uma página que só publicasse resultados favoráveis não provaria nada.
+
+Ele foi adotado por três razões:
+
+1. **O ledger de estoque tem estado cumulativo cuja saída depende do estado anterior** — a
+   forma que o SQL não expressa, medida em S7b.
+2. **O spike demonstrou interoperabilidade real com Iceberg** — 18/18, incluindo o ciclo
+   completo de conflito otimista entre motores diferentes.
+3. **O projeto precisava validar múltiplos engines escrevendo no mesmo catálogo** — que era a
+   metade não demonstrada da justificativa do Iceberg.
+
+**Isto não é propaganda de Spark, e a distinção importa.** O DuckDB não passou a ser "errado":
+ele continua o motor de todo o Silver e de todos os 25 modelos. O que mudou é que **uma** tabela
+passou a ter um escritor cuja forma o SQL não expressa. E o caminho padrão do projeto **não**
+depende de Spark: `silver_gate.py` tira do build o que depende de uma tabela que não existe, e
+`test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova` reprova se qualquer nó do portão deixar de estar
+coberto. `make silver` fica verde numa árvore onde o Spark nunca rodou — 364 nós — e verde de
+novo com o ledger dentro, 391.
+
+**O que a Fase 7 NÃO provou, e está escrito:** que o Spark **escala**. Ele roda `local[*]` —
+driver e executor no mesmo JVM, sem shuffle entre nós. Um cluster de mentira não provaria nem
+escala nem interoperabilidade; provaria que o compose sobe containers.
+
+### Marco B: duas premissas que se contradiziam, e a distinção que autorizou corrigi-las
+
+O projeto tinha uma regra certa e uma distinção faltando. A regra: **recusar ajuste de premissa
+até a saída agradar**. A distinção: mexer numa premissa para melhorar um número é uma coisa;
+tornar duas premissas **mutuamente coerentes** é outra. A primeira se recusa; a segunda é
+correção de modelo.
+
+Duas contradições, medidas antes de qualquer alteração:
+
+| premissa | valia | o que a contradizia |
+|---|---|---|
+| `slot_lead_hours_min` / `_max` | 2 h / 24 h | o ciclo declarado pelas outras linhas do **mesmo seed** nunca passa de 8,5 h. Medido sobre 86.803 pedidos entregues: **73.124 (84%) chegavam antes de a janela abrir** — prometer para depois do que já foi entregue |
+| `sla_minutes_picking` | 90 min | o teto aritmético é 80 (`basket_lines_max` × `minutes_per_line_picked`). **Nenhuma cesta possível alcançava o limiar**, e `orders_breaching_sla` era estruturalmente zero |
+
+Nenhuma das duas é resultado ruim. As duas são modelo internamente contraditório, e três fases
+as tinham "registrado em vez de corrigido".
+
+**Os dois passaram a ser derivados**, não escolhidos: `slot_lead_hours_min` = `ceil(ciclo_mínimo/60)`
+= 1 h; `slot_lead_hours_max` = `floor(ciclo_máximo/60)` = 8 h; `sla_minutes_picking` =
+`floor(triangular_p90(basket_lines_min, basket_lines_max+1, basket_lines_mode)) × minutes_per_line_picked`
+= 60. O `+1` não é detalhe: o gerador sorteia com `rng.triangular(low, high+1, mode)` e trunca.
+E `sla_picking_percentile = 0.90` entrou como **linha própria do seed**, para que a política
+fique visível — sem ela, o limiar seria um número livre entre 28 e 80, e ajustá-lo até o
+indicador agradar seria indistinguível de calibrá-lo.
+
+**O guarda contra o risco desta própria correção.** Depois de mexer aqui fica trivial continuar
+mexendo até o KPI ficar bonito, que é exatamente o proibido. Então
+`assert_order_premises_are_internally_coherent` afere a **derivação**, nunca o resultado, em
+quatro cláusulas independentes. Medido: trocar 60 por **75** — um valor plausível, dentro da
+banda que as outras cláusulas permitem — **reprova** na cláusula da derivação exata. Seis
+injeções foram tentadas e as seis reprovaram.
+
+### Marco C: ruptura zero em 86.520 linhas — e a mesma falha recriada duas horas depois
+
+A primeira execução do job de estoque produziu **ruptura zero em 86.520 linhas**. Isso não era
+operação boa: `opening_days_of_demand` valia **7** e a janela observada tinha **5 dias**, então
+o estoque **inicial** cobria o período inteiro. Ruptura zero era **aritmética, não medição** —
+uma condição estruturalmente incapaz de produzir violação.
+
+**É exatamente a mesma família do `orders_breaching_sla` estruturalmente zero que o Marco B
+tinha acabado de corrigir** — recriada no domínio de estoque duas horas depois, por quem tinha
+escrito a correção. Um limiar que nenhuma cesta alcança e um estoque que nenhuma janela consome
+são a mesma coisa: um número que só pode dar um resultado. Por isso a regra virou **teste** em
+vez de virar parágrafo: `assert_stock_window_can_exercise_replenishment` exige que a janela
+observada seja **maior** que a cobertura inicial.
+
+**O que esse teste deliberadamente NÃO exige:** que **haja** ruptura. Uma operação que não rompe
+é um estado legítimo do mundo, e exigir ruptura seria pedir que o modelo produzisse o número que
+agrada. O que ele exige é que a ruptura seja **possível** — que o resultado dependa da demanda e
+não da aritmética das premissas.
+
+**Zero violações não é evidência de qualidade operacional.** É a primeira coisa a desconfiar.
+
+Hoje o ledger mede: 5.038 unidades de ruptura em 590 das 173.970 linhas. Sete injeções foram
+tentadas contra os três testes do ledger (conservação do saldo, respeito ao `lead_time`,
+exercibilidade da janela) e as sete reprovaram.
+
+### Marco D: a regeração única, e o que a correção passou a medir
+
+A janela final é **derivada**, não escolhida: tem de exceder `opening_days_of_demand` (7 dias,
+senão cai no defeito acima) e o teto é externo — **2026-09-01**, até onde o catálogo observado
+alcança. Baixar a política de estoque para caber mais ciclos seria escolher uma premissa pelo
+efeito dela no gráfico.
+
+Resultado: 9 dias, **206.523 pedidos**, 3.892.062 linhas, 1.433.723 eventos, com os **três folds
+concordando** — lote, projeção Iceberg e sink Postgres.
+
+**A correção do Marco B passou a medir algo**, e os números foram declarados como consequência
+antes de serem medidos:
+
+| indicador | antes | agora |
+|---|---:|---:|
+| entregas **antes** de a janela abrir | 84,0% | 42,5% |
+| entregas **dentro** da janela | 8,5% fixo | **24,8%**, e varia |
+| violações de SLA de separação | 0 (estrutural) | **19.136 = 9,694%** |
+
+O 9,694% é contra 9,747% teóricos derivados do p90 declarado da distribuição da cesta —
+concordância na terceira casa. Isso virou `assert_picking_breach_rate_matches_the_declared_percentile`,
+um teste de conformidade **distribucional**, e não de contagem.
+
+`make demand-reality-check` foi rodado depois: erro médio de **0,066 pt** em 34 grupos contra o
+MAPA. A correção do slot e do SLA **não moveu** a mistura de demanda, que é o certo — ela é de
+outro domínio.
+
+### Marco E: o parquet do Silver sobrevive à exclusão do modelo
+
+Quando `silver_gate` tira `silver_stock_ledger` do build — porque a tabela Iceberg não existe
+nesta máquina — o **parquet da última construção bem-sucedida fica** no object storage. O export
+para o Snowflake o lê sem saber que é velho.
+
+Aconteceu de verdade, e já tinha sido publicado: **`MART_STOCK_HEALTH` descrevia uma janela de 5
+dias enquanto todos os outros marts descreviam 9**, e **nenhum teste reprovou**. Todos os totais
+fechavam — dentro de cada domínio.
+
+Mitigado por `assert_stock_ledger_covers_the_order_window`, que compara as janelas dos dois
+domínios **no warehouse**, que é onde eles finalmente se encontram. O teste novo reprovou contra
+o dado real na primeira execução — uma injeção natural, que é a única espécie que não se
+suspeita de ter sido escrita para passar.
+
+**Não está fechado, e não deve ser apresentado como fechado:** a mitigação é **por domínio** e a
+classe é **geral**. Qualquer modelo que o portão exclua deixa parquet velho para trás, e nada
+verifica isso de forma genérica. Fica na dívida como item aberto.
+
+### O consumidor contava ESCRITAS e chamava de PEDIDOS
+
+O último defeito da fase, e o mais instrutivo. Consumindo os 1.433.723 eventos, o CLI imprimiu
+**`SLA estourado 31.908`** enquanto a projeção Iceberg e `silver_order` concordavam em
+**19.136**.
+
+`orders` e `sla_breaches` eram **inteiros somados lote a lote**. Um pedido cujos eventos caem em
+lotes diferentes era contado **uma vez por lote** — e a partir do `order_picked` o estado carrega
+`sla_breached = true`, então todo lote seguinte que tocasse o pedido o reescrevia estourado, e a
+soma contava cada uma dessas escritas. Contagem de evento **é** aditiva entre lotes; contagem de
+pedido **não é**.
+
+**Nada quebrou, e é esse o ponto.** O número era plausível, tinha a ordem de grandeza certa, e o
+rótulo dizia outra coisa do que ele media. Nenhum teste de contagem pega isso. Quem pegou foram
+**dois folds discordando** — pela terceira vez neste projeto, e as três vezes acharam defeito
+real.
+
+Corrigido trocando os inteiros por **conjuntos de identificadores**, com `orders` e
+`sla_breaches` virando propriedades derivadas do tamanho do conjunto. O teste que congela isso
+precisou de um **quarto** lote para reproduzir o defeito: o pedido só passa a estourar no
+`order_picked`, que é o terceiro.
+
+### Marco G: o RAW é selado, não reproduzido
+
+`make freeze` percorre o RAW, lê cada `_manifest.json` e escreve
+[`docs/FREEZE.md`](docs/FREEZE.md): **81 partições, 2.221.069 registros, 2,29 GB**, com um
+`capture_id` agregado — `cec10cb5931f284f463a68ccc707c7612da1bab81caf4d41936a7a7f0ec568ef`.
+`make freeze-check` relê o RAW e compara.
+
+**O selo cobre o dado, não a execução.** Cada `content_sha256` é o hash da lista **ordenada** de
+`(path, sha256, bytes, records)`; `run_id`, `started_at_utc`, `finished_at_utc`,
+`duration_seconds` e `history` ficam **deliberadamente de fora**. Incluí-los faria um re-land de
+dado byte-idêntico quebrar o selo, e um alarme que dispara sem causa treina quem revisa a
+ignorá-lo — a mesma razão pela qual o `CONTRACT.md` do painel carrega o sha256 da origem e não a
+data da geração.
+
+**A propriedade que isto garante é `mesmo RAW congelado → downstream reproduzível`**, e não que o
+RAW seja reproduzível: a API da Mercadona é viva, o Callejero é download manual semestral, e a
+URL do MAPA aponta para "últimos datos". Numa máquina nova o operador roda `make freeze` e sela a
+captura **dele**.
+
+**Se uma regeração fizer `make freeze-check` reprovar, o certo é não consertar o selo.** Esse
+comportamento é intencional: uma janela que cresce depois do fechamento invalida todo número já
+publicado sobre ela. Uma injeção de nome de partição foi recusada; alterar um byte reprova.
+
+### Marco H: 3.910 linhas de documentação de estado viraram 1.328
+
+O README tinha 1.435 linhas e o ARCHITECTURE 2.475, com o **mesmo assunto em dois lugares
+envelhecendo em ritmos diferentes**. O tamanho é, por si, um questionamento de complexidade.
+
+A narrativa foi para este arquivo — **17 seções movidas literalmente, nada reescrito e nada
+perdido** — o escopo futuro foi para o [BACKLOG.md](BACKLOG.md), e um **teto de linhas testado**
+impede os dois de voltarem a crescer sem que isso seja uma decisão que apareça no diff.
+
+> **Nota do fechamento documental, 2026-09-02.** O README voltou a crescer, de propósito e uma
+> vez: entrou a seção *"As quatorze perguntas do fechamento"*, um índice de uma linha por
+> pergunta apontando para onde a evidência mora, e o teto subiu de 700 para 760 linhas. A
+> mudança do teto está no diff de `test_documentacao.py`, que é exatamente o que o mecanismo
+> foi feito para provocar.
+
+**A mudança expôs duas classes de referência que nunca eram conferidas.** `LinksRelativosTest`
+verificava que o **arquivo** existe — e uma âncora quebrada aponta para um arquivo que existe,
+então ela passava e o leitor caía no topo do documento sem saber que errou de lugar. Um índice
+inteiro pode apodrecer assim. Dois verificadores novos cobrem rótulo `§ "…"` e âncora, em todos
+os níveis de título e nas âncoras HTML explícitas.
+
+E vale registrar contra mim: a **primeira versão** desses verificadores estava errada duas vezes
+— só varria `##`, reportando dois falsos positivos, e não conhecia `<a id="...">`, reportando 22.
+Um verificador errado custa mais caro que verificador nenhum, porque ensina a ignorar o
+resultado.
+
+### A dívida subiu de cinco para oito, e isso é resultado
+
+**Três dos itens novos foram descobertos pela Fase 7, e dois deles medem o que ela mesma
+construiu.** Uma lista de dívidas que só encolhe é sinal de que ninguém está procurando. A lista
+corrente, com problema, impacto, status e próximo passo, está no
+[ARCHITECTURE.md § "Dívida técnica"](ARCHITECTURE.md).
+
+O item mais desconfortável é o único lugar do projeto onde **volume realmente doeu**: a
+reconstrução da projeção é **O(n²)** — 414 commits e ~55 min para 206.523 pedidos, porque cada
+lote faz `upsert` contra a tabela inteira. Na Fase 3, com 6.400 pedidos, isso levava segundos e
+era invisível. A ironia vale escrita: a justificativa do Spark diz que o gatilho de volume não
+disparou, e ele disparou **aqui**, no caminho em Python, e não na análise.
 
 ---
 

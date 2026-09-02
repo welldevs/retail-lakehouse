@@ -15,7 +15,13 @@ gerada, ou datada explicitamente. O RAW não é reproduzível; numa máquina nov
 mudam, e [`docs/FREEZE.md`](docs/FREEZE.md) é o que dá nome à captura que produziu os que
 estão publicados.
 
-Última revisão: **2026-09-01** (Fase 7).
+**Relógio de parede é o caso extremo dessa regra**, e ele já produziu divergência entre dois
+documentos deste repositório: o mesmo comando medido duas vezes dá dois números. Por isso a
+prosa aqui carrega a **magnitude** — "segundos", "~1,5 s" — e o decimal mora só na página
+gerada que o mediu. Ver [DECISIONS.md § "O que a medição publica contra o Spark"](DECISIONS.md).
+
+Última revisão: **2026-09-02** — fechamento documental da Fase 7. O estado técnico é o de
+2026-09-01; o que mudou depois foi só documentação, evidência e a estrutura da dívida.
 
 ## Escala real
 
@@ -48,7 +54,7 @@ bastante para mudar a resposta:
 premissa.** Os pedidos cresceram 32× desde que a Fase 3 os mediu (6.400 → 206.523), e o
 `dbt build` do Silver inteiro continua em menos de um minuto. O self-join de cesta — o
 candidato natural a "grande demais para um nó" — dobrou para 37,9 M pares e continua em
-**1,45 s**.
+**~1,5 s** (o decimal corrente está em [`docs/spark-evidence/`](docs/spark-evidence/README.md)).
 
 **Onde o volume DOEU, e é um só lugar.** A reconstrução da projeção Iceberg custou **414
 commits e ~55 min** para os 206.523 pedidos: cada lote faz `upsert` contra a tabela inteira,
@@ -113,7 +119,7 @@ sem reescrita. É isso que torna as trocas abaixo configuração, e não projeto
 |---|---|---|---|---|
 | **Iceberg** | Isolamento de snapshot entre escritores concorrentes, time travel, interop entre engines | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 6). O gatilho que disparou foi o literal — *"um segundo engine precisar escrever a mesma tabela"*: `live_order_state` é escrita pelo consumidor em streaming e pela reconstrução em lote, com o DuckDB lendo enquanto os dois escrevem. **Disparou por CONCORRÊNCIA, não por volume** — neste volume um parquet com `os.replace` atômico serviria. Precedido por `make spike-iceberg`, um experimento fechado que mediu catálogo, upsert, conflito, isolamento e leitura pelo DuckDB antes de a projeção existir. O gatilho antigo (`dim_product` SCD2 por `MERGE`) continua sem disparar: o SCD2 é derivado da história completa, não acumulado. |
 | **Kafka** | Transporte de eventos, replay, ponto de desacoplamento | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 5). O gatilho que disparou foi o literal — *"CDC de um OLTP"*: o evento nasce na transação que muda o pedido (Marco 4) e um consumidor stateful mantém um read model abaixo do lote. Ficou provada a **semântica de transporte**: at-least-once demonstrado reproduzindo a janela de duplicação, consumo idempotente sem conjunto que cresce, buraco recusado, replay sem efeito, 16 sha256 reproduzidos. **Não** ficou provado, e está escrito: que alguém precise da latência, e que o broker seja a origem — o log canônico continua nascendo em disco. |
-| **Spark** | Um motor fora do Python escrevendo o catálogo, e uma forma de cálculo que o SQL não expressa | — | — | **Adotado em 2026-09-01** (Fase 7). **O gatilho declarado NÃO disparou, e isso está medido**: o self-join de cesta — 37,9 M pares, o candidato natural a "partição que o DuckDB não segura" — roda em **1,45 s e 2,31 GB** num nó. A janela final dobrou esse número em relação à intermediária (18,3 M) e o tempo continuou em segundos, o que torna a afirmação mais forte e não mais fraca. Entrou por outras duas razões. **Primeira, a interop:** o Iceberg foi justificado por *interop entre engines* desde a Fase 3, e essa metade estava afirmada e nunca demonstrada — os dois escritores eram Python. **Segunda, a forma:** o ledger de estoque é uma soma corrida cujas *entradas são geradas por decisões tomadas a partir do próprio estado* (saldo baixo → ordem → chegada em N dias → muda o saldo seguinte); window function lê a partition mas não escreve de volta nela, e isso foi medido — a soma corrida em SQL diverge em 14 de 30 dias do caso de teste e chega a −70 de saldo. Precedido por `make spike-spark-iceberg`, com **os dois desfechos declarados antes**: se o Spark não lesse o catálogo do pyiceberg, ele não entraria **e** a cláusula de interop sairia desta tabela. `make spark-evidence` publica o mesmo job nos dois motores, **inclusive quando o Python puro ganha**. **Não** ficou provado, e está escrito: escala. Ele roda `local[*]`, sem shuffle entre nós. |
+| **Spark** | Um motor fora do Python escrevendo o catálogo, e uma forma de cálculo que o SQL não expressa | — | — | **Adotado em 2026-09-01** (Fase 7). **O gatilho declarado NÃO disparou, e isso está medido**: o self-join de cesta — 37,9 M pares, o candidato natural a "partição que o DuckDB não segura" — roda em **~1,5 s e ~2,4 GB** num nó. A janela final dobrou esse número em relação à intermediária (18,3 M) e o tempo continuou em segundos, o que torna a afirmação mais forte e não mais fraca. Entrou por outras duas razões. **Primeira, a interop:** o Iceberg foi justificado por *interop entre engines* desde a Fase 3, e essa metade estava afirmada e nunca demonstrada — os dois escritores eram Python. **Segunda, a forma:** o ledger de estoque é uma soma corrida cujas *entradas são geradas por decisões tomadas a partir do próprio estado* (saldo baixo → ordem → chegada em N dias → muda o saldo seguinte); window function lê a partition mas não escreve de volta nela, e isso foi medido — a soma corrida em SQL diverge em 14 de 30 dias do caso de teste e chega a −70 de saldo. Precedido por `make spike-spark-iceberg`, com **os dois desfechos declarados antes**: se o Spark não lesse o catálogo do pyiceberg, ele não entraria **e** a cláusula de interop sairia desta tabela. `make spark-evidence` publica o mesmo job nos dois motores, **inclusive quando o Python puro ganha**. **Não** ficou provado, e está escrito: escala. Ele roda `local[*]`, sem shuffle entre nós. |
 | **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe um recorte por escopo, não o Silver inteiro — a razão medida saiu de 3,85% para 46,9% entre a Fase 2 e a Fase 6 sem nenhuma regra mudar, porque ela é função de quais sources cabem no escopo. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
 | **Airflow** | Retry, exit codes, pools, SLA, histórico de execução | — | **Adotado.** Pesado para um job diário de 4 min, e assumido com essa consciência: o valor está no contrato operacional (o pool de 1 slot e o tratamento de exit code não têm equivalente em cron). | — |
 
@@ -302,37 +308,33 @@ com os parâmetros ligados, em vez de conferidas como texto.
 
 ## Dívida técnica
 
-Revisada em **2026-09-01**, depois da Fase 7. **Oito itens em aberto**, todos deliberados,
-cada um com motivo e gatilho. O resto da tabela é histórico: fica porque o que foi fechado e
-*como* foi fechado é a parte que se aprende.
+Revisada em **2026-09-01**, depois da Fase 7, e **reestruturada em 2026-09-02** para que cada
+item declare status e próximo passo em vez de só motivo. **Oito itens em aberto**, todos
+deliberados. O resto da tabela é histórico: fica porque o que foi fechado e *como* foi fechado
+é a parte que se aprende.
 
 **A contagem subiu de cinco para oito, e isso é resultado e não regressão.** Três dos itens
 novos foram *descobertos* pela Fase 7 — dois deles medindo o que ela mesma construiu. Uma
 lista de dívidas que só encolhe é sinal de que ninguém está procurando.
 
-1. **`models/warehouse/` sem teste offline** — escolha de desenho. Um espelho DuckDB teria
-   passado nos dois erros que quebraram a primeira execução real. Mitigada por evidência
-   datada, não por um segundo motor.
-2. **Conta Snowflake é trial** — aberta por natureza. O que o repositório garante é que
-   trocar de conta é barato, e isso está verificado.
-3. **Sem CI** — bloqueada por não haver remoto, e escrever um workflow que nunca rodou
-   seria afirmar uma verificação que ninguém viu.
-4. **Aviso `CustomKeyInConfigDeprecation`** — cosmético e alheio: config do `dbt-duckdb`,
-   sem forma suportada publicada.
-5. **Nenhum mart junta cliente com pedido** — a lacuna funcional mais acionável, e a única
-   que se fecha escrevendo SQL.
-6. **A reconstrução da projeção é O(n²)** — 414 commits e ~55 min para 206.523 pedidos.
-   **É o único lugar do projeto onde volume realmente doeu**, e a ironia vale registrar: a
-   justificativa do Spark diz que o gatilho de volume não disparou, e ele disparou aqui, no
-   caminho em Python. Correção declarada no [BACKLOG.md](BACKLOG.md).
-7. **A ruptura do ledger é independente das linhas `unavailable` do pedido** — o gerador
-   remove linha a taxa fixa sorteada, sem olhar saldo. Unificá-las exigiria o gerador ler o
-   ledger, criando um ciclo entre os dois domínios.
-8. **O parquet do Silver sobrevive à exclusão do modelo pelo portão** — ver abaixo.
+Cada item traz **problema, impacto, status e próximo passo**, e nada mais. O status é um de
+quatro: **mitigado** (o dano está contido, a causa não), **aceito** (não vai ser corrigido, e o
+motivo está escrito), **aberto** (falta trabalho identificado) ou **fora do escopo**.
+
+| # | Problema | Impacto | Status | Próximo passo |
+|---|---|---|---|---|
+| 1 | `models/warehouse/` não tem teste offline | Dois defeitos reais só apareceram na primeira execução contra a conta viva; um espelho DuckDB os teria pegado | **Mitigado** por `make warehouse-evidence` — evidência datada, não um segundo motor | Nenhum. A resposta **não** é um espelho: ver a seção abaixo |
+| 2 | A conta Snowflake é um trial | Expira, e com ela toda a metade da direita do pipeline | **Aceito** — é aberta por natureza | Nenhum. O destino é trocável por `.env.snowflake`, e isso está verificado |
+| 3 | Não há CI | A suíte offline depende de alguém rodar `make test` | **Aberto**, bloqueado por não haver remoto — escrever um workflow que nunca rodou seria afirmar uma verificação que ninguém viu | O repositório ganhar um remoto; o workflow cobre `make test` + `make silver`, nunca a metade Snowflake |
+| 4 | Aviso `CustomKeyInConfigDeprecation` no `dbt build` | Ruído no log | **Aceito** — cosmético e alheio: config do `dbt-duckdb`, sem forma suportada publicada | Acompanhar o `dbt-duckdb` |
+| 5 | Nenhum mart junta cliente com pedido | Sem recompra, RFM, LTV nem coorte. O elo existe em `FACT_ORDER.customer_sk`, no GOLD, fora do alcance do papel de BI | **Aberto** — é a lacuna funcional mais acionável, e a única que se fecha escrevendo SQL | Um mart com grão de cliente (`MART_CUSTOMER_ORDERS`), com o rótulo `synthetic` viajando em cada coluna. Ver [BACKLOG.md](BACKLOG.md) |
+| 6 | A reconstrução da projeção é **O(n²)** | 414 commits e ~55 min para 206.523 pedidos: cada lote faz `upsert` contra a tabela inteira. Numa máquina nova é um imposto de 55 min | **Aberto.** É o **único lugar do projeto onde volume realmente doeu** — e a ironia vale registrar: a justificativa do Spark diz que o gatilho de volume não disparou, e ele disparou aqui, no caminho em Python | Um caminho de `append` em lote único quando `--reset` é usado: a tabela começa vazia e não há escritor concorrente, então não há contra o que fazer `upsert`. Ver [BACKLOG.md](BACKLOG.md) |
+| 7 | A ruptura do ledger é independente das linhas `unavailable` do pedido | Uma não causa a outra, e cruzá-las produziria uma correlação inventada | **Aceito**, e declarado no dado: o gerador remove linha a taxa fixa sorteada, sem olhar saldo | Um gerador de segunda passada que releia o saldo. **Inverteria a dependência do projeto** — hoje pedido gera estoque —, e é isso que segura o item |
+| 8 | O parquet do Silver sobrevive à exclusão do modelo pelo portão | Aconteceu de verdade: `MART_STOCK_HEALTH` descreveu 5 dias enquanto os outros marts descreviam 9, **sem um único teste reprovar** — cada domínio fechava sozinho | **Mitigado por domínio, classe em aberto.** `assert_stock_ledger_covers_the_order_window` compara as janelas dos dois domínios no warehouse. A classe é geral: **qualquer** modelo excluído deixa parquet velho para trás | Uma verificação genérica — para cada modelo que o portão exclui, comparar a idade do parquet contra a do build corrente. Não foi feita porque exigiria o portão publicar o que excluiu, e a fase fechou |
 
 | Item | Situação |
 |---|---|
-| Cobertura de teste | **Fechada.** 19 → 389 testes na plataforma, com duplo de S3 em memória |
+| Cobertura de teste | **Fechada.** 19 → 416 testes na plataforma, com duplo de S3 em memória |
 | Caminho de extração em container | **Fechado.** `bcn1` extraído, validado, aterrissado e transformado dentro do container |
 | Ambientes redundantes | **Removidos.** 265 MB (`venv/` quebrado e `orchestration/.venv`) |
 | Credenciais de desenvolvimento | **Endurecidas.** Portas em loopback, chaves aleatórias, compose recusa subir sem elas |
@@ -474,7 +476,7 @@ Snowflake ausentes, e `--target snowflake` falha nomeando a que falta.
 
 ### `models/warehouse/` sem teste offline — e por que a resposta não é um espelho DuckDB
 
-Um espelho em DuckDB dos 22 modelos teria **passado** nos dois erros que quebraram a
+Um espelho em DuckDB dos 24 modelos teria **passado** nos dois erros que quebraram a
 primeira execução real: `FILTER (WHERE ...)` e `WINDOW ... AS`, que o DuckDB aceita e o
 Snowflake não. Um teste que não reproduz o modo de falha não é teste — é uma segunda
 implementação para manter, e daria confiança falsa exatamente onde não há.
@@ -572,7 +574,7 @@ Confirmado não-vazio por mutação: desligar a comparação de sha256 em `verif
 - **O caminho `dbt` do Silver** — os testes de dados exigem object storage de pé.
 - **As DAGs** — nenhum teste importa o módulo do Airflow. As seis compilam via `DagBag`
   no container, o que pega erro de import mas não comportamento.
-- **A árvore `models/warehouse/`** — os 22 modelos e seus testes só rodam **contra o
+- **A árvore `models/warehouse/`** — os 24 modelos e seus testes só rodam **contra o
   Snowflake**. Não há equivalente offline, e não é oversight: um espelho em DuckDB seria
   uma segunda materialização da mesma verdade, e foi justamente a diferença entre os dois
   motores (`FILTER`, `WINDOW`) que os quebrou na primeira execução — um espelho DuckDB teria
@@ -612,7 +614,7 @@ e a primeira execução é a prova.
 ### A conta Snowflake é um trial — **aberta, por natureza**
 
 Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
-com ele os 22 modelos e 157 testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
+com ele os 24 modelos e os testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
 e as suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
 fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
 `390913`, com o login autenticando e nenhum warehouse disponível.

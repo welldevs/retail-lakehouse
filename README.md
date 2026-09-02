@@ -21,9 +21,12 @@ consome pelo contrato físico — nunca importando o código de nenhuma delas. V
 pacotes irmãos, não uma abstração compartilhada.
 
 As decisões de arquitetura estão em [ARCHITECTURE.md](ARCHITECTURE.md), com a data de
-adoção de Snowflake, Kafka, Iceberg e **Spark**. O caso do Spark é o mais instrutivo dos
+adoção de Snowflake, Kafka, Iceberg e **Spark**. A história de cada uma — decisão, razão,
+evidência, trade-off — está em [DECISIONS.md](DECISIONS.md), o que não entra em
+[BACKLOG.md](BACKLOG.md), e as restrições que governam qualquer agente que continue o trabalho
+em [AI_ENGINEERING_CONSTRAINTS.md](AI_ENGINEERING_CONSTRAINTS.md). O caso do Spark é o mais instrutivo dos
 quatro: o gatilho declarado para ele — *"partição que o DuckDB não segura"* — **nunca
-disparou, e isso está medido** (37,9 M pares de cesta em 1,45 s e 2,31 GB num nó, sobre a
+disparou, e isso está medido** (37,9 M pares de cesta em ~1,5 s e ~2,4 GB num nó, sobre a
 janela final). Ele entrou por duas
 outras razões: é o primeiro escritor do catálogo Iceberg fora do Python, e a forma do job
 que ele carrega — uma soma corrida realimentada pelo próprio estado — não é expressável em
@@ -108,6 +111,9 @@ não efeito colateral de pipeline.
 ```
 .
 ├── ARCHITECTURE.md                     # ADR: o que não entrou, e o gatilho de cada um
+├── DECISIONS.md                        # a história: decisão -> razão -> evidência -> trade-off
+├── BACKLOG.md                          # o que NÃO entra, e o gatilho de cada item
+├── AI_ENGINEERING_CONSTRAINTS.md       # as restrições de engenharia para IA/agentes
 ├── Makefile                            # ponto de entrada da plataforma
 ├── sources/
 │   ├── mercadona-catalog-source/       # Source do catálogo, FROZEN, dependencies = []
@@ -148,7 +154,7 @@ não efeito colateral de pipeline.
 │   │                                   # / export-snowflake / snowflake-ddl
 │   │                                   # / snowflake-bootstrap / load-snowflake / snowflake-evidence
 │   │                                   # / stream-evidence / silver-build
-│   ├── dbt/seeds/                      # 14 seeds, todos com coluna de proveniência
+│   ├── dbt/seeds/                      # 16 seeds, todos com coluna de proveniência
 │   │   ├── warehouse_province_map_seed.csv  # wh -> província/município (sede), códigos do INE
 │   │   ├── warehouse_service_area_seed.csv  # wh -> N municípios da mesma AUF (INE)
 │   │   ├── order_premises_seed.csv          # premissas do gerador de pedidos, TODAS `synthetic`
@@ -164,7 +170,7 @@ não efeito colateral de pipeline.
 │   │   ├── demand_cohort_age_seed.csv       # volume x população por faixa etária, `benchmark`
 │   │   └── demand_cohort_region_seed.csv    # idem por comunidade; a página do PDF em cada linha
 │   ├── dbt/macros/                     # generate_schema_name: GOLD/MART absolutos, sem prefixo
-│   ├── dbt/models/silver/              # target dev (duckdb) — 22 modelos
+│   ├── dbt/models/silver/              # target dev (duckdb) — 25 modelos
 │   │   ├── warehouse_province_map.sql   # passagem do seed para o object storage
 │   │   ├── warehouse_service_area.sql   # idem, para a área de atendimento
 │   │   ├── order_premises.sql           # idem, para as premissas — atravessa até o warehouse
@@ -174,10 +180,10 @@ não efeito colateral de pipeline.
 │   │   ├── ine_callejero/               # seções, núcleos, ruas — geografia oficial
 │   │   ├── simulated_oltp/              # clientes sintéticos + manifesto com a linhagem
 │   │   └── simulated_orders/            # o fold do log: evento, pedido, linha, manifesto
-│   ├── dbt/models/warehouse/           # target snowflake — 22 modelos, ligados por source()
-│   │   ├── sources.yml                  # as 13 tabelas STAGE: a fronteira, declarada
+│   ├── dbt/models/warehouse/           # target snowflake — 24 modelos, ligados por source()
+│   │   ├── sources.yml                  # as 15 tabelas STAGE: a fronteira, declarada
 │   │   ├── gold/                        # 6 DIM + 8 FACT, SCD2 derivado da história
-│   │   └── mart/                        # 8 marts, grão no cabeçalho de cada um
+│   │   └── mart/                        # 9 marts, grão no cabeçalho de cada um
 │   ├── dbt/tests/                      # testes singulares do Silver
 │   ├── dbt/tests/warehouse/            # idem do Gold/Mart (separados: ref() cruzado não compila)
 │   └── tests/                          # sem rede (duplos de S3 e de Postgres em memória)
@@ -455,7 +461,7 @@ acionável: **nenhum mart junta cliente com pedido** — o elo existe em
 
 ## O portão do `dbt build` do Silver
 
-Nem todos os 22 modelos podem ser construídos sempre, e os dois motivos são legítimos: uma
+Nem todos os 25 modelos do Silver podem ser construídos sempre, e os dois motivos são legítimos: uma
 source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver zero linhas), e
 `silver_live_order_state` só pode ser lido quando o catálogo Iceberg responde.
 
@@ -548,10 +554,10 @@ preço), não um efeito colateral.
 ## Verificação
 
 ```bash
-make test          # 1.068 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                      + 140 OLTP simulado + 163 pedidos + 389 plataforma
-make silver        # dbt build no DuckDB: 22 modelos + 14 seeds + 318 testes de dados
-make warehouse     # dbt build no Snowflake: 22 modelos + 157 testes de dados
+make test          # 1.095 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
+                   #                      + 140 OLTP simulado + 163 pedidos + 416 plataforma
+make silver        # dbt build no DuckDB: 25 modelos + 16 seeds + os testes de dados
+make warehouse     # dbt build no Snowflake: 24 modelos + os testes de dados
 ```
 
 `make test` e `make silver` não leem nenhuma variável do Snowflake — é o que mantém a
@@ -673,3 +679,44 @@ que gerou os números publicados aqui.
 (`temp/`), a conta Snowflake (`.env.snowflake`, chave RSA fora do repositório) e o informe do
 MAPA em PDF. Sem eles o caminho padrão ainda roda — o que some é a camada analítica e a
 calibração, e cada ausência é declarada onde apareceria.
+
+## As quatorze perguntas do fechamento
+
+Este é um **índice**, não uma explicação nova: cada resposta cabe numa linha e aponta para
+onde a evidência mora. Ele existe porque o projeto fechou e um leitor tem direito de checar,
+sem ler 3.000 linhas, se a documentação sustenta o que afirma.
+
+| | Pergunta | Resposta curta | Onde a evidência mora |
+|---|---|---|---|
+| 1 | O que o projeto faz? | Ingere 5 sources, preserva o RAW, produz Silver tipado, serve um modelo dimensional e mantém um plano de stream que converge para o mesmo estado que o lote | [Camadas](#camadas) |
+| 2 | Quais dados são **reais**? | Catálogo e preço da Mercadona; população do INE; geografia do INE (seções, ruas, núcleos); o informe do MAPA 2025, usado como **benchmark** | [As cinco Sources](#as-cinco-sources) · [`docs/README.md`](docs/README.md) |
+| 3 | Quais dados são **sintéticos**? | Clientes e pedidos — inventados sobre atributos reais (o endereço existe, a pessoa não); e o **ledger de estoque**, calculado a partir do consumo observado mais uma política em seed. Nenhuma fonte deste repositório mede estoque | seeds `*_premises_seed.csv`, todos com coluna de proveniência · `stock_label = 'synthetic'` em `MART_STOCK_HEALTH` |
+| 4 | Por que cada tecnologia existe? | Cada uma tem data de adoção, o gatilho que disparou e o que **não** ficou provado | [ARCHITECTURE.md § "O que não entrou, e quando entra"](ARCHITECTURE.md) |
+| 5 | Por que Spark existe **sendo mais lento**? | Três razões, e desempenho não é nenhuma: estado cumulativo cuja saída depende do estado anterior; interop Iceberg demonstrada por spike; e a necessidade de validar mais de um engine escrevendo o mesmo catálogo. Neste volume o Python puro é ~3× mais rápido, e o número está publicado | [`docs/spark-evidence/`](docs/spark-evidence/README.md) · [DECISIONS.md § "Fase 7"](DECISIONS.md) |
+| 6 | Qual é o papel do **Kafka**? | **Transporte**, nunca a fonte canônica. `publish → ack do broker → marca o outbox`, at-least-once, com a janela de duplicação reproduzida em teste | [`docs/stream-evidence/`](docs/stream-evidence/README.md) |
+| 7 | Qual é o papel do **Iceberg**? | Commit atômico com concorrência otimista entre escritores, e **interop entre engines** — afirmada na Fase 3, demonstrada na Fase 7 com três escritores no catálogo (`platform`, `rebuild`, `spark`) | `make spike-iceberg` · `make spike-spark-iceberg` |
+| 8 | Qual é o **sistema de registro** em cada etapa? | RAW no object storage é o ponto de não-retorno; o OLTP é a origem do evento (estado + outbox na mesma transação); o Kafka é transporte; a projeção e o Silver são **derivados** e descartáveis | [L1 — RAW](#l1--raw-no-object-storage) · [ARCHITECTURE.md](ARCHITECTURE.md) |
+| 9 | Como trata **duplicação**? | Dedup no consumidor por `(order_id, sequence_no)`: `seq <= last` descarta. Duplicação na janela entre publicar e marcar o outbox é **aceita e declarada** — exactly-once ponta a ponta não é prometido | `make orders-prove-stream` · `fake_kafka.py` |
+| 10 | Como trata **gaps**? | `seq == last + 1` aplica; `seq > last + 1` é buraco e **interrompe** em vez de aplicar fora de ordem | `make orders-prove-stream` |
+| 11 | Como trata **concorrência**? | Conflito otimista no Iceberg com o ciclo completo: detectar → recarregar → reaplicar → retry, e `seq` velho **não** sobrescreve `seq` novo. Demonstrado inclusive **entre motores diferentes** | `make orders-prove-projection` · `make spike-spark-iceberg` |
+| 12 | Como sabe que os **folds concordam**? | `make orders-reconcile` fecha nos três caminhos — lote, projeção Iceberg e sink Postgres — sobre 206.523 pedidos. Foi discordância entre folds que achou **três** defeitos reais neste projeto | [Verificação](#verificação) |
+| 13 | Como sabe que a **RAW não mudou**? | `make freeze` sela `(path, sha256, bytes, records)` de 81 partições num `capture_id`; `make freeze-check` relê o RAW e sai 1 em qualquer diferença | [`docs/FREEZE.md`](docs/FREEZE.md) |
+| 14 | Quais **limitações** permanecem? | Oito itens de dívida, cada um com problema, impacto, status e próximo passo; mais o escopo que exige fonte nova | [ARCHITECTURE.md § "Dívida técnica"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
+
+### O que **não** está demonstrado neste projeto
+
+Escrito com estas palavras de propósito. A ausência de prova é informação, e apagá-la seria a
+única forma de esta lista ficar bonita:
+
+- **Que o Spark escala.** Ele roda `local[*]` — driver e executor no mesmo JVM, sem shuffle
+  entre nós. **Não demonstrado neste projeto.**
+- **Que alguém precisa da latência do Kafka, ou que o broker seja a origem.** O log canônico
+  continua nascendo em disco. **Não demonstrado neste projeto.**
+- **Exactly-once ponta a ponta.** Não é prometido, e a janela onde a duplicação acontece está
+  reproduzida em teste em vez de escondida.
+- **Que o RAW é reproduzível.** Não é, por natureza das fontes. O que é garantido é
+  `mesmo RAW congelado → downstream reproduzível`.
+- **Que a operação é production-grade.** Não há tráfego real, SLO, plantão nem incidente. O que
+  existe é comportamento verificado em teste e evidência datada de execução.
+- **Que o comportamento de compra é realista.** Cliente e pedido são sintéticos, calibrados
+  contra um **benchmark** que nunca é tratado como ground truth.

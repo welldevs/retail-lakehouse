@@ -157,10 +157,16 @@ class TetoDeLinhasTest(unittest.TestCase):
 
     ONDE O TEXTO DEVE IR quando o teto apertar: historia para DECISIONS.md, escopo futuro
     para BACKLOG.md, e detalhe de uma Source para o README dela.
+
+    O TETO DO README SUBIU DE 700 PARA 760 em 2026-09-02, e a razao vai escrita porque o
+    proprio teste diz que crescer tem de ser decisao e nao acumulo: entrou a secao "As quatorze
+    perguntas do fechamento", um INDICE de uma linha por pergunta apontando para onde a
+    evidencia mora. Ela nao duplica explicacao — e o oposto disso, e existe para que um leitor
+    possa conferir se a documentacao sustenta o que afirma sem ler 3.000 linhas.
     """
 
     TETOS = {
-        "README.md": 700,
+        "README.md": 760,
         "ARCHITECTURE.md": 700,
     }
 
