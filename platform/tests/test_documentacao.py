@@ -57,10 +57,28 @@ class ArvoreDeEstruturaTest(unittest.TestCase):
     def test_todo_caminho_da_arvore_existe(self):
         caminhos = self._caminhos_da_arvore()
         self.assertGreater(len(caminhos), 80, "a arvore encolheu — o parser provavelmente quebrou")
-        ausentes = sorted(c for c in caminhos if not (RAIZ / c).exists())
+
+        # data/ e seus filhos sao a unica excecao: a propria arvore os marca "outside
+        # version control" (.gitignore linha 36) porque sao scratch de extracao, nunca
+        # codigo-fonte. Um checkout limpo nunca os tem antes de rodar o pipeline — a CI
+        # e quem expos isso, passando so localmente onde o pipeline ja rodou alguma vez.
+        fora_de_versionamento = {c for c in caminhos if c == "data" or c.startswith("data/")}
+        normais = [c for c in caminhos if c not in fora_de_versionamento]
+
+        ausentes = sorted(c for c in normais if not (RAIZ / c).exists())
         self.assertEqual(
             ausentes, [],
             "a arvore do README nomeia caminhos que nao existem:\n  " + "\n  ".join(ausentes),
+        )
+
+        nao_ignorados = sorted(
+            c for c in fora_de_versionamento
+            if subprocess.run(["git", "check-ignore", "-q", c + "/"], cwd=RAIZ).returncode != 0
+        )
+        self.assertEqual(
+            nao_ignorados, [],
+            "a arvore marca estes caminhos como fora de versionamento, "
+            "mas o .gitignore nao os cobre:\n  " + "\n  ".join(nao_ignorados),
         )
 
 
