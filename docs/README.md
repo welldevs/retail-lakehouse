@@ -82,6 +82,53 @@ where the others label it `13,86`. Both are in the `note` column of the
 corresponding row, and the checksums' tolerance is wide enough to admit them and
 narrow enough to catch a swapped digit.
 
+## What the live sources return
+
+Two sources are **live APIs**, not downloads — the platform re-fetches current data on
+every run, so nothing about them is frozen the way the two downloads below are. What's
+worth keeping is a dated sample of the response shape:
+
+- **Mercadona catalog** — [`sources/mercadona-catalog-source/sample-catalog-response.json`](../sources/mercadona-catalog-source/sample-catalog-response.json), a real capture (`wh=mad1`, `ingestion_date=2026-09-04`, sha256 `b5bfb47c7dfea67081dfe1ad3b2dde3c5fc775b2fecf80b39475fa1aed5919f0`, matches the run's own `_manifest.json`). Prices in it are whatever they were on that date — see [sources/mercadona-catalog-source/README.md § "Forma dos arquivos"](../sources/mercadona-catalog-source/README.md) for what's structural versus what's just that day's price.
+- **INE population** — no static sample kept; the series is small enough (`make ine-refresh`) that running it is cheaper than a snapshot going stale.
+
+## External sources downloaded manually, not via API
+
+Two sources have no API and are only published as a manual download. Both are
+`.gitignore`d (large reference files, not source code) — what the repository keeps
+instead is the exact URL and the derivation script that turns the download into a
+versioned seed, so re-downloading and re-deriving reproduces the same seed byte for
+byte.
+
+### INE Callejero (streets, census sections, population units)
+
+| | |
+|---|---|
+| what | official geography — `SECC`, `UP`, `VIAS`, `PSEU`, `TRAM`, one `.zip` per province |
+| source page | [Cartografía secciones censales y callejero de Censo Electoral](https://www.ine.es/ss/Satellite?L=es_ES&c=Page&cid=1259952026632&pagename=ProductosYServicios%2FPYSLayout) (ine.es) |
+| provinces used | 08 (Barcelona), 28 (Madrid), 41 (Sevilla), 46 (Valencia) |
+| cadence | semiannual — the INE republishes it twice a year |
+| full detail | [sources/ine-callejero-source/README.md](../sources/ine-callejero-source/README.md) |
+
+### `AUF_mun.xlsx` — INE Functional Urban Areas
+
+Used to derive `warehouse_service_area_seed.csv` — which municipalities neighboring
+each warehouse belong to the same commuting area, not just which municipality the
+warehouse sits in.
+
+| | |
+|---|---|
+| file | `temp/AUF_mun.xlsx` — **not versioned** (`temp/` in `.gitignore`) |
+| source | Instituto Nacional de Estadística — page "Áreas Urbanas Funcionales" |
+| URL | https://www.ine.es/uaudit_imagenes/AUF_mun.xlsx |
+| sha256 | `773643c416a5c1384069f7615b4b57ae4e4e5ca1f8b83e029037bbbb35d99ba5` |
+| size | 49.009 bytes |
+| downloaded on | 2026-08-25 |
+| derived by | `scripts/derive_warehouse_service_area.py <AUF_mun.xlsx> <callejero-dir>` → `platform/dbt/seeds/warehouse_service_area_seed.csv` |
+
+**The URL can move or the file can be revised** the same way the MAPA one can — if the
+sha256 stops matching, re-run the derivation script instead of assuming the seed is
+still correct.
+
 ## Generated evidence
 
 None of the numbers on these pages are written by hand. Regenerate them instead of

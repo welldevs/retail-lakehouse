@@ -69,12 +69,12 @@ Python 3.12, Docker with Compose v2. `make venv` creates the platform environmen
 ## Usage
 
 ```bash
-cp .env.example .env && make secrets   # chaves aleatórias; o compose recusa subir sem elas
-make venv                              # cria platform/.venv e instala a plataforma
-make up                                # MinIO + buckets. NÃO sobe Kafka, Spark nem Airflow
+cp .env.example .env && make secrets   # random keys; the compose refuses to start without them
+make venv                              # creates platform/.venv and installs the platform
+make up                                # MinIO + buckets. Does NOT bring up Kafka, Spark, or Airflow
 make daily                             # extract -> validate -> land -> verify -> silver
-make test                              # todas as suítes, sem rede
-make help                              # todos os alvos, um por linha
+make test                              # every suite, no network
+make help                              # every target, one per line
 ```
 
 The full sequence, from zero to the dashboard, is in **[From zero to the dashboard](#from-zero-to-the-dashboard)**.
@@ -315,10 +315,10 @@ versioned artifact with no command that generates it is indistinguishable from a
 hand-typed number:
 
 ```bash
-make seed-province-map         # wh -> província/município, reconferido contra o Callejero
-make seed-service-area         # wh -> municípios da AUF (AUF_XLSX=temp/AUF_mun.xlsx)
-make seed-municipality-codes   # nome (Tempus3) -> código oficial    [rede: API do INE]
-make seed-ambiguous-series     # série -> código, para homônimo      [rede: API do INE]
+make seed-province-map         # wh -> province/municipality, cross-checked against the Callejero
+make seed-service-area         # wh -> AUF municipalities (AUF_XLSX=temp/AUF_mun.xlsx)
+make seed-municipality-codes   # name (Tempus3) -> official code    [network: INE API]
+make seed-ambiguous-series     # series -> code, for homonyms       [network: INE API]
 ```
 
 ## From zero to the dashboard
@@ -329,50 +329,50 @@ come up on demand, and whatever depends on them leaves the build on its own —
 stays green without either of them.
 
 ```bash
-# 1. plano de dados
-make up                       # MinIO + Postgres + Airflow. NÃO sobe Kafka nem Spark
+# 1. data plane
+make up                       # MinIO + Postgres + Airflow. Does NOT bring up Kafka or Spark
 make daily                    # extract -> validate -> land -> verify -> silver
 make ine-refresh callejero-refresh
 make oltp-export-reference && make oltp-refresh-all
 make orders-export-reference && make orders-refresh-all
 make silver && make test
 
-# 2. calibração da demanda, contra o MAPA 2025
-make demand-check-mapping     # 444 trincas do catálogo, uma regra cada, zero default
-make demand-reality-check     # ANTES | MAPA | ALVO | DEPOIS + propensão por coorte
+# 2. demand calibration, against MAPA 2025
+make demand-check-mapping     # 444 catalog triples, one rule each, zero default
+make demand-reality-check     # BEFORE | MAPA | TARGET | AFTER + propensity by cohort
 
-# 3. plano de stream (opcional) — OLTP, outbox, Kafka, projeção Iceberg
+# 3. stream plane (optional) — OLTP, outbox, Kafka, Iceberg projection
 make stream-up
-make orders-apply-all         # log -> OLTP + outbox, na MESMA transação
-make orders-publish           # outbox -> tópico, at-least-once por desenho
-make orders-project           # tópico -> live_order_state, idempotente
-make orders-rebuild-projection PROJECTION_RESET=1   # o SEGUNDO escritor, em lote
-make orders-reconcile         # três folds independentes; sai 1 se divergirem
+make orders-apply-all         # log -> OLTP + outbox, in the SAME transaction
+make orders-publish           # outbox -> topic, at-least-once by design
+make orders-project           # topic -> live_order_state, idempotent
+make orders-rebuild-projection PROJECTION_RESET=1   # the SECOND writer, in batch
+make orders-reconcile         # three independent folds; exits 1 if they diverge
 make orders-prove-atomicity orders-prove-stream orders-prove-projection
 
-# 4. plano de estoque (opcional) — o job Spark
-make spike-spark-iceberg      # o PORTÃO: o Spark lê o catálogo do pyiceberg?
-make stock-ledger             # consumo observado -> saldo, ruptura e reposição
-make spark-evidence           # os dois motores, e os dois tempos
+# 4. stock plane (optional) — the Spark job
+make spike-spark-iceberg      # the GATE: does Spark read pyiceberg's catalog?
+make stock-ledger             # observed consumption -> balance, stockout, and reorder
+make spark-evidence           # both engines, and both durations
 
-# 5. warehouse e painel
-make warehouse-refresh        # export -> load -> dbt no Snowflake
-make warehouse-prove-tests    # injeta o defeito que cada teste diz pegar e exige o vermelho
+# 5. warehouse and dashboard
+make warehouse-refresh        # export -> load -> dbt on Snowflake
+make warehouse-prove-tests    # injects the defect each test claims to catch and demands red
 make dashboard                # http://localhost:8501
 
-# 6. fechar
-make freeze                   # sela a captura do RAW
-make freeze-check             # e confere que ela não mudou
+# 6. close
+make freeze                   # seals the RAW capture
+make freeze-check             # and confirms it hasn't changed
 ```
 
 
 ## Analytical warehouse (Snowflake)
 
 ```bash
-cp .env.snowflake.example .env.snowflake   # conta, usuário, papel — nenhum segredo
-make warehouse-bootstrap                   # 1x por conta, exige ACCOUNTADMIN
+cp .env.snowflake.example .env.snowflake   # account, user, role — no secret in it
+make warehouse-bootstrap                   # once per account, requires ACCOUNTADMIN
 make warehouse-refresh                     # export -> load -> dbt
-make warehouse-evidence                    # registra o que ficou no destino, datado
+make warehouse-evidence                    # records what landed at the destination, dated
 ```
 
 **Three separate verbs**, for the same reason `land` and `verify-landing` are separate:
@@ -424,7 +424,7 @@ is the same separation seen through the vendor's own interface, which is the one
 the repository can't produce on its own.
 
 ```bash
-make warehouse-ddl   # imprime o DDL do STAGE sem conectar em nada (derivado do recorte)
+make warehouse-ddl   # prints the STAGE DDL without connecting to anything (derived from the cut)
 ```
 
 ## Strategic dashboard (Streamlit over the MART)
@@ -434,10 +434,10 @@ pipeline: KPI, table, chart, no SQL on screen and no methodology note interrupti
 chart. 22 indicators in 7 groups, reading only the `MART`.
 
 ```bash
-make dashboard-venv       # 1x: streamlit/pandas/altair (extra, fora da imagem do Airflow)
+make dashboard-venv       # once: streamlit/pandas/altair (extra, outside the Airflow image)
 make dashboard            # http://localhost:8501
-make dashboard-contract   # regenera streamlit/CONTRACT.md, sem conectar em nada
-make dashboard-check      # roda o painel de verdade e exige zero exceção (exige conta)
+make dashboard-contract   # regenerates streamlit/CONTRACT.md, without connecting to anything
+make dashboard-check      # runs the real dashboard and demands zero exceptions (needs an account)
 ```
 
 **Wears `RETAIL_READER` for real** — it's the first consumer to wear the BI role, and the
@@ -506,11 +506,11 @@ session knows neither the endpoint nor the credential, and DuckDB tries the real
 ways out:
 
 ```bash
-make query                                    # resumo por partição
+make query                                    # summary by partition
 make query SQL="select * from silver_price_change where name_seen_before"
 
-make duckdb-secret                            # grava o secret uma vez...
-duckdb platform/dbt/retail.duckdb             # ...e daí qualquer cliente funciona
+make duckdb-secret                            # writes the secret once...
+duckdb platform/dbt/retail.duckdb             # ...and from then on any client works
 ```
 
 `make duckdb-secret` writes a DuckDB secret to `~/.duckdb/stored_secrets` from `.env`.
@@ -529,10 +529,10 @@ The seven reference models expose `is_latest_ingestion` precisely so that readin
 current state doesn't depend on the consumer remembering a `max(ingestion_date)`:
 
 ```sql
--- estado atual (o que quase sempre se quer)
+-- current state (what's almost always wanted)
 select count(*) from silver_ine_population_series where is_latest_ingestion;
 
--- histórico completo — agora é uma escolha explícita, não um acidente
+-- full history — now an explicit choice, not an accident
 select ingestion_date, count(*) from silver_ine_population_series group by 1;
 ```
 
@@ -563,10 +563,10 @@ history), not a side effect.
 ## Verification
 
 ```bash
-make test          # 1.095 testes sem rede: 145 Mercadona + 136 INE população + 95 Callejero
-                   #                      + 140 OLTP simulado + 163 pedidos + 416 plataforma
-make silver        # dbt build no DuckDB: 25 modelos + 16 seeds + os testes de dados
-make warehouse     # dbt build no Snowflake: 24 modelos + os testes de dados
+make test          # 1,095 tests, no network: 145 Mercadona + 136 INE population + 95 Callejero
+                   #                        + 140 simulated OLTP + 163 orders + 416 platform
+make silver        # dbt build on DuckDB: 25 models + 16 seeds + the data tests
+make warehouse     # dbt build on Snowflake: 24 models + the data tests
 ```
 
 `make test` and `make silver` read no Snowflake variable — that's what keeps the Lakehouse
@@ -632,10 +632,10 @@ double the real rate.
 scheduler with **LocalExecutor**, and a webserver on `:8080` (`admin`/`admin`).
 
 ```bash
-make airflow           # builda a imagem e sobe o stack
-make airflow-trigger   # despausa e dispara o DAG de hoje
-make airflow-logs      # acompanha o scheduler
-make airflow-down      # derruba só o Airflow, mantendo o MinIO de pé
+make airflow           # builds the image and brings up the stack
+make airflow-trigger   # unpauses and triggers today's DAG run
+make airflow-logs      # follows the scheduler
+make airflow-down      # tears down only Airflow, keeping MinIO up
 ```
 
 `LocalExecutor` is a deliberate choice, not a convenience: it's the only executor in which

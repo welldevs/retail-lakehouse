@@ -142,11 +142,19 @@ bytes crus produziriam digests diferentes para dados idênticos a cada reordena�
 do servidor. A escrita é atômica (temporário + `fsync` + `os.replace`): um processo
 interrompido nunca deixa arquivo parcial no lugar final.
 
-Exemplo real de `category_id=112.json`: nível 2 `Aceite, vinagre y sal` → subgrupo
-`Aceite de oliva` → produto `Aceite de oliva 0,4º Hacendado` (id `4241`, 5 L) →
-`unit_price` `"17.75"`, `reference_price` `"3.550"` por `L`. O mesmo `display_name` aparece
-no id `4240` (1 L, `"3.80"`): a chave é `id`, não o nome. Nenhum dos 153 arquivos contém
-`currency`, `EUR` ou `€`.
+**[`sample-catalog-response.json`](sample-catalog-response.json)** é uma captura real,
+byte a byte como a Source grava: `category_id=112` (nível 2 `Aceite, vinagre y sal`),
+capturada em `wh=mad1`, `ingestion_date=2026-09-04`, sha256
+`b5bfb47c7dfea67081dfe1ad3b2dde3c5fc775b2fecf80b39475fa1aed5919f0`. Ela existe pra não
+copiar preço a mão neste README: preço do Mercadona muda, e um número digitado aqui
+apodreceria na primeira atualização real enquanto o texto continuasse afirmando o
+contrário — abra o arquivo pra ver o preço vigente na data da captura.
+
+Estruturalmente, o que vale independente de qualquer atualização: dentro dele, subgrupo
+`Aceite de oliva` → produto `Aceite de oliva 0,4º Hacendado` aparece **duas vezes**, uma
+vez como id `4241` (5 L) e outra como id `4240` (1 L) — mesmo `display_name`, embalagens
+diferentes. A chave é `id`, não o nome. Nenhum dos arquivos contém `currency`, `EUR` ou
+`€`.
 
 ### `_manifest.json`
 
