@@ -99,13 +99,13 @@ class PlanoCompletoTest(unittest.TestCase):
         self.assertIn("2026-08-29 13:32:28 UTC", self.texto)
 
     def test_os_tres_planos_aparecem(self):
-        for cabecalho in ("Plano transacional", "Transporte — Kafka", "Projeção — Iceberg",
-                          "Os três folds"):
+        for cabecalho in ("Transactional plane", "Transport — Kafka", "Projection — Iceberg",
+                          "The three folds"):
             self.assertIn(cabecalho, self.texto)
 
     def test_o_total_do_topico_e_somado_e_nao_escrito(self):
         """11.306 + 11.164 = 22.470. Um total escrito a mao envelhece na primeira execucao."""
-        self.assertIn("22,470 mensagens", self.texto)
+        self.assertIn("22,470 messages", self.texto)
 
     def test_a_proveniencia_dos_dois_escritores_e_publicada(self):
         """`written_by` e a unica prova CONSULTAVEL de que ha dois escritores. Sem ela, o
@@ -121,8 +121,8 @@ class PlanoCompletoTest(unittest.TestCase):
         pode estar 306 mensagens atras sem que isso afete o sink Postgres."""
         self.assertIn("`orders-projector`", self.texto)
         self.assertIn("`orders-projector-iceberg`", self.texto)
-        self.assertIn("Lag total: **306**", self.texto)
-        self.assertIn("Lag total: **0**", self.texto)
+        self.assertIn("Total lag: **306**", self.texto)
+        self.assertIn("Total lag: **0**", self.texto)
 
     def test_o_metadado_corrente_e_publicado_com_o_caminho_completo(self):
         """E o que permite ao DuckDB ler a tabela sem adivinhar — e o que prova que o
@@ -130,8 +130,8 @@ class PlanoCompletoTest(unittest.TestCase):
         self.assertIn("00052-abc.metadata.json", self.texto)
 
     def test_o_acordo_dos_tres_folds_e_declarado_como_acordo(self):
-        self.assertIn("os três concordam", self.texto)
-        self.assertIn("6,400 pedidos", self.texto)
+        self.assertIn("all three agree", self.texto)
+        self.assertIn("6,400 orders", self.texto)
 
 
 class DivergenciaTest(unittest.TestCase):
@@ -139,14 +139,14 @@ class DivergenciaTest(unittest.TestCase):
         """O modo de falha mais caro deste relatorio seria uma divergencia virar um resumo.
         Quem le precisa do order_id e da coluna para ir olhar."""
         texto = render(_dados(reconciliacao=_reconciliacao(ok=False)))
-        self.assertIn("**Divergências: 1.**", texto)
+        self.assertIn("**Divergences: 1.**", texto)
         self.assertIn("ord_vlc1_20260824_000001", texto)
         self.assertIn("net_amount", texto)
-        self.assertNotIn("os três concordam", texto)
+        self.assertNotIn("all three agree", texto)
 
     def test_pedido_ausente_de_uma_fonte_aparece_nomeado(self):
         texto = render(_dados(reconciliacao=_reconciliacao(ok=False)))
-        self.assertIn("ausentes de `oltp`", texto)
+        self.assertIn("missing from `oltp`", texto)
         self.assertIn("ord_mad1_20260827_000010", texto)
 
 
@@ -158,16 +158,16 @@ class PlanoDesligadoTest(unittest.TestCase):
         tabela e significam coisas opostas. A primeira e uma medicao; a segunda e a falta
         de uma. Um relatorio que as confunde e pior que nenhum relatorio."""
         texto = render(_dados(oltp={"erro": "connection refused"}))
-        self.assertIn("**OLTP nao observado.**", texto)
+        self.assertIn("**OLTP not observed.**", texto)
         self.assertIn("connection refused", texto)
         self.assertIn("make stream-up", texto)
-        self.assertNotIn("| eventos no `outbox` | 0 |", texto)
+        self.assertNotIn("| events in `outbox` | 0 |", texto)
 
     def test_um_plano_fora_nao_derruba_os_outros(self):
         """Evidencia parcial e util; evidencia que nao existe nao e."""
         texto = render(_dados(broker={"erro": "broker nao existe"}))
-        self.assertIn("**Broker nao observado.**", texto)
-        self.assertIn("| pedidos em `orders` | 6,400 |", texto)
+        self.assertIn("**Broker not observed.**", texto)
+        self.assertIn("| orders in `orders` | 6,400 |", texto)
         self.assertIn("`rebuild`", texto)
 
     def test_grupo_que_falhou_nao_se_disfarca_de_lag_zero(self):
@@ -176,12 +176,12 @@ class PlanoDesligadoTest(unittest.TestCase):
         broker = _broker()
         broker["lags"]["orders-projector-iceberg"] = {"erro": "grupo desconhecido"}
         texto = render(_dados(broker=broker))
-        self.assertIn("não observado: `grupo desconhecido`", texto)
+        self.assertIn("not observed: `grupo desconhecido`", texto)
 
     def test_todos_os_planos_fora_ainda_produz_um_relatorio_legivel(self):
         texto = render(_dados(oltp={"erro": "a"}, broker={"erro": "b"},
                               projecao={"erro": "c"}, reconciliacao={"erro": "d"}))
-        self.assertEqual(texto.count("nao observado"), 4)
+        self.assertEqual(texto.count("not observed"), 4)
         self.assertIn("2026-08-29 13:32:28 UTC", texto)
 
 
@@ -196,7 +196,7 @@ class EscritaTest(unittest.TestCase):
             self.assertEqual(
                 [f for f in os.listdir(os.path.dirname(escrito)) if f.endswith(".tmp")], []
             )
-            self.assertIn("Evidência do plano de stream",
+            self.assertIn("Stream plane evidence",
                           open(escrito, encoding="utf-8").read())
 
 

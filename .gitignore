@@ -54,3 +54,10 @@ FAQ.md
 # A rastreabilidade que o repo precisa esta em docs/README.md (URL + sha256 + data) e na
 # coluna `informe_section` de mapa_2025_benchmark_seed.csv, que cita a secao de cada numero.
 docs/*.pdf
+
+# Screencasts: mesma razao do PDF do MAPA, so que pior — dezenas de MB por arquivo, e o
+# historico do git e permanente. Print (leve, PNG) pode ser versionado como evidencia;
+# video, nao. Referenciar o arquivo local em prosa nao exige commita-lo.
+docs/screens/*.webm
+docs/screens/*.mp4
+docs/screens/*.mov

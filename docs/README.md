@@ -1,116 +1,123 @@
-# Documentos de referência
+# Reference documents
 
-## Fontes externas usadas como **benchmark**, não ingeridas
+## External sources used as **benchmark**, not ingested
 
-Um benchmark não é uma fonte desta plataforma. Não tem Source, não tem RAW, não tem
-partição, e nenhum número dele entra num fato. Ele é usado **apenas como alvo de
-distribuição**, e o CONTRACT da Source de Orders trata `benchmark` como uma terceira
-natureza ao lado de `observed` e `synthetic`.
+A benchmark is not a source of this platform. It has no Source, no RAW, no
+partition, and none of its numbers enters a fact. It is used **only as a distribution
+target**, and the Orders Source's CONTRACT treats `benchmark` as a third nature
+alongside `observed` and `synthetic`.
 
 ### Informe del Consumo Alimentario en España 2025 — MAPA
 
 | | |
 |---|---|
-| arquivo | `docs/Informe comsumo 2025_.pdf` — **não versionado** (`docs/*.pdf` no `.gitignore`) |
-| origem | Ministerio de Agricultura, Pesca y Alimentación (gob.es) |
+| file | `docs/Informe comsumo 2025_.pdf` — **not versioned** (`docs/*.pdf` in `.gitignore`) |
+| source | Ministerio de Agricultura, Pesca y Alimentación (gob.es) |
 | URL | https://www.mapa.gob.es/es/alimentacion/temas/consumo-tendencias/panel-de-consumo-alimentario/ultimos-datos |
 | sha256 | `b8c8abb6230ceda48db36f9fd59f8f99f268d332d49af3a3cdd73b430c4f0856` |
-| tamanho | 30.086.039 bytes · 645 páginas |
-| baixado em | 2026-08-31 |
+| size | 30.086.039 bytes · 645 pages |
+| downloaded on | 2026-08-31 |
 
-**Por que não está versionado.** São 29 MB de binário, e o histórico do git é permanente. O
-que o repositório precisa preservar é a **rastreabilidade**, não o arquivo: cada uma das 64
-linhas de `platform/dbt/seeds/mapa_2025_benchmark_seed.csv` cita a seção do informe de onde
-o número veio, e `provenance` distingue `informe_table` (tabela-cabeçalho da seção) de
-`informe_prose` (número citado no texto), `informe_chart` (rótulo impresso num gráfico) e
-`derived` (calculado a partir de dois números publicados, com a derivação escrita na
-própria linha). Os seeds de coorte citam a **página do PDF**, e não a seção, porque é a
-página que se abre para reconferir um rótulo de gráfico.
+**Why it is not versioned.** It is 29 MB of binary, and git history is permanent. What
+the repository needs to preserve is **traceability**, not the file: each of the 64
+lines of `platform/dbt/seeds/mapa_2025_benchmark_seed.csv` cites the report section the
+number came from, and `provenance` distinguishes `informe_table` (the section's header
+table) from `informe_prose` (a number cited in the text), `informe_chart` (a label
+printed on a chart), and `derived` (calculated from two published numbers, with the
+derivation written on the row itself). The cohort seeds cite the **PDF page**, not the
+section, because it's the page you open to double-check a chart label.
 
-**A URL aponta para "últimos datos" e vai mudar.** Quando o MAPA publicar o informe de 2026,
-este link passará a servir o arquivo novo. O `sha256` acima é o que identifica a edição
-usada; se ele deixar de bater, o benchmark em vigor não é o que os seeds descrevem, e a
-versão do modelo (`mapa_2025_v2`) precisa mudar junto.
+**The URL points to "latest data" and will change.** When MAPA publishes the 2026
+report, this link will start serving the new file. The `sha256` above is what
+identifies the edition used; if it stops matching, the benchmark in force is not what
+the seeds describe, and the model version (`mapa_2025_v2`) needs to change along with
+it.
 
-**O informe também dimensiona a base de clientes, e não só o mix.** A participação do
-e-commerce no volume de alimentação (2,2%, seção 3) é usada como taxa de penetração sobre a
-população adulta das quatro AUFs — é o único número observado deste repositório capaz de
-dimensionar um cadastro. Ele mora numa única linha
-(`demand_profile_seed.channel_reference_pct`), e `customer_premises_seed` **aponta** para ela
-em vez de copiá-la. Duas premissas declaradas fazem a transposição de share de volume para
-share de gente, e nenhuma delas é medida: que o comprador online consome como a média, e que
-estes quatro armazéns modelam o canal inteiro da AUF e não um operador dentro dele.
+**The report also sizes the customer base, not just the mix.** E-commerce's share of
+food volume (2,2%, section 3) is used as a penetration rate over the adult population
+of the four AUFs — it is the only observed number in this repository able to size a
+registry. It lives in a single line
+(`demand_profile_seed.channel_reference_pct`), and `customer_premises_seed`
+**points** to it instead of copying it. Two declared assumptions carry out the
+transposition from volume share to people share, and neither is measured: that the
+online buyer consumes like the average, and that these four warehouses model the
+AUF's entire channel and not one operator within it.
 
-**Achado de proveniência.** A folha de rosto do PDF diz *"Informe del consumo alimentario en
-España 2024"*, enquanto o corpo inteiro reporta o ano **2025** ("A cierre del año 2025…",
-"frente a los 26.823,4 millones del año 2024"). É resíduo de copiar-colar da edição anterior
-na página de créditos. Os seeds citam o **corpo**. A discrepância fica registrada aqui e no
-CONTRACT em vez de ser silenciosamente resolvida.
+**Provenance finding.** The PDF's cover page says *"Informe del consumo alimentario en
+España 2024"*, while the entire body reports the year **2025** ("A cierre del año
+2025…", "frente a los 26.823,4 millones del año 2024"). It's copy-paste residue from
+the previous edition on the credits page. The seeds cite the **body**. The
+discrepancy is recorded here and in the CONTRACT instead of being silently resolved.
 
-**Como extrair de novo.** `pdftotext -layout` preserva o alinhamento das tabelas-cabeçalho de
-cada seção, que é de onde saem `Parte de mercado volumen (%)`, `Parte de mercado valor (%)` e
-`Precio medio (€/kg)`. Os gráficos mensais e de canal são **imagens**: só os rótulos dos
-eixos saem no texto, e é por isso que não há perfil sazonal por categoria.
+**How to extract again.** `pdftotext -layout` preserves the alignment of each
+section's header tables, which is where `Parte de mercado volumen (%)`, `Parte de
+mercado valor (%)` and `Precio medio (€/kg)` come from. The monthly and channel
+charts are **images**: only the axis labels come out in the text, which is why there
+is no seasonal profile by category.
 
-**Os blocos `Demográficos` estão em dois formatos, e o segundo exige ler a página.** Dezessete
-seções trazem uma tabela compacta que o `pdftotext` recupera inteira; as demais trazem
-gráficos de barras. Esses gráficos **carregam rótulo numérico impresso** — a página 158 mostra
-`8,89 / 2,63 · 30,33 / 18,19 · 31,34 / 34,55 · 29,44 / 44,63` — então lê-los é extração, e não
-estimativa. Foram lidas ~45 páginas para cobrir os 39 grupos pesáveis nas duas dimensões de
-coorte.
+**The `Demográficos` blocks come in two formats, and the second requires reading the
+page.** Seventeen sections carry a compact table that `pdftotext` recovers whole; the
+rest carry bar charts. Those charts **carry a printed numeric label** — page 158 shows
+`8,89 / 2,63 · 30,33 / 18,19 · 31,34 / 34,55 · 29,44 / 44,63` — so reading them is
+extraction, not estimation. About 45 pages were read to cover the 39 weighable groups
+across the two cohort dimensions.
 
-**Dois checksums independentes conferem cada leitura**, e são a razão de a extração manual ser
-aceitável:
+**Two independent checksums verify every reading**, and are why the manual extraction
+is acceptable:
 
-1. as quatro faixas etárias de **volume** somam 100,00;
-2. as de **população** somam `8,89 + 30,33 + 31,34 + 29,44 = 100,00`, e esses quatro números
-   se repetem em **toda** seção, porque são o universo e não uma medição da categoria.
+1. the four **volume** age bands add up to 100,00;
+2. the **population** ones add up to `8,89 + 30,33 + 31,34 + 29,44 = 100,00`, and
+   those four numbers repeat in **every** section, because they are the universe and
+   not a category measurement.
 
-Um dígito mal lido quebra uma das duas somas, e `demand_profile.load_cohort_age` reprova. O
-seed de região não tem soma para fechar — traz 4 das 17 comunidades — e por isso a conferência
-dele é a constância do share de população, verificada em
+A misread digit breaks one of the two sums, and `demand_profile.load_cohort_age`
+fails. The region seed has no sum to close — it carries 4 of the 17 communities — so
+its check is the constancy of the population share, verified in
 `test_share_de_populacao_e_o_mesmo_em_todo_grupo`.
 
-**Duas discrepâncias da própria fonte**, registradas em vez de aparadas: a página 206 publica
-`30,5 / 31,7 / 29,0` de população onde todas as outras publicam `30,3 / 31,3 / 29,4`, e a
-página 84 rotula a Comunidad de Madrid com `13,78` onde as demais rotulam `13,86`. As duas
-estão na coluna `note` da linha correspondente, e a tolerância dos checksums é larga o
-bastante para admiti-las e estreita o bastante para pegar um dígito trocado.
+**Two discrepancies from the source itself**, recorded rather than smoothed over:
+page 206 publishes `30,5 / 31,7 / 29,0` for population where every other page
+publishes `30,3 / 31,3 / 29,4`, and page 84 labels the Comunidad de Madrid `13,78`
+where the others label it `13,86`. Both are in the `note` column of the
+corresponding row, and the checksums' tolerance is wide enough to admit them and
+narrow enough to catch a swapped digit.
 
-## Evidências geradas
+## Generated evidence
 
-Nenhum número destas páginas é escrito à mão. Refaça-as em vez de editá-las.
+None of the numbers on these pages are written by hand. Regenerate them instead of
+editing them.
 
-| diretório | gerado por | o que a página prova |
+| directory | generated by | what the page proves |
 |---|---|---|
-| `docs/demand-evidence/` | `make demand-reality-check` | a cesta gerada bate com o alvo do MAPA, coorte a coorte |
-| `docs/warehouse-evidence/` | `make warehouse-evidence` | posse, volume e isolamento de papel no destino |
-| `docs/stream-evidence/` | `make stream-evidence` | a semântica dos motores reais — broker, OLTP, Iceberg |
-| `docs/spark-evidence/` | `make spark-evidence` | o mesmo job nos dois motores, **inclusive quando o Python puro ganha** |
-| `docs/FREEZE.md` | `make freeze` | o selo da captura: partição, `content_sha256`, `capture_id` |
+| `docs/demand-evidence/` | `make demand-reality-check` | the generated basket matches the MAPA target, cohort by cohort |
+| `docs/warehouse-evidence/` | `make warehouse-evidence` | ownership, volume and role isolation at the destination |
+| `docs/stream-evidence/` | `make stream-evidence` | the semantics of the real engines — broker, OLTP, Iceberg |
+| `docs/spark-evidence/` | `make spark-evidence` | the same job on both engines, **including when plain Python wins** |
+| `docs/FREEZE.md` | `make freeze` | the capture seal: partition, `content_sha256`, `capture_id` |
 
-**`docs/spark-evidence/` é a única que existe para sustentar uma afirmação NEGATIVA** — "o
-Spark não foi adotado por desempenho". Uma negativa sem benchmark é a mesma doença do número
-copiado à mão, com o sinal trocado, então a página publica os dois tempos lado a lado seja
-qual for o vencedor.
+**`docs/spark-evidence/` is the only one that exists to back a NEGATIVE claim** — "Spark
+was not adopted for performance". A negative without a benchmark has the same disease
+as a hand-copied number, with the sign flipped, so the page publishes both times side
+by side no matter which one wins.
 
-Os `before_*.json` de `docs/demand-evidence/` são a exceção: não são gerados a cada
-execução, são **snapshots congelados**. Depois de `orders-refresh-all --overwrite` o estado
-anterior não existe mais em lugar nenhum — sem eles, o reality check só consegue dizer "é
-assim hoje", que é metade da pergunta.
+The `before_*.json` files of `docs/demand-evidence/` are the exception: they are not
+generated on every run, they are **frozen snapshots**. After `orders-refresh-all
+--overwrite` the prior state no longer exists anywhere — without them, the reality
+check can only say "this is how it is today", which is half the question.
 
-| snapshot | o que congela |
+| snapshot | what it freezes |
 |---|---|
-| `before_mapa_2025_v1.json` | o mix **uniforme**, antes de qualquer calibração |
-| `before_mapa_2025_v2.json` | o mix **calibrado no agregado**, antes da camada de coorte |
-| `before_customer_v2.json` | a base de **20.000 clientes iguais entre armazéns**, com 18,01% de menores, antes de a densidade existir |
+| `before_mapa_2025_v1.json` | the **uniform** mix, before any calibration |
+| `before_mapa_2025_v2.json` | the mix **calibrated in aggregate**, before the cohort layer |
+| `before_customer_v2.json` | the base of **20.000 customers equal across warehouses**, with 18,01% minors, before density existed |
 
-O padrão de `--before` é o **mais recente**, o estado imediatamente anterior. Usar um antigo
-como padrão somaria os efeitos de várias fases numa coluna só — a queda de receita da correção
-de preço da Fase 4 seria lida como se fosse da Fase 6. Os anteriores continuam no disco e são
-citados no texto da página.
+The default for `--before` is the **most recent** one, the immediately prior state.
+Using an old one as the default would sum the effects of several phases into a single
+column — Phase 4's price-correction revenue drop would read as if it were Phase 6's.
+The earlier ones stay on disk and are cited in the page's text.
 
-Cada snapshot registra `null` para o que ainda não existia quando ele foi congelado, e não um
-objeto vazio: `cohorts: null` no v2 (anterior ao carimbo `buyer_age_band`), `channel: null` nos
-dois primeiros (anteriores à população servida entrar na medição). Vazio seria indistinguível
-de "medi e não havia nada".
+Each snapshot records `null` for whatever did not yet exist when it was frozen,
+rather than an empty object: `cohorts: null` in v2 (before the `buyer_age_band`
+stamp), `channel: null` in the first two (before the served population entered the
+measurement). Empty would be indistinguishable from "I measured and there was
+nothing there".

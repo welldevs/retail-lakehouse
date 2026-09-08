@@ -1,30 +1,31 @@
-"""Evidencia do Spark — INCLUSIVE a medicao que joga contra ele.
+"""Spark evidence — INCLUDING the measurement that argues against it.
 
-POR QUE ESTA PAGINA EXISTE, e por que ela publica um numero desfavoravel de proposito.
+WHY THIS PAGE EXISTS, and why it publishes an unfavorable number on purpose.
 
-O ARCHITECTURE afirma que o Spark NAO foi adotado por desempenho. Uma afirmacao dessas, sem
-medicao, e modestia retorica — a mesma doenca do numero copiado a mao, so que com o sinal
-trocado. O documento de restricoes deste projeto proibe "alegar performance sem benchmark", e
-a obrigacao e simetrica: alegar AUSENCIA de performance tambem exige medir.
+ARCHITECTURE claims Spark was NOT adopted for performance. A claim like that, without a
+measurement, is rhetorical modesty — the same disease as a hand-copied number, just with the
+sign flipped. This project's constraints document forbids "claiming performance without a
+benchmark", and the obligation is symmetric: claiming an ABSENCE of performance also requires
+measuring.
 
-Entao esta pagina roda o MESMO job de estoque nas duas implementacoes — Spark e Python puro —
-sobre a MESMA entrada, e publica os dois tempos lado a lado, seja qual for o vencedor.
+So this page runs the SAME stock job on both implementations — Spark and plain Python — over
+the SAME input, and publishes both times side by side, no matter which one wins.
 
-AS TRES COISAS QUE ELA REGISTRA, e nenhuma e "o Spark e rapido":
+THE THREE THINGS IT RECORDS, and none of them is "Spark is fast":
 
-  1. INTEROP — quantos escritores distintos o catalogo Iceberg tem hoje, e quais. Era a
-     propriedade que justificou o Iceberg desde a Fase 3 e que estava afirmada e nunca
-     demonstrada, porque os dois escritores eram Python.
-  2. FORMA — o resultado das duas implementacoes tem de ser IDENTICO. Se divergirem, a
-     comparacao de tempo nao significa nada, porque medem coisas diferentes.
-  3. TEMPO — os dois, com o overhead da JVM incluido e declarado.
+  1. INTEROP — how many distinct writers the Iceberg catalog has today, and which ones. This
+     was the property that justified Iceberg since Phase 3 and that had been claimed and
+     never demonstrated, because both writers were Python.
+  2. SHAPE — the result of the two implementations has to be IDENTICAL. If they diverge, the
+     time comparison means nothing, because they are measuring different things.
+  3. TIME — both, with the JVM overhead included and stated.
 
-E ela registra o GATILHO QUE NAO DISPAROU: o self-join de cesta, o candidato natural a
-"volume que exige Spark", medido no DuckDB.
+And it records the TRIGGER THAT DID NOT FIRE: the basket self-join, the natural candidate for
+"volume that requires Spark", measured in DuckDB.
 
-O QUE ESTE MODULO NAO FAZ: nao valida, nao conserta e nao decide. Ele observa e escreve. Se o
-Spark nao estiver disponivel, a secao diz isso — evidencia parcial e util, evidencia
-inventada nao e.
+WHAT THIS MODULE DOES NOT DO: it does not validate, does not fix, and does not decide. It
+observes and writes. If Spark is not available, the section says so — partial evidence is
+useful, invented evidence is not.
 """
 
 from __future__ import annotations
@@ -53,14 +54,14 @@ def _tabela(colunas: list[str], linhas: list) -> list[str]:
 
 
 # ======================================================================================
-# 1. INTEROP: quem escreve no catalogo
+# 1. INTEROP: who writes to the catalog
 # ======================================================================================
 
 def _observar_catalogo(config=None) -> dict:
-    """Quais tabelas o catalogo tem, e QUEM escreveu cada uma.
+    """Which tables the catalog has, and WHO wrote each one.
 
-    `written_by` e o que torna "tres escritores" um fato consultavel em vez de uma frase de
-    documentacao. Sem essa coluna, a interop seria afirmada de novo.
+    `written_by` is what turns "three writers" into a queryable fact instead of a
+    documentation sentence. Without this column, interop would be claimed all over again.
     """
     from .orders_projection import TABLE_NAME as PROJECAO
     from .stock_ledger import CONSUMPTION_TABLE, LEDGER_TABLE, catalog
@@ -89,17 +90,18 @@ def _observar_catalogo(config=None) -> dict:
 
 
 # ======================================================================================
-# 2 e 3. A MESMA CONTA, NOS DOIS MOTORES
+# 2 AND 3. THE SAME COMPUTATION, ON BOTH ENGINES
 # ======================================================================================
 
 def _ledger_em_python(config=None) -> dict:
-    """O MESMO laco do job Spark, em Python puro sobre a mesma tabela Iceberg.
+    """The SAME loop as the Spark job, in plain Python over the same Iceberg table.
 
-    NAO E UMA REIMPLEMENTACAO APROXIMADA — e o mesmo algoritmo: a funcao do `applyInPandas`
-    e importada de `jobs/spark/stock_ledger.py`, entao nao ha como as duas divergirem por um
-    detalhe de traducao. O que muda e SO quem itera sobre os grupos: aqui um `for` num
-    processo, la o Spark distribuindo. Se fossem duas implementacoes diferentes, a comparacao
-    de tempo mediria a habilidade de quem escreveu cada uma.
+    THIS IS NOT AN APPROXIMATE REIMPLEMENTATION — it is the same algorithm: the
+    `applyInPandas` function is imported from `jobs/spark/stock_ledger.py`, so there's no way
+    for the two to diverge over a translation detail. The only thing that changes is WHO
+    iterates over the groups: here a `for` in one process, there Spark distributing it. If
+    these were two different implementations, the time comparison would measure the skill of
+    whoever wrote each one.
     """
     import sys
 
@@ -148,11 +150,11 @@ def _ledger_em_python(config=None) -> dict:
 
 
 def _ledger_em_spark() -> dict:
-    """Roda o job de verdade, pelo mesmo alvo que a operacao usaria, e le o que ele imprime.
+    """Runs the real job, through the same target the operation would use, and reads what it prints.
 
-    O TEMPO INCLUI A SUBIDA DA JVM e o `docker compose run`, e isso e declarado na pagina em
-    vez de descontado. Descontar o custo de subir o motor seria medir um Spark que nao existe
-    — quem roda o job paga esse custo.
+    THE TIME INCLUDES THE JVM STARTUP and the `docker compose run`, and that is stated on
+    the page instead of discounted. Discounting the cost of starting the engine would measure
+    a Spark that doesn't exist — whoever runs the job pays that cost.
     """
     comando = ["docker", "compose", "--env-file", ".env", "-f", "infra/docker-compose.yml",
                "--profile", "spark", "run", "--rm", "--no-deps", "spark",
@@ -179,7 +181,7 @@ def _ledger_em_spark() -> dict:
 
 
 # ======================================================================================
-# O GATILHO QUE NAO DISPAROU
+# THE TRIGGER THAT DID NOT FIRE
 # ======================================================================================
 
 SELF_JOIN = """
@@ -196,11 +198,12 @@ SELF_JOIN = """
 
 
 def _observar_nao_gatilho(config=None) -> dict:
-    """O self-join de cesta no DuckDB: o candidato natural a "volume que exige Spark".
+    """The basket self-join in DuckDB: the natural candidate for "volume that requires Spark".
 
-    Ele esta aqui porque a decisao de adotar Spark tem de vir acompanhada da medicao que
-    NAO a sustenta. Se um dia este numero virar minutos e gigabytes, o gatilho de volume
-    tera disparado — e ai a justificativa do Spark muda, o que tambem e informacao.
+    It is here because the decision to adopt Spark has to come with the measurement that
+    does NOT support it. If this number ever turns into minutes and gigabytes, the volume
+    trigger will have fired — and then Spark's justification changes, which is also
+    information.
     """
     import resource
 
@@ -224,7 +227,7 @@ def _observar_nao_gatilho(config=None) -> dict:
 
 
 # ======================================================================================
-# coleta e render
+# collect and render
 # ======================================================================================
 
 def collect(config=None, *, rodar_spark: bool = True) -> dict:
@@ -244,55 +247,56 @@ def collect(config=None, *, rodar_spark: bool = True) -> dict:
 
 def _ausente(titulo: str, erro: str) -> list[str]:
     return [f"### {titulo}", "",
-            f"**Não observado nesta execução.** `{erro}`", "",
-            "A seção declara a ausência em vez de sumir: uma página que esconde o que não",
-            "conseguiu medir é indistinguível de uma que mediu e não gostou.", ""]
+            f"**Not observed on this run.** `{erro}`", "",
+            "The section declares the absence instead of disappearing: a page that hides",
+            "what it couldn't measure is indistinguishable from one that measured and",
+            "didn't like the result.", ""]
 
 
 def render(dados: dict) -> str:
     linhas = [
-        "# Evidência do Spark — e a medição que joga contra ele",
+        "# Spark evidence — and the measurement that argues against it",
         "",
-        f"**Gerado por `make spark-evidence` em {dados['gerado_em']}.** Não editar à mão.",
+        f"**Generated by `make spark-evidence` on {dados['gerado_em']}.** Do not edit by hand.",
         "",
-        "Esta página existe para sustentar uma afirmação **negativa**: o Spark não foi",
-        "adotado por desempenho. Dizer isso sem medir seria modéstia retórica — a mesma",
-        "doença do número copiado à mão, com o sinal trocado. Então o mesmo job roda nos",
-        "dois motores, sobre a mesma entrada, e os dois tempos ficam publicados.",
+        "This page exists to back a **negative** claim: Spark was not adopted for",
+        "performance. Saying so without measuring would be rhetorical modesty — the same",
+        "disease as a hand-copied number, with the sign flipped. So the same job runs on",
+        "both engines, over the same input, and both times end up published.",
         "",
-        "## Por que o Spark está neste projeto",
+        "## Why Spark is in this project",
         "",
-        "Duas razões, e desempenho não é nenhuma delas.",
+        "Two reasons, and performance is not one of them.",
         "",
-        "**1. É o terceiro escritor do catálogo Iceberg, e o primeiro fora do Python.** O",
-        "Iceberg foi justificado por *interop entre engines* desde a Fase 3, e essa metade da",
-        "justificativa estava **afirmada e nunca demonstrada**: os dois escritores eram",
-        "Python usando a mesma biblioteca. `make spike-spark-iceberg` foi o portão que testou",
-        "isso antes de qualquer linha desta fase existir — com os dois desfechos declarados",
-        "de antemão, incluindo o de apagar a cláusula de interop se ela não se sustentasse.",
+        "**1. It is the Iceberg catalog's third writer, and the first outside Python.**",
+        "Iceberg was justified by *interop between engines* since Phase 3, and that half of",
+        "the justification was **claimed and never demonstrated**: both writers were Python",
+        "using the same library. `make spike-spark-iceberg` was the gate that tested this",
+        "before any line of this phase existed — with both outcomes declared in advance,",
+        "including erasing the interop clause if it didn't hold up.",
         "",
-        "**2. A forma do job não é SQL.** O saldo de estoque é uma soma corrida cujas",
-        "*entradas são geradas por decisões tomadas a partir do próprio estado*: o saldo cai",
-        "abaixo do ponto, uma ordem é emitida, ela chega dias depois e muda o saldo seguinte,",
-        "que decide se há nova ordem. Window function lê a partition inteira mas não escreve",
-        "de volta nela.",
+        "**2. The job's shape is not SQL.** The stock balance is a running sum whose",
+        "*inputs are generated by decisions made from the state itself*: the balance drops",
+        "below the reorder point, an order is issued, it arrives days later and changes the",
+        "next balance, which decides whether there's a new order. A window function reads",
+        "the whole partition but doesn't write back into it.",
         "",
     ]
 
     # ---- interop ---------------------------------------------------------------------
     catalogo = dados.get("catalogo", {})
     if "erro" in catalogo:
-        linhas += _ausente("Escritores do catálogo", catalogo["erro"])
+        linhas += _ausente("Catalog writers", catalogo["erro"])
     else:
         linhas += [
-            "## Os escritores do catálogo, hoje",
+            "## The catalog's writers, today",
             "",
-            "`written_by` é o que torna \"três escritores\" um **fato consultável** em vez de",
-            "uma frase de documentação.",
+            "`written_by` is what turns \"three writers\" into a **queryable fact** instead",
+            "of a documentation sentence.",
             "",
         ]
         linhas += _tabela(
-            ["Tabela", "Linhas", "Snapshots", "Escritores"],
+            ["Table", "Rows", "Snapshots", "Writers"],
             [[t["nome"], t.get("linhas", "—"), t.get("snapshots", "—"),
               ", ".join(f"`{k}` ({v})" for k, v in sorted(t.get("escritores", {}).items()))
               or t.get("erro", "—")]
@@ -306,110 +310,110 @@ def render(dados: dict) -> str:
         jvm = [e for e in distintos if e == "spark"]
         python = [e for e in distintos if e != "spark"]
         linhas += ["",
-                   f"**Escritores distintos no catálogo: {len(distintos)}** — "
+                   f"**Distinct writers in the catalog: {len(distintos)}** — "
                    + ", ".join(f"`{e}`" for e in distintos) + ".",
                    "",
                    ", ".join(f"`{e}`" for e in python)
-                   + (" é Python" if len(python) == 1 else " são Python")
-                   + (f"; {', '.join(f'`{e}`' for e in jvm)} é a JVM." if jvm
-                      else ". **Nenhum escritor fora do Python** — a interop continua "
-                           "afirmada e não demonstrada."),
+                   + (" is Python" if len(python) == 1 else " are Python")
+                   + (f"; {', '.join(f'`{e}`' for e in jvm)} is the JVM." if jvm
+                      else ". **No writer outside Python** — interop remains "
+                           "claimed and not demonstrated."),
                    "",
-                   "A propriedade que justificou o Iceberg desde a Fase 3 era *interop entre",
-                   "engines*, e ela só deixa de ser afirmação quando esta lista tem um nome",
-                   "que não é Python.",
+                   "The property that justified Iceberg since Phase 3 was *interop between",
+                   "engines*, and it stops being a claim only once this list has a name",
+                   "that isn't Python.",
                    ""]
 
     # ---- os dois motores --------------------------------------------------------------
     py, sp = dados.get("python", {}), dados.get("spark", {})
-    linhas += ["## O mesmo job, nos dois motores", "",
-               "A função do laço é **importada** de `jobs/spark/stock_ledger.py` pelos dois",
-               "caminhos — não é uma reimplementação aproximada. O que muda é só quem itera",
-               "sobre os grupos: um `for` num processo, ou o Spark distribuindo. Se fossem",
-               "duas implementações diferentes, a comparação mediria a habilidade de quem",
-               "escreveu cada uma.", ""]
+    linhas += ["## The same job, on both engines", "",
+               "The loop function is **imported** from `jobs/spark/stock_ledger.py` by both",
+               "paths — it is not an approximate reimplementation. The only thing that",
+               "changes is who iterates over the groups: a `for` in one process, or Spark",
+               "distributing it. If these were two different implementations, the",
+               "comparison would measure the skill of whoever wrote each one.", ""]
     if "erro" in py or "erro" in sp:
-        linhas += _ausente("Comparação", py.get("erro") or sp.get("erro"))
+        linhas += _ausente("Comparison", py.get("erro") or sp.get("erro"))
     else:
         iguais = all(py.get(k) == sp.get(k)
                      for k in ("linhas", "series", "demanda", "atendido", "ruptura",
                                "ordens", "chegadas"))
         linhas += _tabela(
-            ["", "Python puro", "Spark"],
-            [["linhas", py.get("linhas"), sp.get("linhas")],
-             ["séries", py.get("series"), sp.get("series")],
-             ["demanda", py.get("demanda"), sp.get("demanda")],
-             ["atendido", py.get("atendido"), sp.get("atendido")],
-             ["ruptura", py.get("ruptura"), sp.get("ruptura")],
-             ["ordens emitidas", py.get("ordens"), sp.get("ordens")],
-             ["chegadas", py.get("chegadas"), sp.get("chegadas")],
-             ["**segundos**", f"**{py.get('segundos')}**",
+            ["", "Plain Python", "Spark"],
+            [["rows", py.get("linhas"), sp.get("linhas")],
+             ["series", py.get("series"), sp.get("series")],
+             ["demand", py.get("demanda"), sp.get("demanda")],
+             ["fulfilled", py.get("atendido"), sp.get("atendido")],
+             ["stockout", py.get("ruptura"), sp.get("ruptura")],
+             ["orders issued", py.get("ordens"), sp.get("ordens")],
+             ["arrivals", py.get("chegadas"), sp.get("chegadas")],
+             ["**seconds**", f"**{py.get('segundos')}**",
               f"**{sp.get('segundos')}** (job) · "
-              f"{sp.get('segundos_com_jvm')} com a JVM e o container"]],
+              f"{sp.get('segundos_com_jvm')} with the JVM and the container"]],
         )
         linhas += ["",
-                   f"**Os dois resultados são {'IDÊNTICOS' if iguais else 'DIFERENTES'}.** "
-                   + ("Sem isso a comparação de tempo não significaria nada, porque os dois "
-                      "mediriam coisas diferentes."
+                   f"**The two results are {'IDENTICAL' if iguais else 'DIFFERENT'}.** "
+                   + ("Without that, the time comparison would mean nothing, because the "
+                      "two would be measuring different things."
                       if iguais else
-                      "**Isso é um defeito**: enquanto divergirem, nenhum dos dois tempos é "
-                      "comparável, e a divergência é o que precisa ser investigado antes de "
-                      "qualquer leitura desta página."),
+                      "**This is a defect**: while they diverge, neither of the two times is "
+                      "comparable, and the divergence is what needs investigating before "
+                      "any reading of this page."),
                    "",
-                   "O tempo do Spark **inclui a subida da JVM e o `docker compose run`**, e",
-                   "isso não é descontado de propósito: quem roda o job paga esse custo. A",
-                   "coluna \"job\" é o que o próprio job cronometra, para que a diferença",
-                   "entre as duas fique visível em vez de escondida numa nota de rodapé.",
+                   "Spark's time **includes the JVM startup and the `docker compose run`**,",
+                   "and that is not discounted on purpose: whoever runs the job pays that",
+                   "cost. The \"job\" column is what the job itself times, so the difference",
+                   "between the two stays visible instead of hidden in a footnote.",
                    ""]
         if py.get("segundos") and sp.get("segundos"):
-            mais_rapido = "Python puro" if py["segundos"] < sp["segundos"] else "Spark"
+            mais_rapido = "Plain Python" if py["segundos"] < sp["segundos"] else "Spark"
             razao = max(py["segundos"], sp["segundos"]) / max(
                 min(py["segundos"], sp["segundos"]), 0.1)
             linhas += [
-                f"**Neste volume, {mais_rapido} é ~{razao:.1f}x mais rápido.** Se o vencedor",
-                "for o Python — que é o esperado nesta escala — o número fica publicado do",
-                "mesmo jeito. Ele é a prova de que o Spark não está aqui por velocidade, e",
-                "uma página que só publicasse resultados favoráveis não provaria nada.",
+                f"**At this volume, {mais_rapido} is ~{razao:.1f}x faster.** If the winner",
+                "is Python — which is expected at this scale — the number gets published",
+                "just the same. It is the proof that Spark isn't here for speed, and a page",
+                "that only published favorable results wouldn't prove anything.",
                 "",
             ]
 
     # ---- o gatilho que nao disparou ----------------------------------------------------
     ng = dados.get("nao_gatilho", {})
-    linhas += ["## O gatilho de volume, que NÃO disparou", ""]
+    linhas += ["## The volume trigger, which did NOT fire", ""]
     if "erro" in ng:
-        linhas += _ausente("Self-join de cesta", ng["erro"])
+        linhas += _ausente("Basket self-join", ng["erro"])
     else:
         linhas += [
-            "O candidato natural a \"volume que exige Spark\" neste projeto é o self-join de",
-            "cesta — todo par de produtos comprados juntos, que é a base de qualquer análise",
-            "de afinidade. Medido no DuckDB, num nó:",
+            "This project's natural candidate for \"volume that requires Spark\" is the",
+            "basket self-join — every pair of products bought together, which is the basis",
+            "of any affinity analysis. Measured in DuckDB, on a single node:",
             "",
         ]
         linhas += _tabela(
-            ["Pares", "Pares distintos", "Segundos", "Pico de RSS (GB)"],
+            ["Pairs", "Distinct pairs", "Seconds", "Peak RSS (GB)"],
             [[f"{ng['pares']:,}".replace(",", "."),
               f"{ng['distintos']:,}".replace(",", "."),
               ng["segundos"], ng["pico_gb"]]],
         )
         linhas += ["",
-                   "**O gatilho de volume não disparou, e está medido.** O ARCHITECTURE",
-                   "declara o gatilho do Spark como *\"partição que o DuckDB não segura em",
-                   "memória\"*; este número é o que diz que ele continua fechado. Se um dia",
-                   "virar minutos e dezenas de gigabytes, a justificativa do Spark muda — e",
-                   "isso também é informação.",
+                   "**The volume trigger did not fire, and it is measured.** ARCHITECTURE",
+                   "declares Spark's trigger as *\"a partition DuckDB can't hold in",
+                   "memory\"*; this number is what says it stays closed. If it ever turns",
+                   "into minutes and tens of gigabytes, Spark's justification changes — and",
+                   "that is also information.",
                    ""]
 
     linhas += [
-        "## O que esta página NÃO prova",
+        "## What this page does NOT prove",
         "",
-        "- **Que o Spark escala aqui.** Ele roda `local[*]`: driver e executor no mesmo JVM.",
-        "  Não há shuffle entre nós, não há cluster, e um cluster de mentira não provaria",
-        "  nem escala nem interoperabilidade.",
-        "- **Que o job precisa de Spark hoje.** Precisa de um motor que expresse",
-        "  realimentação por série; o Python puro também expressa. O que o Spark acrescenta",
-        "  é ser o escritor fora do Python e paralelizar por série quando as séries crescerem.",
-        "- **Que o estoque é real.** O saldo é calculado a partir do consumo observado mais",
-        "  uma política declarada em seed. Nenhuma fonte deste repositório mede estoque.",
+        "- **That Spark scales here.** It runs `local[*]`: driver and executor on the same",
+        "  JVM. There is no shuffle between nodes, no cluster, and a fake cluster wouldn't",
+        "  prove either scale or interoperability.",
+        "- **That the job needs Spark today.** It needs an engine that expresses",
+        "  per-series feedback; plain Python expresses that too. What Spark adds is being",
+        "  the writer outside Python and parallelizing by series once the series grow.",
+        "- **That the stock is real.** The balance is calculated from observed consumption",
+        "  plus a policy declared in a seed. No source in this repository measures stock.",
         "",
     ]
     return "\n".join(linhas) + "\n"

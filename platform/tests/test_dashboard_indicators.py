@@ -201,7 +201,7 @@ class ContractEmSincroniaTest(unittest.TestCase):
 
     def test_o_contract_declara_o_que_o_painel_nao_exibe(self):
         gerado = C.render()
-        self.assertIn("O que o painel NÃO exibe", gerado)
+        self.assertIn("What the panel does NOT show", gerado)
         for titulo, motivo, gatilho in I.FORA_DE_ALCANCE:
             with self.subTest(titulo):
                 self.assertIn(titulo, gerado)
@@ -254,8 +254,8 @@ class ContagemNaProsaTest(unittest.TestCase):
 
     def test_o_numero_de_indicadores_confere_em_todo_documento_que_o_cita(self):
         grupos = len({indicador.grupo for indicador in I.INDICADORES})
-        frase = f"{len(I.INDICADORES)}\nindicadores em {grupos} grupos"
-        frase_linha = f"{len(I.INDICADORES)} indicadores em {grupos} grupos"
+        frase = f"{len(I.INDICADORES)}\nindicators in {grupos} groups"
+        frase_linha = f"{len(I.INDICADORES)} indicators in {grupos} groups"
         for nome in self.DOCUMENTOS:
             with self.subTest(nome):
                 texto = self._texto(nome)
@@ -266,7 +266,7 @@ class ContagemNaProsaTest(unittest.TestCase):
 
     def test_o_numero_de_consultas_no_architecture_confere(self):
         total = len(I.INDICADORES) + 3  # FRESCOR, JANELA, ARMAZENS
-        self.assertIn(f"as {total} consultas", self._texto("ARCHITECTURE.md"))
+        self.assertIn(f"the {total} queries", self._texto("ARCHITECTURE.md"))
 
 
 class ForaDeAlcanceTest(unittest.TestCase):
@@ -285,7 +285,7 @@ class ForaDeAlcanceTest(unittest.TestCase):
         Nenhum mart junta cliente com pedido, e isso precisa estar escrito onde quem for
         montar o Power BI leia ANTES de prometer o indicador."""
         texto = " ".join(m for _, m, _ in I.FORA_DE_ALCANCE)
-        self.assertIn("NENHUM MART JUNTA CLIENTE COM PEDIDO", texto)
+        self.assertIn("NO MART JOINS CUSTOMER WITH ORDER", texto)
 
 
 if __name__ == "__main__":

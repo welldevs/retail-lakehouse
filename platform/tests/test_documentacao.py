@@ -41,8 +41,8 @@ class ArvoreDeEstruturaTest(unittest.TestCase):
 
     def _caminhos_da_arvore(self) -> list[str]:
         texto = (RAIZ / "README.md").read_text(encoding="utf-8")
-        bloco = re.search(r"## Estrutura\n\n```\n(.*?)\n```", texto, re.S)
-        self.assertIsNotNone(bloco, "o bloco '## Estrutura' sumiu do README")
+        bloco = re.search(r"## Structure\n\n```\n(.*?)\n```", texto, re.S)
+        self.assertIsNotNone(bloco, "o bloco '## Structure' sumiu do README")
         pilha: list[str] = []
         caminhos: list[str] = []
         for linha in bloco.group(1).splitlines():

@@ -28,6 +28,11 @@ try:  # Airflow 3.x
 except ImportError:  # Airflow 2.x
     from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
+try:  # Airflow 3.x
+    from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+except ImportError:  # Airflow 2.x
+    from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
 # Raiz do repositorio, montada no container ou o proprio checkout no host.
 REPO = os.environ.get("RETAIL_REPO_ROOT", "/opt/retail-lakehouse")
 DATA_ROOT = f"{REPO}/data/mercadona"
@@ -318,7 +323,25 @@ with DAG(
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 
+    # SEM trigger_rule customizado aqui: o default (all_success) e o certo, ao contrario
+    # do proprio build_silver acima.
+    #   build_silver `skipped` (todos os wh curto-circuitaram, nada novo hoje) -> este
+    #     task tambem fica `skipped`, por cascata. Certo: nada mudou, nao ha por que
+    #     recarregar o Snowflake.
+    #   build_silver passou (ao menos um wh aterrissou) -> dispara.
+    #   build_silver falhou -> nao dispara. Nao empurramos Silver suspeito para o warehouse.
+    trigger_warehouse_load = TriggerDagRunOperator(
+        task_id="trigger_warehouse_load",
+        trigger_dag_id="warehouse_load",
+        # Fire-and-forget: uma falha no Snowflake (rede, conta trial expirada — FAQ §9)
+        # fica isolada em warehouse_load e nao deve reprovar o catalogo do dia seguinte.
+        wait_for_completion=False,
+        reset_dag_run=True,
+    )
+
     # O Silver le do object storage, entao depende do verify de TODOS os armazens.
     for task in dag.tasks:
         if task.task_id.startswith("verify_landing_"):
             task >> build_silver
+
+    build_silver >> trigger_warehouse_load

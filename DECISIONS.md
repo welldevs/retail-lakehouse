@@ -1,2421 +1,2682 @@
-# Decisões, e o que cada uma custou
+# Decisions, and what each one cost
 
-Este arquivo guarda a **história**: o que se decidiu, por quê, contra que evidência, e o que
-se perdeu no caminho. O [ARCHITECTURE.md](ARCHITECTURE.md) guarda o **estado** — o que vale
-hoje. A regra que separa os dois é simples e é verificada por teste:
+This file holds the **history**: what was decided, why, against what evidence, and what
+was lost along the way. [ARCHITECTURE.md](ARCHITECTURE.md) holds the **state** — what holds
+true today. The rule that separates the two is simple and is verified by test:
 
-> **Estado no ARCHITECTURE e no README. História só aqui.**
+> **State in ARCHITECTURE and README. History only here.**
 
-Ela existe porque os dois documentos vinham crescendo juntos, com o mesmo texto aparecendo em
-lugares diferentes e envelhecendo em ritmos diferentes. Três revisões de documentação foram
-gastas exatamente nisso.
+It exists because the two documents used to grow together, with the same text appearing in
+different places and aging at different rates. Three documentation revisions were
+spent on exactly this.
 
-## Como ler
+## How to read
 
-O índice abaixo dá cada decisão em quatro linhas — **decisão, razão, evidência, trade-off** —
-e aponta para a narrativa completa, que ficou **intacta**, com a data e os números que
-valiam quando foi escrita. Um número datado não apodrece: ele era verdade naquele dia. O que
-apodrece é o número apresentado como estado corrente, e por isso ele não mora aqui.
+The index below gives each decision in four lines — **decision, reason, evidence, trade-off** —
+and points to the full narrative, which was kept **intact**, with the date and the numbers that
+held true when it was written. A dated number doesn't rot: it was true on that day. What
+rots is a number presented as current state, and that's why it doesn't live here.
 
-**Nem toda decisão tem trade-off confortável, e as que não têm são as que mais importam.**
-Um "não custou nada" nesta lista é sinal de que a análise foi rasa, não de que a decisão foi
-boa.
+**Not every decision has a comfortable trade-off, and the ones that don't are the ones that matter most.**
+A "cost nothing" in this list is a sign that the analysis was shallow, not that the decision was
+good.
 
 ---
 
-## Índice das decisões
+## Decision index
 
-### Cinco Sources como pacotes irmãos, com `dependencies = []`
+### Five Sources as sibling packages, with `dependencies = []`
 
-- **Decisão.** Cada fonte é um pacote Python independente, sem dependência de terceiros, e a
-  plataforma a consome pelo contrato físico em disco — nunca importando o código dela.
-- **Razão.** Uma abstração compartilhada entre fontes que não se parecem (API viva, download
-  manual, dado sintético) obrigaria a inventar o denominador comum antes de conhecer as
-  diferenças.
-- **Evidência.** `make source-test` roda no Python do sistema, fora do venv: se qualquer
-  Source ganhar uma dependência, ele quebra. Um teste AST proíbe o import.
-- **Trade-off.** Código repetido entre as cinco. Aceito: repetição clara custa menos que
-  abstração prematura, e o retorno apareceu na imagem do Airflow — dependência zero significa
-  que a Source roda em qualquer lugar.
-- → [§ "Fronteira Source ↔ plataforma"](ARCHITECTURE.md)
+- **Decision.** Each source is an independent Python package, with no third-party dependency, and
+  the platform consumes it through the physical contract on disk — never importing its code.
+- **Reason.** A shared abstraction between sources that don't resemble each other (live API,
+  manual download, synthetic data) would force inventing the common denominator before knowing
+  the differences.
+- **Evidence.** `make source-test` runs on the system Python, outside the venv: if any
+  Source gains a dependency, it breaks. An AST test forbids the import.
+- **Trade-off.** Repeated code across the five. Accepted: clear repetition costs less than
+  premature abstraction, and the payoff showed up in the Airflow image — zero dependency means
+  the Source runs anywhere.
+- → [§ "Source ↔ platform boundary"](ARCHITECTURE.md)
 
-### Segunda e terceira sources: INE e Callejero
+### Second and third sources: INE and Callejero
 
-- **Decisão.** População e endereços reais do INE entram como sources próprias, não como
+- **Decision.** Real population and addresses from the INE come in as their own sources, not as
   seeds.
-- **Razão.** Uma base de clientes sintética precisa de geografia real para não ser um sorteio
-  uniforme sobre um mapa que não existe.
-- **Evidência.** A ambiguidade de homônimos municipais só apareceu contra o dado real, e
-  produziu `ine_ambiguous_series_seed` — derivado por script, com alvo no Makefile.
-- **Trade-off.** O Callejero é **download manual semestral**, e isso quebra a
-  reprodutibilidade automática do RAW. É a razão de o `capture_id` existir.
-- → [§ "Segunda source"](#segunda-source-população-do-ine) · [§ "Terceira source"](#terceira-source-callejero-do-ine)
+- **Reason.** A synthetic customer base needs real geography so it isn't a uniform draw
+  over a map that doesn't exist.
+- **Evidence.** The ambiguity of municipal homonyms only showed up against the real data, and
+  produced `ine_ambiguous_series_seed` — derived by script, with a target in the Makefile.
+- **Trade-off.** The Callejero is a **semiannual manual download**, and that breaks the
+  automatic reproducibility of RAW. That's the reason `capture_id` exists.
+- → [§ "Second source"](#second-source-ine-population) · [§ "Third source"](#third-source-ine-callejero)
 
-### Snowflake recebe um recorte, não o Silver inteiro
+### Snowflake gets a cut, not the whole Silver
 
-- **Decisão.** O warehouse recebe as tabelas que respondem perguntas analíticas, e não uma
-  segunda cópia do lakehouse.
-- **Razão.** Copiar RAW para o Snowflake porque o Snowflake existe é o oposto de arquitetura.
-- **Evidência.** A razão do recorte foi de 3,85% para 46,9% entre a Fase 2 e a Fase 6 **sem
-  nenhuma regra mudar** — ela é função de quais sources cabem no escopo, e por isso não é
-  propriedade do desenho.
-- **Trade-off.** Perguntas fora do recorte exigem voltar ao lakehouse. Aceito, e declarado no
-  painel como *Fora de alcance*.
-- → [§ "Fase 2"](#fase-2-camada-analítica-no-snowflake)
+- **Decision.** The warehouse receives the tables that answer analytical questions, not a
+  second copy of the lakehouse.
+- **Reason.** Copying RAW to Snowflake just because Snowflake exists is the opposite of
+  architecture.
+- **Evidence.** The cut ratio went from 3.85% to 46.9% between Phase 2 and Phase 6 **with no
+  rule changing** — it is a function of which sources fall within scope, and therefore is not a
+  property of the design.
+- **Trade-off.** Questions outside the cut require going back to the lakehouse. Accepted, and
+  declared on the dashboard as *Out of scope*.
+- → [§ "Phase 2"](#phase-2-analytical-layer-on-snowflake)
 
-### Pedidos nascem como LOG DE EVENTOS, não como fotografia
+### Orders are born as an EVENT LOG, not a snapshot
 
-- **Decisão.** A quinta source entrega um log append-only; `silver_order` é um fold.
-- **Razão.** Uma tabela com `status` diz onde o pedido está, nunca quanto tempo levou para
-  chegar lá. As durações do warehouse são a resposta concreta ao que o log comprou.
-- **Evidência.** Três folds independentes — window function, transacional e streaming —
-  concordam pedido a pedido. Dois folds discordando acharam dois defeitos que nenhum teste
-  pegava.
-- **Trade-off.** O fold é caro e a reconstrução é O(n²) no volume atual — 55 min para 206 mil
-  pedidos. Declarado no [BACKLOG.md](BACKLOG.md) com a correção.
-- → [§ "Fase 3"](#fase-3-orders-como-eventos-quinta-source)
+- **Decision.** The fifth source delivers an append-only log; `silver_order` is a fold.
+- **Reason.** A table with `status` says where the order is, never how long it took to
+  get there. The warehouse durations are the concrete answer to what the log bought.
+- **Evidence.** Three independent folds — window function, transactional, and streaming —
+  agree order by order. Two folds disagreeing found two defects that no test
+  caught.
+- **Trade-off.** The fold is expensive and reconstruction is O(n²) at the current volume — 55 min
+  for 206 thousand orders. Declared in [BACKLOG.md](BACKLOG.md) with the fix.
+- → [§ "Phase 3"](#phase-3-orders-as-events-fifth-source)
 
-### Outbox transacional em vez de dual write
+### Transactional outbox instead of dual write
 
-- **Decisão.** Estado de negócio e evento na **mesma transação**; o publicador lê a tabela.
-- **Razão.** Escrever no banco e no broker em duas operações perde evento em toda falha
-  entre as duas.
-- **Evidência.** `prove_oltp_atomicity.py` injeta falha no banco e prova que os dois lados
-  caem juntos.
-- **Trade-off.** Duplicação **é possível** entre o ACK do broker e a marcação do outbox, e o
-  projeto **não promete exactly-once**. A dedup vive no consumidor.
-- → [§ "Fase 3, segunda metade"](#fase-3-segunda-metade-o-oltp-e-o-outbox-transacional)
+- **Decision.** Business state and event in the **same transaction**; the publisher reads the
+  table.
+- **Reason.** Writing to the database and the broker in two operations loses an event on every
+  failure between the two.
+- **Evidence.** `prove_oltp_atomicity.py` injects a failure into the database and proves that
+  both sides fall together.
+- **Trade-off.** Duplication **is possible** between the broker's ACK and marking the outbox,
+  and the project **does not promise exactly-once**. Dedup lives in the consumer.
+- → [§ "Phase 3, second half"](#phase-3-second-half-the-oltp-and-the-transactional-outbox)
 
-### Kafka é transporte, nunca a fonte canônica
+### Kafka is transport, never the canonical source
 
-- **Decisão.** O log canônico nasce em disco; o broker carrega.
-- **Razão.** Um broker com retenção de 7 dias não é sistema de registro.
-- **Evidência.** Replay reproduz os 16 sha256; buraco de sequência é recusado; duplicata é
-  descartada.
-- **Trade-off.** Ninguém aqui precisa da latência que o Kafka compra, e isso está escrito.
-- → [§ "Fase 3, terceira metade"](#fase-3-terceira-metade-transporte-replay-e-consumo-idempotente)
+- **Decision.** The canonical log is born on disk; the broker carries it.
+- **Reason.** A broker with 7-day retention is not a system of record.
+- **Evidence.** Replay reproduces the 16 sha256; a sequence gap is refused; a duplicate is
+  discarded.
+- **Trade-off.** Nobody here needs the latency that Kafka buys, and that is written down.
+- → [§ "Phase 3, third half"](#phase-3-third-half-transport-replay-and-idempotent-consumption)
 
-### Iceberg entra por CONCORRÊNCIA, não por volume
+### Iceberg comes in for CONCURRENCY, not volume
 
-- **Decisão.** `live_order_state` em Iceberg, com dois escritores e um leitor concorrente.
-- **Razão.** Neste volume um parquet com `os.replace` atômico serviria; o que o Iceberg
-  compra é isolamento de snapshot entre escritores.
-- **Evidência.** `make spike-iceberg` mediu catálogo, upsert, conflito e leitura **antes** de
-  a projeção existir. O commit sobre snapshot velho é recusado, e o retry depois de recarregar
-  passa.
-- **Trade-off.** Metade da justificativa — *interop entre engines* — ficou **afirmada e não
-  demonstrada** por quatro fases, porque os dois escritores eram Python. Só a Fase 7 pagou
-  essa dívida.
-- → [§ "Fase 3, quarta metade"](#fase-3-quarta-metade-a-projeção-concorrente-em-iceberg)
+- **Decision.** `live_order_state` in Iceberg, with two writers and one concurrent reader.
+- **Reason.** At this volume an atomic-`os.replace` parquet would do; what Iceberg
+  buys is snapshot isolation between writers.
+- **Evidence.** `make spike-iceberg` measured catalog, upsert, conflict, and read **before**
+  the projection existed. A commit over a stale snapshot is refused, and the retry after
+  reloading passes.
+- **Trade-off.** Half of the justification — *interop between engines* — stayed **asserted and
+  not demonstrated** for four phases, because both writers were Python. Only Phase 7 paid down
+  that debt.
+- → [§ "Phase 3, fourth half"](#phase-3-fourth-half-the-concurrent-projection-in-iceberg)
 
-### Calibrar a demanda contra o MAPA 2025 — benchmark, nunca ground truth
+### Calibrate demand against MAPA 2025 — benchmark, never ground truth
 
-- **Decisão.** O mix de categorias da cesta é calibrado contra o informe de consumo do MAPA.
-- **Razão.** Sem isso, o mix espelhava o **tamanho do sortimento**: um catálogo com 475 SKUs
-  de cuidado pessoal produzia uma cesta que ninguém compra.
-- **Evidência.** A calibração encontrou um defeito de **preço** que a demanda anterior
-  escondia — `unit_price` nem sempre é preço de unidade comprável.
-- **Trade-off.** O MAPA mede **consumo domiciliar em volume**, não carrinho de e-commerce em
-  valor. A conversão é heurística declarada, e o benchmark calibra volume; valor é
-  consequência do preço observado.
-- → [§ "Calibração da demanda"](#calibração-da-demanda-contra-o-mapa-2025-fase-4)
+- **Decision.** The basket's category mix is calibrated against the MAPA consumption report.
+- **Reason.** Without it, the mix mirrored the **assortment size**: a catalog with 475 SKUs of
+  personal care produced a basket nobody buys.
+- **Evidence.** The calibration found a **price** defect that the previous demand was
+  hiding — `unit_price` isn't always the price of a purchasable unit.
+- **Trade-off.** MAPA measures **household consumption in volume**, not e-commerce cart in
+  value. The conversion is a declared heuristic, and the benchmark calibrates volume; value is
+  a consequence of the observed price.
+- → [§ "Demand calibration"](#demand-calibration-against-mapa-2025-phase-4)
 
-### Coorte só com atributo observado
+### Cohort only with an observed attribute
 
-- **Decisão.** A demanda varia por coorte de idade e região, e só por atributos que existem
-  no dado.
-- **Razão.** Um corte do benchmark só pode virar segmentação se o atributo estiver observado
-  nos dois lados.
-- **Evidência.** A Fase 5 encontrou 18% da base abaixo de 18 anos — titulares de conta
-  recém-nascidos — porque a idade passou a governar a demanda.
-- **Trade-off.** Grupos de índice neutro escondem defeito: um segmento sem diferença medida
-  parece calibrado e apenas não foi testado.
-- → [§ "Perfil de consumo do cliente"](#perfil-de-consumo-do-cliente-fase-5)
+- **Decision.** Demand varies by age and region cohort, and only by attributes that exist
+  in the data.
+- **Reason.** A benchmark cut can only become a segmentation if the attribute is observed on
+  both sides.
+- **Evidence.** Phase 5 found 18% of the base under 18 years old — newborn account
+  holders — because age had started to govern demand.
+- **Trade-off.** Neutral-index groups hide defects: a segment with no measured difference
+  looks calibrated and simply wasn't tested.
+- → [§ "Customer consumption profile"](#customer-consumption-profile-phase-5)
 
-### A base de clientes é população servida, não compradores
+### The customer base is served population, not buyers
 
-- **Decisão.** `silver_customer` dimensiona a base pela população real das áreas atendidas.
-- **Razão.** Uma base de 20 mil clientes distribuída uniformemente não tem densidade nenhuma
-  para medir.
-- **Evidência.** A Fase 6 mostrou que a proporção estava errada **sem quebrar nenhuma soma** —
-  defeito de repartição, que só um teste que refaz a divisão a partir da fonte pega.
-- **Trade-off.** Densidade de simulação parece penetração de mercado, e é o número mais fácil
-  de citar fora de contexto de todo o painel. O rótulo viaja em cada coluna.
-- → [§ "Densidade real da base de clientes"](#densidade-real-da-base-de-clientes-fase-6)
-
----
-
-## Fase 7 — o fechamento
-
-### Spark entra por interop e por forma; volume é NÃO-GATILHO declarado
-
-- **Decisão.** Um job Spark calcula o ledger de estoque e escreve no mesmo catálogo Iceberg.
-- **Razão.** Duas, e desempenho não é nenhuma. **Interop:** é o terceiro escritor do catálogo
-  e o primeiro fora do Python — a propriedade que justificou o Iceberg estava afirmada desde a
-  Fase 3 e nunca demonstrada. **Forma:** o saldo é uma soma corrida cujas *entradas são
-  geradas por decisões tomadas a partir do próprio estado*, e window function não escreve de
-  volta na partition que lê.
-- **Evidência.** `make spike-spark-iceberg`, 18 perguntas, rodado **antes** de qualquer linha
-  da fase, com os dois desfechos declarados de antemão. O gatilho de volume foi **medido e
-  não disparou**: 37,9 M pares de cesta em ~1,5 s e ~2,4 GB num nó. E S7b roda a mesma entrada
-  pela soma corrida em SQL: ela diverge em 14 de 30 dias e chega a −70 de saldo.
-- **Trade-off.** Uma JVM, uma imagem e um perfil de compose a mais. Contido por construção: o
-  Spark é **opcional** — `make silver` roda verde numa árvore onde ele nunca rodou, e isso é
-  teste, não promessa. E `make spark-evidence` publica o tempo do Python puro ao lado, que
-  neste volume ganha.
-
-### Premissas contraditórias são defeito de modelo, e podem ser corrigidas
-
-- **Decisão.** `slot_lead_hours_*` e `sla_minutes_picking` passaram a ser **derivados** das
-  outras linhas do mesmo seed.
-- **Razão.** A regra do projeto — recusar ajuste de premissa até a saída agradar — estava
-  certa e faltava uma distinção: mexer numa premissa para melhorar um número é uma coisa;
-  tornar duas premissas **mutuamente coerentes** é outra. Um alerta acima do teto aritmético e
-  uma janela que abre depois da entrega não são resultados indesejados, são contradições.
-- **Evidência.** 84% das entregas chegavam **antes** de a janela abrir (73.124 de 86.803);
-  o limiar de SLA valia 90 contra um teto possível de 80.
-- **Trade-off.** Fica trivialmente fácil continuar mexendo até o KPI agradar. Contido:
-  `assert_order_premises_are_internally_coherent` afere a **derivação**, nunca o resultado —
-  medido, trocar o limiar de 60 por 75 reprova, mesmo sendo um valor plausível.
-
-### O RAW é selado, não reproduzido
-
-- **Decisão.** `make freeze` sela a captura; `make freeze-check` confere.
-- **Razão.** O RAW **não** é reproduzível — API viva, download manual, URL móvel — e prometer
-  que fosse seria falso. Tudo a jusante é determinístico **dada a mesma RAW**.
-- **Evidência.** Três revisões de documentação existiram porque uma regeração mudou números
-  já escritos e nada avisou. A disciplina virou verificação.
-- **Trade-off.** O selo cobre o **dado**, não a execução: `run_id` e timestamps ficam de fora
-  de propósito, senão um re-land byte-idêntico quebraria o selo — e alarme que dispara sem
-  causa treina quem revisa a ignorá-lo.
+- **Decision.** `silver_customer` sizes the base by the real population of the served areas.
+- **Reason.** A base of 20 thousand customers distributed uniformly has no density to
+  measure.
+- **Evidence.** Phase 6 showed that the proportion was wrong **without breaking any sum** —
+  an allocation defect, which only a test that redoes the split from the source catches.
+- **Trade-off.** Simulation density looks like market penetration, and it's the number easiest
+  to quote out of context across the whole dashboard. The label travels with every column.
+- → [§ "Real density of the customer base"](#real-density-of-the-customer-base-phase-6)
 
 ---
 
-# A narrativa completa, por fase
+## Phase 7 — the closing
 
-As seções abaixo estão **como foram escritas**, com a data e os números que valiam
-naquele dia. Um número datado não apodrece — ele era verdade quando foi medido. O que
-apodrece é o número apresentado como estado corrente, e por isso ele não mora aqui.
+### Spark comes in for interop and for shape; volume is a declared NON-TRIGGER
 
-## Segunda source: população do INE
+- **Decision.** A Spark job computes the stock ledger and writes to the same Iceberg catalog.
+- **Reason.** Two, and performance is not one of them. **Interop:** it's the catalog's third
+  writer and the first one outside Python — the property that justified Iceberg had been
+  asserted since Phase 3 and never demonstrated. **Shape:** the balance is a running sum whose
+  *inputs are generated by decisions made from the state itself*, and a window function doesn't
+  write back into the partition it reads.
+- **Evidence.** `make spike-spark-iceberg`, 18 questions, run **before** any line of this
+  phase, with both outcomes declared beforehand. The volume trigger was **measured and did not
+  fire**: 37.9M basket pairs in ~1.5 s and ~2.4 GB on one node. And S7b runs the same input
+  through the running sum in SQL: it diverges on 14 of 30 days and reaches a balance of −70.
+- **Trade-off.** One more JVM, one more image, and one more compose profile. Contained by
+  construction: Spark is **optional** — `make silver` runs green on a tree where it never ran,
+  and that is test, not promise. And `make spark-evidence` publishes the pure-Python time
+  alongside it, which wins at this volume.
 
-[sources/ine-population-source/](sources/ine-population-source/) foi adicionada em
-2026-08-25, junto de três mudanças na plataforma que a fronteira Source ↔ plataforma
-acima não previa, porque só existia uma source quando foi escrita.
+### Contradictory assumptions are a model defect, and can be corrected
 
-**`platform/…/manifest.py` generalizado para um segundo eixo opcional.** Antes, `Partition`
-exigia `warehouse` e computava a raiz do snapshot subindo exatamente dois níveis fixos —
-`SOURCE_NAME` era uma constante única em `__init__.py`, e `land.py` a usava direto em vez
-de `partition.source_name` (que já existia no dataclass, populado do manifesto, mas nunca
-usado para esse fim — resíduo de um comentário que já prometia isso sem o código cumprir).
-Uma source sem eixo de armazém, como o INE, quebrava em
-`"manifesto sem partition.ingestion_date ou partition.warehouse"`. Generalizado para
-`axis_name`/`axis_value` (`None` quando não há eixo) e `SUPPORTED_MANIFEST_VERSIONS` como
-dicionário por `source_name`, mantendo a propriedade `warehouse` como compatibilidade para
-não tocar em `raw_manifest.sql` nem nos testes da Mercadona. Land e verify passaram a
-derivar o prefixo de `partition.source_name` — a mudança que torna real a promessa do
-comentário original ("para que uma segunda source aterrisse ao lado sem reorganizar
-nada").
+- **Decision.** `slot_lead_hours_*` and `sla_minutes_picking` became **derived** from the other
+  rows of the same seed.
+- **Reason.** The project's rule — refuse to adjust an assumption until the output pleases —
+  was correct and was missing a distinction: tweaking an assumption to improve a number is one
+  thing; making two assumptions **mutually coherent** is another. An alert above the arithmetic
+  ceiling and a window that opens after delivery are not undesired outcomes, they are
+  contradictions.
+- **Evidence.** 84% of deliveries arrived **before** the window opened (73,124 of 86,803); the
+  SLA threshold was 90 against a possible ceiling of 80.
+- **Trade-off.** It becomes trivially easy to keep tweaking until the KPI pleases. Contained:
+  `assert_order_premises_are_internally_coherent` checks the **derivation**, never the result —
+  measured, swapping the threshold from 60 to 75 fails, even though it's a plausible value.
 
-**`dbt build` compila o projeto inteiro, então uma source vazia derrubava as demais.**
-Medido: `read_json` do DuckDB levanta erro fatal sobre um glob sem nenhum arquivo
-correspondente — o estado normal de uma source recém-adicionada antes do primeiro land, ou
-de um clone novo do repositório. Sem tratamento, isso quebraria `make daily` da Mercadona
-inteiro só por causa do modelo do INE, mesmo em quem nunca tocou nele. A tentativa óbvia —
-fazer o SQL do modelo fingir uma relação vazia com `WHERE false` — não resolve: o próprio
-`external` materialization do dbt-duckdb, ao lidar com uma relação vazia, grava uma linha
-sentinela (todas as colunas `NULL`) num arquivo `__HIVE_DEFAULT_PARTITION__` para preservar
-o schema do parquet, e só filtra essa linha na *view* daquela mesma execução — o arquivo
-físico persiste, e a primeira execução seguinte com dado real lê o `location` inteiro de
-volta, incluindo a linha fantasma. A correção ficou fora do SQL: `retail-platform has-data
-<prefixo>` (novo subcomando, genérico — qualquer source) confere se existe algum objeto
-aterrissado, e `make silver` passa `--exclude` para o modelo de uma source sem dado ainda,
-em vez de fazer o modelo mentir sobre ter uma partição vazia.
+### RAW is sealed, not reproduced
 
-**Sources irmãs, não uma abstração "multi-source".** Quando um segundo dataset do INE
-entrar (cogitado: o Callejero do Censo Eleitoral, ver histórico do projeto), o padrão é
-outro pacote irmão completo em `sources/`, não uma camada compartilhada dentro do pacote
-do INE atual. Os dois datasets são estruturalmente distintos (API JSON pequena e instantânea
-vs. ZIP semestral de arquivos ASCII de largura fixa por província) — forçar uma interface
-comum agora encaixaria mal nos dois, e cada pacote mantém `dependencies = []` de forma
-independente e verificável por AST. Extrair um helper compartilhado só valeria a pena
-depois de existirem dois casos concretos para comparar, não antes.
+- **Decision.** `make freeze` seals the capture; `make freeze-check` verifies it.
+- **Reason.** RAW is **not** reproducible — live API, manual download, moving URL — and
+  promising otherwise would be false. Everything downstream is deterministic **given the same
+  RAW**.
+- **Evidence.** Three documentation revisions existed because a regeneration changed numbers
+  already written and nothing warned about it. The discipline became verification.
+- **Trade-off.** The seal covers the **data**, not the run: `run_id` and timestamps are left
+  out on purpose, otherwise a byte-identical re-land would break the seal — and an alarm that
+  fires with no cause trains reviewers to ignore it.
 
-## Extensão: população por município (Fase A)
+---
 
-Adicionada em 2026-08-26, sobre `ine-population-source` já existente (não uma quarta
-source) — o mecanismo de fetch já era genérico por `table_id` desde o dia 1 (ver seção
-anterior), então acrescentar `table_id=29005` (população por **município**, INE) ao lado
-de `31304` (população por **província**) foi extensão de configuração, confirmada por
-auditoria de código antes de implementar: `http_client.py`/`extract.py`/`partition.py`
-não conhecem nenhum `table_id` específico.
+# The full narrative, by phase
 
-**Motivação, não estética.** `31304` sozinho é inadequado para densidade: medido que
-"Valencia/València" nessa tabela é a **província inteira** (2,6 milhões de habitantes,
-266 municípios), não a cidade — distribuir esse número entre ruas seria dado fabricado.
-`29005` dá o número real por município, cruzável com `warehouse_service_area` (Callejero)
-para densidade de verdade.
+The sections below are **as they were written**, with the date and the numbers that held
+true on that day. A dated number doesn't rot — it was true when it was measured. What
+rots is a number presented as current state, and that's why it doesn't live here.
 
-**Colisão real entre as duas tabelas, medida antes de acontecer em produção:** "Sevilla"
-é ao mesmo tempo nome de província (lista fechada de 52 em `silver_ine_population_series`)
-E nome do município capital dessa província. Um glob genérico (`table_id=*.json`) sobre
-as duas tabelas juntas faria o classificador de `31304` (por vocabulário) capturar
-"Sevilla. Total. Total habitantes. Personas." (de `29005`) como se fosse uma linha de
-província, com sexo/idade errados. Corrigido restringindo cada modelo Silver ao seu
-próprio `table_id`, glob literal, sem wildcard compartilhado — nenhuma abstração "um
-modelo lê todas as tabelas de população", porque as duas tabelas têm vocabulário de
-`Nombre` incompatível (ver CONTRACT.md da source, § 2).
+## Second source: INE population
 
-**Nome de município não é chave seciável de fora do escopo desta plataforma.** `29005`
-não traz código, só o nome por extenso. Medido contra o payload completo de
-`VALORES_VARIABLE/19` (variável "Municipios" da mesma API Tempus3): 18 dos ~8.200
-municípios da Espanha compartilham nome com outro município em provincia diferente (ex.
-"Arroyomolinos" existe em Madrid [28015] e Cáceres [10023]) — um join por nome
-Espanha-inteira seria ambíguo para esses casos. Nenhuma colisão acontece **dentro** das 4
-províncias desta plataforma (verificado antes de escrever `ine_municipality_codes_seed`),
-então escopar o seed a 08/28/41/46 (mesmo raciocínio de `warehouse_service_area`)
-resolve isso estruturalmente, não por sorte.
+[sources/ine-population-source/](sources/ine-population-source/) was added on
+2026-08-25, along with three changes to the platform that the Source ↔ platform boundary
+above didn't foresee, because only one source existed when it was written.
 
-**Testado e descartado: reaproveitar o Callejero já landado para o código, em vez de uma
-chamada nova a `VALORES_VARIABLE/19`.** `silver_callejero_population_units` já tem
-`(province_code, municipality_code, municipality_name)` — parecia redundante buscar outra
-fonte. Descartado depois de consultar os dois ao vivo: a grafia diverge estruturalmente,
-não é só maiúscula/minúscula — o Callejero grava o nome todo em CAIXA ALTA e move o
-artigo definido para sufixo entre parênteses (`"AMETLLA DEL VALLÈS (L')"`), enquanto o
-Tempus3 (tanto `29005` quanto `VALORES_VARIABLE/19`) usa o nome natural com o artigo como
-prefixo (`"L'Ametlla del Vallès"`). Um join direto entre as duas grafias erraria
-silenciosamente. `VALORES_VARIABLE/19` foi escolhido por estar na MESMA família de
-endpoint que `29005` — confirmado 0 divergências de grafia numa amostra de 1.501 nomes.
+**`platform/…/manifest.py` generalized to a second, optional axis.** Before, `Partition`
+required `warehouse` and computed the snapshot root by climbing exactly two fixed levels —
+`SOURCE_NAME` was a single constant in `__init__.py`, and `land.py` used it directly instead
+of `partition.source_name` (which already existed in the dataclass, populated from the
+manifest, but never used for that purpose — a residue of a comment that already promised this
+without the code delivering). A source with no warehouse axis, like the INE, broke with
+`"manifest missing partition.ingestion_date or partition.warehouse"`. Generalized to
+`axis_name`/`axis_value` (`None` when there is no axis) and `SUPPORTED_MANIFEST_VERSIONS` as a
+dictionary keyed by `source_name`, keeping the `warehouse` property as compatibility so as
+not to touch `raw_manifest.sql` or the Mercadona tests. Land and verify started deriving
+the prefix from `partition.source_name` — the change that makes real the promise of the
+original comment ("so that a second source can land alongside without reorganizing
+anything").
 
-**Faixa etária por município ficou de fora, deliberadamente.** Existe uma família de
-dezenas de `table_id` do INE com município+idade (confirmado que pelo menos um,
-`33956`, é populado — mas só para a província de Zamora, sugerindo um `table_id` por
-província, não descoberto para as 4 províncias desta plataforma). Perseguir isso agora
-seria proporcional a criar outra integração inteira sem necessidade comprovada ainda.
-Decisão: manter `31304` (única fonte de estrutura etária, nível província) e `29005`
-(único fonte de densidade real, nível município) como **complementares**, não tentar
-substituir um pelo outro — se a simulação de clientes sintéticos precisar de pirâmide
-etária por município no futuro, essa família de tabelas é o próximo lugar a investigar,
-não antes.
+**`dbt build` compiles the whole project, so an empty source used to bring down the rest.**
+Measured: DuckDB's `read_json` raises a fatal error on a glob with no matching file — the
+normal state of a newly added source before its first land, or of a fresh repository clone.
+Left untreated, this would break the whole Mercadona `make daily` just because of the INE
+model, even for someone who never touched it. The obvious attempt — making the model's SQL
+fake an empty relation with `WHERE false` — doesn't fix it: dbt-duckdb's own `external`
+materialization, when handling an empty relation, writes a sentinel row (all columns `NULL`)
+into a `__HIVE_DEFAULT_PARTITION__` file to preserve the parquet schema, and only filters that
+row out in the *view* of that same run — the physical file persists, and the next run with
+real data reads the whole `location` back, including the ghost row. The fix stayed out of
+SQL: `retail-platform has-data <prefix>` (a new, generic subcommand — any source) checks
+whether any object has landed, and `make silver` passes `--exclude` for the model of a source
+with no data yet, instead of making the model lie about having an empty partition.
 
-**A extração de produção real (2026-08-26) confirmou dois problemas que só apareceram
-rodando de verdade, não em amostra.** (1) O payload sem filtro de `31304` é grande o
-bastante (~264 MB no formato canônico) pra corromper em trânsito antes de terminar — a
-primeira tentativa falhou com `JSONDecodeError` no byte 154.057.166 depois de ~33 min; o
-retry automático do `Fetcher` (já existia, tratando corpo JSON inválido como erro
-retentável) resolveu na 2ª tentativa. Total pousado: ~402 MB, 40.791 séries, 2.253.624
-pontos — ver CONTRACT.md da source para os números completos. (2) `validate --strict`
-reprovou a partição por 6 séries de `29005` sem nenhum ponto de dado — 2 municípios
-(`Gatova`/Castellón, `Palmerola`/Girona) fora das 4 províncias desta plataforma. Como
-`--strict` é uma checagem opcional por contrato (não integridade), e reprovar toda
-extração por município fora de escopo não protegeria nada real, `--strict` foi removido de
-`make ine-validate` e do DAG — mas não do Makefile interno da própria source (que continua
-buscando só `31304` por padrão, onde essa checagem nunca falhou). A contagem de séries sem
-valor continua reportada no output do `validate`, só deixou de ser fatal.
+**Sibling sources, not a "multi-source" abstraction.** When a second INE dataset comes in
+(considered: the Electoral Census Callejero, see the project history), the pattern is another
+complete sibling package in `sources/`, not a shared layer inside the current INE package.
+The two datasets are structurally distinct (a small, instant JSON API vs. a semiannual ZIP of
+fixed-width ASCII files per province) — forcing a common interface now would fit both poorly,
+and each package keeps `dependencies = []` independently and verifiably by AST. Extracting a
+shared helper would only be worth it once two concrete cases exist to compare, not before.
 
-## Terceira source: Callejero do INE
+## Extension: population by municipality (Phase A)
 
-[sources/ine-callejero-source/](sources/ine-callejero-source/), adicionada em
-2026-08-25, confirma a previsão da seção anterior: pacote irmão completo, não uma
-extensão do pacote de população. **Zero mudança estrutural na plataforma** foi
-necessária além de registrar o nome em `SUPPORTED_MANIFEST_VERSIONS` — `land.py`,
-`verify.py` e `manifest.py`, generalizados na fase anterior, funcionaram sem tocar
-código, incluindo a partição de eixo único (`ingestion_date` só, sem warehouse nem
-província como eixo formal).
+Added on 2026-08-26, on top of the already-existing `ine-population-source` (not a fourth
+source) — the fetch mechanism had already been generic by `table_id` since day 1 (see the
+previous section), so adding `table_id=29005` (population by **municipality**, INE) alongside
+`31304` (population by **province**) was a configuration extension, confirmed by a code audit
+before implementing: `http_client.py`/`extract.py`/`partition.py` don't know about any
+specific `table_id`.
 
-**Sem API — a primeira source deste tipo.** O Callejero só é publicado para download
-manual, semestral. Isso quebrou uma suposição implícita das duas sources anteriores (que
-"extract" busca dado por rede): aqui `extract` incorpora arquivos que um humano já
-baixou, sem nenhuma requisição HTTP. O verbo foi mantido por uniformidade de CLI, com o
-significado documentado explicitamente no `CONTRACT.md` da source — trocar o verbo
-quebraria a simetria do Makefile/DAG sem ganho real.
+**Motivation, not aesthetics.** `31304` alone is inadequate for density: measured that
+"Valencia/València" in that table is the **entire province** (2.6 million residents, 266
+municipalities), not the city — distributing that number across streets would be fabricated
+data. `29005` gives the real number per municipality, joinable against
+`warehouse_service_area` (Callejero) for real density.
 
-**Layout de arquivo não documentado — medido, não presumido, com um gotcha de
-ferramental no meio do caminho.** O download não trouxe "Diseño de Registro" nenhum.
-Encoding real é ISO-8859-1 (Latin-1), confirmado com `file`; um `grep` direto nos
-arquivos brutos (antes de descobrir isso) retornava vazio mesmo com o texto lá —
-descoberto depois que o `grep` deste ambiente é um wrapper de `ugrep -I`, que **ignora
-arquivos que parecem binário**, e um arquivo Latin-1 com bytes altos (acentos) dispara
-essa heurística. A correção foi checar com `grep -a` ou converter com `iconv` antes.
-O mesmo encoding, ao ler os arquivos de volta no DuckDB via `read_csv`, precisou do nome
-exato `'latin-1'` (com hífen) — `'latin1'` é rejeitado com uma lista de ~700 encodings
-suportados, nenhum deles com esse nome exato. Nenhuma das duas pegadinhas seria pega sem
-testar contra o arquivo real.
+**Real collision between the two tables, measured before it happened in production:**
+"Sevilla" is at the same time a province name (a closed list of 52 in
+`silver_ine_population_series`) AND the name of that province's capital municipality. A
+generic glob (`table_id=*.json`) over the two tables together would make the `31304`
+classifier (by vocabulary) capture "Sevilla. Total. Total habitantes. Personas." (from
+`29005`) as though it were a province row, with the wrong sex/age. Fixed by restricting each
+Silver model to its own `table_id`, literal glob, no shared wildcard — no "one model reads
+every population table" abstraction, because the two tables have incompatible `Nombre`
+vocabulary (see the source's CONTRACT.md, § 2).
 
-**Layout de coluna por arquivo** (offsets de byte, sem delimitador — lido no DuckDB via
-`read_csv(..., delim=E'\x01', hive_partitioning=1, filename=true)`, um delimitador que
-nunca aparece no dado, para trazer a linha inteira como uma coluna): `SECC` é só um
-código de 10 dígitos; `VIAS`/`PSEU` têm código + nome em 2-3 formas redundantes (larguras
-diferentes, mesmo texto); `UP` é o mais complexo — 604 caracteres, com o nome do
-MUNICÍPIO numa posição (`[94:314]`) e o nome do NÚCLEO/entidade dentro dele noutra
-(`[459:529]`), confirmado comparando conteúdo real (`"ABRERA"` repetido para várias
-entidades, cada uma com um nome de núcleo diferente — `"CAN VILALBA"`, `"SANT MIQUEL"`,
-`"*DISEMINADO*"`), não assumido por semelhança de posição com os outros arquivos. Ver
-`CONTRACT.md § 2` da source para a tabela completa.
+**A municipality name is not a key severable from outside this platform's scope.** `29005`
+carries no code, only the spelled-out name. Measured against the full payload of
+`VALORES_VARIABLE/19` (the "Municipios" variable of the same Tempus3 API): 18 of Spain's
+~8,200 municipalities share a name with another municipality in a different province (e.g.
+"Arroyomolinos" exists in Madrid [28015] and Cáceres [10023]) — a Spain-wide join by name
+would be ambiguous for those cases. No collision happens **within** this platform's 4
+provinces (verified before writing `ine_municipality_codes_seed`), so scoping the seed to
+08/28/41/46 (the same reasoning as `warehouse_service_area`) resolves this structurally, not
+by luck.
 
-**`TRAM` foi incorporado numa segunda rodada, depois de ficar deliberadamente de fora na
-primeira.** A decisão original era não inspecionar `TRAM` (o mais pesado dos 5 — 14-28 MB
-por província) até a simulação de Orders precisar de granularidade de número de porta.
-Reabriu quando ficou claro que nenhum dos outros 4 arquivos tem código postal (CEP) nem
-"bairro" com significado real fora de Valencia — e a página oficial do INE sobre o
-Callejero confirma explicitamente que é `TRAM` quem carrega "el distrito postal de cada
-tramo".
+**Tested and discarded: reusing the already-landed Callejero for the code, instead of a new
+call to `VALORES_VARIABLE/19`.** `silver_callejero_population_units` already has
+`(province_code, municipality_code, municipality_name)` — fetching another source seemed
+redundant. Discarded after querying both live: the spelling diverges structurally, not just
+upper/lower case — the Callejero writes the whole name in UPPERCASE and moves the definite
+article to a parenthetical suffix (`"AMETLLA DEL VALLÈS (L')"`), while Tempus3 (both `29005`
+and `VALORES_VARIABLE/19`) uses the natural name with the article as a prefix (`"L'Ametlla
+del Vallès"`). A direct join between the two spellings would fail silently.
+`VALORES_VARIABLE/19` was chosen for being in the SAME endpoint family as `29005` —
+confirmed 0 spelling divergences in a sample of 1,501 names.
 
-**Decodificado por medição, confirmado contra doc oficial — não presumido nos dois
-sentidos.** Layout novo (273 chars) inspecionado do zero: código de seção em `[0:10]`
-(mesmo formato de `SECC`), sufixo de entidade/núcleo em `[13:20]` (mesmo formato de
-`UP`), id de via em `[20:25]` (mesmo formato de `VIAS`) OU id de pseudovia em `[25:30]`
-(mesmo formato de `PSEU`) — mutuamente exclusivos, confirmado sem exceção em 305 mil
-linhas reais das 4 províncias. O bloco intermediário (`[42:58]`, 16 chars) resistiu a
-uma primeira leitura por regex ingênua (`\S+` colava campos adjacentes sem espaço).
-Achamos o PDF oficial ["Diseños de registro de los ficheros de intercambio de
-información INE-Ayuntamientos"](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)
-(IDA-Padrón, 2015) via busca — descreve o formato de *intercâmbio* de variações
-INE↔Ayuntamentos, não o snapshot que baixamos, mas nomeia os campos do "Tramero" na
-mesma ordem: `CUN CVIA CPSVIA MANZ CPOS TINUM EIN CEIN ESN CESN`. Usando essa ordem pra
-recortar os bytes, bateu: `CPOS` (código postal, 5 dígitos) sempre com o prefixo
-correto da província em 304.905/304.952 linhas (99,985% — as 47 exceções só em
-Barcelona), `TINUM` nunca fora de `{0,1,2}`, e a faixa `EIN`/`ESN` sempre respeitando a
-paridade que `TINUM` declara (par/ímpar) — zero exceções nas quatro. Validado também
-contra geografia real: Valencia cidade tem 30 CEPs distintos (46001-46026 + exceções),
-e pedanias específicas batem com o CEP real da área (Pinedo/El Saler → 46012, zona sul
-da cidade). O resto do registro (parte de `[58:273]`) continua não decodificado —
-inclui um campo repetido no fim que espelha `CPOS`+`TINUM`+`EIN`+`ESN` já capturados no
-início; nada além disso é extraído ou afirmado no Silver.
+**Age bracket by municipality was left out, deliberately.** There's a family of dozens of
+INE `table_id`s with municipality+age (confirmed that at least one, `33956`, is populated —
+but only for the province of Zamora, suggesting one `table_id` per province, not discovered
+for this platform's 4 provinces). Chasing this now would amount to building a whole other
+integration with no proven need yet. Decision: keep `31304` (the only source of age
+structure, province level) and `29005` (the only source of real density, municipality level)
+as **complementary**, not try to substitute one for the other — if the synthetic customer
+simulation needs an age pyramid by municipality in the future, that family of tables is the
+next place to investigate, not before.
 
-**`warehouse_province_map` não é gerado por esta source.** O seed
-(`platform/dbt/seeds/warehouse_province_map_seed.csv`) foi derivado do Callejero
-manualmente durante o desenvolvimento (`scripts/derive_warehouse_province_map.py`,
-cruzando o nome do município em `UP` contra a existência de seções em `SECC`), e existe
-independente da source em si. A source do Callejero não sabe que warehouses existem —
-produz `province_code`/`municipality_code` como o INE os publica, sem nenhuma referência
-a `mad1`/`bcn1`/`svq1`/`vlc1`. O vínculo é uma decisão desta plataforma, não uma
-propriedade do INE, e só entra via `JOIN` no Silver/Gold.
+**The real production extraction (2026-08-26) confirmed two problems that only showed up
+running for real, not on a sample.** (1) The unfiltered `31304` payload is large enough (~264
+MB in the canonical format) to get corrupted in transit before finishing — the first attempt
+failed with `JSONDecodeError` at byte 154,057,166 after ~33 min; the `Fetcher`'s automatic
+retry (already existed, treating an invalid JSON body as a retryable error) resolved it on
+the 2nd attempt. Total landed: ~402 MB, 40,791 series, 2,253,624 data points — see the
+source's CONTRACT.md for the full numbers. (2) `validate --strict` failed the partition over
+6 `29005` series with no data point at all — 2 municipalities (`Gatova`/Castellón,
+`Palmerola`/Girona) outside this platform's 4 provinces. Since `--strict` is an optional
+contract check (not integrity), and failing the whole extraction over an out-of-scope
+municipality wouldn't protect anything real, `--strict` was removed from `make ine-validate`
+and the DAG — but not from the source's own internal Makefile (which still fetches only
+`31304` by default, where this check never failed). The count of series with no value is
+still reported in the `validate` output, it just stopped being fatal.
 
-**`warehouse_service_area` — mesmo mecanismo, pergunta diferente.** `município = wh`
-(1:1) não é o mesmo que "área que o warehouse atende" (N municípios vizinhos). Consultar
-só `warehouse_province_map` faz um município real e adjacente (ex. Albal, vizinho de
-Valencia, mas administrativamente independente — prefeitura, CEP e código de município
-próprios) parecer "não existir" na geografia do warehouse, quando na verdade só estava
-fora do escopo da consulta. A fonte da lista não podia ser inventada nem estimada por
-proximidade (o Callejero não tem coordenada nem adjacência) — usamos a "Área Urbana
-Funcional" do INE (AUF, ex-LUZ): metodologia oficial única para o país inteiro (um
-município entra na AUF de uma cidade se ≥15% da população empregada comuta pra lá por
-trabalho), baixada como Excel de `ine.es` e parseada com `zipfile`+`xml.etree` da stdlib
-(um `.xlsx` é só um zip de XML — nenhuma dependência nova precisou entrar). Cada um dos
-370 municípios resultantes foi cross-validado contra o Callejero real antes de entrar no
-seed (`scripts/derive_warehouse_service_area.py`): confirmado que existe pelo menos uma
-seção `SECC` com aquele prefixo de província+município, e o nome usado é o do `UP` real
-(não o texto do Excel do INE), pra bater exatamente com
-`silver_callejero_population_units.municipality_name`. **Limitação aceita
-conscientemente**: a AUF oficial de Madrid tem 166 municípios, mas 38 caem em Ávila,
-Guadalajara ou Toledo — províncias que esta plataforma nunca baixou do Callejero (só
-08/28/41/46). Barcelona tem o mesmo problema em menor escala (2 de 135, em Tarragona).
-Sevilla (46/46) e Valencia (63/63) não têm essa lacuna — a AUF de ambas cabe inteira nas
-provincias já landadas. Decisão explícita do usuário: usar o que já está baixado agora,
-em vez de estender a source do Callejero pra mais 4 províncias só pelos municípios de
-fronteira.
+## Third source: INE Callejero
 
-## Quarta source: OLTP simulado (Fase 1 — Customers)
+[sources/ine-callejero-source/](sources/ine-callejero-source/), added on 2026-08-25,
+confirms the previous section's prediction: a complete sibling package, not an extension of
+the population package. **Zero structural change to the platform** was needed beyond
+registering the name in `SUPPORTED_MANIFEST_VERSIONS` — `land.py`, `verify.py`, and
+`manifest.py`, generalized in the previous phase, worked without touching code, including the
+single-axis partition (`ingestion_date` only, no warehouse or province as a formal axis).
 
-[sources/simulated-oltp-source/](sources/simulated-oltp-source/), adicionada em
-2026-08-27. É a **primeira source derivada** do repositório: as outras três são upstream
-de dado externo, esta consome o Silver que elas produziram e devolve uma RAW nova. A
-inversão de direção é o ponto — sem as três anteriores, gerar um cliente sintético
-significaria inventar endereço; com elas, o cliente é inventado e o lugar onde ele mora
-não.
+**No API — the first source of this type.** The Callejero is only published for manual,
+semiannual download. That broke an implicit assumption of the two previous sources (that
+"extract" fetches data over the network): here `extract` ingests files a human has already
+downloaded, with no HTTP request at all. The verb was kept for CLI uniformity, with the
+meaning documented explicitly in the source's `CONTRACT.md` — swapping the verb would break
+the Makefile/DAG symmetry with no real gain.
 
-**A tensão que precisou ser resolvida antes de escrever uma linha.** Toda Source deste
-repo é FROZEN (`dependencies = []`, imposto por AST em `tests/test_dependencies.py`), e
-`duckdb`/`boto3` são dependências exclusivas da plataforma por design explícito
-(`platform/pyproject.toml`: "os dois conjuntos nunca se encontram"). Uma Source que
-precisa de dado do Lakehouse não pode abrir conexão sem quebrar essa fronteira.
+**Undocumented file layout — measured, not assumed, with a tooling gotcha along the way.**
+The download brought no "Diseño de Registro" at all. The real encoding is ISO-8859-1
+(Latin-1), confirmed with `file`; a `grep` straight on the raw files (before discovering
+this) returned empty even with the text right there — discovered afterward that this
+environment's `grep` is a wrapper around `ugrep -I`, which **ignores files that look
+binary**, and a Latin-1 file with high bytes (accents) triggers that heuristic. The fix was
+checking with `grep -a` or converting with `iconv` first. The same encoding, when reading the
+files back into DuckDB via `read_csv`, needed the exact name `'latin-1'` (with a hyphen) —
+`'latin1'` is rejected with a list of ~700 supported encodings, none of them under that exact
+name. Neither gotcha would have been caught without testing against the real file.
 
-A saída reusa o precedente que o Callejero já tinha criado, um nível antes na cadeia: lá
-`extract` não busca rede, incorpora arquivos já preparados em `--in`. Aqui a **plataforma**
-ganhou um subcomando (`retail-platform export-oltp-reference`) que consulta o Silver e
-escreve três JSON planos; o `extract` da Source os lê só com a stdlib. Nenhum lado importa
-o código do outro — compartilham um contrato **físico**, o mesmo mecanismo que
-`land.py`/`manifest.py` já usam com o manifesto de qualquer Source. **Zero mudança
-estrutural na plataforma** além de registrar o nome em `SUPPORTED_MANIFEST_VERSIONS`.
+**Per-file column layout** (byte offsets, no delimiter — read in DuckDB via
+`read_csv(..., delim=E'\x01', hive_partitioning=1, filename=true)`, a delimiter that never
+appears in the data, to bring the whole line in as one column): `SECC` is just a 10-digit
+code; `VIAS`/`PSEU` have code + name in 2-3 redundant forms (different widths, same text);
+`UP` is the most complex — 604 characters, with the MUNICIPALITY name at one position
+(`[94:314]`) and the name of the NÚCLEO/entity within it at another (`[459:529]`), confirmed
+by comparing real content (`"ABRERA"` repeated for several entities, each with a different
+núcleo name — `"CAN VILALBA"`, `"SANT MIQUEL"`, `"*DISEMINADO*"`), not assumed from
+positional similarity with the other files. See the source's `CONTRACT.md § 2` for the full
+table.
 
-**O que a revisão adversarial pegou antes da implementação.** Três rodadas de revisão
-contra o Lakehouse real, e a maior parte do valor veio de medir em vez de presumir:
+**`TRAM` was brought in during a second round, after being deliberately left out in the
+first.** The original decision was not to inspect `TRAM` (the heaviest of the 5 — 14-28 MB
+per province) until the Orders simulation needed house-number granularity. It reopened once
+it became clear that none of the other 4 files carries a postal code (CEP) or a
+"neighborhood" with real meaning outside Valencia — and the INE's official page on the
+Callejero explicitly confirms that it's `TRAM` that carries "el distrito postal de cada
+tramo" (the postal district of each segment).
 
-- **O join de nome de município zerava Valência.** O desenho inicial casava
-  `tramos.unit_code` com a linha agregada de `population_units`. Medido: **0 de 7.194**
-  tramos de `vlc1` — València é o único dos 4 municípios-sede com núcleos/pedanias reais,
-  então nenhum tramo pendura na linha agregada. Corrigido para casar por
-  `(province_code, municipality_code)`: 7.194/7.194.
-- **Os seeds do dbt não são alcançáveis por `connect_lakehouse()`.**
-  `warehouse_service_area_seed` e `warehouse_province_map_seed` não têm `location =` no
-  `dbt_project.yml`, então o dbt-duckdb os materializa dentro do `retail.duckdb` local e
-  eles nunca viram parquet sob `silver/`, que é tudo que aquela função enxerga. O export
-  lê os dois CSV direto.
-- **Os 103 `age_label` da tabela 31304 não formam uma partição.** Junto das 101 idades
-  simples convivem dois agregados sobrepostos, `Total` e `85 y más años`. Somar os 103
-  ingenuamente dá **2,03×** o valor correto (medido em Madrid/2022: 27.724.421 contra
-  13.650.010, que é exatamente o rótulo `Total`). Sem `where age_label not in (...)`, a
-  pirâmide etária de todos os clientes sairia errada e **nenhum teste do plano anterior a
-  pegaria**.
-- **`silver_ine_population_series` está duplicada em duas `ingestion_date`** com linhas
-  idênticas (1.547.496 cada). O export fixa `max(ingestion_date)`.
-- **Filtrar por `numbering_type='0'` não basta para não fabricar número.** Existem 14
-  tramos com `numbering_type='2'` e faixa `0000..0000`: sortear em `[0,0]` daria número de
-  casa 0. O 0 é excluído do conjunto amostrável.
-- **A rastreabilidade que o plano prometia era falsa.** `(street_code, postal_code)`
-  identifica sozinho apenas **13,3%** dos tramos do escopo (105.112 combinações para
-  216.594 tramos; a maior cobre 70). Nem uma chave de 7 colunas basta — o grão real tem
-  11. Resolvido com `candidate_index`: um inteiro que aponta a linha exata da referência.
-- **Nenhuma das duas fontes do INE grafa município igual.** Em **370 de 370** casos o
-  Callejero usa caixa alta com artigo entre parênteses (`BRUC (EL)`) e a tabela 29005 usa
-  caixa mista com artigo posposto (`Bruc, El`). Isso foi descoberto porque a validação
-  reprovou 200/200 clientes na primeira execução real. Os dois nomes convivem na
-  referência com rótulos distintos, e o que se compara é sempre o **código**.
+**Decoded by measurement, confirmed against official documentation — not assumed in either
+direction.** New layout (273 chars) inspected from scratch: section code at `[0:10]` (same
+format as `SECC`), entity/núcleo suffix at `[13:20]` (same format as `UP`), street id at
+`[20:25]` (same format as `VIAS`) OR pseudo-street id at `[25:30]` (same format as `PSEU`) —
+mutually exclusive, confirmed with no exception across 305 thousand real rows from the 4
+provinces. The intermediate block (`[42:58]`, 16 chars) resisted a first pass with a naive
+regex (`\S+` glued adjacent fields together with no space). We found the official PDF
+["Diseños de registro de los ficheros de intercambio de información
+INE-Ayuntamientos"](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF) (IDA-Padrón,
+2015) via search — it describes the *exchange* format for variations between the INE and
+municipalities (Ayuntamientos), not the snapshot we downloaded, but it names the "Tramero"
+fields in the same order: `CUN CVIA CPSVIA MANZ CPOS TINUM EIN CEIN ESN CESN`. Using that
+order to cut the bytes, it matched: `CPOS` (postal code, 5 digits) always with the correct
+province prefix in 304,905/304,952 rows (99.985% — the 47 exceptions only in Barcelona),
+`TINUM` never outside `{0,1,2}`, and the `EIN`/`ESN` range always respecting the parity that
+`TINUM` declares (even/odd) — zero exceptions across all four. Also validated against real
+geography: the city of Valencia has 30 distinct postal codes (46001-46026 + exceptions), and
+specific pedanías match the real postal code of the area (Pinedo/El Saler → 46012, southern
+zone of the city). The rest of the record (part of `[58:273]`) remains undecoded — it
+includes a field repeated at the end that mirrors `CPOS`+`TINUM`+`EIN`+`ESN` already captured
+at the beginning; nothing beyond that is extracted or asserted in Silver.
 
-**Um defeito do nosso próprio Silver, encontrado de raspão — e corrigido.** Três
-municípios recebiam duas linhas de população (Arroyomolinos e El Molar em `mad1`, Torrent
-em `vlc1`). A causa medida não é anomalia do INE nem colisão do seed (0 colisões nas 4
-províncias): a tabela RAW 29005 é nacional e traz duas séries com `Nombre` idêntico para
-municípios homônimos de províncias diferentes, e o `inner join ... on municipality_name`
-casa só por nome. Foi registrado como dívida técnica na entrega da Fase 1 e **fechado no
-mesmo dia**, pelo código oficial do INE em vez de heurística — ver "Fanout de homônimo no
-Silver de população", abaixo.
+**`warehouse_province_map` is not generated by this source.** The seed
+(`platform/dbt/seeds/warehouse_province_map_seed.csv`) was derived from the Callejero
+manually during development (`scripts/derive_warehouse_province_map.py`, cross-referencing
+the municipality name in `UP` against the existence of sections in `SECC`), and exists
+independent of the source itself. The Callejero source doesn't know warehouses exist — it
+produces `province_code`/`municipality_code` the way the INE publishes them, with no
+reference to `mad1`/`bcn1`/`svq1`/`vlc1`. The link is a decision of this platform, not a
+property of the INE, and only enters via `JOIN` in Silver/Gold.
 
-**Escolhas de vocabulário: preservar, não renomear.** O primeiro desenho criava um campo
-`address_precision` com valores `house`/`street` para dizer se o endereço tinha número. O
-repo já tinha a resposta: `numbering_type`, com `accepted_values ["0","1","2"]`, modela
-exatamente esse fato. Inventar vocabulário novo colapsaria `1` e `2` numa coisa só,
-apagando a paridade — que é justamente a garantia a auditar. O cliente carrega
-`numbering_type` verbatim, e `house_number` fica `null` (nunca ausente) quando não há
-número: uma chave opcional faria o `schema_fingerprint` da partição depender da seed,
-porque a impressão digital é a união das chaves observadas.
+**`warehouse_service_area` — same mechanism, different question.** `municipality = wh` (1:1)
+is not the same as "area the warehouse serves" (N neighboring municipalities). Querying only
+`warehouse_province_map` makes a real, adjacent municipality (e.g. Albal, a neighbor of
+Valencia, but administratively independent — with its own town hall, postal code, and
+municipality code) look like it "doesn't exist" in the warehouse's geography, when in fact it
+was simply outside the query's scope. The source for the list couldn't be invented or
+estimated by proximity (the Callejero has no coordinate or adjacency) — we used the INE's
+"Functional Urban Area" (AUF, formerly LUZ): the single official methodology for the whole
+country (a municipality enters a city's AUF if ≥15% of the employed population commutes there
+for work), downloaded as an Excel file from `ine.es` and parsed with the stdlib's
+`zipfile`+`xml.etree` (an `.xlsx` is just a zip of XML — no new dependency had to be added).
+Each of the resulting 370 municipalities was cross-validated against the real Callejero
+before entering the seed (`scripts/derive_warehouse_service_area.py`): confirmed that at
+least one `SECC` section exists with that province+municipality prefix, and the name used is
+the real `UP`'s name (not the INE's Excel text), to match exactly
+`silver_callejero_population_units.municipality_name`. **Consciously accepted limitation**:
+Madrid's official AUF has 166 municipalities, but 38 fall in Ávila, Guadalajara, or Toledo —
+provinces this platform has never downloaded from the Callejero (only 08/28/41/46). Barcelona
+has the same problem at a smaller scale (2 of 135, in Tarragona). Sevilla (46/46) and
+Valencia (63/63) have no such gap — both AUFs fit entirely within the provinces already
+landed. Explicit user decision: use what's already downloaded now, instead of extending the
+Callejero source to 4 more provinces just for the border municipalities.
 
-**Reprodutibilidade teve de ser construída, não herdada.** Esta é a primeira source com
-aleatoriedade — não havia nenhum uso de `random` no repo. Dois riscos reais: nenhum dos 6
-modelos Silver da junção tem `ORDER BY` (a ordem vem do scan do DuckDB e não é estável),
-e o hash de `str` em CPython é aleatorizado por processo. As três queries do export levam
-`ORDER BY` explícito, e o gerador nunca itera `set` nem `dict` reconstruído. A garantia é
-verificada rodando a mesma seed em subprocessos com `PYTHONHASHSEED` diferente.
+## Fourth source: simulated OLTP (Phase 1 — Customers)
 
-**Resultado medido na primeira execução real** (Callejero `2026-08-25`, população
-`2026-08-26`): 216.591 candidatos de endereço (3 órfãos excluídos), 370 municípios, 800
-clientes em 4 partições, **200/200 coerentes em cada armazém**, 14 sem número de casa, 2
-em pseudovia. Injetar um CEP de fora da AUF faz `oltp-validate` reprovar com código 1 —
-verificado ponta a ponta, não só em teste unitário.
+[sources/simulated-oltp-source/](sources/simulated-oltp-source/), added on 2026-08-27. It is
+the **first derived source** in the repository: the other three are upstream of external
+data, this one consumes the Silver that they produced and hands back a new RAW. The inverted
+direction is the point — without the previous three, generating a synthetic customer would
+mean inventing their address; with them, the customer is invented and where they live is not.
 
-**Deliberadamente fora da Fase 1:** modelo Silver e DAG do Airflow. Nenhuma source deste
-repo ganhou modelo Silver antes de ter um consumidor. **Ambos entraram na Fase 2**
-(`silver_customer`, `silver_oltp_manifest`, `simulated_oltp_customers.py`), junto do
-consumidor que faltava — o modelo dimensional.
+**The tension that had to be resolved before writing a line.** Every Source in this repo is
+FROZEN (`dependencies = []`, enforced by AST in `tests/test_dependencies.py`), and
+`duckdb`/`boto3` are platform-only dependencies by explicit design (`platform/pyproject.toml`:
+"the two sets never meet"). A Source that needs data from the Lakehouse can't open a
+connection without breaking that boundary.
 
-**A base é recarregável, e isso é uma propriedade do código, não uma promessa.** Verificado
-lendo `customers_generator.py`: o laço é `for index in range(count)` sobre uma única
-`random.Random(seed)` consumida em ordem fixa, e **nada antes do laço depende de `count`**.
-Logo `generate(ref, wh, N, seed, data)[:M] == generate(ref, wh, M, seed, data)` — crescer a
-base é **append-only**, sem tocar a Source congelada. Provado ponta a ponta: regerar de 200
-para 5.000 clientes preservou os 200 originais **byte a byte** nos quatro armazéns, com os
-sha256 conferidos. Cobertura da AUF de `mad1` subiu de 46 para 125 dos 128 municípios.
+The way out reuses a precedent the Callejero had already created, one level up the chain:
+there, `extract` doesn't fetch over the network, it ingests files already prepared under
+`--in`. Here the **platform** gained a subcommand (`retail-platform export-oltp-reference`)
+that queries Silver and writes three flat JSON files; the Source's `extract` reads them using
+only the stdlib. Neither side imports the other's code — they share a **physical** contract,
+the same mechanism `land.py`/`manifest.py` already use with any Source's manifest. **Zero
+structural change to the platform** beyond registering the name in
+`SUPPORTED_MANIFEST_VERSIONS`.
 
-As duas condições que **não** são aditivas, ditas explicitamente: outra `ingestion_date`
-preserva a idade amostrada e desloca `birth_year` (a mesma pessoa, mais velha); outra seed
-troca as pessoas por trás dos mesmos ids. O manifesto registra as duas em `history`, com a
-seed e o `count` de cada execução anterior. É por isso que `DIM_CUSTOMER` é SCD2 e não uma
-tabela fixa.
+**What adversarial review caught before implementation.** Three rounds of review against the
+real Lakehouse, and most of the value came from measuring instead of assuming:
 
-Orders, estoque e entrega continuam fora — ver "Fase 2: camada analítica no Snowflake".
+- **The municipality-name join zeroed out Valencia.** The initial design matched
+  `tramos.unit_code` against the aggregated row of `population_units`. Measured: **0 of
+  7,194** `vlc1` tramos — València is the only one of the 4 hub municipalities with real
+  núcleos/pedanías, so no tramo hangs off the aggregate row. Fixed to match by
+  `(province_code, municipality_code)`: 7,194/7,194.
+- **The dbt seeds aren't reachable by `connect_lakehouse()`.** `warehouse_service_area_seed`
+  and `warehouse_province_map_seed` have no `location =` in `dbt_project.yml`, so dbt-duckdb
+  materializes them inside the local `retail.duckdb` and they never become parquet under
+  `silver/`, which is all that function sees. The export reads both CSVs directly.
+- **The 103 `age_label` values of table 31304 don't form a partition.** Alongside the 101
+  single ages sit two overlapping aggregates, `Total` and `85 y más años`. Naively summing all
+  103 gives **2.03×** the correct value (measured for Madrid/2022: 27,724,421 against
+  13,650,010, which is exactly the `Total` label). Without `where age_label not in (...)`, the
+  age pyramid of every customer would come out wrong and **no test in the previous plan would
+  catch it**.
+- **`silver_ine_population_series` is duplicated across two `ingestion_date`** with identical
+  rows (1,547,496 each). The export pins `max(ingestion_date)`.
+- **Filtering by `numbering_type='0'` isn't enough to avoid fabricating a number.** There are
+  14 tramos with `numbering_type='2'` and a `0000..0000` range: drawing from `[0,0]` would
+  yield house number 0. 0 is excluded from the sampleable set.
+- **The traceability the plan promised was false.** `(street_code, postal_code)` alone
+  identifies only **13.3%** of the tramos in scope (105,112 combinations for 216,594 tramos;
+  the largest covers 70). Not even a 7-column key is enough — the real grain has 11. Resolved
+  with `candidate_index`: an integer pointing to the exact row in the reference.
+- **Neither of the two INE sources spells a municipality the same way.** In **370 of 370**
+  cases the Callejero uses uppercase with the article in parentheses (`BRUC (EL)`) and table
+  29005 uses mixed case with the article postposed (`Bruc, El`). This was discovered because
+  validation failed 200/200 customers on the first real run. Both names live in the reference
+  under distinct labels, and what's ever compared is always the **code**.
 
-## Consolidação operacional da Fase 1
+**A defect in our own Silver, found in passing — and fixed.** Three municipalities were
+getting two population rows each (Arroyomolinos and El Molar in `mad1`, Torrent in `vlc1`).
+The measured cause is neither an INE anomaly nor a seed collision (0 collisions across the 4
+provinces): the RAW 29005 table is national and carries two series with an identical `Nombre`
+for homonymous municipalities in different provinces, and the `inner join ...
+on municipality_name` matches by name alone. It was logged as technical debt at the Phase 1
+delivery and **closed the same day**, using the INE's official code instead of a heuristic —
+see "Homonym fanout in the population Silver," below.
 
-Três problemas que só apareceram ao perguntar "o que acontece se eu rodar isto de novo?" —
-nenhum era visível numa execução única, e os três davam resultado errado em silêncio.
+**Vocabulary choices: preserve, don't rename.** The first design created an
+`address_precision` field with values `house`/`street` to say whether the address had a
+number. The repo already had the answer: `numbering_type`, with `accepted_values
+["0","1","2"]`, models exactly that fact. Inventing new vocabulary would collapse `1` and `2`
+into one thing, erasing the parity — which is exactly the guarantee worth auditing. The
+customer carries `numbering_type` verbatim, and `house_number` stays `null` (never absent)
+when there's no number: an optional key would make the partition's `schema_fingerprint`
+depend on the seed, because the fingerprint is the union of the observed keys.
 
-**O timeout padrão não servia para estas tabelas, e nem o Makefile nem a DAG corrigiam.**
-A Source usa `DEFAULT_TIMEOUT = 30.0`, dimensionado para uma chamada de API comum. Estas
-não são comuns: 264 MB (31304) e 125 MB (29005) num único `GET`. A extração que funcionou
-nesta máquina foi uma invocação **manual** com `--timeout 240 --max-retries 3` — o caminho
-automatizado teria estolado. Os dois caminhos agora passam os mesmos valores
-(`INE_TIMEOUT`/`INE_MAX_RETRIES` no Makefile, `RETAIL_INE_TIMEOUT`/`RETAIL_INE_MAX_RETRIES`
-no compose e na DAG). O default genérico da Source fica como está: **quem sabe o tamanho da
-tabela é quem a pede**, e é no chamador que isso está escrito.
+**Reproducibility had to be built, not inherited.** This is the first source with
+randomness — there was no use of `random` anywhere in the repo before. Two real risks: none
+of the join's 6 Silver models has an `ORDER BY` (the order comes from DuckDB's scan and isn't
+stable), and CPython's `str` hash is randomized per process. The export's three queries carry
+an explicit `ORDER BY`, and the generator never iterates a `set` or a reconstructed `dict`.
+The guarantee is verified by running the same seed in subprocesses with different
+`PYTHONHASHSEED`.
 
-**Reextrair a mesma publicação duplicava linhas no Silver, sem erro visível.** Os modelos
-de referência empilham todas as `ingestion_date` de propósito — o histórico é deliberado —
-mas nada marcava qual era a atual. Medido: `silver_ine_population_series` com 1.547.496
-linhas em **cada** uma de duas datas, ou seja, 3.094.992 no total; qualquer contagem sem
-filtro saía dobrada. Os sete modelos passaram a expor `is_latest_ingestion`
-(`ingestion_date = max(ingestion_date) over ()`), um teste dbt garante que a flag marca
-exatamente uma data por modelo, e `export-oltp-reference` trocou seus `max(ingestion_date)`
-espalhados por `where is_latest_ingestion`. Os modelos da Mercadona **não** ganharam a
-coluna: lá as várias datas são o produto, não um efeito colateral.
+**Result measured on the first real run** (Callejero `2026-08-25`, population `2026-08-26`):
+216,591 address candidates (3 orphans excluded), 370 municipalities, 800 customers across 4
+partitions, **200/200 coherent in each warehouse**, 14 with no house number, 2 on a
+pseudo-street. Injecting a postal code from outside the AUF makes `oltp-validate` fail with
+exit code 1 — verified end to end, not only in a unit test.
 
-**`data/` crescia sem limite e nada nunca era apagado.** Depois de `land` +
-`verify-landing`, a cópia local é redundante. `retail-platform prune-local` remove a
-partição local, mas só depois de **duas** conferências: a cópia local contra o próprio
-manifesto e o destino contra esse mesmo manifesto. A primeira não é redundante — o smoke
-test contra o MinIO real mostrou que sem ela um arquivo local corrompido era apagado como
-se estivesse íntegro, porque `verify-landing` compara o objeto com o manifesto e o objeto
-continuava certo. Não há `--force`, e o alvo nunca entra num `*-refresh`: apagar dado é
-decisão de quem opera.
+**Deliberately out of Phase 1:** Silver model and Airflow DAG. No source in this repo got a
+Silver model before it had a consumer. **Both entered Phase 2** (`silver_customer`,
+`silver_oltp_manifest`, `simulated_oltp_customers.py`), together with the missing
+consumer — the dimensional model.
 
-## Fase 2: camada analítica no Snowflake
+**The base is reloadable, and that is a property of the code, not a promise.** Verified by
+reading `customers_generator.py`: the loop is `for index in range(count)` over a single
+`random.Random(seed)` consumed in fixed order, and **nothing before the loop depends on
+`count`**. So `generate(ref, wh, N, seed, data)[:M] == generate(ref, wh, M, seed, data)` —
+growing the base is **append-only**, without touching the frozen Source. Proved end to end:
+regenerating from 200 to 5,000 customers preserved the original 200 **byte for byte** across
+all four warehouses, with the sha256 checked. `mad1`'s AUF coverage rose from 46 to 125 of
+128 municipalities.
 
-Adicionada em 2026-08-27. É a primeira vez que este repositório atravessa a fronteira
-entre dois motores de banco.
+The two conditions that are **not** additive, stated explicitly: another `ingestion_date`
+preserves the sampled age and shifts `birth_year` (the same person, older); another seed
+swaps the people behind the same ids. The manifest logs both in `history`, with the seed and
+the `count` of each previous run. That's why `DIM_CUSTOMER` is SCD2 and not a fixed table.
 
-**A pergunta não foi "como levo dado para o Snowflake", foi "quanto não deveria ir".**
-Medido quando a decisão foi tomada (2026-08-27): o Silver tinha 3.796.213 linhas, das
-quais **3.094.992 (81,5%)** eram `silver_ine_population_series` — população **nacional**,
-das quais apenas **57.072 (1,8%)** no escopo das 4 províncias. Outras 517 mil são resolução
-de endereço do Callejero, que serve ao gerador de clientes, não ao analista. Atravessavam
-**146.240 linhas, 3,85%**, e ficavam no S3 os outros 95%. Carregar o Silver inteiro seria
-pagar armazenamento por 27× o dado útil.
+Orders, stock, and delivery remain out of scope — see "Phase 2: analytical layer on
+Snowflake."
 
-**A razão NÃO é uma propriedade do pipeline, e dizer "oscila em torno de 5%" foi um erro
-de leitura que a Fase 3 desfez.** Ela é função de **quanto de cada source cai dentro do
-escopo** — e como as sources crescem em ritmos diferentes, a razão se move sozinha, sem
-ninguém tocar no recorte:
+## Phase 1 operational consolidation
 
-| medido em | Silver | atravessa | razão | o que mudou |
+Three problems that only showed up when asking "what happens if I run this again?" — none
+was visible on a single run, and all three gave a wrong result silently.
+
+**The default timeout didn't fit these tables, and neither the Makefile nor the DAG corrected
+it.** The Source uses `DEFAULT_TIMEOUT = 30.0`, sized for a common API call. These aren't
+common: 264 MB (31304) and 125 MB (29005) in a single `GET`. The extraction that worked on
+this machine was a **manual** invocation with `--timeout 240 --max-retries 3` — the automated
+path would have stalled. Both paths now pass the same values
+(`INE_TIMEOUT`/`INE_MAX_RETRIES` in the Makefile, `RETAIL_INE_TIMEOUT`/`RETAIL_INE_MAX_RETRIES`
+in compose and in the DAG). The Source's generic default stays as is: **whoever knows the size
+of the table is whoever requests it**, and that's written in the caller.
+
+**Re-extracting the same release duplicated rows in Silver, with no visible error.** The
+reference models stack every `ingestion_date` on purpose — the history is deliberate — but
+nothing marked which one was current. Measured: `silver_ine_population_series` with 1,547,496
+rows on **each** of two dates, i.e. 3,094,992 total; any unfiltered count came out doubled.
+The seven models started exposing `is_latest_ingestion` (`ingestion_date =
+max(ingestion_date) over ()`), a dbt test guarantees the flag marks exactly one date per
+model, and `export-oltp-reference` swapped its scattered `max(ingestion_date)` calls for
+`where is_latest_ingestion`. The Mercadona models did **not** gain the column: there, the
+several dates are the product, not a side effect.
+
+**`data/` grew without limit and nothing was ever deleted.** After `land` + `verify-landing`,
+the local copy is redundant. `retail-platform prune-local` removes the local partition, but
+only after **two** checks: the local copy against its own manifest, and the destination
+against that same manifest. The first isn't redundant — the smoke test against real MinIO
+showed that without it a corrupted local file was deleted as if it were intact, because
+`verify-landing` compares the object with the manifest and the object was still fine. There's
+no `--force`, and the target never enters a `*-refresh`: deleting data is a decision for
+whoever operates it.
+
+## Phase 2: analytical layer on Snowflake
+
+Added on 2026-08-27. This is the first time this repository crosses the boundary between two
+database engines.
+
+**The question wasn't "how do I get data into Snowflake," it was "how much shouldn't go."**
+Measured when the decision was made (2026-08-27): Silver had 3,796,213 rows, of which
+**3,094,992 (81.5%)** were `silver_ine_population_series` — **national** population, of which
+only **57,072 (1.8%)** fell within the scope of the 4 provinces. Another 517 thousand are
+Callejero address resolution, which serves the customer generator, not the analyst.
+**146,240 rows, 3.85%,** crossed over, and the other 95% stayed in S3. Loading the whole
+Silver would mean paying for storage on 27× the useful data.
+
+**The ratio is NOT a property of the pipeline, and saying it "hovers around 5%" was a reading
+error that Phase 3 undid.** It is a function of **how much of each source falls within
+scope** — and as the sources grow at different rates, the ratio moves on its own, with nobody
+touching the cut:
+
+| measured on | Silver | crosses over | ratio | what changed |
 |---|---:|---:|---:|---|
-| 2026-08-27 (Fase 2) | 3.796.213 | 146.240 | **3,85%** | só catálogo, população e clientes |
-| 2026-08-29 (Fase 3) | 4.087.507 | 406.855 | **9,95%** | Orders entrou, e nasce dentro das AUFs |
-| 2026-09-01 (Fase 6) | 7.098.881 | 3.327.809 | **46,9%** | clientes ×14 e pedidos ×14, ambos 100% no escopo |
+| 2026-08-27 (Phase 2) | 3,796,213 | 146,240 | **3.85%** | only catalog, population, and customers |
+| 2026-08-29 (Phase 3) | 4,087,507 | 406,855 | **9.95%** | Orders came in, and is born inside the AUFs |
+| 2026-09-01 (Phase 6) | 7,098,881 | 3,327,809 | **46.9%** | customers ×14 and orders ×14, both 100% in scope |
 
-O que continua fixo é o denominador que **não** atravessa: `silver_ine_population_series`
-tem 3.094.992 linhas nacionais das quais 1,8% estão no escopo, e o Callejero tem 517 mil de
-resolução de endereço que servem ao gerador, não ao analista. Sem Orders o recorte é 19,2%.
+What stays fixed is the denominator that does **not** cross over: `silver_ine_population_series`
+has 3,094,992 national rows of which 1.8% are in scope, and the Callejero has 517 thousand
+of address resolution that serve the generator, not the analyst. Without Orders the cut is
+19.2%.
 
-**Ler 46,9% como "o recorte afrouxou" é o mesmo erro que ler 5% como propriedade.** Nenhuma
-regra mudou desde a Fase 2: escopo geográfico, última ingestão, dedup de grão. O que mudou
-foi a proporção entre uma source nacional que quase não entra e duas sintéticas que entram
-inteiras — e é exatamente por isso que o número sai de `make warehouse-evidence` e não deste
-parágrafo.
+**Reading 46.9% as "the cut loosened" is the same mistake as reading 5% as a property.** No
+rule changed since Phase 2: geographic scope, latest ingestion, grain dedup. What changed was
+the proportion between a national source that barely enters and two synthetic ones that enter
+whole — and that is exactly why the number comes out of `make warehouse-evidence` and not out
+of this paragraph.
 
-O número de qualquer momento sai de `make warehouse-evidence`, não deste parágrafo. O que
-**não** muda com o tempo é a estrutura da decisão: o recorte é escopo geográfico + última
-ingestão + dedup de grão, e nenhuma regra de negócio.
+The number at any given moment comes out of `make warehouse-evidence`, not this paragraph.
+What does **not** change over time is the structure of the decision: the cut is geographic
+scope + latest ingestion + grain dedup, and no business rule.
 
-**O recorte é deliberadamente burro:** escopo geográfico, última ingestão, dedup de grão.
-Nenhuma regra de negócio — se aparecer um `case when` de domínio em `snowflake_export.py`,
-está no lugar errado. É o que impede a mesma lógica existir em dois motores e divergir.
+**The cut is deliberately dumb:** geographic scope, latest ingestion, grain dedup. No business
+rule — if a domain `case when` shows up in `snowflake_export.py`, it's in the wrong place.
+That's what keeps the same logic from existing in two engines and diverging.
 
-**A única exceção declarada** é excluir agregados que a fonte mistura com o detalhe
-(`sex_label = 'Total'`). Não é regra de negócio, é evitar dupla contagem: somar os três
-rótulos dá o dobro da população. É a mesma armadilha que na Fase 1 inflou a pirâmide etária
-em 2,03× com `age_label`, e ela nunca falha — produz um número plausível.
+**The one declared exception** is excluding aggregates that the source mixes with the detail
+(`sex_label = 'Total'`). It's not a business rule, it's avoiding double counting: summing the
+three labels gives double the population. It's the same trap that inflated the age pyramid
+2.03× via `age_label` in Phase 1, and it never fails — it produces a plausible number.
 
-**O DDL vem da própria query.** Um DDL escrito à mão é um segundo lugar onde o schema vive,
-e os dois divergem no primeiro dia em que alguém acrescenta uma coluna ao recorte. Como
-STAGE é espelho 1:1, seu schema *é* o resultado da consulta.
+**The DDL comes from the query itself.** A hand-written DDL is a second place where the
+schema lives, and the two diverge on the first day someone adds a column to the cut. Since
+STAGE is a 1:1 mirror, its schema *is* the query's result.
 
-### O gatilho do Iceberg não disparou na Fase 2 — e disparou na Fase 3
+### The Iceberg trigger didn't fire in Phase 2 — and it fired in Phase 3
 
-Registrado aqui como estava, porque a sequência importa: durante a Fase 2 o gatilho
-pré-escrito era *"quando o Gold `dim_product` precisar de SCD2 por `MERGE` em tabela
-existente"*, e **ele não disparou** — o SCD2 é derivado da história completa, não acumulado
-por MERGE, porque o RAW guarda todos os snapshots e a dimensão é sempre reconstruível. O
-Snowflake absorveu o resto (MERGE nativo, RBAC, BI) sem broker nem catálogo novo.
+Logged here as it was, because the sequence matters: during Phase 2 the pre-written trigger
+was *"when Gold `dim_product` needs SCD2 via `MERGE` into an existing table,"* and **it did
+not fire** — SCD2 is derived from the full history, not accumulated by MERGE, because RAW
+keeps every snapshot and the dimension is always reconstructible. Snowflake absorbed the rest
+(native MERGE, RBAC, BI) with no new broker or catalog.
 
-O gatilho que sobrou — *"um segundo engine precisar **escrever** a mesma tabela"* — disparou
-no Marco 6 da Fase 3, e por **concorrência, não por volume**. Ver a seção da projeção
-concorrente, mais abaixo.
+The trigger that was left — *"a second engine needing to **write** the same table"* —
+fired in Milestone 6 of Phase 3, and by **concurrency, not volume**. See the section on the
+concurrent projection, further below.
 
-### Quatro defeitos que só apareceram executando
+### Four defects that only showed up at runtime
 
-Nenhum deles gera SQL inválido. Todos geram SQL **válido apontando para o lugar errado**,
-que é a categoria que nenhum teste offline pega.
+None of them produce invalid SQL. All of them produce **valid SQL pointing at the wrong
+place**, which is the category no offline test catches.
 
-- **`@%TABELA` seguia o schema errado.** O stage de tabela resolve contra o schema
-  *corrente da sessão*, e `create schema` do Snowflake **troca** o schema corrente. Como
-  `ensure_schemas` cria STAGE, GOLD e MART nessa ordem, a sessão terminava em MART e o
-  `PUT` procurava `RETAIL.MART.%STG_PRODUCT_PRICE`. Corrigido qualificando sempre; virou
-  teste em `test_snowflake_load.py`.
-- **`GOLD_GOLD` e `GOLD_MART`.** O dbt **concatena** o schema do profile com o do modelo
-  por padrão — comportamento pensado para vários desenvolvedores num banco compartilhado.
-  Aqui GOLD/MART/STAGE são as *camadas*, com nome fixo e alvo de grant. A macro
-  `generate_schema_name` passou a usar o nome absoluto; o isolamento certo, quando fizer
-  falta, é por **database**, não por prefixo de schema.
-- **Um `source_name` inventado.** O teste que liga preço a execução de ingestão filtrava
-  por `'mercadona_catalog'`; o valor real, medido no manifesto, é
-  `'mercadona_catalog_api'`. Errar isso não reprova uma partição: faz o join inteiro não
-  casar e as **14** reprovarem de uma vez, como se o modelo estivesse quebrado.
-- **`FILTER (WHERE …)` e `WINDOW … AS (…)` não existem no Snowflake.** O DuckDB aceita os
-  dois, então o SQL passou no `dbt parse` local e só quebrou no motor de verdade. Trocados
-  por `count_if()` e por janelas repetidas.
+- **`@%TABLE` was following the wrong schema.** A table stage resolves against the *current
+  session* schema, and Snowflake's `create schema` **switches** the current schema. Since
+  `ensure_schemas` creates STAGE, GOLD, and MART in that order, the session ended up on MART
+  and `PUT` was looking for `RETAIL.MART.%STG_PRODUCT_PRICE`. Fixed by always qualifying it;
+  it became a test in `test_snowflake_load.py`.
+- **`GOLD_GOLD` and `GOLD_MART`.** dbt **concatenates** the profile's schema with the model's
+  by default — behavior meant for several developers on a shared database. Here GOLD/MART/STAGE
+  are the *layers*, with a fixed name and a grant target. The `generate_schema_name` macro
+  switched to using the absolute name; the right isolation, when it's needed, is by
+  **database**, not by schema prefix.
+- **A made-up `source_name`.** The test linking price to an ingestion run was filtering by
+  `'mercadona_catalog'`; the real value, measured in the manifest, is
+  `'mercadona_catalog_api'`. Getting this wrong doesn't fail one partition: it makes the whole
+  join not match, and all **14** fail at once, as if the model were broken.
+- **`FILTER (WHERE …)` and `WINDOW … AS (…)` don't exist in Snowflake.** DuckDB accepts both,
+  so the SQL passed local `dbt parse` and only broke on the real engine. Swapped for
+  `count_if()` and for repeated windows.
 
-### Governança verificada, não afirmada
+### Governance verified, not asserted
 
-Três papéis, um por **verbo** do pipeline: `RETAIL_LOADER` escreve o STAGE e não lê o
-GOLD; `RETAIL_TRANSFORMER` lê o STAGE e escreve GOLD/MART; `RETAIL_READER` só lê o MART.
+Three roles, one per pipeline **verb**: `RETAIL_LOADER` writes STAGE and doesn't read GOLD;
+`RETAIL_TRANSFORMER` reads STAGE and writes GOLD/MART; `RETAIL_READER` only reads MART.
 
-**A verificação foi mais importante que os grants**, e por dois motivos medidos:
+**Verification mattered more than the grants**, for two measured reasons:
 
-1. **`DEFAULT_SECONDARY_ROLES = ('ALL')`** é o padrão de contas Snowflake modernas: a
-   sessão ativa *todos* os papéis do usuário além do primário. Como este usuário também tem
-   ACCOUNTADMIN, `RETAIL_READER` lia GOLD e STAGE sem problema — enquanto
-   `show grants to role RETAIL_READER` continuava mostrando apenas MART. **Uma verificação
-   de RBAC feita da sessão de um admin sem desligar isso passa por engano, sempre.** A
-   checagem roda com `use secondary roles none`.
-2. **`grant all on schema` não alcança as tabelas que já existem** dentro dele — elas
-   pertencem a quem as criou. O `RETAIL_TRANSFORMER` podia criar tabelas em GOLD e não
-   conseguia ler as que já estavam lá. Isso só apareceu porque a verificação existia; foi
-   ela que reprovou.
+1. **`DEFAULT_SECONDARY_ROLES = ('ALL')`** is the default for modern Snowflake accounts: the
+   session activates *every* role the user has besides the primary one. Since this user also
+   has ACCOUNTADMIN, `RETAIL_READER` could read GOLD and STAGE with no problem — while `show
+   grants to role RETAIL_READER` kept showing only MART. **An RBAC check run from an admin's
+   session without turning this off always passes by mistake.** The check runs with `use
+   secondary roles none`.
+2. **`grant all on schema` doesn't reach the tables that already exist** inside it — they
+   belong to whoever created them. `RETAIL_TRANSFORMER` could create tables in GOLD and
+   couldn't read the ones already there. This only showed up because the verification
+   existed; it's what failed.
 
-`snowflake-bootstrap` aplica os grants **e prova a matriz de isolamento** antes de
-retornar sucesso.
+`snowflake-bootstrap` applies the grants **and proves the isolation matrix** before returning
+success.
 
-### Resultado medido
+### Measured result
 
-STAGE reconferido contagem a contagem (146.240 linhas na entrega da fase); **102 testes
-dbt** no target `snowflake`, 0 erros; **215** no target `dev`, inalterados. O fechamento
-cruza os três caminhos: soma de `MART_MARKET_COVERAGE.customers` = `DIM_CUSTOMER` vigente =
-base do STAGE = **20.000**.
+STAGE re-verified count by count (146,240 rows at the phase's delivery); **102 dbt tests** on
+the `snowflake` target, 0 errors; **215** on the `dev` target, unchanged. The closing crosses
+the three paths: sum of `MART_MARKET_COVERAGE.customers` = current `DIM_CUSTOMER` = STAGE
+base = **20,000**.
 
-> **Fase 6 redimensionou a base pela população, e esse número é 286.826 hoje.** Os
-> `102`/`215`/`146.240` acima também são desta fase e não da atual — ver "Escala real",
-> no topo, para o estado corrente. O que esta seção estabelece não é o valor: é que **as
-> três somas continuam iguais entre si**, e isso segue valendo em qualquer tamanho.
+> **Phase 6 resized the base by population, and that number is 286,826 today.** The
+> `102`/`215`/`146,240` above are also from this phase, not the current one — see "Real
+> scale," at the top, for the current state. What this section establishes isn't the value:
+> it's that **the three sums keep matching each other**, and that keeps holding at any size.
 
-`DIM_PRODUCT` tem 4.962 versões para 4.959 produtos (3 com mais de uma
-versão, 7 marcados como identidade ambígua). E a lacuna de 08-17 a 08-23 aparece como sete
-dias com zero em `DIM_DATE` — que é exatamente o que o calendário completo e o
-`FACT_INGESTION_RUN` existem para tornar visível.
+`DIM_PRODUCT` has 4,962 versions for 4,959 products (3 with more than one version, 7 flagged
+as ambiguous identity). And the 08-17 to 08-23 gap shows up as seven days with zero in
+`DIM_DATE` — which is exactly what the full calendar and `FACT_INGESTION_RUN` exist to make
+visible.
 
-### Fora desta fase, com o gatilho escrito
+### Out of this phase, with the trigger written
 
 Orders, Order Items, Stock, Replenishment, Delivery, Events, Kafka, Spark, Iceberg,
 `BRIDGE_PRODUCT_CATEGORY`, `DIM_CENSUS_SECTION`, `DIM_ADDRESS`.
 
-**Orders, Order Items e Events entraram na Fase 3** — como Source, RAW e Silver no Marco 3,
-e a árvore `models/warehouse/` no Marco 7. **Kafka e Iceberg também saíram desta lista**, nos
-Marcos 5 e 6, cada um com o gatilho que disparou escrito. Restam Stock, Replenishment,
-Delivery, Spark e as três dimensões — ver a seção da Fase 3.
+**Orders, Order Items, and Events entered in Phase 3** — as a Source, RAW, and Silver in
+Milestone 3, and the `models/warehouse/` tree in Milestone 7. **Kafka and Iceberg also came
+off this list**, in Milestones 5 and 6, each with the trigger that fired written down. What
+remains is Stock, Replenishment, Delivery, Spark, and the three dimensions — see the Phase 3
+section.
 
-**Bloqueio real para `FACT_DELIVERY`:** rota e tempo de entrega exigem coordenada, e o
-Callejero não tem coordenada nem adjacência — já registrado neste documento. Sem
-geocodificação, "rota" seria inventada, exatamente o que a regra de ouro da Fase 1 proíbe.
-Proxy honesto: distância entre centróides de CEP/município, rotulada como proxy. Gatilho
-para o real: uma quinta source com coordenada (CartoCiudad do IGN, ou OSM).
+**Real blocker for `FACT_DELIVERY`:** route and delivery time require a coordinate, and the
+Callejero has no coordinate or adjacency — already logged in this document. Without
+geocoding, "route" would be invented, exactly what Phase 1's golden rule forbids. Honest
+proxy: distance between postal-code/municipality centroids, labeled as a proxy. Trigger for
+the real thing: a fifth source with coordinates (CartoCiudad from the IGN, or OSM).
 
-## Fase 3: Orders como eventos (quinta source)
+## Phase 3: Orders as events (fifth source)
 
-Adicionada em 2026-08-28. É a primeira vez que este repositório modela **fluxo** em vez de
-fotografia, e a primeira source cuja partição **não contém estado**.
+Added on 2026-08-28. This is the first time this repository models **flow** instead of a
+snapshot, and the first source whose partition **holds no state**.
 
-**A regra de ouro, deslocada um nível.** A Fase 1 dizia "o cliente é inventado; o lugar onde
-ele mora não". Aqui: **o pedido é inventado; quem compra, o que se compra, quanto custa e
-onde mora não.** Cliente vem de `silver_customer`, produto e preço vêm de
-`silver_product_price` do mesmo armazém na mesma data. Nada aqui fabrica produto, preço,
-cliente ou CEP — e `orders-validate` reconfere as três coisas, pedido a pedido, contra a
-mesma referência que gerou a partição.
+**The golden rule, moved down one level.** Phase 1 said "the customer is invented; where they
+live is not." Here: **the order is invented; who buys, what's bought, how much it costs, and
+where they live is not.** The customer comes from `silver_customer`, the product and price
+come from `silver_product_price` for the same warehouse on the same date. Nothing here
+fabricates a product, price, customer, or postal code — and `orders-validate` re-checks all
+three, order by order, against the same reference that generated the partition.
 
-### O que impediria isto de ser teatro
+### What would keep this from being theater
 
-Este documento já tinha recusado a versão fácil de um modelo de eventos: *"publicar o próprio
-output batch num tópico e consumir de volta adicionaria um broker para manter e zero
-informação"*. Três decisões existem só para não cair nessa armadilha, e as três são
-verificadas, não afirmadas.
+This document had already refused the easy version of an event model: *"publishing the batch
+output itself to a topic and consuming it back would add a broker to maintain and zero
+information."* Three decisions exist just to avoid that trap, and all three are verified, not
+asserted.
 
-**1. O fold é não-trivial.** Substituição e remoção de linha alteram a cesta **depois** da
-colocação, então `net_amount` não é derivável de `gross_amount_placed` — o valor do pedido só
-existe depois de dobrar o log. Medido na janela de 2026-08-24 a 08-27, sobre 120.693 linhas:
+**1. The fold is non-trivial.** Substitution and removal of a line change the basket **after**
+placement, so `net_amount` isn't derivable from `gross_amount_placed` — the order's value only
+exists after folding the log. Measured over the window from 2026-08-24 to 08-27, across
+120,693 lines:
 
-| Mecanismo | Linhas | Efeito no valor |
+| Mechanism | Lines | Effect on value |
 |---|---|---|
-| cumprida sem alteração | 108.194 | 0,00 |
-| substituída | 4.670 | **+10.318,99** |
-| removida | 2.321 | **−15.153,72** |
+| fulfilled with no change | 108,194 | 0.00 |
+| substituted | 4,670 | **+10,318.99** |
+| removed | 2,321 | **−15,153.72** |
 
-Um teste dbt **invertido** (`assert_order_fold_is_not_trivial`) reprova quando *nenhuma* cesta
-muda — irmão de `assert_geography_postal_code_is_not_a_key`, e pelo mesmo motivo: ele vigia a
-justificativa do desenho, não o dado.
+An **inverted** dbt test (`assert_order_fold_is_not_trivial`) fails when *no* basket changes —
+a sibling of `assert_geography_postal_code_is_not_a_key`, and for the same reason: it guards
+the design's rationale, not the data.
 
-**2. Há uma única verdade.** A partição RAW contém `order_events.jsonl` e mais nada. Não
-existe `orders.json` com o estado dobrado ao lado, de propósito: duas representações da mesma
-verdade divergem. O estado mora em `silver_order` e é sempre reconstruível — o mesmo princípio
-que faz `DIM_PRODUCT` ser SCD2 **derivado** da história em vez de acumulado por `MERGE`.
+**2. There is a single truth.** The RAW partition contains `order_events.jsonl` and nothing
+else. There is no `orders.json` with the folded state sitting alongside it, on purpose: two
+representations of the same truth diverge. The state lives in `silver_order` and is always
+reconstructible — the same principle that makes `DIM_PRODUCT` a **derived** SCD2 from history
+instead of one accumulated by `MERGE`.
 
-**3. Kafka será justificado pelo consumidor, não pelo produtor.** O gatilho escrito exige as
-duas metades — um simulador que emite continuamente **e** um consumidor que precise de
-latência abaixo do lote. Esta fase entrega a primeira; **o broker não entra até a segunda
-existir**, e é por isso que a linha do Kafka na tabela de gatilhos continua como está.
+**3. Kafka will be justified by the consumer, not the producer.** The written trigger requires
+both halves — a simulator that emits continuously **and** a consumer that needs latency below
+the batch. This phase delivers the first; **the broker doesn't come in until the second
+exists**, and that's why the Kafka row in the trigger table stays as it is.
 
-### Duas decisões de partição que precisam estar escritas
+### Two partitioning decisions that need to be written down
 
-**`ingestion_date` é a data do PEDIDO, não a do evento.** Todo evento de um pedido mora na
-partição do dia em que ele foi colocado, mesmo atravessando a meia-noite. Medido: **4.567 de
-44.456 eventos (10,3%) ocorrem depois da meia-noite do dia do pedido.** A alternativa —
-particionar por data do evento — deixaria a partição de um dia impossível de fechar: ela só
-estaria completa dois dias depois, quando o último pedido daquele dia terminasse, e `_SUCCESS`
-perderia o significado. O Silver expõe `ingestion_date` **e** `event_date`, porque as duas
-perguntas são legítimas e diferentes.
+**`ingestion_date` is the date of the ORDER, not the event.** Every event of an order lives in
+the partition of the day it was placed, even when it crosses midnight. Measured: **4,567 of
+44,456 events (10.3%) occur after midnight of the order's day.** The alternative —
+partitioning by event date — would leave a given day's partition impossible to close: it
+would only be complete two days later, when that day's last order finished, and `_SUCCESS`
+would lose its meaning. Silver exposes **both** `ingestion_date` and `event_date`, because both
+questions are legitimate and different.
 
-**O arquivo é NDJSON, e é o único desvio de forma canônica das cinco Sources.** As outras
-quatro gravam um array JSON com `indent=2`. Um log é lido linha a linha e cresce por append;
-cada linha é um evento completo e independente — o mesmo byte no disco e, mais adiante, no
-tópico — e `read_json(format='newline_delimited')` do DuckDB o consome direto. A garantia que
-importa é preservada: mesmo conteúdo ⇒ mesmos bytes ⇒ mesmo SHA-256, porque cada linha é
-canônica e a ordem das linhas é determinística.
+**The file is NDJSON, and it's the only departure from canonical form among the five
+Sources.** The other four write a JSON array with `indent=2`. A log is read line by line and
+grows by append; each line is a complete, independent event — the same byte on disk and,
+later, in the topic — and DuckDB's `read_json(format='newline_delimited')` consumes it
+directly. The guarantee that matters is preserved: same content ⇒ same bytes ⇒ same SHA-256,
+because every line is canonical and the line order is deterministic.
 
-### Reprodutibilidade num eixo novo
+### Reproducibility on a new axis
 
-A Fase 1 provou que **crescer a base de clientes é aditivo**. Aqui o que é aditivo é o **eixo
-do tempo**: cada `(armazém, dia)` deriva a própria semente de `sha256("<seed>|<wh>|<dia>")`, e
-nenhum dia depende do sorteio de outro. Consequência verificada ponta a ponta:
+Phase 1 proved that **growing the customer base is additive**. Here what's additive is the
+**time axis**: each `(warehouse, day)` derives its own seed from
+`sha256("<seed>|<wh>|<day>")`, and no day depends on another day's draw. Consequence verified
+end to end:
 
-> Acrescentar um dia à janela deixa as partições já geradas **byte a byte idênticas**.
+> Adding a day to the window leaves the already-generated partitions **byte for byte
+> identical**.
 
-`sha256` e não `hash()`, porque o hash de `str` em CPython é aleatorizado por processo —
-derivar a sub-seed dele faria a partição inteira depender de `PYTHONHASHSEED`. Verificado em
-subprocesso com três valores.
+`sha256` and not `hash()`, because CPython's `str` hash is randomized per process — deriving
+the sub-seed from it would make the whole partition depend on `PYTHONHASHSEED`. Verified in a
+subprocess with three values.
 
-**As três condições que NÃO são aditivas**, ditas explicitamente: outra `seed`, outra
-referência, e outra **tabela de premissas**. As três trocam os pedidos por trás dos mesmos
-`order_id`, e as três estão registradas em `config` e em `history`. A terceira é nova nesta
-fase, e é por isso que o `sha256` do seed de premissas viaja até o manifesto.
+**The three conditions that are NOT additive**, stated explicitly: another `seed`, another
+reference, and another **assumptions table**. All three swap the orders behind the same
+`order_id`s, and all three are logged in `config` and in `history`. The third is new in this
+phase, and that's why the assumptions seed's `sha256` travels all the way to the manifest.
 
-### Premissas: sintéticas, declaradas, e sem default
+### Assumptions: synthetic, declared, and with no default
 
-Nenhuma fonte ingerida por esta plataforma mede venda, cesta, cadência de compra ou
-disponibilidade de produto. Toda premissa vive em `platform/dbt/seeds/order_premises_seed.csv`
-e é rotulada `synthetic` — um rótulo diferente **reprova o export**, porque chamar qualquer
-uma destas de `observed` ou `proxy` prometeria um dado que ninguém mediu.
+No source ingested by this platform measures sales, basket, purchase cadence, or product
+availability. Every assumption lives in `platform/dbt/seeds/order_premises_seed.csv` and is
+labeled `synthetic` — a different label **fails the export**, because calling any of these
+`observed` or `proxy` would promise data nobody measured.
 
-**Não existe default para nenhuma premissa.** Uma chave ausente reprova a geração, em vez de
-o gerador escolher um número. Um default escondido no código seria, por definição, uma
-premissa não declarada.
+**There is no default for any assumption.** A missing key fails the generation, instead of the
+generator picking a number. A default hidden in code would, by definition, be an undeclared
+assumption.
 
-`daily_order_rate` é a única sem **nenhuma** âncora observacional: é por isso que ela mora num
-seed que qualquer um edita e reconstrói, e não numa constante.
+`daily_order_rate` is the only one with **no** observational anchor at all: that's why it lives
+in a seed anyone can edit and rebuild, and not in a constant.
 
-### Escolhas de vocabulário, outra vez: preservar em vez de prometer
+### Vocabulary choices, again: preserve instead of promise
 
-`order_line_removed` carrega `reason = "unavailable"`, e **não** `"out_of_stock"`. Não existe
-fato de estoque em nenhuma fonte desta plataforma; nomear como se existisse prometeria um dado
-que ninguém mediu. É a mesma disciplina que fez a Fase 1 preservar `numbering_type` do INE em
-vez de inventar um `address_precision`.
+`order_line_removed` carries `reason = "unavailable"`, and **not** `"out_of_stock"`. No stock
+fact exists in any source of this platform; naming it as if it did would promise data nobody
+measured. It's the same discipline that made Phase 1 preserve the INE's `numbering_type`
+instead of inventing an `address_precision`.
 
-Pelo mesmo motivo a entrega é modelada como **janela** (`delivery_slot`, uma promessa
-comercial numa grade fixa) e nunca como rota: o Callejero não tem coordenada nem adjacência, e
-`FACT_DELIVERY` continua bloqueado exatamente onde estava.
+For the same reason, delivery is modeled as a **window** (`delivery_slot`, a commercial
+promise on a fixed grid) and never as a route: the Callejero has no coordinate or adjacency,
+and `FACT_DELIVERY` remains blocked exactly where it was.
 
-### O que a revisão adversarial pegou antes e durante a implementação
+### What adversarial review caught before and during implementation
 
-- **A escolha do produto tinha de ser uniforme.** O desenho inicial ponderaria produto por
-  categoria. Nenhuma fonte deste repo mede venda, giro ou cesta — ponderar inventaria uma
-  distribuição que ninguém mediu, que é a mesma proibição que a Fase 1 aplicou ao tramo.
-  Consequência declarada: **o mix por categoria espelha o tamanho do sortimento**, e isso é
-  consequência de uma premissa, não afirmação sobre o mercado.
-- **O `payload` não pode ser inferido.** Deixar o DuckDB inferir produz um `STRUCT` com a
-  união dos campos dos 12 tipos — medido, 32 campos — e essa união depende do que a amostragem
-  viu. Um dia sem nenhuma devolução não teria `returned_amount` no struct, e um modelo a
-  jusante que o referenciasse **deixaria de compilar por sorteio**. O schema é declarado em
-  `columns =` e o payload atravessa como JSON.
-- **A impressão digital de schema tinha o mesmo problema, ao contrário.** Nas outras quatro
-  Sources ela é a união das chaves *observadas*; aqui isso faria duas partições corretas
-  divergirem quando um dia não tivesse devolução. Ela passou a cobrir o **vocabulário
-  declarado inteiro**, e muda quando o código muda — que é o que ela existe para detectar.
-- **`totals_of` não podia levantar exceção.** A primeira versão dobrava o log para contar, e
-  um log adulterado fazia `validate` sair com **código 3 (exceção não tratada)** em vez de
-  **1 (validação reprovou)** — apagando a diferença entre dado ruim e bug do validador.
-  `fold(strict=False)` devolve um sentinela `INVALID` e a divergência de totais denuncia.
-- **Duas das oito provas de reprovação eram falsas.** Ao provar que cada teste dbt novo é
-  capaz de falhar, duas injeções não pegaram — e o defeito estava nas **injeções**, não nos
-  testes: uma usava um valor que podia coincidir com o dado real, e a outra escrevia
-  `select *, 0 as substituted_lines`, onde o `*` já trazia a coluna e o alias colidia. Vale
-  registrar porque é o modo de falha de uma verificação de verificação.
+- **Product choice had to be uniform.** The initial design would weight products by category.
+  No source in this repo measures sales, turnover, or basket composition — weighting would
+  invent a distribution nobody measured, the same prohibition Phase 1 applied to the tramo.
+  Declared consequence: **the category mix mirrors the assortment size**, and that is a
+  consequence of an assumption, not a claim about the market.
+- **The `payload` can't be inferred.** Letting DuckDB infer it produces a `STRUCT` with the
+  union of fields across the 12 types — measured, 32 fields — and that union depends on what the
+  sample saw. A day with no returns at all would have no `returned_amount` in the struct, and a
+  downstream model referencing it **would stop compiling by sheer luck of the draw**. The schema
+  is declared in `columns =` and the payload travels through as JSON.
+- **The schema fingerprint had the same problem, in reverse.** In the other four Sources it's
+  the union of *observed* keys; here that would make two correct partitions diverge whenever a
+  day had no returns. It switched to covering the **entire declared vocabulary**, and changes
+  when the code changes — which is exactly what it exists to detect.
+- **`totals_of` couldn't raise an exception.** The first version folded the log to count, and a
+  tampered log made `validate` exit with **code 3 (unhandled exception)** instead of **1
+  (validation failed)** — erasing the difference between bad data and a validator bug.
+  `fold(strict=False)` returns an `INVALID` sentinel and the totals mismatch gives it away.
+- **Two of the eight failure proofs were false.** While proving that each new dbt test is
+  capable of failing, two injections didn't catch anything — and the defect was in the
+  **injections**, not the tests: one used a value that could coincide with the real data, and
+  the other wrote `select *, 0 as substituted_lines`, where the `*` already carried the column
+  and the alias collided. Worth logging because it's the failure mode of a check on a check.
 
-### Uma característica da fonte que muda como se mede valor **[fonte]**
+### A source characteristic that changes how value is measured **[source]**
 
-O `unit_price` da Mercadona cobre **quatro ordens de grandeza**: mediana 2,25, p90 6,15,
-máximo 3.663,00. Os extremos são reais — marisco congelado e presunto ibérico vendidos por
-peso (`Alistado mediano congelado` 3.663,00; `Jamón de bellota ibérico 100%` 532,00).
+Mercadona's `unit_price` spans **four orders of magnitude**: median 2.25, p90 6.15,
+maximum 3,663.00. The extremes are real — frozen seafood and Iberian ham sold by
+weight (`Alistado mediano congelado` 3,663.00; `Jamón de bellota ibérico 100%` 532.00).
 
-Consequência medida: **9 das 4.670 substituições caíram acima de 100,00 e respondem por 42%
-do valor substituído.** Excluindo essas nove, a média do substituto (3,288) e a do original
-(3,258) são praticamente iguais — ou seja, **não há viés na regra de substituição**, há uma
-cauda. Qualquer mart que use média aritmética de valor de cesta será dominado por punhado de
-linha; a orientação é mediana ou percentil, e está escrita no `schema.yml` do modelo.
+Measured consequence: **9 of the 4,670 substitutions fell above 100.00 and account for 42%
+of the substituted value.** Excluding those nine, the substitute's average (3.288) and the
+original's (3.258) are practically equal — in other words, **there is no bias in the
+substitution rule**, there's a tail. Any mart using the arithmetic mean of basket value will
+be dominated by a handful of lines; the guidance is median or percentile, and it's written in
+the model's `schema.yml`.
 
-### Resultado medido
+### Measured result
 
-Janela de 2026-08-24 a 2026-08-27, 4 armazéns, 16 partições:
+Window from 2026-08-24 to 2026-08-27, 4 warehouses, 16 partitions:
 
-| Métrica | Valor |
+| Metric | Value |
 |---|---|
-| Pedidos | 6.400 |
-| Eventos | 44.456, em 12 tipos |
-| Linhas de pedido | 120.693 |
-| Valor colocado / separado | 879.449,74 / 821.121,93 |
-| Partições reconciliadas manifesto ↔ Silver | 16 de 16, zero divergência |
-| Coerência (cliente, produto e preço reais) | 16 de 16 partições, `--strict` |
-| Suítes das Sources | 631 (145 + 136 + 95 + 125 + **130**) |
-| Testes da plataforma | 178 no Marco 3, 210 no Marco 4, 239 no Marco 5, 262 no Marco 6, 273 no Marco 7, **288** no Marco 8 |
-| Nós dbt no target `dev` | 303 no Marco 3, 312 no Marco 6, **319** no Marco 7 (era 215) |
-| Nós dbt no target `snowflake` | 102 antes da Fase 3, **170** no Marco 7 |
+| Orders | 6,400 |
+| Events | 44,456, across 12 types |
+| Order lines | 120,693 |
+| Value placed / picked | 879,449.74 / 821,121.93 |
+| Partitions reconciled manifest ↔ Silver | 16 of 16, zero divergence |
+| Coherence (real customer, product, and price) | 16 of 16 partitions, `--strict` |
+| Source suites | 631 (145 + 136 + 95 + 125 + **130**) |
+| Platform tests | 178 at Milestone 3, 210 at Milestone 4, 239 at Milestone 5, 262 at Milestone 6, 273 at Milestone 7, **288** at Milestone 8 |
+| dbt nodes on the `dev` target | 303 at Milestone 3, 312 at Milestone 6, **319** at Milestone 7 (was 215) |
+| dbt nodes on the `snowflake` target | 102 before Phase 3, **170** at Milestone 7 |
 
-### Fora desta fase, com o gatilho escrito
+### Out of this phase, with the trigger written
 
 Stock, Replenishment, Delivery, Spark, `BRIDGE_PRODUCT_CATEGORY`,
-`DIM_CENSUS_SECTION`, `DIM_ADDRESS`, e Debezium/Kafka Connect.
+`DIM_CENSUS_SECTION`, `DIM_ADDRESS`, and Debezium/Kafka Connect.
 
-**O OLTP com outbox, o Kafka e o Iceberg saíram desta lista** — entraram nos Marcos 4, 5 e 6,
-depois de o portão abrir. **A árvore `models/warehouse/` de Orders saiu no Marco 7.**
-**Stock, Replenishment e Spark saíram na Fase 7**, e vale registrar *como*: o gatilho de
-volume do Spark **não** disparou; ele entrou por interop e por forma, com a medição
-desfavorável publicada. Restam **Delivery** (sem coordenada no Callejero — gatilho:
-CartoCiudad/IGN ou OSM) e as três estruturas de dimensão, com os gatilhos intactos.
+**The OLTP with outbox, Kafka, and Iceberg came off this list** — they entered in
+Milestones 4, 5, and 6, after the gate opened. **The Orders `models/warehouse/` tree came in
+at Milestone 7.** **Stock, Replenishment, and Spark came in during Phase 7**, and it's worth
+logging *how*: Spark's volume trigger did **not** fire; it came in for interop and for shape,
+with the unfavorable measurement published. What remains is **Delivery** (no coordinate in
+the Callejero — trigger: CartoCiudad/IGN or OSM) and the three dimension structures, with
+their triggers intact.
 
-**O portão é deliberado.** Kafka e Iceberg existem para servir o fold, e o fold acabou de
-ficar de pé. Ligá-los antes de o caminho em lote estar provado faria `orders-reconcile`
-comparar duas coisas erradas e **passar** — o mesmo modo de falha que
-`DEFAULT_SECONDARY_ROLES` produziu na Fase 2, quando uma verificação de RBAC passava por
-engano.
+**The gate is deliberate.** Kafka and Iceberg exist to serve the fold, and the fold has only
+just gotten on its feet. Turning them on before the batch path was proven would make
+`orders-reconcile` compare two wrong things and **pass** — the same failure mode that
+`DEFAULT_SECONDARY_ROLES` produced in Phase 2, when an RBAC check passed by mistake.
 
-## Fase 3, segunda metade: o OLTP e o outbox transacional
+## Phase 3, second half: the OLTP and the transactional outbox
 
-Data: 2026-08-28. **Marco 4 do plano.** A regra que passou a governar os marcos seguintes:
-*cada etapa prova a propriedade que justifica a tecnologia da etapa seguinte.* O Marco 3
-provou event sourcing não-trivial; este prova **atomicidade + outbox**.
+Date: 2026-08-28. **Milestone 4 of the plan.** The rule that came to govern the following
+milestones: *each step proves the property that justifies the next step's technology.*
+Milestone 3 proved non-trivial event sourcing; this one proves **atomicity + outbox**.
 
-### O gatilho literal, e o que ainda falta dele
+### The literal trigger, and what's still missing from it
 
-O gatilho escrito para o Kafka é *"uma source genuinamente event-driven: POS, webhook,
-**CDC de um OLTP**"*, mais *"emite continuamente **e** um consumidor abaixo do lote"*.
-O que este marco entrega é a **primeira metade da primeira metade**: o evento passou a
-nascer dentro da transação que muda o pedido.
+The trigger written for Kafka is *"a genuinely event-driven source: POS, webhook,
+**CDC off an OLTP**"*, plus *"emits continuously **and** a consumer below the batch."*
+What this milestone delivers is the **first half of the first half**: the event now gets
+born inside the transaction that changes the order.
 
-Isso não é detalhe de implementação — é a diferença entre um outbox e um *dual-write*.
-Republicar o estado depois de gravá-lo é ter duas escritas que podem discordar; gravar as
-duas na mesma transação é ter uma. **A linha do Kafka na tabela de gatilhos continua não
-adotada**, e continuará até o Marco 5 rodar: declarar adoção antes de a coisa existir é a
-mesma classe de defeito que este plano fechou em outro lugar.
+This isn't an implementation detail — it's the difference between an outbox and a
+*dual-write*. Republishing the state after writing it means having two writes that can
+disagree; writing both in the same transaction means having one. **The Kafka row in the
+trigger table remains not adopted**, and stays that way until Milestone 5 runs: declaring
+adoption before the thing exists is the same class of defect this plan closed elsewhere.
 
-### O que exatamente se prova, e onde cada prova mora
+### What exactly is being proven, and where each proof lives
 
-| Propriedade | Onde é provada | Por que não pode ser provada no outro lugar |
+| Property | Where it's proven | Why it can't be proven elsewhere |
 |---|---|---|
-| A fronteira da transação: outbox e estado entre o mesmo início e o mesmo `commit`, sem commit no meio | `platform/tests/fake_pg.py`, offline, em `make test` | É o defeito que se comete de verdade — um `commit()` a mais — e ele é de **forma**, visível no diário de chamadas |
-| Que `rollback` **desfaz** | `make orders-prove-atomicity`, contra Postgres real | Atomicidade é propriedade do motor. Um duplo que desfaz só demonstra que o duplo desfaz |
-| Que o outbox não perdeu, não duplicou e não alterou | `orders-outbox --verify`, nas 16 partições | Contar linhas não prova; reproduzir o **sha256 do manifesto** prova |
-| Idempotência do replay | as duas | `event_id unique` é do banco; pular em vez de recusar é do código |
-| Recusa de evento fora de ordem | as duas | É a guarda que dá sentido a `key = order_id` no Marco 5 |
+| The transaction boundary: outbox and state between the same start and the same `commit`, with no commit in between | `platform/tests/fake_pg.py`, offline, in `make test` | It's the defect actually made in practice — one extra `commit()` — and it's a matter of **shape**, visible in the call log |
+| That `rollback` **undoes** | `make orders-prove-atomicity`, against real Postgres | Atomicity is a property of the engine. A double that undoes only demonstrates that the double undoes |
+| That the outbox didn't lose, duplicate, or alter anything | `orders-outbox --verify`, across the 16 partitions | Counting rows doesn't prove it; reproducing the **manifest's sha256** does |
+| Replay idempotence | both | `event_id unique` is the database's job; skipping instead of refusing is the code's job |
+| Refusal of an out-of-order event | both | It's the guard that gives meaning to `key = order_id` in Milestone 5 |
 
-A injeção da prova real **não mexe no código da plataforma — mexe no banco**: um trigger que
-levanta exceção no `insert`. É uma falha que o applier não pode prever nem tratar, que é
-exatamente o tipo de falha contra a qual a transação existe.
+The real proof's injection **doesn't touch the platform's code — it touches the
+database**: a trigger that raises an exception on `insert`. It's a failure the applier can
+neither predict nor handle, which is exactly the kind of failure the transaction exists
+against.
 
-E ela é feita **nas duas direções**, o que é a metade que se esquece:
+And it's done **in both directions**, which is the half people forget:
 
-1. o insert no `outbox` explode → nenhum pedido, nenhuma linha, nenhum evento sobrevivem;
-2. o insert em `orders` explode → **nenhuma linha de outbox sobrevive**.
+1. the insert into `outbox` blows up → no order, no line, no event survives;
+2. the insert into `orders` blows up → **no outbox row survives**.
 
-A segunda importa tanto quanto a primeira: um outbox que sobrevivesse a um estado que não
-mudou **publicaria um evento que nunca aconteceu**. Provar só um lado provaria metade do
-padrão. Verificado injetando o dual-write no applier: a prova (1) continua passando e a
-prova (2) reprova com `outbox=1` — e a partição seguinte falha em cascata, porque o outbox
-acha que aplicou o que o estado não tem.
+The second matters as much as the first: an outbox that survived a state that didn't
+change **would publish an event that never happened**. Proving only one side would prove
+half the pattern. Verified by injecting dual-write into the applier: proof (1) keeps passing
+and proof (2) fails with `outbox=1` — and the next partition fails in cascade, because the
+outbox thinks it applied something the state doesn't have.
 
-### Três guardas independentes que precisam concordar
+### Three independent guards that need to agree
 
-| # | Guarda | Recusa |
+| # | Guard | Refuses |
 |---|---|---|
-| 1 | `outbox.event_id` UNIQUE | reaplicar o mesmo evento — e o replay **pula**, não falha |
-| 2 | `orders.last_sequence_no` | evento fora de ordem |
-| 3 | `orders.status` em `from_states` | transição inválida |
+| 1 | `outbox.event_id` UNIQUE | reapplying the same event — and replay **skips**, doesn't fail |
+| 2 | `orders.last_sequence_no` | an out-of-order event |
+| 3 | `orders.status` in `from_states` | an invalid transition |
 
-A guarda 2 é a que **converte a chave de partição do Kafka de preferência em exigência**.
-Se o OLTP aceitasse evento fora de ordem, preservar ordem por `order_id` no broker seria
-enfeite. É porque ele recusa que `key = order_id` passa a significar alguma coisa.
+Guard 2 is the one that **turns the Kafka partition key from preference into
+requirement**. If the OLTP accepted an out-of-order event, preserving order by `order_id` in
+the broker would be decoration. It's because it refuses that `key = order_id` comes to mean
+something.
 
-A máquina de estados é **redeclarada** aqui, a partir do `CONTRACT.md` §5 da Source — nunca
-importada. Mesmo princípio de `verify.py` reler o objeto em vez de confiar no que acabou de
-escrever. Se as duas declarações divergirem, `orders-apply` reprova na primeira transição
-afetada.
+The state machine is **re-declared** here, from the Source's `CONTRACT.md` §5 — never
+imported. Same principle as `verify.py` rereading the object instead of trusting what it
+just wrote. If the two declarations diverge, `orders-apply` fails on the first affected
+transition.
 
-### O outbox reconstitui o log byte a byte
+### The outbox reconstitutes the log byte for byte
 
-`outbox.event_json` guarda **a linha canônica do log, verbatim** — não uma reserialização.
-As colunas do envelope existem para **rotear** (chave, ordem, filtro), e quatro `CHECK`
-amarram cada uma ao próprio JSON: uma linha não consegue ser roteada sob uma chave que
-discorda do payload que ela carrega. É o motor que garante, não a convenção.
+`outbox.event_json` stores **the log's canonical line, verbatim** — not a
+re-serialization. The envelope's columns exist to **route** (key, order, filter), and four
+`CHECK` constraints tie each one to the JSON itself: a row can't be routed under a key that
+disagrees with the payload it carries. It's the engine that guarantees this, not convention.
 
-Consequência: reordenando as linhas do outbox pela ordem canônica da Source e recompondo o
-arquivo, o `sha256` bate com o manifesto da partição. **16 de 16.** É a prova mais forte
-que este marco tem para dar, e não custou nada.
+Consequence: reordering the outbox rows by the Source's canonical order and recomposing the
+file, the `sha256` matches the partition's manifest. **16 of 16.** It's the strongest proof
+this milestone has to give, and it cost nothing.
 
-`payload` deliberadamente **não** é coluna: `event_json::jsonb -> 'payload'` responde
-qualquer consulta sem guardar uma segunda cópia. Guardar `jsonb` em vez do texto teria sido
-pior de forma não óbvia — `jsonb` reordena chaves pelo próprio critério, e o `event_id` e o
-`sha256` deixariam de ser verificáveis ponta a ponta.
+`payload` is deliberately **not** a column: `event_json::jsonb -> 'payload'` answers any
+query without storing a second copy. Storing `jsonb` instead of text would have been worse
+in a non-obvious way — `jsonb` reorders keys by its own criteria, and `event_id` and
+`sha256` would stop being verifiable end to end.
 
-### Uma transação por evento, e não por pedido nem por partição
+### One transaction per event, not per order or per partition
 
-Uma transação por partição provaria *"o dia inteiro é atômico"*, que nenhuma loja garante.
-O recorte tem de ser o mesmo de um OLTP de verdade: **uma mudança de estado é um negócio
-fechado**. Custo medido: 44.456 transações em 85 s, ~520 eventos/s. É lento em comparação
-com um `COPY`, e é o preço de a propriedade significar o que promete.
+One transaction per partition would prove *"the whole day is atomic,"* which no store
+guarantees. The cut has to be the same as a real OLTP's: **one state change is one closed
+piece of business.** Measured cost: 44,456 transactions in 85 s, ~520 events/s. It's slow
+compared to a `COPY`, and it's the price for the property to mean what it promises.
 
-### O que o OLTP achou no Silver — dois folds independentes discordando
+### What the OLTP found in Silver — two independent folds disagreeing
 
-Aqui está o retorno concreto da regra do usuário. Replicar o mesmo log por um caminho
-completamente diferente — incremental e transacional, em vez de window function sobre o
-log inteiro — e comparar os dois estados achou **dois defeitos no Marco 3** que nenhum teste
-existente pegava, porque ambos eram internamente consistentes.
+Here is the concrete payoff of the project's rule. Replicating the same log through a
+completely different path — incremental and transactional, instead of a window function
+over the whole log — and comparing the two states found **two defects in Milestone 3**
+that no existing test caught, because both were internally consistent.
 
-**1. `net_amount` respondia duas perguntas com o mesmo nome.** 298 dos 6.400 pedidos (196
-cancelados, 102 com pagamento recusado) morrem antes da separação. O Silver deixa
-`net_amount` nulo — *"não houve separação"*. O OLTP, na primeira versão, o inicializava com
-o valor colocado — *"quanto o pedido ainda vale"*. Duas perguntas legítimas, um nome só.
-`orders-reconcile`, no Marco 6, teria comparado as duas achando que comparava duas
-respostas. Corrigido no OLTP: a coluna nasce **indeterminada** e só é preenchida quando um
-evento a determina.
+**1. `net_amount` was answering two questions under one name.** 298 of the 6,400 orders (196
+canceled, 102 with payment refused) die before picking. Silver leaves `net_amount` null —
+*"picking never happened."* The OLTP, in its first version, initialized it with the placed
+value — *"how much the order is still worth."* Two legitimate questions, one name.
+`orders-reconcile`, in Milestone 6, would have compared the two thinking it was comparing
+two answers. Fixed in the OLTP: the column is born **undetermined** and only gets filled
+when an event determines it.
 
-**2. O Silver afirmava separação que o log nunca declarou.** `line_status` era
-`case ... else 'fulfilled'`: toda linha que não fosse substituída nem removida virava
-*cumprida* — **inclusive as 5.508 linhas dos 298 pedidos que nunca chegaram à separação**.
-`order_picked` é o único evento que declara separação, e ele não ocorre nesses pedidos. O
-`else` era uma afirmação **do modelo**, não da fonte — a violação mais direta possível da
-regra de ouro deste repositório, e ela passou por três revisões porque o número fechava com
-tudo o mais.
+**2. Silver was asserting a picking that the log never declared.** `line_status` was
+`case ... else 'fulfilled'`: every line that wasn't substituted or removed became
+*fulfilled* — **including the 5,508 lines of the 298 orders that never reached picking**.
+`order_picked` is the only event that declares picking, and it doesn't occur for those
+orders. The `else` was an assertion **by the model**, not the source — the most direct
+possible violation of this repository's golden rule, and it went through three reviews
+because the number balanced with everything else.
 
-O vocabulário passou a ter cinco valores, **idênticos nos dois lados**:
-`placed | fulfilled | substituted | removed | not_picked`. `placed` cobre o pedido ainda em
-voo — não ocorre nesta janela, e existe para o vocabulário ser completo em vez de completo
-por sorte. Vocabulário igual dos dois lados não é estética: uma tabela de tradução entre
-dois folds é exatamente onde *"compara duas coisas erradas e passa"* mora.
+The vocabulary got five values, **identical on both sides**:
+`placed | fulfilled | substituted | removed | not_picked`. `placed` covers an order still
+in flight — it doesn't occur in this window, and it exists so the vocabulary is complete
+instead of complete by luck. Identical vocabulary on both sides isn't aesthetics: a
+translation table between two folds is exactly where *"compares two wrong things and
+passes"* lives.
 
-Depois da correção, os dois folds concordam em **tudo**:
+After the fix, the two folds agree on **everything**:
 
-| Comparação | Linhas | Atributos | Divergências |
+| Comparison | Rows | Attributes | Divergences |
 |---|---|---|---|
-| `orders` (OLTP) × `silver_order` | 6.400 | status, net, gross, linhas, separadas, cliente, wh | **0** |
-| `order_line` (OLTP) × `silver_order_line` | 120.693 | status, valor, produto cumprido, qtd, preço, produto | **0** |
+| `orders` (OLTP) × `silver_order` | 6,400 | status, net, gross, lines, picked, customer, wh | **0** |
+| `order_line` (OLTP) × `silver_order_line` | 120,693 | status, value, fulfilled product, qty, price, product | **0** |
 
-Nenhum dos dois defeitos apareceria adicionando mais um teste ao Silver: os dois eram
-internamente coerentes, e o teste que os pegaria teria de conhecer a resposta certa. O que
-os achou foi **uma segunda implementação independente do mesmo fold**. É o argumento a favor
-do par lambda que o Marco 6 vai montar, feito antes de o Marco 6 existir.
+Neither defect would have shown up by adding one more test to Silver: both were
+internally coherent, and the test that would catch them would have to know the right
+answer. What found them was **a second, independent implementation of the same fold**.
+It's the argument for the lambda pair Milestone 6 is going to build, made before Milestone
+6 existed.
 
-### Decisões de infraestrutura
+### Infrastructure decisions
 
-**Postgres separado do metadado do Airflow.** Não por organização: o OLTP é um componente
-*modelado* da simulação, precisa de `wal_level=logical` próprio (que exige restart e afeta o
-servidor inteiro), e *"reiniciar o OLTP"* não pode significar *"reiniciar o cérebro do
-Airflow"*.
+**Postgres kept separate from Airflow's metadata.** Not for organization: the OLTP is a
+*modeled* component of the simulation, needs its own `wal_level=logical` (which requires a
+restart and affects the whole server), and *"restarting the OLTP"* can't mean *"restarting
+Airflow's brain."*
 
-**`wal_level=logical` ligado agora, sem uso agora.** O outbox é drenado por polling — lê a
-tabela, não o WAL. A configuração está ligada porque é a única que exige restart do
-servidor: deixá-la ligada desde o início permite plugar Debezium (Marco 4b) sem derrubar o
-banco e sem perder o que estiver no outbox. Custo: alguns bytes por escrita.
+**`wal_level=logical` turned on now, with no use yet.** The outbox is drained by polling —
+it reads the table, not the WAL. The setting is turned on because it's the only one that
+requires a server restart: leaving it on from the start allows plugging in Debezium
+(Milestone 4b) without bringing the database down and without losing whatever is in the
+outbox. Cost: a few bytes per write.
 
-**`profiles: ["stream"]`.** `make up` continua subindo só o MinIO — promessa do README. A
-separação mora no arquivo do compose, não na memória de quem opera.
+**`profiles: ["stream"]`.** `make up` still only brings up MinIO — the README's promise. The
+separation lives in the compose file, not in the operator's memory.
 
-**`orders-oltp-init --reset` existe, e `prune-local --force` não.** A assimetria é
-deliberada: `prune-local` tem como alvo uma partição aterrissada, que pode ser a única
-cópia; o OLTP é uma **réplica** do log, que `orders-apply` reconstrói em 85 s. Nada nele é a
-única cópia de nada.
+**`orders-oltp-init --reset` exists, and `prune-local --force` doesn't.** The asymmetry is
+deliberate: `prune-local` targets a landed partition, which may be the only copy; the OLTP is
+a **replica** of the log, which `orders-apply` rebuilds in 85 s. Nothing in it is the only
+copy of anything.
 
-### O que ficou de fora deste marco
+### What was left out of this milestone
 
-O DAG de replay. `orders-apply` já é um verbo limitado e idempotente, próprio para tarefa de
-Airflow, mas o grafo útil (`apply >> wait_for_drain >> reconcile`) precisa dos Marcos 5 e 6
-para existir. Escrever agora um DAG de uma tarefa só seria fachada.
+The replay DAG. `orders-apply` is already a limited, idempotent verb, well suited for an
+Airflow task, but the useful graph (`apply >> wait_for_drain >> reconcile`) needs Milestones
+5 and 6 to exist. Writing a one-task DAG now would be a facade.
 
-## Fase 3, terceira metade: transporte, replay e consumo idempotente
+## Phase 3, third half: transport, replay, and idempotent consumption
 
-Data: 2026-08-28. **Marco 5.** O enquadramento importa mais que o software: isto é
-*transporte + replay + semântica de entrega + consumo idempotente*, e não "subir um broker e
-publicar mensagens". Contar mensagens prova que algo trafegou; não prova que trafegou
-intacto, nem o que acontece quando alguém morre no meio, nem que reprocessar é seguro. As
-quatro propriedades são independentes e cada uma precisou de prova própria.
+Date: 2026-08-28. **Milestone 5.** The framing matters more than the software: this is
+*transport + replay + delivery semantics + idempotent consumption*, not "bring up a broker
+and publish messages." Counting messages proves that something traveled; it doesn't prove
+it traveled intact, nor what happens when something dies mid-flight, nor that reprocessing
+is safe. The four properties are independent and each needed its own proof.
 
-### Semântica de entrega: a escolha, e o lado em que se erra
+### Delivery semantics: the choice, and the side you err on
 
-O pipeline é **at-least-once do outbox ao broker**, e não exactly-once. A razão é estrutural
-e não tem conserto barato: marcar `published_at` no Postgres e receber o ack do Kafka são
-duas escritas em dois sistemas, e não existe transação entre eles. A escolha está em qual
-lado errar:
+The pipeline is **at-least-once from the outbox to the broker**, and not exactly-once.
+The reason is structural and has no cheap fix: marking `published_at` in Postgres and
+receiving Kafka's ack are two writes in two systems, and there's no transaction spanning
+them. The choice is which side to err on:
 
-| Ordem | Morrer no meio produz | |
+| Order | Dying midway produces | |
 |---|---|---|
-| publicar → ack → marcar | **duplicata** | escolhido |
-| marcar → publicar | **perda** | recusado |
+| publish → ack → mark | **duplicate** | chosen |
+| mark → publish | **loss** | refused |
 
-Perder é irreversível; duplicar é absorvível a jusante. Por isso o consumidor tem de ser
-idempotente **por obrigação, não por elegância**.
+Losing is irreversible; duplicating is absorbable downstream. That's why the consumer has
+to be idempotent **by obligation, not by elegance**.
 
-**`enable.idempotence=true` não resolve isso, e conflatar as duas coisas é o erro mais comum
-aqui.** Ele elimina duplicata gerada por *retry dentro da sessão do produtor*. Duplicata
-gerada por o processo morrer entre o ack e o commit do outbox está fora do alcance dele — é
-do desenho, não do transporte.
+**`enable.idempotence=true` doesn't fix this, and conflating the two things is the most
+common mistake here.** It eliminates duplicates generated by *retries within the producer's
+session*. A duplicate generated by the process dying between the ack and the outbox commit
+is outside its reach — it's a matter of design, not transport.
 
-E isso não é uma ressalva de documentação: `make orders-prove-stream` **reproduz a janela**.
-Devolve 500 linhas do outbox para a fila (exatamente o que uma queda depois do ack produz),
-republica, e o tópico passa a ter mais mensagens do que o log tem eventos. Medido:
-44.456 → 44.956.
+And this isn't a documentation caveat: `make orders-prove-stream` **reproduces the
+window**. It returns 500 outbox rows to the queue (exactly what a crash after the ack
+produces), republishes, and the topic ends up with more messages than the log has events.
+Measured: 44,456 → 44,956.
 
-### Deduplicação sem conjunto que cresce
+### Deduplication without a growing set
 
-O consumidor não guarda um conjunto de `event_id`. Ele compara `sequence_no` com o
-`last_sequence_no` que já está no read model:
+The consumer doesn't keep a set of `event_id`. It compares `sequence_no` against the
+`last_sequence_no` already in the read model:
 
-| Comparação | Verdito |
+| Comparison | Verdict |
 |---|---|
-| `seq <= last` | duplicata — descarta em silêncio |
-| `seq == last + 1` | aplica |
-| `seq > last + 1` | **buraco — recusa em voz alta** |
+| `seq <= last` | duplicate — discards silently |
+| `seq == last + 1` | applies |
+| `seq > last + 1` | **gap — refuses loudly** |
 
-Duas consequências que valem mais que a economia de memória:
+Two consequences that matter more than the memory savings:
 
-**É limitado por construção.** Um inteiro por pedido. Um conjunto de `event_id` cresce sem
-limite e obriga a inventar uma política de expiração — e toda política de expiração é uma
-janela em que a duplicata volta a passar.
+**It's bounded by construction.** One integer per order. A set of `event_id` grows without
+bound and forces inventing an expiration policy — and every expiration policy is a window
+where the duplicate gets through again.
 
-**Faz `key = order_id` virar peça de carga.** A comparação só é válida porque a ordem por
-chave é garantida: uma duplicata sempre chega *depois* do original. Se não chegasse, ela
-seria classificada como buraco. A chave deixa de ser detalhe de configuração e passa a ser a
-premissa de uma função — e a prova contra o broker confere as duas coisas: todo pedido numa
-única partição, e toda repetição em offset maior que o seu original.
+**It makes `key = order_id` a load-bearing piece.** The comparison is only valid because
+ordering by key is guaranteed: a duplicate always arrives *after* the original. If it
+didn't, it would be classified as a gap. The key stops being a configuration detail and
+becomes a function's assumption — and the proof against the broker checks both things:
+every order on a single partition, and every repeat at an offset greater than its original.
 
-**Buraco é perda, e perda tem de doer.** `seq > last + 1` significa que um evento não chegou.
-Avançar o offset por cima tornaria a perda permanente e invisível. O consumidor para.
+**A gap is loss, and loss has to hurt.** `seq > last + 1` means an event didn't arrive.
+Advancing the offset past it would make the loss permanent and invisible. The consumer
+stops.
 
-### O offset é commitado depois da escrita
+### The offset is committed after the write
 
-`enable.auto.commit` é **false**, e essa é a segunda escolha que decide tudo: o commit
-automático anda no *timer*, não na escrita, e entrega at-most-once sem ninguém ter escolhido.
-A ordem é escrever a projeção → commitar a projeção → commitar o offset. Morrer no meio
-reentrega o lote, e a deduplicação o descarta: **at-least-once na entrega, efeito
-exactly-once na projeção**.
+`enable.auto.commit` is **false**, and that's the second choice that decides everything:
+automatic commit runs on a *timer*, not on the write, and delivers at-most-once without
+anyone having chosen it. The order is write the projection → commit the projection → commit
+the offset. Dying midway redelivers the batch, and deduplication discards it:
+**at-least-once on delivery, exactly-once effect on the projection**.
 
-Nenhum teste de contagem enxerga essa ordem. Por isso ela é asserida contra duplos que
-gravam um **diário compartilhado** — a intercalação entre os dois lados é a propriedade, e
-ela não existe em dois diários separados.
+No counting test can see this ordering. That's why it's asserted against doubles that
+write to a **shared journal** — the interleaving between the two sides is the property, and
+it doesn't exist in two separate journals.
 
-### Onde cada prova mora, outra vez
+### Where each proof lives, again
 
-| Propriedade | Offline (`make test`) | Contra o broker (`make orders-prove-stream`) |
+| Property | Offline (`make test`) | Against the broker (`make orders-prove-stream`) |
 |---|---|---|
-| Verdito de duplicata / buraco | `decide` é pura, testada sem nada | — |
-| Ordem escrita → commit de offset | diário compartilhado dos duplos | — |
-| Chave = `order_id`, nada marcado antes do ack | duplo de produtor | — |
-| Ordem por chave, repetição depois do original | — | só o broker pode garantir |
-| Transporte fiel byte a byte | — | 16 sha256 |
-| At-least-once real | — | a janela é reproduzida |
-| Replay sem efeito | duplos | e contra o tópico inteiro |
+| Duplicate/gap verdict | `decide` is pure, tested with no dependencies | — |
+| Order: write → offset commit | doubles' shared journal | — |
+| Key = `order_id`, nothing marked before the ack | producer double | — |
+| Order by key, repeat after the original | — | only the broker can guarantee it |
+| Byte-for-byte faithful transport | — | 16 sha256 |
+| Real at-least-once | — | the window is reproduced |
+| Replay with no effect | doubles | and against the whole topic |
 
-Seis inversões de semântica foram injetadas no código e cada uma reprovou o teste certo:
-offset antes da escrita, commit assíncrono, marcar antes do flush, marcar só o que passou,
-chave constante, buraco como no-op.
+Six semantic inversions were injected into the code and each one failed the right test:
+offset before the write, asynchronous commit, marking before the flush, marking only what
+passed, a constant key, a gap treated as a no-op.
 
-### Replay: rebobinar sem apagar
+### Replay: rewind without erasing
 
-`orders-replay` rebobina o grupo para o início e **não apaga a projeção**. Isso é
-deliberado: reprocessar o tópico inteiro *por cima* do estado existente é o que prova consumo
-idempotente. Apagar antes provaria que o fold é determinístico — que é outra coisa, e já
-estava provada desde o Marco 2.
+`orders-replay` rewinds the group to the beginning and **does not erase the
+projection**. This is deliberate: reprocessing the whole topic *on top of* the existing
+state is what proves idempotent consumption. Erasing first would prove that the fold is
+deterministic — a different thing, already proven since Milestone 2.
 
-Medido: 44.956 mensagens reprocessadas, **0 aplicadas**, digest da projeção idêntico. E o
-plano inteiro reconstruído a partir de volumes vazios produz o **mesmo digest**
-(`d769f727f805736a…`): a projeção é reconstruível do zero, não só estável.
+Measured: 44,956 messages reprocessed, **0 applied**, identical projection digest. And the
+whole plan rebuilt from empty volumes produces the **same digest**
+(`d769f727f805736a…`): the projection is reconstructible from scratch, not just stable.
 
-### Três folds independentes, agora
+### Three independent folds, now
 
-`silver_order` (window function sobre o log), `orders` no OLTP (incremental, transacional) e
-`live_order_state` (incremental, em memória, alimentado pelo broker). Três caminhos, um
-número: **6.400 pedidos, zero divergências** em estado, sequência, contagens e valores.
+`silver_order` (window function over the log), `orders` in the OLTP (incremental,
+transactional), and `live_order_state` (incremental, in memory, fed by the broker). Three
+paths, one number: **6,400 orders, zero divergences** in state, sequence, counts, and
+values.
 
-O Marco 4 já mostrou o que isso compra — dois folds discordando acharam dois defeitos que
-nenhum teste pegava. O terceiro fold não achou defeito novo, e isso também é informação.
+Milestone 4 already showed what this buys — two disagreeing folds found two defects that no
+test caught. The third fold found no new defect, and that's information too.
 
-### Dois achados que valem mais escritos que corrigidos
+### Two findings worth more written down than fixed
 
-> **Superado na Fase 7.** Os dois achados abaixo deixaram de estar apenas registrados: as
-> premissas foram conciliadas. O texto fica como estava porque a razão de eles terem
-> sobrevivido três fases é o que importa — faltava a distinção entre *ajustar uma premissa
-> até a saída agradar*, que se recusa, e *tornar duas premissas mutuamente coerentes*, que é
-> correção de modelo. Ver a Fase 7 e `assert_order_premises_are_internally_coherent`.
+> **Superseded in Phase 7.** The two findings below stopped being merely logged: the
+> assumptions were reconciled. The text stays as it was because the reason they survived
+> three phases is what matters — the missing piece was the distinction between *adjusting an
+> assumption until the output pleases*, which is refused, and *making two assumptions
+> mutually coherent*, which is a model correction. See Phase 7 and
+> `assert_order_premises_are_internally_coherent`.
 
-**1. A premissa `sla_minutes_picking = 90` é inalcançável por construção.** O consumidor
-calcula o tempo de separação e marca `sla_breached` — o mecanismo funciona e está testado.
-Mas `basket_lines_max × minutes_per_line_picked = 40 × 2 = 80 min`, e a maior separação
-observada em 6.400 pedidos foi exatamente **80,00 min**. O limiar não pode disparar.
+**1. The `sla_minutes_picking = 90` assumption is unreachable by construction.** The
+consumer computes the picking time and flags `sla_breached` — the mechanism works and is
+tested. But `basket_lines_max × minutes_per_line_picked = 40 × 2 = 80 min`, and the longest
+picking time observed across 6,400 orders was exactly **80.00 min**. The threshold can't
+fire.
 
-Foi deixado como está. Ajustar uma premissa declarada até a verificação acender é o oposto
-de verificar — e "o processo está confortavelmente dentro do SLA" é um estado legítimo do
-mundo, não um defeito. Fica registrado que o alerta **não é exercido por estes dados**, e
-portanto não conta como prova de nada.
+It was left as is. Adjusting a declared assumption until the check lights up is the
+opposite of verifying — and "the process is comfortably within SLA" is a legitimate state
+of the world, not a defect. It's logged that the alert **is not exercised by this data**,
+and therefore doesn't count as proof of anything.
 
-**2. A distribuição perfeitamente uniforme entre partições é artefato da chave.** Medido:
-1.600 pedidos em cada uma das 4 partições, e exatamente 100 em cada uma dentro de *cada* um
-dos 16 grupos (armazém, dia). Isso não é mérito do particionador: a parte variável de
-`order_id` é um contador sequencial denso com zeros à esquerda, e os bits baixos do murmur2
-acompanham os últimos dígitos de forma linear — o resultado é um sistema completo de
-resíduos. Com `order_id` esparso ou em UUID o equilíbrio viraria apenas estatístico. **Não é
-garantia e não deve virar premissa.**
+**2. The perfectly uniform distribution across partitions is an artifact of the key.**
+Measured: 1,600 orders in each of the 4 partitions, and exactly 100 in each within *every*
+one of the 16 (warehouse, day) groups. This is not the partitioner's merit: the variable
+part of `order_id` is a dense sequential counter with leading zeros, and murmur2's low bits
+track the last digits linearly — the result is a complete residue system. With a sparse
+`order_id` or a UUID, the balance would become merely statistical. **It's not a guarantee
+and shouldn't become an assumption.**
 
-### Um defeito na prova, não no sistema
+### A defect in the proof, not in the system
 
-A primeira versão da conferência de ordem exigia que a lista de `sequence_no` de cada pedido,
-ordenada por offset, fosse crescente. Ela passou no primeiro run e **reprovou 121 pedidos no
-segundo** — porque o segundo run tinha as duplicatas do primeiro no tópico, e uma duplicata
-republicada foi produzida *depois*, então aparecer depois é o comportamento correto. A
-sequência crua lê `1, 2, …, 1`.
+The first version of the order check required that the list of `sequence_no` for each
+order, ordered by offset, be increasing. It passed on the first run and **failed 121 orders
+on the second** — because the second run had the first run's duplicates in the topic, and a
+republished duplicate was produced *later*, so appearing later is the correct behavior. The
+raw sequence reads `1, 2, …, 1`.
 
-A prova estava reprovando o broker por fazer exatamente o certo. A garantia do Kafka é sobre
-a **ordem de produção**, não sobre a lista de offsets. Corrigida para as duas propriedades
-que a deduplicação realmente usa: a *primeira* aparição de cada `sequence_no` vem em ordem, e
-toda repetição vem depois do seu original.
+The proof was failing the broker for doing exactly the right thing. Kafka's guarantee is
+about **production order**, not about the list of offsets. Fixed for the two properties
+that deduplication actually uses: the *first* appearance of each `sequence_no` comes in
+order, and every repeat comes after its original.
 
-Vale o registro porque é a terceira vez neste projeto que a verificação estava errada e o
-sistema certo — e as três só apareceram porque a verificação foi rodada mais de uma vez,
-contra estado que já não era limpo.
+Worth logging because it's the third time in this project that the check was wrong and the
+system right — and all three only showed up because the check was run more than once,
+against state that was no longer clean.
 
-### O que Kafka comprou, e o que continua hipotético
+### What Kafka bought, and what remains hypothetical
 
-**Comprou, e é medível**: um ponto de desacoplamento onde um segundo consumidor entra sem
-tocar no produtor; replay a partir de offset arbitrário; e um lugar onde at-least-once mais
-idempotência são *exercidos* em vez de assumidos.
+**It bought, and it's measurable**: a decoupling point where a second consumer enters
+without touching the producer; replay from an arbitrary offset; and a place where
+at-least-once plus idempotence are *exercised* instead of assumed.
 
-**Continua hipotético**: que alguém precise da latência. O gatilho escrito pedia "um
-consumidor cuja utilidade EXPIRE se chegar no lote do dia seguinte". Existe agora um
-consumidor que mantém estado vivo abaixo do lote — o mecanismo. Se alguma decisão muda por o
-número chegar em segundos em vez de no dia seguinte é pergunta de produto, e **replay de
-dado histórico não pode respondê-la**. Está escrito assim de propósito.
+**Remains hypothetical**: that anyone needs the latency. The written trigger called for "a
+consumer whose usefulness EXPIRES if it arrives in the next day's batch." There is now a
+consumer that keeps live state below the batch — the mechanism. Whether any decision
+changes because the number arrives in seconds instead of the next day is a product
+question, and **replay of historical data can't answer it**. It's written this way on
+purpose.
 
-**E o broker não é a origem.** O log canônico continua sendo escrito em disco antes de
-entrar no OLTP e no tópico. Isso é deliberado — trocar reprodutibilidade byte a byte pelo
-broker como fonte da verdade seria um mau negócio, e o replay determinístico é justamente o
-que permite rodar o mesmo dia cem vezes e comparar. Mas significa que este pipeline
-demonstra **semântica de transporte**, não uma origem genuinamente event-driven. Quem ler
-isto procurando o segundo não vai encontrar.
+**And the broker is not the origin.** The canonical log is still written to disk before
+entering the OLTP and the topic. This is deliberate — trading byte-for-byte reproducibility
+for the broker as the source of truth would be a bad deal, and deterministic replay is
+exactly what allows running the same day a hundred times and comparing. But it means this
+pipeline demonstrates **transport semantics**, not a genuinely event-driven origin. Anyone
+reading this looking for the latter won't find it.
 
 
-## Fase 3, quarta metade: a projeção concorrente em Iceberg
+## Phase 3, fourth half: the concurrent projection in Iceberg
 
-Data: 2026-08-28. **Marco 6.** O gatilho era *"um segundo engine precisar **escrever** a mesma
-tabela"*, e agora `live_order_state` tem dois escritores por desenho: o consumidor em
-streaming (`orders-project --sink iceberg`) e a reconstrução em lote
-(`orders-rebuild-projection`), com o DuckDB lendo a mesma tabela enquanto os dois escrevem.
+Date: 2026-08-28. **Milestone 6.** The trigger was *"a second engine needing to
+**write** the same table,"* and now `live_order_state` has two writers by design: the
+streaming consumer (`orders-project --sink iceberg`) and the batch rebuild
+(`orders-rebuild-projection`), with DuckDB reading the same table while both write.
 
-**O gatilho disparou por CONCORRÊNCIA, não por volume.** Neste volume um parquet reescrito
-com `os.replace` atômico funcionaria. O que o Iceberg compra aqui é isolamento de snapshot
-entre dois escritores e um leitor, mais time travel na projeção. Escrever isso é a diferença
-entre uma decisão e uma moda.
+**The trigger fired for CONCURRENCY, not volume.** At this volume an atomic
+`os.replace`-rewritten parquet would work. What Iceberg buys here is snapshot isolation
+between two writers and a reader, plus time travel on the projection. Writing this down is
+the difference between a decision and a fad.
 
-### O experimento fechado veio antes
+### The closed experiment came first
 
-`make spike-iceberg` respondeu nove perguntas contra o stack de verdade **antes de uma linha
-da projeção existir**, porque o plano registrou "o DuckDB pode não ler o catálogo SQL do
-pyiceberg" como a premissa mais frágil. Se ela caísse no meio da construção, o retrabalho
-seria caro e a tentação pior: contornar com um caminho que quase funciona e chamar de
-projeção.
+`make spike-iceberg` answered nine questions against the real stack **before a single
+line of the projection existed**, because the plan flagged "DuckDB might not read
+pyiceberg's SQL catalog" as the most fragile assumption. If it fell apart mid-build, the
+rework would be expensive and the temptation worse: work around it with a path that almost
+works and call it a projection.
 
-Duas respostas mudaram o desenho:
+Two answers changed the design:
 
-**1. O DuckDB lê pelo `metadata_location`, e só por ele.** Ele se recusa a descobrir qual é o
-metadado corrente varrendo o storage — *"globbing the filesystem to locate the latest version
-is disabled by default as this is considered unsafe and could result in reading uncommitted
-data"*. O atalho existe (`SET unsafe_enable_version_guessing = true`), foi medido, funciona, e
-foi **recusado**: ler metadado não commitado é exatamente o que uma leitura concorrente com
-dois escritores não pode fazer.
+**1. DuckDB reads by `metadata_location`, and only by it.** It refuses to discover the
+current metadata by scanning storage — *"globbing the filesystem to locate the latest
+version is disabled by default as this is considered unsafe and could result in reading
+uncommitted data."* The shortcut exists (`SET unsafe_enable_version_guessing = true`), was
+measured, works, and was **refused**: reading uncommitted metadata is exactly what a
+concurrent read with two writers cannot do.
 
-Quem sabe qual metadado é o corrente é o **catálogo**. `make silver` pergunta a ele e passa a
-resposta como var. A autoridade continua num lugar só, sem flag insegura e sem reimplementar
-convenção de catálogo.
+Whoever knows which metadata is current is the **catalog**. `make silver` asks it and
+passes the answer as a var. Authority stays in a single place, with no unsafe flag and no
+reimplementing catalog convention.
 
-**2. O experimento reprovou a minha asserção, não o Iceberg.** A primeira versão da Q5 exigia
-que "as duas escritas sobrevivessem" a duas referências carregadas ao mesmo tempo, e deu
-`CommitFailedException`. Isso é o controle otimista funcionando: o segundo commit parte de um
-snapshot que já não é o corrente e **tem** de ser recusado. Se passasse calado, seria lost
-update — e aí sim havia motivo para não usar Iceberg. Reescrita para a propriedade correta:
-recusa → recarrega → retry commita → ambas presentes.
+**2. The experiment disproved my assertion, not Iceberg.** The first version of Q5 required
+that "both writes survive" from two references loaded at the same time, and it produced a
+`CommitFailedException`. That's optimistic concurrency working: the second commit starts
+from a snapshot that is no longer current and **has** to be refused. If it passed silently,
+it would be a lost update — and then there would have been a real reason not to use
+Iceberg. Rewritten for the correct property: refuse → reload → retry commits → both
+present.
 
-**Uma armadilha de dependência, medida:** `pyiceberg[s3fs]` arrasta um `aiobotocore` que fixa
-um botocore antigo e quebra o `boto3` que a plataforma usa para o RAW. O pip aceita instalar e
-o estrago aparece noutro módulo. `PyArrowFileIO` faz o mesmo trabalho.
+**A measured dependency trap:** `pyiceberg[s3fs]` drags in an `aiobotocore` that pins an
+old botocore and breaks the `boto3` the platform uses for RAW. pip accepts the install and
+the damage shows up in a different module. `PyArrowFileIO` does the same job.
 
-### Retry não basta: a fusão precisa ser monotônica
+### Retry isn't enough: the merge has to be monotonic
 
-Esta é a parte que o experimento não pega e que decide se dois escritores funcionam.
+This is the part the experiment doesn't catch and that decides whether two writers
+actually work.
 
-Recarregar e tentar de novo resolve o conflito de **commit** — e ainda assim perde dado. Se o
-outro escritor já gravou o pedido no `sequence_no` 7 e a nossa tentativa carrega o 5, o retry
-cego escreve o 5 por cima. **O commit passa. A tabela regride. Nada reprova**, porque do ponto
-de vista do Iceberg não há nada errado: o branch estava onde se esperava.
+Reloading and retrying resolves the **commit** conflict — and still loses data. If the
+other writer has already written the order at `sequence_no` 7 and our attempt loads 5, a
+blind retry writes 5 over it. **The commit passes. The table regresses. Nothing fails**,
+because from Iceberg's point of view nothing is wrong: the branch was where expected.
 
-Por isso cada tentativa relê o estado das chaves afetadas e descarta as próprias linhas que
-não avançam. É a mesma guarda de `last_sequence_no` que protege o OLTP (Marco 4) e o
-consumidor (Marco 5), agora protegendo a escrita concorrente — a terceira vez que o mesmo
-invariante paga.
+That's why every attempt rereads the state of the affected keys and drops its own rows that
+don't advance. It's the same `last_sequence_no` guard that protects the OLTP (Milestone 4)
+and the consumer (Milestone 5), now protecting the concurrent write — the third time the
+same invariant pays off.
 
-Medido na prova: um escritor com `seq=5` contra uma tabela em `seq=7` produz
-`rows_dropped_as_stale=1, rows_written=0` e **nenhum upsert é emitido**. Não escrever é o
-resultado correto, não uma falha.
+Measured in the proof: a writer with `seq=5` against a table at `seq=7` produces
+`rows_dropped_as_stale=1, rows_written=0` and **no upsert is emitted**. Not writing is the
+correct outcome, not a failure.
 
-### O par lambda, com o recorte que ele deveria ter
+### The lambda pair, with the cut it should have
 
-`orders-rebuild-projection --through 2026-08-26` cobre a história assentada; o streaming cobre
-a cauda viva. Medido:
+`orders-rebuild-projection --through 2026-08-26` covers the settled history; streaming
+covers the live tail. Measured:
 
-| | Pedidos | Tempo |
-|---|---|---|
-| Lote (12 partições, 33.349 eventos) | 4.800 | **3,2 s** |
-| Streaming (o tópico inteiro por cima) | 1.600 | 60 s |
+| | Orders | Time |
+|---|---:|---:|
+| Batch (12 partitions, 33,349 events) | 4,800 | **3.2 s** |
+| Streaming (the whole topic on top) | 1,600 | 60 s |
 
-`written_by` na tabela: `{rebuild: 4800, stream: 1600}` — os dois escritores marcaram
-presença, e a coluna é **proveniência consultável**, não afirmação sobre log. O streaming
-descartou 33.849 eventos como duplicata: eram os pedidos que o lote já tinha trazido ao estado
-final, e a dedup do consumidor os reconheceu lendo o estado que o **outro** escritor gravou.
-Os dois mecanismos compõem.
+`written_by` in the table: `{rebuild: 4800, stream: 1600}` — both writers made their
+mark, and the column is **queryable provenance**, not a claim about the log. Streaming
+discarded 33,849 events as duplicates: they were the orders the batch had already brought
+to final state, and the consumer's dedup recognized them by reading the state the **other**
+writer had written. The two mechanisms compose.
 
-### Quatro caminhos, um digest
+### Four paths, one digest
 
-O read model tem hoje quatro produções independentes, e todas dão o mesmo `d769f727f805736a…`:
+The read model today has four independent productions, and all of them give the same
+`d769f727f805736a…`:
 
-| Caminho | Como |
+| Path | How |
 |---|---|
-| `live_order_state` no Postgres | fold incremental, sink Postgres |
-| `live_order_state` no Iceberg, só streaming | mesmo fold, outro armazenamento |
-| `live_order_state` no Iceberg, lote + streaming | dois escritores, fusão monotônica |
-| Reconstrução do zero, volumes vazios | Marco 5, partida a frio |
+| `live_order_state` in Postgres | incremental fold, Postgres sink |
+| `live_order_state` in Iceberg, streaming only | same fold, different storage |
+| `live_order_state` in Iceberg, batch + streaming | two writers, monotonic merge |
+| Rebuild from scratch, empty volumes | Milestone 5, cold start |
 
-**Dois motores de armazenamento diferentes produzindo digest byte a byte igual** é um
-resultado mais forte do que qualquer contagem.
+**Two different storage engines producing a byte-for-byte identical digest** is a
+stronger result than any count.
 
-### O que o acordo entre os dois escritores NÃO prova
+### What the agreement between the two writers does NOT prove
 
-`orders-rebuild-projection` e `orders-project` compartilham `fold_event`. Concordarem mostra
-que **não se atropelam** — não que estão certos. Confundir as duas coisas seria o mesmo
-defeito que este projeto já registrou duas vezes: uma verificação que compara algo consigo
-mesmo e passa.
+`orders-rebuild-projection` and `orders-project` share `fold_event`. Their agreeing
+shows they **don't step on each other** — not that they're correct. Confusing the two would
+be the same defect this project has already logged twice: a check that compares something
+with itself and passes.
 
-A evidência de correção vem de `orders-reconcile`, que compara com `silver_order` — window
-function em SQL sobre o log inteiro, sem uma linha de código em comum com as outras duas.
-**Três folds independentes, 6.400 pedidos, zero divergências.** E o mesmo invariante virou
-teste dbt (`assert_live_projection_matches_batch_fold`), porque um pipeline em que a
-divergência só aparece quando alguém lembra de rodar um comando não tem verificação — tem
-hábito.
+The evidence of correctness comes from `orders-reconcile`, which compares against
+`silver_order` — a SQL window function over the whole log, with not one line of code in
+common with the other two. **Three independent folds, 6,400 orders, zero divergences.** And
+the same invariant became a dbt test (`assert_live_projection_matches_batch_fold`), because
+a pipeline where divergence only shows up when someone remembers to run a command doesn't
+have verification — it has a habit.
 
-### Um defeito real que a prova encontrou
+### A real defect the proof found
 
-`IcebergProjection._refresh()` recarregava `TABLE_NAME` — um identificador **cravado**.
-Enquanto só existiu uma tabela, funcionou. No primeiro teste que usou uma tabela de sonda, um
-conflito fez o escritor da sonda recarregar a tabela de **produção** e gravar nela: quatro
-linhas sintéticas entraram em `live_order_state`, e quem apontou foi a reconciliação, três
-passos adiante.
+`IcebergProjection._refresh()` was reloading `TABLE_NAME` — a **hardcoded** identifier.
+While there was only one table, it worked. In the first test that used a probe table, a
+conflict made the probe's writer reload the **production** table and write into it: four
+synthetic rows entered `live_order_state`, and it was reconciliation, three steps further
+down, that caught it.
 
-Um identificador cravado numa função de refresh é sempre isto: funciona até existir um segundo
-objeto, e aí escreve no lugar errado sem erro nenhum.
+A hardcoded identifier in a refresh function is always this: it works until a second object
+exists, and then it writes to the wrong place with no error at all.
 
-Duas consequências viraram permanentes:
+Two consequences became permanent:
 
-- a prova ganhou uma **sentinela** — conta as linhas da tabela de produção antes e depois das
-  partes que usam a sonda. Uma prova que usa uma sonda tem de vigiar o alvo que ela *não*
-  deveria tocar;
-- a verificação da injeção passou a exigir que a reconciliação reprove **pela linha
-  adulterada**, e a pular a injeção se a base já estiver suja. Na rodada com o defeito, ela
-  "passou" porque `not ok` já era verdade — um falso-positivo clássico.
+- the proof gained a **sentinel** — it counts the production table's rows before and after
+  the parts that use the probe. A proof that uses a probe has to watch the target it
+  *shouldn't* touch;
+- the injection check now requires reconciliation to fail **because of the tampered row**,
+  and to skip the injection if the base is already dirty. In the run with the defect, it
+  "passed" because `not ok` was already true — a classic false positive.
 
-### O custo medido do copy-on-write
+### The measured cost of copy-on-write
 
-O sink Iceberg processou o tópico inteiro em **4 min 48 s** contra **14 s** do sink Postgres —
-~20×. A causa não é o formato em si: o `upsert` do pyiceberg é copy-on-write, então cada lote
-reescreve os arquivos de dados, e a guarda monotônica lê a tabela antes de cada tentativa.
-Com 90 lotes de 500 mensagens, isso é ~90 leituras e ~90 reescritas de 6.400 linhas.
+The Iceberg sink processed the whole topic in **4 min 48 s** against **14 s** for the
+Postgres sink — ~20×. The cause isn't the format itself: pyiceberg's `upsert` is
+copy-on-write, so every batch rewrites the data files, and the monotonic guard reads the
+table before every attempt. With 90 batches of 500 messages, that's ~90 reads and ~90
+rewrites of 6,400 rows.
 
-Números para dimensionar: 268 snapshots numa passada, 80 na passada com o recorte lambda.
+Numbers for scale: 268 snapshots in one pass, 80 in the pass with the lambda cut.
 
-**Não foi otimizado, e o motivo está aqui:** os dois sinks respondem perguntas diferentes. O
-Postgres é o read model de baixa latência; o Iceberg é o que aceita dois escritores e guarda
-história. Ajustar o lote do Iceberg para ficar perto do Postgres trocaria latência por
-throughput sem que ninguém tivesse pedido. **Gatilho para mexer**: a projeção sair da ordem de
-10⁴ linhas, quando o custo por commit deixa de ser desprezível e merge-on-read (delete
-posicional) passa a valer o que custa em complexidade.
+**It was not optimized, and here's why:** the two sinks answer different questions.
+Postgres is the low-latency read model; Iceberg is the one that accepts two writers and
+keeps history. Tuning the Iceberg batch to get close to Postgres would trade latency for
+throughput with nobody having asked for it. **Trigger to revisit**: the projection leaving
+the 10⁴-row order of magnitude, when the per-commit cost stops being negligible and
+merge-on-read (positional delete) becomes worth what it costs in complexity.
 
 
-## Fase 3, quinta metade: os pedidos no warehouse
+## Phase 3, fifth half: orders in the warehouse
 
-O último salto da fase é o mais convencional — três STAGE, três FACT, três MART — e foi onde
-apareceu o defeito mais caro dela. Vale contar nessa ordem.
+The phase's last leap is the most conventional one — three STAGE, three FACT, three
+MART — and it's where its most expensive defect showed up. Worth telling it in that order.
 
-### O que entrou
+### What came in
 
-| Camada | Objetos |
+| Layer | Objects |
 |---|---|
-| STAGE | `STG_ORDER` (6.400) · `STG_ORDER_LINE` (120.693) · `STG_ORDER_EVENT` (44.456) · `STG_ORDER_PREMISE` (30) |
+| STAGE | `STG_ORDER` (6,400) · `STG_ORDER_LINE` (120,693) · `STG_ORDER_EVENT` (44,456) · `STG_ORDER_PREMISE` (30) |
 | GOLD | `FACT_ORDER` · `FACT_ORDER_ITEM` · `FACT_ORDER_EVENT` · `FACT_ORDER_PREMISE` |
 | MART | `MART_ORDER_FUNNEL` · `MART_FULFILLMENT_SLA` · `MART_BASKET_DAILY` |
 
-O destino saiu de 236.797 para **406.855 linhas**; `DIM_CUSTOMER` dobrou para 40.000 porque a
-base de 2026-08-24, gerada no Marco 0, nunca tinha atravessado a fronteira.
+The destination went from 236,797 to **406,855 rows**; `DIM_CUSTOMER` doubled to 40,000
+because the 2026-08-24 base, generated in Milestone 0, had never crossed the boundary.
 
-`FACT_ORDER` é **accumulating snapshot**, e o padrão só existe porque há eventos: uma linha
-por pedido que se preenche conforme ele avança, com onze marcos e as durações entre eles. Uma
-fotografia de estado diria *onde* o pedido está; nunca *quanto tempo levou para chegar lá*.
+`FACT_ORDER` is an **accumulating snapshot**, and the pattern only exists because there are
+events: one row per order that fills in as it progresses, with eleven milestones and the
+durations between them. A state snapshot would say *where* the order is; never *how long it
+took to get there*.
 
-### Um timestamp 56 milhões de anos no futuro, e 166 nós verdes por cima dele
+### A timestamp 56 million years in the future, and 166 green nodes on top of it
 
-A primeira carga do STAGE pôs **todo** timestamp no ano **56.648.666**. O DuckDB anota a
-unidade do timestamp só no `LogicalType` moderno do parquet e deixa o `ConvertedType` legado
-em `NONE`; o leitor do Snowflake ignora o primeiro por padrão, cai no segundo, não acha
-unidade nenhuma e assume **milissegundos**. 1,787×10¹⁵ microssegundos viram 1,787×10¹⁵
-milissegundos.
+The first STAGE load put **every** timestamp in the year **56,648,666**. DuckDB only
+annotates the timestamp's unit in parquet's modern `LogicalType` and leaves the legacy
+`ConvertedType` at `NONE`; Snowflake's reader ignores the former by default, falls back to
+the latter, finds no unit at all, and assumes **milliseconds**. 1.787×10¹⁵ microseconds
+become 1.787×10¹⁵ milliseconds.
 
-O que **não** pegou:
+What did **not** catch it:
 
-- a reconferência do carregador — compara **contagem** de linhas, e ela estava certa;
-- os 166 nós do dbt, **todos verdes** — as durações viraram números grandes, não nulos nem
-  erros, e nenhum tipo mudou;
-- `assert_gold_grains_are_unique` — o grão continuou único;
-- `assert_order_funnel_totals_match_fact_order` — um funil é feito de
-  `count_if(marco is not null)`, e "não nulo" continua exato quando o instante está deslocado;
-- `assert_fact_order_amount_equals_sum_of_items` — dinheiro não passa por timestamp.
+- the loader's re-check — it compares row **counts**, and those were correct;
+- dbt's 166 nodes, **all green** — the durations turned into big numbers, not nulls or
+  errors, and no type changed;
+- `assert_gold_grains_are_unique` — the grain stayed unique;
+- `assert_order_funnel_totals_match_fact_order` — a funnel is built from
+  `count_if(milestone is not null)`, and "not null" stays exact even when the instant is
+  shifted;
+- `assert_fact_order_amount_equals_sum_of_items` — money doesn't go through a timestamp.
 
-Quem apontou foi um humano lendo **80.000.060 minutos de separação** num mart.
+What caught it was a human reading **80,000,060 minutes of picking time** in a mart.
 
-Só apareceu agora porque era a **primeira vez que um `TIMESTAMP` cruzava a fronteira**: até o
-Marco 6 o recorte inteiro só tinha `DATE`, que viaja como `date32` sem ambiguidade de unidade.
+It only showed up now because it was the **first time a `TIMESTAMP` crossed the
+boundary**: through Milestone 6 the whole cut only had `DATE`, which travels as `date32`
+with no unit ambiguity.
 
-A correção é `use_logical_type = true` no `file_format`. O que ficou permanente é o teste:
-`assert_order_milestones_are_plausible_against_the_order_date` ancora cada marco contra
-`order_date` — que chegou por **outro caminho**. Comparar marcos entre si passaria alegremente,
-porque todos estavam deslocados pelo mesmo fator e a ordem relativa continuava certa.
+The fix is `use_logical_type = true` in `file_format`. What stayed permanent is the test:
+`assert_order_milestones_are_plausible_against_the_order_date` anchors every milestone
+against `order_date` — which arrived by **a different path**. Comparing milestones against
+each other would have happily passed, because they were all shifted by the same factor and
+the relative order stayed correct.
 
-O teste foi provado contra o defeito **real**, não contra uma injeção: o STAGE ainda estava
-corrompido quando ele rodou pela primeira vez, e reprovou nos 6.400 pedidos.
+The test was proven against the **real** defect, not an injection: STAGE was still
+corrupted when it first ran, and it failed on the 6,400 orders.
 
-### O DDL derivado achou uma contagem virando `FLOAT`
+### The derived DDL found a count turning into `FLOAT`
 
-Menor, mesma família. `sum()` sobre `INTEGER` devolve `HUGEINT` no DuckDB; o parquet não tem
-`INT128`, então a escrita rebaixa a coluna para `DOUBLE` — e `substituted_lines` e
-`removed_lines`, que são contagens de eventos, chegariam ao warehouse declaradas como `FLOAT`.
-Nenhum valor foi corrompido (nenhum passa de 40), mas o tipo passa a afirmar "isto pode ter
-parte fracionária", que é falso.
+Smaller, same family. `sum()` over `INTEGER` returns `HUGEINT` in DuckDB; parquet has no
+`INT128`, so the write downgrades the column to `DOUBLE` — and `substituted_lines` and
+`removed_lines`, which are event counts, would reach the warehouse declared as `FLOAT`. No
+value was corrupted (none exceeds 40), but the type ends up asserting "this can have a
+fractional part," which is false.
 
-Quem achou foi o DDL ser **derivado do próprio recorte**. Um DDL escrito à mão teria dito
-`NUMBER(38,0)`, e a divergência entre o que o arquivo tem e o que a tabela declara só
-apareceria no `COPY INTO` — ou nunca.
+What caught it was the DDL being **derived from the cut itself**. A hand-written DDL would
+have said `NUMBER(38,0)`, and the mismatch between what the file has and what the table
+declares would only show up in `COPY INTO` — or never.
 
-### O SCD2 finalmente paga por si, e dois caminhos independentes concordam
+### SCD2 finally pays for itself, and two independent paths agree
 
-Até aqui `DIM_CUSTOMER` e `DIM_PRODUCT` eram SCD2 **sem nenhum fato apontando para uma
-versão**. `FACT_ORDER` resolve a versão de cliente vigente na data do pedido por *range join*;
-`FACT_ORDER_ITEM` resolve duas versões de produto — a do pedido e a do **cumprido**, que
-diferem nas 4.670 linhas substituídas.
+Up to now `DIM_CUSTOMER` and `DIM_PRODUCT` were SCD2 **with no fact pointing to a
+version**. `FACT_ORDER` resolves the customer version current on the order date via a
+*range join*; `FACT_ORDER_ITEM` resolves two product versions — the ordered one and the
+**fulfilled** one, which differ across the 4,670 substituted lines.
 
-E há uma coincidência que virou verificação: a versão resolvida pelo *range join* é a mesma
-que a Source gravou em `customer_ingestion_date` dentro do evento `order_placed`, nos
-**6.400** pedidos. São dois caminhos que não se tocam — a escolha do roster em Python, no
-momento da geração, e uma junção por intervalo em SQL, no warehouse. Enquanto coincidirem, o
-SCD2 está sendo resolvido do jeito que a fase prometeu; quando divergirem, um dos dois lados
-mudou de ideia sobre o que "versão vigente" significa, e isso precisa ser falha e não
-descoberta em dashboard.
+And there's a coincidence that became a check: the version resolved by the *range join* is
+the same one the Source wrote to `customer_ingestion_date` inside the `order_placed` event,
+across the **6,400** orders. These are two paths that never touch — the roster choice in
+Python, at generation time, and an interval join in SQL, in the warehouse. As long as they
+coincide, SCD2 is being resolved the way the phase promised; when they diverge, one of the
+two sides changed its mind about what "current version" means, and that needs to be a
+failure, not a dashboard discovery.
 
-### Um funil que se apoia em marco, e os 61 pedidos que provam por quê
+### A funnel built on milestones, and the 61 orders that prove why
 
-`order_status` guarda o estado do **último** evento. Um pedido devolvido tem status
-`RETURNED` — **e foi entregue**. Medido: contar `order_status = 'DELIVERED'` dá **5.985**;
-contar `delivered_at is not null` dá **6.046**. São os 61 devolvidos, e um funil montado sobre
-status produziria uma taxa de entrega 1% menor que a real sem nada reprovar.
+`order_status` holds the state of the **last** event. A returned order has status
+`RETURNED` — **and was delivered**. Measured: counting `order_status = 'DELIVERED'` gives
+**5,985**; counting `delivered_at is not null` gives **6,046**. Those are the 61 returned
+ones, and a funnel built on status would produce a delivery rate 1% lower than the real one
+with nothing failing.
 
-Marco é monotônico; status não é. Um funil é por definição uma contagem de etapas
-**alcançadas**, então a coluna certa é o instante.
+A milestone is monotonic; status isn't. A funnel is by definition a count of stages
+**reached**, so the right column is the instant.
 
-### Dois achados registrados em vez de corrigidos
+### Two findings logged instead of fixed
 
-> **Superado na Fase 7.** Os dois achados abaixo deixaram de estar apenas registrados: as
-> premissas foram conciliadas. O texto fica como estava porque a razão de eles terem
-> sobrevivido três fases é o que importa — faltava a distinção entre *ajustar uma premissa
-> até a saída agradar*, que se recusa, e *tornar duas premissas mutuamente coerentes*, que é
-> correção de modelo. Ver a Fase 7 e `assert_order_premises_are_internally_coherent`.
+> **Superseded in Phase 7.** The two findings below stopped being merely logged: the
+> assumptions were reconciled. The text stays as it was because the reason they survived
+> three phases is what matters — the missing piece was the distinction between *adjusting an
+> assumption until the output pleases*, which is refused, and *making two assumptions
+> mutually coherent*, which is a model correction. See Phase 7 and
+> `assert_order_premises_are_internally_coherent`.
 
-**`sla_minutes_picking = 90` é inalcançável por construção.** A separação leva
-`minutes_per_line_picked` (2) × número de linhas, e `basket_lines_max` é 40 — teto de 80. p50
-= 36, p90 = 62, **máximo = 80**. Zero violações, e não porque a operação seja boa: porque as
-três premissas não se cruzam. Baixar o limiar até o alerta acender seria adaptar a premissa ao
-resultado desejado. O mart carrega `sla_minutes`, `max_picking_minutes` e
-`orders_breaching_sla` **lado a lado** — quem lê vê 90, vê 80 e vê 0, e entende o zero.
+**`sla_minutes_picking = 90` is unreachable by construction.** Picking takes
+`minutes_per_line_picked` (2) × number of lines, and `basket_lines_max` is 40 — a ceiling of
+80. p50 = 36, p90 = 62, **max = 80**. Zero violations, and not because operations are good:
+because the three assumptions don't intersect. Lowering the threshold until the alert
+fires would be adapting the assumption to the desired outcome. The mart carries
+`sla_minutes`, `max_picking_minutes`, and `orders_breaching_sla` **side by side** — a reader
+sees 90, sees 80, and sees 0, and understands the zero.
 
-**A janela de entrega quase nunca é cumprida, e o desvio é para CEDO.** Das 6.046 entregas,
-**5.166 chegam antes de a janela abrir**, 471 dentro, 409 depois. Mediana de 4,6 h até a
-entrega contra 12,8 h até o início da janela: `slot_lead_hours` sorteia 2–24 h enquanto a soma
-dos marcos entrega em ~4,6 h. Duas premissas declaradas separadamente e nunca conciliadas.
+**The delivery window is almost never met, and the skew is toward EARLY.** Of the 6,046
+deliveries, **5,166 arrive before the window opens**, 471 within it, 409 after. A median of
+4.6 h to delivery against 12.8 h to the window's start: `slot_lead_hours` draws 2–24 h while
+the sum of milestones delivers in ~4.6 h. Two assumptions declared separately and never
+reconciled.
 
-O que mudou não foi o seed, foi **o que se publica**: `orders_delivered_before_slot` e
-`orders_delivered_after_slot` viajam separados, porque chegar cedo e chegar tarde são
-problemas operacionais **opostos** e "fora da janela" não diz qual dos dois está acontecendo.
+What changed wasn't the seed, it was **what gets published**: `orders_delivered_before_slot`
+and `orders_delivered_after_slot` travel separately, because arriving early and arriving
+late are **opposite** operational problems and "outside the window" doesn't say which one
+is happening.
 
-### As premissas atravessam a fronteira, e não uma cópia delas
+### The assumptions cross the boundary, not a copy of them
 
-`sla_minutes_picking` tem dono: o seed que o gerador leu, cujo `sha256` está no manifesto de
-cada partição do RAW. Reescrevê-lo como var do dbt criaria a segunda cópia que diverge na
-primeira edição — e **nada reprovaria**, porque contar zero violação contra o limiar errado
-tem exatamente a aparência de contar zero contra o certo. Daí `STG_ORDER_PREMISE` e
-`FACT_ORDER_PREMISE`: metadado promovido a fato pelo mesmo motivo de `FACT_INGESTION_RUN`.
+`sla_minutes_picking` has an owner: the seed the generator read, whose `sha256` is in
+every RAW partition's manifest. Rewriting it as a dbt var would create the second copy that
+diverges on the first edit — and **nothing would fail**, because counting zero violations
+against the wrong threshold looks exactly like counting zero against the right one. Hence
+`STG_ORDER_PREMISE` and `FACT_ORDER_PREMISE`: metadata promoted to a fact for the same
+reason as `FACT_INGESTION_RUN`.
 
-A var `currency` continua sendo var, e a diferença é o ponto: a Mercadona não declara moeda em
-campo nenhum, então a premissa **não tem outra casa**.
+The `currency` var stays a var, and that difference is the point: Mercadona doesn't declare
+currency in any field, so the assumption **has no other home**.
 
-Uma armadilha medida no caminho: `dbt seed` só recria a tabela com `--full-refresh`. Trocar
-`column_types` num seed que já existe é um no-op silencioso até alguém forçar.
+A trap measured along the way: `dbt seed` only recreates the table with `--full-refresh`.
+Changing `column_types` on a seed that already exists is a silent no-op until someone
+forces it.
 
-### Cada teste foi visto vermelho
+### Every test was seen red
 
-`make warehouse-prove-tests` injeta, no dado **real** do warehouse, o defeito específico que
-cada um dos cinco testes diz pegar; exige o vermelho; desfaz; e exige o verde de volta. Termina
-rodando a suíte inteira e conferindo uma sentinela de contagens. Só toca GOLD e MART, que são
-inteiramente reconstruíveis a partir do STAGE.
+`make warehouse-prove-tests` injects, into the warehouse's **real** data, the specific
+defect each of the five tests claims to catch; demands red; undoes it; and demands green
+again. It finishes by running the whole suite and checking a count sentinel. It only
+touches GOLD and MART, which are entirely reconstructible from STAGE.
 
-Depois do que aconteceu com os timestamps, um teste verde que nunca foi visto vermelho não é
-evidência de nada.
+After what happened with the timestamps, a green test that was never seen red is not
+evidence of anything.
 
 ### `make stream-evidence`
 
-Espelha `make warehouse-evidence`, com um gatilho diferente: lá o motivo é **expiração** (a
-conta é trial); aqui é que a metade em streaming **não é coberta offline** — `make test` roda
-sem rede, e broker, OLTP e Iceberg só existem enquanto `make stream-up` estiver de pé.
+It mirrors `make warehouse-evidence`, with a different trigger: there the reason is
+**expiration** (the account is a trial); here it's that the streaming half **isn't covered
+offline** — `make test` runs with no network, and the broker, OLTP, and Iceberg only exist
+while `make stream-up` is up.
 
-`docs/stream-evidence/README.md` registra os três planos e os três folds concordando em 6.400
-pedidos. Nenhum número escrito à mão. É **tolerante a plano desligado de propósito**: cada
-seção ausente aparece como ausência declarada, nunca como zero — *"o outbox tem 0 eventos"* e
-*"o OLTP não respondeu"* cabem na mesma célula de tabela e significam coisas opostas.
+`docs/stream-evidence/README.md` logs the three plans and the three folds agreeing on 6,400
+orders. No number written by hand. It's **tolerant of a plane deliberately turned off**:
+every missing section appears as a declared absence, never as zero — *"the outbox has 0
+events"* and *"the OLTP didn't respond"* fit in the same table cell and mean opposite
+things.
 
-## Painel de conferência: o terceiro papel finalmente vestido
+## Verification dashboard: the third role finally worn
 
-Streamlit sobre o `MART`, 22 indicadores em 7 grupos. O propósito declarado não é *mostrar
-dados* — é **conferir os indicadores antes de reconstruí-los no Power BI**, que é uma
-ferramenta onde a medida obviamente errada e a certa têm exatamente a mesma aparência.
+Streamlit on top of `MART`, 22 indicators in 7 groups. The declared purpose isn't to
+*show data* — it's to **verify the indicators before rebuilding them in Power BI**, a tool
+where the obviously wrong measure and the right one look exactly the same.
 
-### O papel de BI deixa de ser decorativo
+### The BI role stops being decorative
 
-Os três papéis existem desde a Fase 2. A carga passou a vestir `RETAIL_LOADER` e o dbt
-`RETAIL_TRANSFORMER` quando aquela dívida foi fechada; **`RETAIL_READER` continuava sem
-nenhum consumidor**. Este painel é o primeiro, e a consequência é concreta: ele lê `MART` e
-é *recusado pelo motor* em `GOLD` e `STAGE` — verificado ao vivo, na própria tela, com
-`use secondary roles none`.
+The three roles have existed since Phase 2. The load started wearing `RETAIL_LOADER` and
+dbt `RETAIL_TRANSFORMER` when that debt got closed; **`RETAIL_READER` still had no
+consumer**. This dashboard is the first one, and the consequence is concrete: it reads
+`MART` and is *refused by the engine* on `GOLD` and `STAGE` — verified live, on screen
+itself, with `use secondary roles none`.
 
-Isso tem um efeito de projeto que vale mais que a conveniência: quando um indicador pede algo
-que o papel não alcança, isso é **informação**, não obstáculo. Foi assim que a maior lacuna
-do modelo apareceu (abaixo).
+This has a project effect worth more than convenience: when an indicator needs something
+the role can't reach, that's **information**, not an obstacle. That's how the model's
+biggest gap showed up (below).
 
-### O CONTRACT é gerado, não escrito
+### CONTRACT is generated, not written
 
-`streamlit/indicators.py` carrega, para cada indicador, a pergunta, o grão, o tipo
-(observado/sintético) e o SQL **no mesmo objeto**. `streamlit/CONTRACT.md` é derivado dele.
+`streamlit/indicators.py` carries, for each indicator, the question, the grain, the type
+(observed/synthetic), and the SQL **in the same object**. `streamlit/CONTRACT.md` is derived
+from it.
 
-O motivo é o de sempre neste repositório, e aqui ele morde mais: o CONTRACT existe para
-alguém ler a consulta ao lado da explicação e decidir se o indicador está certo. Se os dois
-morassem em arquivos separados, divergiriam no primeiro ajuste — e **a conferência continuaria
-passando**, porque ninguém lê um SQL e um texto lado a lado procurando desacordo. Um teste
-offline reprova se o arquivo no disco não for o que o gerador produz, e foi provado capaz de
-reprovar.
+The reason is the usual one in this repository, and here it bites harder: CONTRACT exists
+so someone can read the query alongside the explanation and decide whether the indicator is
+right. If the two lived in separate files, they'd diverge on the first tweak — and **the
+check would keep passing**, because nobody reads a SQL query and a piece of text side by
+side looking for a disagreement. An offline test fails if the file on disk isn't what the
+generator produces, and it was proven capable of failing.
 
-### As três armadilhas que o painel existe para publicar
+### The three traps the dashboard exists to publish
 
-| Armadilha | Medido |
+| Trap | Measured |
 |---|---|
-| **Perda de valor tem duas causas** | `SUM(gross) − SUM(net)` = 58.327,81 mistura cesta que encolheu na separação (4.834,73) com pedido que morreu antes dela (53.493,08). A soma fecha exatamente; um número único esconde qual está acontecendo, e são áreas diferentes — operação de loja contra pagamento |
-| **Ticket médio tem dois denominadores** | receita/separados = 134,57; receita/colocados = 128,30. O segundo divide a receita de quem foi separado pelo total incluindo quem nunca chegou lá |
-| **`orders_touching_category` não é aditivo** | somar as 151 categorias de um dia dá muito mais que os 1.600 pedidos daquele dia |
+| **Lost value has two causes** | `SUM(gross) − SUM(net)` = 58,327.81 mixes a basket that shrank during picking (4,834.73) with an order that died before it (53,493.08). The sum ties out exactly; a single number hides which is happening, and they're different areas — store operations vs. payment |
+| **Average ticket has two denominators** | revenue/picked = 134.57; revenue/placed = 128.30. The second divides the revenue of the picked ones by the total including those who never got there |
+| **`orders_touching_category` isn't additive** | summing a day's 151 categories gives far more than that day's 1,600 orders |
 
-E as duas que a Fase 3 já havia registrado voltam aqui como aviso na tela, porque é onde
-alguém as leria errado: `orders_breaching_sla = 0` só é legível ao lado do limiar (90) e do
-máximo observado (80); e a aderência à janela de 8% precisa das três contagens, porque
-**5.166 das 6.046 entregas chegam antes de a janela abrir** — chegar cedo e chegar tarde são
-problemas opostos.
+And the two things Phase 3 had already logged come back here as an on-screen warning,
+because this is where someone would misread them: `orders_breaching_sla = 0` is only
+legible next to the threshold (90) and the observed maximum (80); and the 8% window
+adherence needs the three counts, because **5,166 of the 6,046 deliveries arrive before the
+window opens** — arriving early and arriving late are opposite problems.
 
-### A lacuna que o exercício revelou
+### The gap the exercise revealed
 
-**Nenhum mart junta cliente com pedido.** `MART_CUSTOMER_BASE` tem cliente sem pedido;
-`MART_ORDER_FUNNEL` e `MART_BASKET_DAILY` têm pedido agregado sem cliente. O elo existe em
-`FACT_ORDER.customer_sk`, no GOLD — fora do alcance de `RETAIL_READER`.
+**No mart joins customer with order.** `MART_CUSTOMER_BASE` has customers with no
+orders; `MART_ORDER_FUNNEL` and `MART_BASKET_DAILY` have aggregated orders with no
+customer. The link exists in `FACT_ORDER.customer_sk`, in GOLD — out of `RETAIL_READER`'s
+reach.
 
-Consequência: **não há recompra, LTV, coorte, RFM nem receita por cliente**, e são
-exatamente os indicadores que um painel estratégico costuma ser cobrado de ter. Não exige
-fonte nova — exige um mart com grão de cliente e medidas de pedido. Fica registrado como a
-ausência mais acionável da lista, com o gatilho escrito, em vez de aproximada por algum
-número que *pareceria* responder.
+Consequence: **there is no repeat purchase, LTV, cohort, RFM, or revenue per customer**, and
+those are exactly the indicators a strategic dashboard is usually asked to have. It requires
+no new source — it requires a mart with customer grain and order measures. It's logged as
+the most actionable gap on the list, with the trigger written down, instead of approximated
+by some number that would *look* like it answers it.
 
-### Onde as dependências ficam, e por quê
+### Where the dependencies live, and why
 
-`streamlit`, `pandas`, `pyarrow` e `altair` vão em `[project.optional-dependencies]` de
-`platform/pyproject.toml`, **fora** de `dependencies`. O `infra/Dockerfile.airflow` instala
-exatamente aquela lista, e ~150 MB de UI não têm o que fazer numa imagem que não renderiza
-dashboard. Mesmo venv, porém: o app precisa do conector do Snowflake que já está lá, e um
-segundo venv duplicaria o conector só para não duplicar o Streamlit.
+`streamlit`, `pandas`, `pyarrow`, and `altair` go in
+`[project.optional-dependencies]` of `platform/pyproject.toml`, **outside**
+`dependencies`. `infra/Dockerfile.airflow` installs exactly that list, and ~150 MB of UI has
+no business in an image that doesn't render a dashboard. Same venv, though: the app needs
+the Snowflake connector that's already there, and a second venv would duplicate the
+connector just to avoid duplicating Streamlit.
 
-### Por que o smoke test não é um `curl`
+### Why the smoke test isn't a `curl`
 
-O Streamlit devolve **HTTP 200 com o esqueleto da página mesmo quando o script morre no
-primeiro `select`** — a renderização é no cliente. `make dashboard-check` roda o script de
-verdade via `AppTest` e exige zero exceção; é a única forma de as 25 consultas serem
-exercitadas. Fica fora de `make test` porque exige conta viva.
+Streamlit returns **HTTP 200 with the page skeleton even when the script dies on the
+first `select`** — rendering happens client-side. `make dashboard-check` runs the real
+script via `AppTest` and requires zero exceptions; it's the only way to exercise all 25
+queries. It's left out of `make test` because it requires a live account.
 
-## O portão do Silver morava em seis arquivos, e nenhum concordava com o outro
+## The Silver gate lived in six files, and none of them agreed
 
-Achado em 2026-08-31 pela execução real: `mercadona_catalog_daily` reprovava **todo dia** na
-última tarefa. Os quatro armazéns extraíam, validavam, aterrissavam e verificavam com
-sucesso; o `silver` caía com *"no version-hint could be found"*.
+Found on 2026-08-31 by a real run: `mercadona_catalog_daily` was failing **every day**
+on its last task. The four warehouses extracted, validated, landed, and verified
+successfully; `silver` fell over with *"no version-hint could be found."*
 
-**O dado estava certo o tempo inteiro. O portão é que morava no arquivo errado.**
+**The data was right the whole time. It was the gate that lived in the wrong file.**
 
-### A decisão, e as seis cópias dela
+### The decision, and its six copies
 
-Nem todos os 22 modelos do Silver podem ser construídos sempre, e os dois motivos são
-legítimos: uma source que ainda não aterrissou nada faz `read_json` **falhar** (não devolver
-zero linhas), e `silver_live_order_state` só pode ser lido quando o catálogo Iceberg
-responde, porque o caminho do metadado vem dele e nunca de uma varredura do storage.
+Not all 22 Silver models can always be built, and there are two legitimate reasons: a
+source that hasn't landed anything yet makes `read_json` **fail** (not return zero rows),
+and `silver_live_order_state` can only be read when the Iceberg catalog responds, because
+the metadata path comes from it and never from a storage scan.
 
-Essa decisão existia em seis lugares:
+That decision existed in six places:
 
-| Onde | Portões que tinha |
+| Where | Gates it had |
 |---|---|
-| alvo `silver` do Makefile | os cinco — quatro sources + Iceberg |
-| `simulated_orders_events` | um — a própria source |
-| `ine_population_on_demand` | um — a própria source |
-| `ine_callejero_on_demand` | um — a própria source |
-| `simulated_oltp_customers` | um — a própria source |
-| **`mercadona_catalog_daily`** | **nenhum** |
+| the Makefile's `silver` target | all five — four sources + Iceberg |
+| `simulated_orders_events` | one — its own source |
+| `ine_population_on_demand` | one — its own source |
+| `ine_callejero_on_demand` | one — its own source |
+| `simulated_oltp_customers` | one — its own source |
+| **`mercadona_catalog_daily`** | **none** |
 
-A Mercadona sempre tem dado, então ninguém sentiu falta do portão dela — até o Marco 6
-criar um modelo que **não tem nada a ver com a source daquela DAG** e que ela passou a
-tentar construir todo dia.
+Mercadona always has data, so nobody missed its gate — until Milestone 6 created a
+model that **has nothing to do with that DAG's source** and that it started trying to build
+every day.
 
-### Por que nada pegou
+### Why nothing caught it
 
-`make silver` passava — tem o portão completo. `make test` passava — não olha DAG. A suíte
-do dbt nunca chegava a rodar. Só a execução real reprovava, e um dia depois, o que é a
-distância máxima entre a causa e o sintoma neste repositório.
+`make silver` passed — it has the full gate. `make test` passed — it doesn't look at the
+DAG. The dbt suite never got to run. Only the real run failed, and a day later, which is
+the maximum distance between cause and symptom in this repository.
 
-### O que ficou
+### What was left in place
 
-Um verbo: `retail_platform silver-build`, sobre `silver_gate.py`. `plan()` é **pura** —
-recebe o que foi observado e devolve `--exclude`/`--vars` — então a decisão inteira é
-exercitável sem MinIO e sem catálogo. Makefile e as cinco DAGs chamam o mesmo verbo.
+One verb: `retail_platform silver-build`, on top of `silver_gate.py`. `plan()` is
+**pure** — it receives what was observed and returns `--exclude`/`--vars` — so the whole
+decision is exercisable with no MinIO and no catalog. The Makefile and all five DAGs call
+the same verb.
 
-E uma checagem de fonte, porque **um portão único só vale enquanto for o único**: a suíte
-exige que nenhuma DAG do Silver monte o próprio `dbt build`, e que todo modelo de source
-esteja atribuído a alguma source em `SOURCE_MODELS`. A segunda é a que pega o modelo *novo*
-— quem criar um e esquecer de registrá-lo reproduz este defeito exatamente. As duas foram
-provadas capazes de reprovar antes de serem aceitas.
+Plus a source check, because **a single gate is only worth it as long as it stays the only
+one**: the suite requires that no Silver DAG assemble its own `dbt build`, and that every
+source model be assigned to some source in `SOURCE_MODELS`. The second is what catches a
+*new* model — whoever creates one and forgets to register it reproduces this exact defect.
+Both were proven capable of failing before being accepted.
 
-### O segundo achado, que o primeiro escondia
+### The second finding, which the first was hiding
 
-Com o portão certo, o container do Airflow passou a **excluir** a projeção — e a excluir
-sempre. `orders_projection.catalog()` cai num default `localhost:5433`, que dentro do
-container é o próprio container.
+With the right gate in place, the Airflow container started **excluding** the
+projection — and excluding it always. `orders_projection.catalog()` falls back to a default
+`localhost:5433`, which inside the container is the container itself.
 
-**Isso não reprova nada**: o build fica verde com uma tabela a menos, que é o pior tipo de
-sucesso. Resolvido dando ao serviço o seu próprio endereço
+**This fails nothing**: the build stays green with one table missing, which is the worst
+kind of success. Resolved by giving the service its own address
 (`ICEBERG_CATALOG_URI: postgresql+psycopg://oltp:oltp@oltp-postgres:5432/iceberg_catalog`),
-que é a diferença entre *"não pode"* e *"não tentou"*.
+which is the difference between *"can't"* and *"didn't try."*
 
-E, ao verificar, apareceu o terceiro: a **imagem do Airflow em execução era anterior ao
-Marco 5** — sem `psycopg`, `confluent-kafka` nem `pyiceberg`. O `Dockerfile.airflow` já
-tinha a verificação de import que quebra o build quando uma dependência some; ela estava
-certa e ninguém a executou. Reconstruída, o Airflow constrói os 319 nós.
+And, while verifying, a third one showed up: the **running Airflow image predated
+Milestone 5** — no `psycopg`, `confluent-kafka`, or `pyiceberg`. `Dockerfile.airflow`
+already had the import check that breaks the build when a dependency is missing; it was
+right and nobody had run it. Rebuilt, Airflow builds all 319 nodes.
 
-## Dois defeitos de orquestração que só apareceram com dois armazéns
+## Two orchestration defects that only showed up with two warehouses
 
-Ambos invisíveis com um único armazém, e ambos silenciosos: o DAG terminava `success`
-enquanto deixava de transformar dado recém-aterrissado.
+Both invisible with a single warehouse, and both silent: the DAG finished `success`
+while failing to transform newly landed data.
 
-1. **`trigger_rule` padrão do `silver`.** `all_success` faz a tarefa compartilhada ser
-   pulada quando *qualquer* upstream é pulado. Com o `mad1` curto-circuitando por já estar
-   aterrissado, o `silver` era pulado mesmo com o `bcn1` tendo acabado de aterrissar.
-   Corrigido para `NONE_FAILED_MIN_ONE_SUCCESS`.
+1. **`silver`'s default `trigger_rule`.** `all_success` makes the shared task get
+   skipped when *any* upstream is skipped. With `mad1` short-circuiting because it was
+   already landed, `silver` was skipped even with `bcn1` having just landed.
+   Fixed to `NONE_FAILED_MIN_ONE_SUCCESS`.
 
-2. **`ignore_downstream_trigger_rules` do `ShortCircuitOperator`.** O padrão é `True`, e
-   com ele o short-circuit pula **todo** o downstream **ignorando a `trigger_rule` de cada
-   tarefa** — inclusive a que acabara de ser corrigida. O sintoma foi exatamente o mesmo, o
-   que torna o segundo defeito fácil de confundir com a correção do primeiro ter falhado.
-   Com `False`, o gate pula apenas o próprio ramo e o `silver` volta a decidir pela própria
-   regra.
+2. **`ShortCircuitOperator`'s `ignore_downstream_trigger_rules`.** The default is `True`,
+   and with it the short-circuit skips **all** downstream tasks **ignoring each task's
+   `trigger_rule`** — including the one that had just been fixed. The symptom was exactly
+   the same, which makes the second defect easy to confuse with the first fix having
+   failed. With `False`, the gate only skips its own branch and `silver` goes back to
+   deciding by its own rule.
 
-Verificado no cenário misto: `mad1` curto-circuita, `bcn1` percorre
-`extract → validate → land → verify`, e o `silver` **roda**.
+Verified in the mixed scenario: `mad1` short-circuits, `bcn1` goes through
+`extract → validate → land → verify`, and `silver` **runs**.
 
-## Calibração da demanda contra o MAPA 2025 (Fase 4)
+## Demand calibration against MAPA 2025 (Phase 4)
 
-Até aqui o simulador de Orders escolhia produto **uniformemente sobre o catálogo**, e isso
-estava declarado como premissa: *"o mix por categoria espelha o TAMANHO do sortimento"*.
-Deixou de valer quando apareceu uma âncora observacional que não existia — o **Informe del
-Consumo Alimentario en España 2025** do MAPA, que mede volume, valor, preço médio e canal do
-consumo doméstico espanhol.
+Up to now, the Orders simulator chose products **uniformly across the catalog**, and
+that was declared as an assumption: *"the category mix mirrors the assortment's SIZE."*
+That stopped holding once an observational anchor appeared that didn't exist before — the
+MAPA's **Informe del Consumo Alimentario en España 2025**, which measures volume, value,
+average price, and channel of Spanish household consumption.
 
-### O achado que abriu a fase não era de demanda
+### The finding that opened the phase wasn't about demand
 
-A investigação começou por um sintoma: "Marisco y pescado" tinha **3,38% das unidades e
-22,82% da receita**, com preço médio pago de **27,09 €** contra um catálogo cujo produto mais
-caro em mad1 custava **24,05 €**. Um preço médio acima do máximo do sortimento não pode vir de
-escolha de produto.
+The investigation started from a symptom: "Marisco y pescado" had **3.38% of units and
+22.82% of revenue**, with an average price paid of **€27.09** against a catalog whose most
+expensive product in mad1 cost **€24.05**. An average price above the assortment's maximum
+cannot come from product choice.
 
-O RAW resolveu. Quando `selling_method = 1` e `unit_size` é nulo, a API da Mercadona devolve
-`unit_price = reference_price × 99` — o preço do **teto do seletor de peso**, não de nada que
-um domicílio compre. O fator é exatamente `99,000` em **10 combinações produto×armazém**, e a
-porção realmente comprável está em `min_bunch_amount`, um campo **que estava no RAW desde a
-primeira partição e que o Silver descartava**.
+RAW resolved it. When `selling_method = 1` and `unit_size` is null, the Mercadona API
+returns `unit_price = reference_price × 99` — the price of the **weight-selector's
+ceiling**, not of anything a household buys. The factor is exactly `99.000` in **10
+product×warehouse combinations**, and the actually purchasable portion sits in
+`min_bunch_amount`, a field **that had been in RAW since the first partition and that
+Silver was discarding**.
 
-| faixa de preço | produtos | unidades | receita | % da receita |
+| price range | products | units | revenue | % of revenue |
 |---|---|---|---|---|
-| ≤ 30 € | 4.921 | 204.393 | 622.812,08 | 75,85 % |
-| 30–100 € | 6 | 203 | 8.818,30 | 1,07 % |
-| **> 100 €** | **12** | **275** | **189.491,55** | **23,08 %** |
+| ≤ €30 | 4,921 | 204,393 | 622,812.08 | 75.85% |
+| €30–100 | 6 | 203 | 8,818.30 | 1.07% |
+| **> €100** | **12** | **275** | **189,491.55** | **23.08%** |
 
-**12 produtos em 4.939 — 0,24% do sortimento — produziam 23% da receita**, e nenhum dos 947
-testes reprovava, porque o número continuava internamente consistente. É a mesma classe de
-defeito do carimbo de tempo em milissegundos do Marco 7: uma unidade de medida errada não
-quebra nenhum total.
+**12 products out of 4,939 — 0.24% of the assortment — were producing 23% of revenue**,
+and none of the 947 tests failed, because the number stayed internally consistent. It's
+the same class of defect as the millisecond timestamp in Milestone 7: a wrong unit of
+measure doesn't break any total.
 
-`unit_price` **permanece intacto** em `silver_product_price` — projeção fiel da fonte é
-invariante. O que entrou foram colunas derivadas ao lado: `purchasable_unit_price`,
-`price_basis`, `net_content_kg_l`, e os três campos de granel que o modelo jogava fora.
+`unit_price` **remains untouched** in `silver_product_price` — a faithful projection of the
+source is an invariant. What came in were derived columns alongside it:
+`purchasable_unit_price`, `price_basis`, `net_content_kg_l`, and the three bulk fields the
+model was throwing away.
 
-### A resposta à pergunta que foi feita
+### The answer to the question that was asked
 
-*"Produtos de preço elevado estão recebendo demanda excessiva porque aumentam o valor da
-Order?"* — **Não.** Preço não entra em nenhum sorteio, nem antes nem depois desta fase. O
-mecanismo era o oposto: a escolha era *indiferente* ao preço, e foi a indiferença, sobre um
-catálogo com 12 preços mal escalados, que concentrou a receita.
+*"Are high-priced products receiving excessive demand because they raise the Order's
+value?"* — **No.** Price enters no draw, neither before nor after this phase. The
+mechanism was the opposite: the choice was *indifferent* to price, and it was that
+indifference, over a catalog with 12 badly scaled prices, that concentrated the revenue.
 
-### O que a calibração faz, e o que ela recusa fazer
+### What the calibration does, and what it refuses to do
 
 ```
-grupo de demanda   P(g)  <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
+demand group   P(g)  <- MAPA VOLUME target (kg/L), tilted by the e-commerce channel
        |
-produto no grupo         <- UNIFORME (nenhuma fonte mede giro por SKU)
+product within group  <- UNIFORM (no source measures per-SKU turnover)
        |
-quantidade / preço       <- inalterado / OBSERVADO
+quantity / price       <- unchanged / OBSERVED
        |
-valor do pedido          <- consequência, nunca objetivo
+order value             <- consequence, never the goal
 ```
 
-Preço não aparece em nenhuma seta que aponta para demanda. **Volume e valor divergem de
-propósito**: no MAPA, mariscos são 0,81% do volume e 2,88% do valor, e um simulador que os
-igualasse estaria errado.
+Price appears in no arrow pointing at demand. **Volume and value diverge on
+purpose**: in MAPA, seafood is 0.81% of volume and 2.88% of value, and a simulator that
+equated them would be wrong.
 
-**A fronteira, que vale mais que a calibração.** O MAPA mede consumo doméstico do residente —
-não mede pedido de loja online, nem cesta, nem cadência. Por isso `daily_order_rate`,
-`basket_lines_*` e `quantity_max` **continuam `synthetic` e não receberam calibração nenhuma**.
-Transformar o benchmark em fonte para esses números seria transformá-lo numa falsa
-representação da realidade.
+**The boundary, which matters more than the calibration.** MAPA measures the resident's
+household consumption — it doesn't measure an online store order, a basket, or a cadence.
+That's why `daily_order_rate`, `basket_lines_*`, and `quantity_max` **remain `synthetic` and
+received no calibration at all**. Turning the benchmark into a source for those numbers
+would turn it into a false representation of reality.
 
-### Três coisas que o informe não sustenta, registradas em vez de inventadas
+### Three things the report doesn't support, logged instead of invented
 
-| Dado | Por que não | O que foi feito |
+| Data | Why not | What was done |
 |---|---|---|
-| **Sazonalidade mensal por categoria** | Os gráficos mensais são **imagens**: só os rótulos dos eixos saem no texto. Há cinco números mensais em prosa, todos do total. E a janela cobre apenas agosto. | Slot criado **neutro** nos 12 meses, aplicado à taxa de pedidos (nunca ao mix, onde um fator global se normalizaria). Um par de testes prova que o mecanismo funciona *e* que o perfil entregue está neutro. |
-| **E-commerce por categoria** | Só 18 dos 102 blocos trazem a linha de canal. | Inclinação **fina** nos 18, **grossa** (1,1% fresca / 2,8% resto sobre 2,2% total) nos demais. Cada grupo carrega `channel_basis` e o relatório reporta qual regra o produziu. |
-| **Não-alimentar (~30% das unidades)** | Fora do universo do informe. | Fatia mantida com premissa agregada declarada, **nunca somada** ao bloco calibrado. |
+| **Monthly seasonality by category** | The monthly charts are **images**: only the axis labels come through in text. There are five monthly numbers in prose, all of them totals. And the window covers only August. | A slot created **neutral** across the 12 months, applied to the order rate (never to the mix, where a global factor would normalize away). A pair of tests proves both that the mechanism works *and* that the delivered profile is neutral. |
+| **E-commerce by category** | Only 18 of the 102 blocks carry the channel row. | A **fine** tilt on the 18, a **coarse** one (1.1% fresh / 2.8% rest over 2.2% total) on the rest. Every group carries `channel_basis` and the report states which rule produced it. |
+| **Non-food (~30% of units)** | Outside the report's universe. | Slice kept with a declared aggregate assumption, **never added** to the calibrated block. |
 
-Também registrado: a folha de rosto do PDF diz *"Informe del consumo alimentario en España
-2024"* enquanto o corpo inteiro reporta **2025**. É resíduo da edição anterior. Os números
-vêm do corpo, e a discrepância está no CONTRACT — não se ajusta a fonte, registra-se o achado.
+Also logged: the PDF's cover page says *"Informe del consumo alimentario en España
+2024"* while the entire body reports **2025**. It's a residue from the previous edition.
+The numbers come from the body, and the discrepancy is in the CONTRACT — the source isn't
+adjusted, the finding is logged.
 
-### O que mudou, medido na mesma janela
+### What changed, measured over the same window
 
-| dimensão | ANTES | DEPOIS |
+| dimension | BEFORE | AFTER |
 |---|---:|---:|
-| unidades | 204.871 | 204.824 |
-| kg ou litro | 126.550 | 144.425 |
-| receita | 821.121,93 | 583.154,43 |
-| EUR/kg | 6,49 | 4,04 |
+| units | 204,871 | 204,824 |
+| kg or liter | 126,550 | 144,425 |
+| revenue | 821,121.93 | 583,154.43 |
+| EUR/kg | 6.49 | 4.04 |
 
-| grupo, % do volume | ANTES | ALVO | DEPOIS |
+| group, % of volume | BEFORE | TARGET | AFTER |
 |---|---:|---:|---:|
-| MARISCOS_MOLUSCOS_CRUSTACEOS | 11,44 | 0,43 | 0,43 |
-| FRUTAS_FRESCAS | 3,11 | 9,17 | 9,51 |
-| HORTALIZAS_FRESCAS | 2,16 | 6,02 | 5,62 |
-| PATATAS | 1,22 | 4,53 | 4,67 |
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 11.44 | 0.43 | 0.43 |
+| FRUTAS_FRESCAS | 3.11 | 9.17 | 9.51 |
+| HORTALIZAS_FRESCAS | 2.16 | 6.02 | 5.62 |
+| PATATAS | 1.22 | 4.53 | 4.67 |
 
-Erro absoluto médio contra o alvo: **0,098 ponto**. **A queda de 29% na receita é a correção
-funcionando, não uma regressão** — 23% dela eram 12 produtos com preço de teto de API.
+Mean absolute error against the target: **0.098 point**. **The 29% drop in revenue is
+the correction working, not a regression** — 23% of it was 12 products with an API-ceiling
+price.
 
-### Uma decisão de desenho que só apareceu ao rodar
+### A design decision that only showed up at runtime
 
-A projeção Iceberg funde estado de forma **monotônica**, descartando linha com
-`last_sequence_no` menor — é assim que os dois escritores convivem. Essa fusão assume, sem
-dizer, que um `order_id` sempre se refere ao mesmo pedido. Trocar `demand_model_version` é a
-**quarta condição não-aditiva** do CONTRACT, e ali a premissa cai: o rebuild descartou **4.028
-linhas** como "mais velhas" e deixou a projeção com dois universos misturados.
-`orders-reconcile` pegou. `--reset` passou a existir por causa disso, é destrutivo de
-propósito e nunca acontece sozinho.
+The Iceberg projection merges state **monotonically**, dropping rows with a lower
+`last_sequence_no` — that's how the two writers coexist. That merge assumes, without
+saying so, that an `order_id` always refers to the same order. Changing
+`demand_model_version` is the CONTRACT's **fourth non-additive condition**, and there the
+assumption falls apart: the rebuild dropped **4,028 rows** as "older" and left the
+projection with two universes mixed together. `orders-reconcile` caught it. `--reset` came
+into existence because of this, is destructive on purpose, and never happens on its own.
 
-### O que ficou verificável
+### What became verifiable
 
-- `make demand-check-mapping` — as **444 trincas** do catálogo casam exatamente **uma** regra
-  do de-para; zero sem regra, zero ambíguas, zero regras mortas. Sem default silencioso.
-- A cobertura é conferida contra a **árvore de categorias**, não contra o recorte: o dedup do
-  catálogo esconde trincas que existem na fonte, e conferir contra ele mediria o desempate.
-  Três regras corretas pareceram mortas antes disso ser percebido.
-- `make demand-reality-check` gera `docs/demand-evidence/README.md` com ANTES · MAPA · ALVO ·
-  DEPOIS nas três dimensões, e **sai 1** se o pior desvio passar de um limiar largo e
-  declarado. O limiar não é nota de qualidade: existe para pegar calibração silenciosamente
-  inerte. Provado — o ANTES reprova com 11,007 pontos; o estado atual passa com 0,660.
+- `make demand-check-mapping` — the catalog's **444 triples** match exactly **one** rule
+  in the mapping; zero with no rule, zero ambiguous, zero dead rules. No silent default.
+- Coverage is checked against the **category tree**, not against the cut: the catalog's
+  dedup hides triples that exist in the source, and checking against it would be measuring
+  the tie-break instead. Three correct rules looked dead before this was noticed.
+- `make demand-reality-check` generates `docs/demand-evidence/README.md` with BEFORE · MAPA
+  · TARGET · AFTER across the three dimensions, and **exits 1** if the worst deviation
+  passes a wide, declared threshold. The threshold isn't a quality score: it exists to
+  catch a calibration that has gone silently inert. Proven — BEFORE fails at 11.007
+  points; the current state passes at 0.660.
 
-## Perfil de consumo do cliente (Fase 5)
+## Customer consumption profile (Phase 5)
 
-A Fase 4 calibrou a demanda **agregada**. O que ficou de fora era que todos os clientes
-compravam a mesma cesta esperada: um cliente de 22 anos em Sevilha e um de 78 em Barcelona
-sorteavam da mesma distribuição. Esta fase troca `P(grupo)` por `P(grupo | coorte)`.
+Phase 4 calibrated **aggregate** demand. What was left out was that every customer was
+buying the same expected basket: a 22-year-old in Sevilla and a 78-year-old in Barcelona
+were drawing from the same distribution. This phase swaps `P(group)` for `P(group |
+cohort)`.
 
-### O achado que abriu a fase, outra vez, não era de demanda
+### The finding that opened the phase, again, wasn't about demand
 
-**18,01% dos clientes tinham menos de 18 anos** — 3.602 de 20.000, com `age_at_ingestion`
-indo de 0 a 100. Havia titular de conta recém-nascido.
+**18.01% of customers were under 18 years old** — 3,602 of 20,000, with
+`age_at_ingestion` ranging from 0 to 100. There was a newborn account holder.
 
-Isso **não era defeito da Source de OLTP**: o contrato dela declara que a idade vem da
-distribuição *populacional* provincial do INE (tabela 31304), e é exatamente isso que ela
-entrega — uma projeção fiel da população residente. O que nunca fora declarado era a
-diferença entre **residente** e **quem coloca um pedido**.
+This **was not a defect in the OLTP Source**: its contract declares that age comes from the
+INE's provincial *population* distribution (table 31304), and that is exactly what it
+delivers — a faithful projection of the resident population. What had never been declared
+was the difference between **resident** and **whoever places an order**.
 
-Enquanto a idade não fazia nada, isso era inofensivo. É a mesma forma do achado da fase
-anterior: um número internamente consistente que só vira erro quando alguém passa a usá-lo.
-Ao ligar a idade à demanda, 18% da base entraria na faixa `-35 anos` do MAPA sendo criança, e
-a calibração ficaria errada por construção sem que nenhum total quebrasse.
+As long as age did nothing, this was harmless. It's the same shape as the previous phase's
+finding: a number that's internally consistent and only becomes an error once someone
+starts using it. Once age got wired to demand, 18% of the base would enter MAPA's
+`-35 years` bracket while being a child, and the calibration would come out wrong by
+construction with no total breaking.
 
-A correção mora onde a pergunta mora: `min_buyer_age = 18` em `order_premises_seed.csv`, uma
-premissa do **domínio de pedidos**. A base de clientes não foi tocada e continua sendo o que
-o contrato dela diz que é.
+The fix lives where the question lives: `min_buyer_age = 18` in `order_premises_seed.csv`,
+an assumption of the **order domain**. The customer base was not touched and remains what
+its contract says it is.
 
-> **Este parágrafo estava errado, e a Fase 6 o desfez.** "A correção mora onde a pergunta
-> mora" pressupõe que a pergunta era *quem pode comprar*. Era também *quem pode existir*, e
-> essa segunda pergunta ficou sem resposta: o titular de conta recém-nascido continuou no
-> cadastro, só impedido de comprar. Um cadastro não é um censo. Ver
-> [Densidade real da base de clientes (Fase 6)](#densidade-real-da-base-de-clientes-fase-6).
+> **This paragraph was wrong, and Phase 6 undid it.** "The fix lives where the question
+> lives" assumes the question was *who can buy*. It was also *who can exist*, and that
+> second question went unanswered: the newborn account holder stayed in the registry, only
+> blocked from buying. A registry is not a census. See
+> [Real density of the customer base (Phase 6)](#real-density-of-the-customer-base-phase-6).
 
-### Duas pontes, e três recusas
+### Two bridges, and three refusals
 
-| corte do MAPA | o cliente tem? | veredito |
+| MAPA cut | does the customer have it? | verdict |
 |---|---|---|
-| idade do responsável de compra (4 faixas) | `birth_year`, do INE 31304 | **usado** — governa o mix |
-| comunidade autónoma (17) | `province_code`, do Callejero | **usado** — mix e frequência |
-| ciclo de vida do lar (9 tipos) | não tem composição familiar | **recusado** |
-| nível socioeconómico (5 níveis) | não tem renda | **recusado** |
-| sexo do comprador | tem — mas o informe só o publica para consumo *extradoméstico* | **recusado** |
+| age of the shopper (4 brackets) | `birth_year`, from INE 31304 | **used** — governs the mix |
+| autonomous community (17) | `province_code`, from the Callejero | **used** — mix and frequency |
+| household life cycle (9 types) | no household composition | **refused** |
+| socioeconomic level (5 levels) | no income | **refused** |
+| shopper sex | has it — but the report only publishes it for *away-from-home* consumption | **refused** |
 
-O ciclo de vida é o corte mais rico do informe e vem completo. O bloqueio não é o dado, é o
-atributo: atribuir composição familiar a um cliente que não a tem seria **inventar o
-atributo** — a mesma proibição que a Fase 1 aplicou à densidade por tramo. **Gatilho
-registrado:** se uma fase futura ingerir lares por província do INE, o corte abre, e o dado
-do MAPA já estará no seed.
+Life cycle is the report's richest cut and it comes complete. The blocker isn't the
+data, it's the attribute: assigning household composition to a customer that doesn't have
+one would be **inventing the attribute** — the same prohibition Phase 1 applied to
+tramo-level density. **Logged trigger:** if a future phase ingests households by INE
+province, the cut opens, and the MAPA data will already be in the seed.
 
-### A extração: os números estavam em gráficos, e os gráficos têm rótulo
+### The extraction: the numbers were in charts, and the charts have labels
 
-Só **17 das seções** trazem a tabela demográfica em texto; as demais são imagens. Mas os
-gráficos carregam **rótulo numérico impresso**, e ler um rótulo é extração, não estimativa.
-Foram lidas ~45 páginas para cobrir os 39 grupos pesáveis, cada leitura conferida por dois
-checksums independentes: as quatro faixas de volume somam 100,00, e as de população somam
-`8,89 + 30,33 + 31,34 + 29,44` — os mesmos quatro números em **toda** seção, porque são o
-universo. Um dígito mal lido quebra uma das duas somas, e `load_cohort_age` reprova.
+Only **17 of the sections** carry the demographic table in text; the rest are images.
+But the charts carry **printed numeric labels**, and reading a label is extraction, not
+estimation. ~45 pages were read to cover the 39 weighable groups, each reading checked by
+two independent checksums: the four volume brackets sum to 100.00, and the population ones
+sum to `8.89 + 30.33 + 31.34 + 29.44` — the same four numbers in **every** section, because
+they're the universe. A misread digit breaks one of the two sums, and `load_cohort_age`
+fails.
 
-Duas discrepâncias da própria fonte ficaram registradas em vez de aparadas: a página 206
-publica `30,5 / 31,7 / 29,0` de população onde todas as outras publicam `30,3 / 31,3 / 29,4`,
-e a página 84 rotula Madrid com `13,78` onde as demais rotulam `13,86`.
+Two discrepancies from the source itself were logged instead of smoothed over: page 206
+publishes `30.5 / 31.7 / 29.0` for population where every other page publishes
+`30.3 / 31.3 / 29.4`, and page 84 labels Madrid with `13.78` where the others label it
+`13.86`.
 
-### O agregado não se move, e esse é o critério de aceitação
+### The aggregate doesn't move, and that's the acceptance criterion
 
-Sem correção, o mix agregado sairia do alvo só porque a nossa pirâmide etária não é a do
-MAPA — a calibração da fase anterior seria desfeita de lado, sem nada falhar. Um *iterative
-proportional fitting* ajusta um fator por grupo até que a média dos pesos por coorte,
-ponderada pela distribuição real de coortes **entre os pedidos**, reproduza os pesos da `v1`.
+Without a fix, the aggregate mix would drift off target just because our age pyramid
+isn't MAPA's — the previous phase's calibration would get undone sideways, with nothing
+failing. An *iterative proportional fitting* adjusts one factor per group until the average
+of the per-cohort weights, weighted by the real cohort distribution **across orders**,
+reproduces the `v1` weights.
 
-Medido: convergência em **6 iterações**, maior desvio **1,0×10⁻¹⁰**. O erro contra o alvo do
-MAPA ficou em 0,075 ponto médio, contra 0,098 antes — a diferença é ruído de amostragem.
+Measured: convergence in **6 iterations**, largest deviation **1.0×10⁻¹⁰**. The error
+against MAPA's target came out at 0.075 average points, against 0.098 before — the
+difference is sampling noise.
 
-Isso dá à fase um critério limpo, e uma consequência para quem for lê-la: **procurar o efeito
-num total não encontra nada.** Ele está inteiro na condicional, e é por isso que
-`MART_DEMAND_COHORT` e a seção de coorte do reality check existem.
+This gives the phase a clean criterion, and a consequence for whoever reads it:
+**looking for the effect in a total finds nothing.** It lives entirely in the conditional,
+and that's why `MART_DEMAND_COHORT` and the reality check's cohort section exist.
 
-### A restrição que só apareceu ao medir
+### The constraint that only showed up when measuring
 
-Normalizando a coorte inteira de uma vez, `NO_FOOD` e `SIN_BENCHMARK` — que têm índice neutro
-por **ausência de evidência** — saíam com **0,60×** da fatia em 65+ contra menos de 35. O
-modelo passaria a afirmar que quem tem mais de 65 anos compra 40% menos drogaria por linha de
-cesta. Ninguém mediu isso: era resíduo da normalização, e era **maior que a maioria dos
-efeitos que são medidos**.
+Normalizing the whole cohort at once, `NO_FOOD` and `SIN_BENCHMARK` — which carry a
+neutral index due to **absence of evidence** — came out with **0.60×** the share in 65+
+against under-35. The model would end up claiming that people over 65 buy 40% less
+drugstore per basket line. Nobody measured that: it was a residue of the normalization, and
+it was **bigger than most of the effects that actually are measured**.
 
-O IPF passou a rodar **dentro de cada bloco**, com a fatia de cada um constante em toda
-coorte. Isso devolve a `food_line_share` o estatuto que o seed lhe dá — premissa declarada,
-uniforme — e faz índice neutro significar de verdade "sem efeito", em vez de "efeito que
-sobrou da conta".
+IPF started running **within each block**, with each one's share held constant across
+every cohort. This gives `food_line_share` back the status the seed grants it — a declared,
+uniform assumption — and makes a neutral index truly mean "no effect," instead of "effect
+left over from the arithmetic."
 
-### O que mudou, medido na mesma janela
+### What changed, measured over the same window
 
-| | ANTES (v1) | DEPOIS (v2) |
+| | BEFORE (v1) | AFTER (v2) |
 |---|---:|---:|
-| pedidos | 6.400 | **5.248** (−18,0%) |
-| unidades | 204.824 | 169.445 (−17,3%) |
-| receita (EUR) | 583.154,43 | 481.201,94 (−17,5%) |
-| **EUR por kg** | 4,04 | **4,06** (+0,5%) |
+| orders | 6,400 | **5,248** (−18.0%) |
+| units | 204,824 | 169,445 (−17.3%) |
+| revenue (EUR) | 583,154.43 | 481,201.94 (−17.5%) |
+| **EUR per kg** | 4.04 | **4.06** (+0.5%) |
 
-As três primeiras caem pelo mesmo ~18%: são os menores de idade deixando de comprar. A quarta
-fica parada, e é ela que prova que o **mix** não se moveu — uma queda de volume sem mudança
-de composição.
+The first three drop by the same ~18%: it's minors dropping out of buying. The fourth
+stays put, and it's what proves that the **mix** didn't move — a volume drop with no
+change in composition.
 
-Os quatro armazéns deixaram de ser cópias: **bcn1 coloca 1.436 pedidos contra 1.176 de
-mad1**, 22,1% a mais, contra os 22,7% que o consumo per cápita das duas comunidades prevê
-(Cataluña 620,82 kg-L por pessoa/ano · Madrid 505,86). O índice é renormalizado sobre as
-quatro comunidades servidas, então o **total** da janela não se move — o que muda é a
-repartição.
+The four warehouses stopped being copies: **bcn1 places 1,436 orders against mad1's
+1,176**, 22.1% more, against the 22.7% that the two communities' per-capita consumption
+predicts (Cataluña 620.82 kg-L per person/year · Madrid 505.86). The index is renormalized
+over the four communities served, so the window's **total** doesn't move — what changes is
+the split.
 
-> Isto vale enquanto as bases dos armazéns são iguais. A Fase 6 as dimensionou pela população
-> e a ordem se inverteu: com 128.771 clientes contra 95.498, mad1 passou a colocar mais
-> pedidos que bcn1 apesar do índice menor. Os dois efeitos continuam existindo; o maior venceu.
+> This holds while the warehouse bases are equal. Phase 6 sized them by population and
+> the order flipped: with 128,771 customers against 95,498, mad1 started placing more
+> orders than bcn1 despite the lower index. Both effects keep existing; the bigger one
+> won.
 
-E a condicional, que é o produto da fase:
+And the conditional, which is the phase's product:
 
-| grupo | LT35 % | GE65 % | × |
+| group | LT35 % | GE65 % | × |
 |---|---:|---:|---:|
-| CARNE_CONEJO | 0,01 | 0,08 | 6,08 |
-| VINO | 0,50 | 2,44 | 4,89 |
-| MARISCOS_MOLUSCOS_CRUSTACEOS | 0,25 | 0,80 | 3,16 |
+| CARNE_CONEJO | 0.01 | 0.08 | 6.08 |
+| VINO | 0.50 | 2.44 | 4.89 |
+| MARISCOS_MOLUSCOS_CRUSTACEOS | 0.25 | 0.80 | 3.16 |
 | … | | | |
-| PASTAS | 2,34 | 0,94 | 0,40 |
-| ARROZ | 1,40 | 0,44 | 0,31 |
+| PASTAS | 2.34 | 0.94 | 0.40 |
+| ARROZ | 1.40 | 0.44 | 0.31 |
 
-### O que ficou verificável
+### What became verifiable
 
-- `make demand-reality-check` ganhou a seção **Propensão por coorte**, com a tabela acima e a
-  contagem por armazém. A página declara a ausência quando a janela é anterior à camada —
-  `cohorts: None`, e não um dicionário vazio, que seria indistinguível de "medi e não havia
-  nada".
-- O ANTES padrão passou a ser o **estado imediatamente anterior**
-  (`before_mapa_2025_v2`). Manter `before_mapa_2025_v1` como padrão faria a queda de receita
-  da correção de preço da Fase 4 ser lida como se fosse desta fase.
-- `assert_buyer_age_band_matches_the_customer_birth_year` recalcula a faixa contra
-  `birth_year` — `not_null` e `accepted_values` passariam com um carimbo trocado, porque um
-  carimbo trocado continua sendo uma das quatro faixas válidas.
-- `assert_no_order_comes_from_a_minor` lê o limiar do seed **e** guarda um piso de 18. A
-  primeira metade sozinha passa se alguém baixar a premissa para zero — foi medido ao
-  escrever o teste, e a segunda metade existe por causa disso.
-- `assert_buyer_age_band_is_stable_across_the_window` pega a janela regerada pela metade, e
-  aceita aniversário: exige que a transição seja para a faixa **seguinte** e para frente no
-  tempo.
+- `make demand-reality-check` gained the **Cohort propensity** section, with the table
+  above and the count per warehouse. The page declares absence when the window predates
+  the layer — `cohorts: None`, not an empty dictionary, which would be indistinguishable
+  from "I measured and there was nothing there."
+- The default BEFORE became the **immediately previous state**
+  (`before_mapa_2025_v2`). Keeping `before_mapa_2025_v1` as the default would make the
+  revenue drop from Phase 4's price fix get read as if it belonged to this phase.
+- `assert_buyer_age_band_matches_the_customer_birth_year` recomputes the band against
+  `birth_year` — `not_null` and `accepted_values` would pass with a swapped label, because
+  a swapped label is still one of the four valid bands.
+- `assert_no_order_comes_from_a_minor` reads the threshold from the seed **and** keeps a
+  floor of 18. The first half alone passes if someone lowers the assumption to zero — this
+  was measured while writing the test, and the second half exists because of it.
+- `assert_buyer_age_band_is_stable_across_the_window` catches a window regenerated halfway,
+  and allows for birthdays: it requires the transition to be to the **next** band and
+  forward in time.
 
-## Densidade real da base de clientes (Fase 6)
+## Real density of the customer base (Phase 6)
 
-A Fase 5 tratou os menores de idade **no domínio errado**. O achado era certo, a medição era
-certa, e a correção respondia metade da pergunta: `min_buyer_age` impede que uma criança
-*compre*, e não que ela *exista* como titular de conta. O argumento que sustentava a escolha —
-"`silver_customer` é uma projeção fiel da população residente, e o contrato da Source diz
-exatamente isso" — também era certo, e é justamente por isso que ele enganou: **a fidelidade
-da projeção não é a propriedade em questão.** Uma base de clientes não é um censo.
+Phase 5 handled minors **in the wrong domain**. The finding was correct, the
+measurement was correct, and the fix answered half the question: `min_buyer_age` prevents
+a child from *buying*, not from *existing* as an account holder. The argument backing the
+choice — "`silver_customer` is a faithful projection of the resident population, and the
+Source's contract says exactly that" — was also correct, and that's exactly why it was
+misleading: **the projection's faithfulness is not the property in question.** A customer
+base is not a census.
 
-### O segundo defeito, que ninguém tinha procurado
+### The second defect, which nobody had looked for
 
-Ao abrir o cadastro, apareceu o que estava ao lado: **5.000 clientes por armazém**, um número
-igual para AUFs que diferem por **4,6×** em população (mad1 tem 7,10 milhões de habitantes na
-sua área de serviço; svq1 tem 1,59).
+Opening up the registry surfaced what was sitting right next to it: **5,000 customers
+per warehouse**, an equal number for AUFs that differ **4.6×** in population (mad1 has
+7.10 million residents in its service area; svq1 has 1.59).
 
-Nada reprovava. Os 216.591 endereços eram reais e verificados cliente a cliente contra o
-Callejero; os totais fechavam; `assert_customer_reconciles_with_manifest` batia; o grão era
-único. A única coisa errada era que a **densidade não existia** — e densidade, ao contrário de
-soma, não aparece em nenhum total. Foi preciso um teste que refizesse a conta a partir do INE
-para que ela virasse uma falha visível.
+Nothing failed. The 216,591 addresses were real and verified customer by customer against
+the Callejero; the totals balanced; `assert_customer_reconciles_with_manifest` matched; the
+grain was unique. The only thing wrong was that **density didn't exist** — and density,
+unlike a sum, shows up in no total. It took a test that redid the math from the INE for it
+to become a visible failure.
 
-### O modelo
+### The model
 
 ```
-população municipal observada (INE 29005, year=2025, ref 2024-12-31)
-  × share adulto da província do município (INE 31304, idades >= min_customer_age)
-  × taxa de penetração
-  = clientes daquele armazém
+observed municipal population (INE 29005, year=2025, ref 2024-12-31)
+  × the municipality's province adult share (INE 31304, ages >= min_customer_age)
+  × penetration rate
+  = customers for that warehouse
 ```
 
-Três decisões, cada uma com um motivo que não é estético:
+Three decisions, each with a reason that isn't aesthetic:
 
-**A conta é por município, não por armazém.** Hoje cada armazém cai numa província só, então
-as duas formas dão o mesmo inteiro. Multiplicar a população inteira do armazém por um único
-share adulto *presumiria* isso; a forma por município continua certa se um armazém passar a
-cruzar província, e a outra passa a estar errada em silêncio.
+**The math is per municipality, not per warehouse.** Today each warehouse falls in a
+single province, so the two forms give the same integer. Multiplying a warehouse's whole
+population by a single adult share would *presume* that; the per-municipality form stays
+correct if a warehouse ever spans provinces, and the other form silently becomes wrong.
 
-**O share adulto é medido ANTES da truncagem.** Medi-lo depois devolve 100% em toda província
-— um número plausível, que não reprovaria nada, e cujo efeito seria dimensionar a base inteira
-pela população total como se ela fosse adulta. As duas consultas compartilham o mesmo CTE da
-pirâmide inteira para que o numerador de uma nunca deixe de ser o mesmo universo do
-denominador da outra.
+**The adult share is measured BEFORE truncation.** Measuring it after returns 100% across
+every province — a plausible number, one that would fail nothing, and whose effect would
+be sizing the whole base by the total population as if it were all adult. The two queries
+share the same CTE over the whole pyramid so that one's numerator never stops being the
+same universe as the other's denominator.
 
-**O denominador é adulto, e não total.** A base é de adultos; distribuí-la por população total
-daria peso a quem não pode ter cadastro. Medido: contra a alocação por população total, svq1
-perderia 29 clientes e mad1 ganharia 16 — uma diferença de 0,15%, mas o denominador certo
-custa o mesmo que o errado.
+**The denominator is adult, not total.** The base is made of adults; distributing it by
+total population would give weight to people who can't have an account. Measured: against
+allocation by total population, svq1 would lose 29 customers and mad1 would gain 16 — a
+0.15% difference, but the right denominator costs the same as the wrong one.
 
-**O total é consequência, não cota.** Com uma cota de 20.000 repartida, acrescentar um
-município à área de serviço *tiraria* clientes dos outros armazéns. Assim, ele acrescenta.
+**The total is a consequence, not a quota.** With a 20,000 quota split up, adding a
+municipality to the service area would *take* customers away from the other warehouses.
+This way, it adds them.
 
-### A taxa, e as duas premissas que ela carrega
+### The rate, and the two assumptions it carries
 
-2,2 % é a participação do e-commerce no volume total de alimentação em 2025 (informe, seção 3).
-É o **único número observado** disponível para dimensionar uma base de clientes neste
-repositório, e ele já existia: `demand_profile_seed.channel_reference_pct`, rotulado
-`observed` desde a Fase 4.
+2.2% is e-commerce's share of total food volume in 2025 (report, section 3). It's the
+**only observed number** available for sizing a customer base in this repository, and it
+already existed: `demand_profile_seed.channel_reference_pct`, labeled `observed` since
+Phase 4.
 
-`customer_premises_seed` **aponta** para ele em vez de copiá-lo, e o export só sabe seguir esse
-ponteiro — um ponteiro arbitrário faria a base ser dimensionada por qualquer número de qualquer
-seed. O teste dbt confere o ponteiro e reprova se ele mudar de destino.
+`customer_premises_seed` **points** to it instead of copying it, and the export only knows
+how to follow that pointer — an arbitrary pointer would let the base be sized by any number
+from any seed. The dbt test checks the pointer and fails if it changes target.
 
-Duas premissas transformam um share de volume num share de gente, e **nenhuma é medida**:
+Two assumptions turn a volume share into a people share, and **neither is measured**:
 
-1. **O comprador online consome como a média.** Sob ela, 2,2 % do volume ↔ 2,2 % das pessoas.
-2. **Estes quatro armazéns modelam o canal online inteiro da AUF**, não um operador dentro
-   dele. Aplicar participação de mercado de um operador exigiria uma fonte não ingerida aqui.
+1. **The online buyer consumes like the average.** Under it, 2.2% of volume ↔ 2.2% of
+   people.
+2. **These four warehouses model the AUF's entire online channel**, not one operator
+   within it. Applying one operator's market share would require a source not ingested
+   here.
 
-### Três camadas contra o menor de idade, e por que três
+### Three layers against minors, and why three
 
-| camada | onde | o que pega |
+| layer | where | what it catches |
 |---|---|---|
-| a distribuição entregue já é adulta | `oltp_reference._age_sql` | o gerador não *pode* sortear 7 anos |
-| a referência é desconfiada | `reference_data._require_customer_scope` | referência de schema antigo, e truncagem pela metade — cabeçalho dizendo 18 com uma criança nas linhas |
-| o dado pousado é reconferido | `validate._check_minimum_age` | qualquer coisa que tenha escapado às duas primeiras |
+| the delivered distribution is already adult | `oltp_reference._age_sql` | the generator *cannot* draw age 7 |
+| the reference is distrusted | `reference_data._require_customer_scope` | an old-schema reference, and half-applied truncation — a header saying 18 with a child in the rows |
+| the landed data is re-checked | `validate._check_minimum_age` | anything that slipped past the first two |
 
-A do meio é a que existe por experiência: o cabeçalho é a **promessa**, e uma promessa sem
-conferência é o que produziu os 18,01% na primeira vez.
+The middle one exists because of experience: the header is the **promise**, and a
+promise with no check is what produced the 18.01% the first time.
 
-### O que a fase mudou, medido
+### What the phase changed, measured
 
-| | ANTES | DEPOIS |
+| | BEFORE | AFTER |
 |---|---:|---:|
-| clientes | 20.000 | 286.826 |
-| menores de idade | 3.602 (18,01%) | **0** |
-| faixa de idade | 0 … 100 | 18 … 100 |
-| base elegível a pedir | 16.398 | 286.826 |
-| pedidos na janela de 4 dias | 5.248 | 91.788 |
-| eventos | 36.596 | 636.848 |
-| erro médio contra o alvo do MAPA | 0,075 pt | **0,070 pt** |
+| customers | 20,000 | 286,826 |
+| minors | 3,602 (18.01%) | **0** |
+| age range | 0 … 100 | 18 … 100 |
+| base eligible to order | 16,398 | 286,826 |
+| orders in the 4-day window | 5,248 | 91,788 |
+| events | 36,596 | 636,848 |
+| average error against MAPA's target | 0.075 pt | **0.070 pt** |
 
-O erro contra o benchmark **melhorou** sem que a calibração fosse tocada: o IPF reconvergiu em
-6 iterações sobre uma distribuição de coortes diferente — `LT35` deixou de conter crianças — e
-o agregado ficou onde estava.
+The error against the benchmark **improved** without the calibration being touched: IPF
+reconverged in 6 iterations over a different cohort distribution — `LT35` stopped
+containing children — and the aggregate stayed where it was.
 
-### A prova de fechamento que a taxa criou
+### The closing proof the rate created
 
-Dimensionar a base como 2,2 % das pessoas *porque* 2,2 % do volume é online cria uma obrigação
-que nenhuma fase anterior tinha: o modelo deveria então produzir 2,2 % do consumo doméstico
-daquelas mesmas AUFs. Isso é conferível contra o próprio informe.
+Sizing the base as 2.2% of the people *because* 2.2% of the volume is online creates an
+obligation no previous phase had: the model should then produce 2.2% of the household
+consumption of those same AUFs. That is checkable against the report itself.
 
-| escopo alimentar, janela de 4 dias | canal esperado | modelo | razão |
+| food scope, 4-day window | expected channel | model | ratio |
 |---|---:|---:|---:|
-| kg ou litro | 2.134.114 | 1.944.027 | 0,91× |
-| receita (EUR) | 7.203.504 | 6.793.690 | 0,94× |
+| kg or liter | 2,134,114 | 1,944,027 | 0.91× |
+| revenue (EUR) | 7,203,504 | 6,793,690 | 0.94× |
 
-**Nada foi ajustado para isso fechar.** A taxa entrou nesta fase; `daily_order_rate`,
-`basket_lines_*` e `quantity_max` entraram na Fase 3, escolhidos sem nenhuma relação com ela e
-sem nenhuma fonte que os medisse. As duas metades se encontram nessa tabela pela primeira vez.
+**Nothing was adjusted to make this tie out.** The rate entered in this phase;
+`daily_order_rate`, `basket_lines_*`, and `quantity_max` entered in Phase 3, chosen with no
+relationship to it and with no source measuring them. The two halves meet in this table
+for the first time.
 
-`NO_FOOD` fica fora do numerador: o per cápita do informe é de alimentação e bebidas e não
-cobre drogaria — somá-lo compararia dois universos e inflaria a razão sem que nada estivesse
-errado. `SIN_BENCHMARK` fica, porque são grupos alimentares que o informe não detalha mas que
-pertencem ao mesmo universo que o per cápita mede.
+`NO_FOOD` stays out of the numerator: the report's per capita figure is for food and
+beverages and doesn't cover drugstore items — adding it would compare two universes and
+inflate the ratio with nothing actually wrong. `SIN_BENCHMARK` stays in, because these are
+food groups the report doesn't detail but that belong to the same universe the per capita
+figure measures.
 
-A distância que sobra **não deve ser fechada** mexendo em `daily_order_rate`: nenhuma fonte
-deste repositório mede cadência de compra nem cesta online, então não existe critério para
-decidir qual dos dois lados está errado. Enquanto for assim, a razão é uma **observação**, não
-um alvo. **Gatilho:** uma fonte que meça frequência de compra doméstica ou ticket médio por
-canal transforma essa linha num teste.
+The remaining distance **should not be closed** by tweaking `daily_order_rate`: no source
+in this repository measures purchase cadence or online basket size, so there's no criterion
+to decide which of the two sides is wrong. As long as that's true, the ratio is an
+**observation**, not a target. **Trigger:** a source that measures household purchase
+frequency or average ticket by channel turns this row into a test.
 
-### O efeito colateral que inverteu a fase anterior
+### The side effect that inverted the previous phase
 
-| wh | clientes | pedidos | índice regional |
+| wh | customers | orders | regional index |
 |---|---:|---:|---:|
-| mad1 | 128.771 | 37.332 | 0,89 |
-| bcn1 | 95.498 | 33.976 | 1,10 |
-| vlc1 | 34.295 | 11.656 | 1,05 |
-| svq1 | 28.262 | 8.824 | 0,96 |
+| mad1 | 128,771 | 37,332 | 0.89 |
+| bcn1 | 95,498 | 33,976 | 1.10 |
+| vlc1 | 34,295 | 11,656 | 1.05 |
+| svq1 | 28,262 | 8,824 | 0.96 |
 
-A Fase 5 tinha bcn1 na frente pelo consumo per cápita da Cataluña. Agora a população de Madrid
-domina, e a ordem se inverte. Os dois efeitos continuam existindo e o maior venceu — o que é
-medição, não escolha, e é o tipo de coisa que só aparece quando as duas dimensões passam a ser
-observadas ao mesmo tempo.
+Phase 5 had bcn1 in the lead due to Cataluña's per-capita consumption. Now Madrid's
+population dominates, and the order flips. Both effects keep existing and the bigger one
+won — which is measurement, not choice, and is the kind of thing that only shows up once
+both dimensions get observed at the same time.
 
-### Uma não-determinação medida, e o aviso que ela virou
+### A measured non-determinism, and the warning it became
 
-Duas execuções de `export-oltp-reference` produzem `adult_share` diferentes **no último bit do
-double** — 0,8224668719886548 contra 0,8224668719886545 — porque a agregação paralela do DuckDB
-não fixa a ordem da soma de ponto flutuante. Não é defeito do módulo e **não propaga**: os
-quatro alvos saem idênticos, e a base gerada a partir de dois exports diferentes tem o mesmo
-`sha256`.
+Two runs of `export-oltp-reference` produce different `adult_share` values **in the
+double's last bit** — 0.8224668719886548 against 0.8224668719886545 — because DuckDB's
+parallel aggregation doesn't fix the floating-point sum's order. It's not a module defect
+and it **doesn't propagate**: all four targets come out identical, and a base generated
+from two different exports has the same `sha256`.
 
-Mas só não propaga porque nenhum dos quatro produtos cai perto de um `.5`. A margem mais
-apertada é a de mad1: **128.770,524404**, a 0,024 de um empate — cerca de 135 residentes. Se
-Madrid crescer ou encolher esse tanto na próxima 29005, o alvo passa a alternar entre 128.770 e
-128.771 de export para export, a base muda de tamanho sem que nada tenha sido decidido, e o
-teste dbt (que tolera 1 cliente **exatamente por causa disto**) começa a passar por sorte.
-`test_a_alocacao_nao_fica_na_beira_do_arredondamento` existe para avisar antes disso.
+But it only doesn't propagate because none of the four products lands near a `.5`. The
+tightest margin is mad1's: **128,770.524404**, 0.024 away from a tie — about 135
+residents. If Madrid grows or shrinks by that much in the next 29005, the target starts
+alternating between 128,770 and 128,771 from export to export, the base changes size with
+nothing having been decided, and the dbt test (which tolerates 1 customer **exactly because
+of this**) starts passing by luck. `test_a_alocacao_nao_fica_na_beira_do_arredondamento`
+exists to warn before that happens.
 
-### O que ficou verificável
+### What became verifiable
 
-- `assert_no_customer_is_a_minor` varre **todas** as `ingestion_date`, e não só a corrente: os
-  pedidos fixam `customer_ingestion_date` e o export resolve a versão mais recente de cada
-  cliente, então filtrar por `is_latest_ingestion` deixaria a porta dos fundos aberta. Lê o
-  limiar do seed **e** guarda um piso de 18 — medido: com o limiar em zero, a primeira metade
-  passa.
-- `assert_customer_base_follows_the_declared_population_allocation` refaz a alocação a partir
-  de `silver_ine_population_by_municipality` × o share adulto de `silver_ine_population_series`
-  e compara. É o teste que uma regeração uniforme reprova, e ele também confere o **ponteiro**
-  da taxa.
-- `--count` virou opcional e `count_source` entrou no manifesto. Sem isso, uma base gerada com
-  override manual seria indistinguível de uma derivada da população.
-- Quatro condições **não-aditivas** declaradas no CONTRACT, não três: seed, `ingestion_date`,
-  `min_customer_age`, e a taxa/regra de alocação. As quatro trocam as pessoas por trás dos
-  mesmos `customer_id`.
-- Regenerar o cadastro **obriga** a regenerar os pedidos. Não é mudança de lógica de Orders —
-  `assert_buyer_age_band_matches_the_customer_birth_year` reprova, e foi ele quem apontou isso
-  durante a fase. Nenhum arquivo do domínio de pedidos foi alterado.
-- **O plano de stream foi levado de volta à convergência**, e não só o lakehouse: o OLTP
-  transacional foi resetado e reaplicado (636.848 eventos, uma transação cada), o outbox foi
-  drenado para o Kafka e o sink Postgres consumiu o tópico inteiro — **39.751 duplicatas
-  descartadas por `sequence_no`**, que são os eventos do universo anterior sendo corretamente
-  rejeitados como mais velhos. `make orders-reconcile` fecha nos três caminhos, 91.788 pedidos.
-- **O sink Iceberg foi deliberadamente NÃO drenado**, e o motivo está escrito na própria
-  página de evidência. A tabela já estava no estado final: `orders-rebuild-projection` é o
-  segundo escritor e escreve direto do RAW, sem passar pelo tópico. Drenar os 628.848 eventos
-  restantes levaria ~9 horas de commits copy-on-write para descartar todos como
-  iguais-ou-mais-velhos, sem mudar uma linha. O que prova a convergência é `orders-reconcile`,
-  não o offset de um consumidor — e a página diz isso, em vez de deixar o lag parecer defeito.
+- `assert_no_customer_is_a_minor` scans **every** `ingestion_date`, not just the
+  current one: orders pin `customer_ingestion_date` and the export resolves each customer's
+  latest version, so filtering by `is_latest_ingestion` would leave a back door open. It
+  reads the threshold from the seed **and** keeps a floor of 18 — measured: with the
+  threshold at zero, the first half passes.
+- `assert_customer_base_follows_the_declared_population_allocation` redoes the allocation
+  from `silver_ine_population_by_municipality` × the adult share from
+  `silver_ine_population_series` and compares. It's the test that a uniform regeneration
+  fails, and it also checks the rate's **pointer**.
+- `--count` became optional and `count_source` entered the manifest. Without this, a base
+  generated with a manual override would be indistinguishable from one derived from the
+  population.
+- Four **non-additive** conditions declared in the CONTRACT, not three: seed,
+  `ingestion_date`, `min_customer_age`, and the rate/allocation rule. All four swap the
+  people behind the same `customer_id`s.
+- Regenerating the registry **forces** regenerating the orders. It's not a change to
+  Orders' logic — `assert_buyer_age_band_matches_the_customer_birth_year` fails, and it was
+  what flagged this during the phase. No file in the order domain was changed.
+- **The stream plane was brought back into convergence**, not just the lakehouse: the
+  transactional OLTP was reset and reapplied (636,848 events, one transaction each), the
+  outbox was drained into Kafka, and the Postgres sink consumed the whole topic —
+  **39,751 duplicates discarded by `sequence_no`**, which are the previous universe's
+  events being correctly rejected as older. `make orders-reconcile` ties out across all
+  three paths, 91,788 orders.
+- **The Iceberg sink was deliberately NOT drained**, and the reason is written on the
+  evidence page itself. The table was already in its final state:
+  `orders-rebuild-projection` is the second writer and writes straight from RAW, without
+  going through the topic. Draining the remaining 628,848 events would take ~9 hours of
+  copy-on-write commits to discard them all as equal-or-older, without changing a single
+  row. What proves convergence is `orders-reconcile`, not a consumer's offset — and the
+  page says so, instead of letting the lag look like a defect.
 
-## Fase 7: o fechamento — o portão sobre o Iceberg, o estoque, o selo, e os três defeitos que ela achou
+## Phase 7: the closing — the gate over Iceberg, stock, the seal, and the three defects it found
 
-**Data: 2026-09-01.** Esta fase foi conduzida contra
-[`AI_ENGINEERING_CONSTRAINTS.md`](AI_ENGINEERING_CONSTRAINTS.md), escrito por quem opera o
-projeto antes de a fase começar. Ele proíbe adotar tecnologia para aumentar a contagem de
-tecnologias, exige que cada uma tenha responsabilidade explícita e evidência de necessidade, e
-põe a preferência do agente como **último** critério de decisão. O que segue é o registro de
-como cada decisão sobreviveu — ou não — a esse texto.
+**Date: 2026-09-01.** This phase was conducted against
+[`AI_ENGINEERING_CONSTRAINTS.md`](AI_ENGINEERING_CONSTRAINTS.md), written by whoever
+operates the project before the phase began. It forbids adopting technology to boost the
+technology count, requires each one to have explicit responsibility and evidence of need,
+and puts the agent's preference as the **last** decision criterion. What follows is the
+record of how each decision survived — or didn't — that text.
 
-### O portão era sobre o Iceberg, não sobre o Spark
+### The gate was about Iceberg, not about Spark
 
-A afirmação mais frágil do repositório não era o Spark: era uma cláusula do próprio
-ARCHITECTURE. O Iceberg foi adotado na Fase 3 com **duas** justificativas — commit atômico com
-concorrência otimista, e **interop entre engines**. A primeira estava provada desde então. A
-segunda estava **afirmada e nunca demonstrada**, por quatro fases, porque os dois escritores
-eram Python usando a mesma biblioteca.
+The repository's most fragile claim wasn't Spark: it was a clause in ARCHITECTURE
+itself. Iceberg was adopted in Phase 3 with **two** justifications — atomic commit with
+optimistic concurrency, and **interop between engines**. The first had been proven since
+then. The second was **asserted and never demonstrated**, for four phases, because both
+writers were Python using the same library.
 
-`make spike-spark-iceberg` é um experimento fechado, no molde de `make spike-iceberg`, rodado
-**antes de existir uma linha desta fase**. São **18 perguntas** em um arquivo
-(`scripts/spike_spark_iceberg.py`), divididas em cinco etapas — leitura, escrita, concorrente,
-forma, limpeza. O **objetivo principal era a interoperabilidade**: o catálogo é um `SqlCatalog`
-do pyiceberg, e o Spark precisa abri-lo como `org.apache.iceberg.jdbc.JdbcCatalog`.
+`make spike-spark-iceberg` is a closed experiment, in the mold of `make spike-iceberg`, run
+**before a single line of this phase existed**. It's **18 questions** in one file
+(`scripts/spike_spark_iceberg.py`), split into five stages — read, write, concurrent, shape,
+cleanup. The **main goal was interoperability**: the catalog is a pyiceberg `SqlCatalog`,
+and Spark needs to open it as `org.apache.iceberg.jdbc.JdbcCatalog`.
 
-**Os dois desfechos foram declarados antes de rodar**, e os dois eram aceitáveis:
+**Both outcomes were declared before running**, and both were acceptable:
 
-| resultado | consequência declarada |
+| outcome | declared consequence |
 |---|---|
-| verde | a interop deixa de ser afirmação; o Spark entra; o resto da fase segue |
-| vermelho | o Spark **não** entra **e** a cláusula de interop é **apagada** da justificativa do Iceberg no ARCHITECTURE. O que sobra — commit atômico e concorrência otimista — continua provado e continua bastando |
+| green | interop stops being an assertion; Spark comes in; the rest of the phase proceeds |
+| red | Spark does **not** come in **and** the interop clause is **struck** from Iceberg's justification in ARCHITECTURE. What's left — atomic commit and optimistic concurrency — remains proven and remains enough |
 
-Deu **verde, 18/18**. O Spark lê `projection.live_order_state` com a **mesma contagem** que o
-pyiceberg (91.788 na janela intermediária), cria e escreve uma tabela que o pyiceberg lê de
-volta, e o conflito otimista **entre motores diferentes** completa o ciclo inteiro que a seção
-4 das restrições exige: detectar → recarregar → reaplicar → retry, sem `metadata_location`
-adivinhado, sem reconstrução manual de metadado, sem overwrite cego, e com `seq` velho **não**
-sobrescrevendo `seq` novo. Duas perguntas (H5, H6) existem só para conferir que o experimento
-**não** tocou a produção: contagem de linhas e schema do catálogo intactos depois dele.
+It came out **green, 18/18**. Spark reads `projection.live_order_state` with the
+**same count** as pyiceberg (91,788 in the intermediate window), creates and writes a table
+that pyiceberg reads back, and the optimistic conflict **between different engines**
+completes the full cycle that section 4 of the constraints requires: detect → reload →
+reapply → retry, with no guessed `metadata_location`, no manual metadata reconstruction, no
+blind overwrite, and with an old `seq` **not** overwriting a new one. Two questions (H5, H6)
+exist just to check that the experiment **did not** touch production: row counts and
+catalog schema intact afterward.
 
-Dois detalhes técnicos que valem o registro. O `iceberg_tables` que o pyiceberg cria é
-exatamente o schema V1 do `JdbcCatalog` do Java — é isso que faz os dois se enxergarem sem
-tradução. E o `io-impl` é `S3FileIO`, não S3A: o pyiceberg gravou caminhos `s3://` com o
-`PyArrowFileIO`, e o S3A exigiria `s3a://`. O efeito colateral é que a imagem não carrega
-`hadoop-aws` mais o bundle da AWS SDK v1 — cerca de 200 MB que não entraram.
+Two technical details worth logging. The `iceberg_tables` pyiceberg creates is exactly the
+Java `JdbcCatalog`'s V1 schema — that's what lets the two see each other with no
+translation. And `io-impl` is `S3FileIO`, not S3A: pyiceberg wrote `s3://` paths with
+`PyArrowFileIO`, and S3A would require `s3a://`. The side effect is that the image doesn't
+carry `hadoop-aws` plus the AWS SDK v1 bundle — about 200 MB that didn't have to go in.
 
-### A forma que o SQL não expressa, medida: S7b
+### The shape SQL can't express, measured: S7b
 
-A pergunta S7b é a que transformou a segunda justificativa do Spark em número. Ela roda a
-**mesma entrada** pela soma corrida que o SQL sabe fazer — `sum(...) over (partition by ... order by ...)`
-— e compara com o laço.
+Question S7b is the one that turned Spark's second justification into a number. It
+runs the **same input** through the running sum SQL knows how to do —
+`sum(...) over (partition by ... order by ...)` — and compares it against the loop.
 
-O saldo de estoque não é uma soma corrida: é uma soma corrida cujas **entradas são geradas por
-decisões tomadas a partir do próprio estado**. O saldo cai abaixo do ponto de reposição, uma
-ordem é emitida, ela chega `lead_time` dias depois e muda o saldo seguinte, que decide se há
-nova ordem. Window function **lê** a partition inteira e não **escreve** de volta nela.
+The stock balance is not a running sum: it's a running sum whose **inputs are generated by
+decisions made from the state itself**. The balance drops below the reorder point, an order
+is issued, it arrives `lead_time` days later and changes the next balance, which decides
+whether there's a new order. A window function **reads** the whole partition and does not
+**write** back into it.
 
-Medido no caso de teste de 30 dias: a soma corrida em SQL **diverge em 14 dos 30 dias** e
-chega a **−70 de saldo** — um estoque negativo que nenhuma operação teria. Depois disso a
-justificativa deixou de ser um parágrafo.
+Measured on the 30-day test case: the running sum in SQL **diverges on 14 of the 30 days**
+and reaches a balance of **−70** — negative stock, which no operation would ever have.
+After that, the justification stopped being a paragraph.
 
-### O que a medição publica contra o Spark
+### What the measurement publishes against Spark
 
-`make spark-evidence` roda o **mesmo laço** nos dois motores. A função é *importada* de
-`jobs/spark/stock_ledger.py` pelos dois caminhos — não é uma reimplementação aproximada — então
-o que varia é só quem itera sobre os grupos: um `for` num processo, ou o Spark distribuindo. Se
-fossem duas implementações, a comparação mediria a habilidade de quem escreveu cada uma.
+`make spark-evidence` runs the **same loop** on both engines. The function is
+*imported* from `jobs/spark/stock_ledger.py` on both paths — it's not an approximate
+reimplementation — so the only thing that varies is who iterates over the groups: a `for`
+in one process, or Spark distributing it. If they were two implementations, the comparison
+would be measuring the skill of whoever wrote each one.
 
-As **sete métricas saem idênticas**, e sem essa igualdade a comparação de tempo não
-significaria nada, porque os dois lados estariam medindo coisas diferentes: 173.970 linhas ·
-17.397 séries · 6.315.644 de demanda · 6.310.606 atendidos · 5.038 de ruptura · 17.397 ordens
-emitidas · 17.357 chegadas.
+The **seven metrics come out identical**, and without that equality the time comparison
+would mean nothing, because the two sides would be measuring different things: 173,970
+lines · 17,397 series · 6,315,644 demand · 6,310,606 fulfilled · 5,038 stockout · 17,397
+orders issued · 17,357 arrivals.
 
-| execução | Python puro | Spark (job) | Spark com JVM e container | razão |
+| run | pure Python | Spark (job) | Spark with JVM and container | ratio |
 |---|---:|---:|---:|---:|
-| a primeira, no Marco F | 17,3 s | 54,8 s | 60,3 s | ~3,2× |
-| a publicada em [`docs/spark-evidence/`](docs/spark-evidence/README.md) | 16,6 s | 54,1 s | 58,9 s | ~3,3× |
+| the first one, at Milestone F | 17.3 s | 54.8 s | 60.3 s | ~3.2× |
+| the one published in [`docs/spark-evidence/`](docs/spark-evidence/README.md) | 16.6 s | 54.1 s | 58.9 s | ~3.3× |
 
-**As duas estão aqui de propósito, e a divergência entre elas é parte do achado.** Relógio de
-parede não é reprodutível: o número muda de execução para execução, e o primeiro par foi
-sobrescrito pela regeração seguinte antes de chegar a um commit — só o segundo tem artefato no
-repositório. O que **não** muda é a afirmação: nas duas execuções o Python puro é **~3× mais
-rápido**, e o tempo do Spark **inclui** a subida da JVM sem desconto, porque quem roda o job
-paga esse custo.
+**Both are here on purpose, and the divergence between them is part of the finding.**
+Wall-clock time isn't reproducible: the number changes from run to run, and the first pair
+was overwritten by the next regeneration before reaching a commit — only the second has an
+artifact in the repository. What does **not** change is the claim: in both runs pure Python
+is **~3× faster**, and Spark's time **includes** the JVM startup with no discount, because
+whoever runs the job pays that cost.
 
-É a regra do próprio projeto aplicada a ela mesma — número medido mora em página gerada, a
-prosa carrega a magnitude e não o decimal.
+It's the project's own rule applied to itself — a measured number lives on a generated
+page, the prose carries the magnitude and not the decimal.
 
-**O gatilho de volume não disparou, e isso também está medido.** O ARCHITECTURE declara o
-gatilho do Spark como *"partição que o DuckDB não segura em memória"*. O candidato natural é o
-self-join de cesta — todo par de produtos comprados juntos, a base de qualquer análise de
-afinidade: **37.899.395 pares, 8.789.258 distintos, em ~1,5 s e ~2,4 GB** num nó de DuckDB. A
-janela final **dobrou** esse número em relação à intermediária (18,3 M pares) e o tempo
-continuou em segundos, o que torna a afirmação mais forte e não mais fraca.
+**The volume trigger did not fire, and that is measured too.** ARCHITECTURE declares
+Spark's trigger as *"a partition DuckDB can't hold in memory."* The natural candidate is
+the basket self-join — every pair of products bought together, the basis of any affinity
+analysis: **37,899,395 pairs, 8,789,258 distinct, in ~1.5 s and ~2.4 GB** on one DuckDB
+node. The final window **doubled** that number relative to the intermediate one (18.3M
+pairs) and the time stayed in the seconds, which makes the claim stronger, not weaker.
 
-**`written_by` é o que faz "três escritores" ser fato consultável** em vez de frase de
-documentação: `platform` e `rebuild` são Python, `spark` é a JVM. A propriedade que justificou o
-Iceberg desde a Fase 3 só deixou de ser afirmação quando essa lista ganhou um nome que não é
-Python.
+**`written_by` is what makes "three writers" a queryable fact** instead of a
+documentation phrase: `platform` and `rebuild` are Python, `spark` is the JVM. The property
+that justified Iceberg since Phase 3 only stopped being an assertion once that list gained
+a name that isn't Python.
 
-### A conclusão, e o que ela não é
+### The conclusion, and what it is not
 
-**O Spark não foi adotado por desempenho.** Neste volume ele perde, o número está publicado, e
-uma página que só publicasse resultados favoráveis não provaria nada.
+**Spark was not adopted for performance.** At this volume it loses, the number is
+published, and a page that only published favorable results would prove nothing.
 
-Ele foi adotado por três razões:
+It was adopted for three reasons:
 
-1. **O ledger de estoque tem estado cumulativo cuja saída depende do estado anterior** — a
-   forma que o SQL não expressa, medida em S7b.
-2. **O spike demonstrou interoperabilidade real com Iceberg** — 18/18, incluindo o ciclo
-   completo de conflito otimista entre motores diferentes.
-3. **O projeto precisava validar múltiplos engines escrevendo no mesmo catálogo** — que era a
-   metade não demonstrada da justificativa do Iceberg.
+1. **The stock ledger has cumulative state whose output depends on the prior state** — the
+   shape SQL doesn't express, measured in S7b.
+2. **The spike demonstrated real interoperability with Iceberg** — 18/18, including the
+   full optimistic-conflict cycle between different engines.
+3. **The project needed to validate multiple engines writing to the same catalog** — which
+   was the undemonstrated half of Iceberg's justification.
 
-**Isto não é propaganda de Spark, e a distinção importa.** O DuckDB não passou a ser "errado":
-ele continua o motor de todo o Silver e de todos os 25 modelos. O que mudou é que **uma** tabela
-passou a ter um escritor cuja forma o SQL não expressa. E o caminho padrão do projeto **não**
-depende de Spark: `silver_gate.py` tira do build o que depende de uma tabela que não existe, e
-`test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova` reprova se qualquer nó do portão deixar de estar
-coberto. `make silver` fica verde numa árvore onde o Spark nunca rodou — 364 nós — e verde de
-novo com o ledger dentro, 391.
+**This is not Spark propaganda, and the distinction matters.** DuckDB did not become
+"wrong": it remains the engine for the whole Silver layer and all 25 models. What changed is
+that **one** table now has a writer whose shape SQL can't express. And the project's
+default path does **not** depend on Spark: `silver_gate.py` pulls from the build whatever
+depends on a table that doesn't exist, and
+`test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova` fails if any gate node stops being
+covered. `make silver` runs green on a tree where Spark never ran — 364 nodes — and green
+again with the ledger in it, 391.
 
-**O que a Fase 7 NÃO provou, e está escrito:** que o Spark **escala**. Ele roda `local[*]` —
-driver e executor no mesmo JVM, sem shuffle entre nós. Um cluster de mentira não provaria nem
-escala nem interoperabilidade; provaria que o compose sobe containers.
+**What Phase 7 did NOT prove, and is written down:** that Spark **scales**. It runs
+`local[*]` — driver and executor in the same JVM, with no shuffle between nodes. A pretend
+cluster would prove neither scale nor interoperability; it would prove that compose brings
+up containers.
 
-### Marco B: duas premissas que se contradiziam, e a distinção que autorizou corrigi-las
+### Milestone B: two contradictory assumptions, and the distinction that authorized fixing them
 
-O projeto tinha uma regra certa e uma distinção faltando. A regra: **recusar ajuste de premissa
-até a saída agradar**. A distinção: mexer numa premissa para melhorar um número é uma coisa;
-tornar duas premissas **mutuamente coerentes** é outra. A primeira se recusa; a segunda é
-correção de modelo.
+The project had the right rule and a missing distinction. The rule: **refuse to adjust
+an assumption until the output pleases**. The distinction: tweaking an assumption to
+improve a number is one thing; making two assumptions **mutually coherent** is another. The
+first is refused; the second is a model correction.
 
-Duas contradições, medidas antes de qualquer alteração:
+Two contradictions, measured before any change:
 
-| premissa | valia | o que a contradizia |
+| assumption | was | what contradicted it |
 |---|---|---|
-| `slot_lead_hours_min` / `_max` | 2 h / 24 h | o ciclo declarado pelas outras linhas do **mesmo seed** nunca passa de 8,5 h. Medido sobre 86.803 pedidos entregues: **73.124 (84%) chegavam antes de a janela abrir** — prometer para depois do que já foi entregue |
-| `sla_minutes_picking` | 90 min | o teto aritmético é 80 (`basket_lines_max` × `minutes_per_line_picked`). **Nenhuma cesta possível alcançava o limiar**, e `orders_breaching_sla` era estruturalmente zero |
+| `slot_lead_hours_min` / `_max` | 2 h / 24 h | the cycle declared by the other rows of the **same seed** never exceeds 8.5 h. Measured over 86,803 delivered orders: **73,124 (84%) arrived before the window opened** — promising for after something that was already delivered |
+| `sla_minutes_picking` | 90 min | the arithmetic ceiling is 80 (`basket_lines_max` × `minutes_per_line_picked`). **No possible basket reached the threshold**, and `orders_breaching_sla` was structurally zero |
 
-Nenhuma das duas é resultado ruim. As duas são modelo internamente contraditório, e três fases
-as tinham "registrado em vez de corrigido".
+Neither is a bad result. Both are an internally contradictory model, and three phases
+had "logged instead of fixed" them.
 
-**Os dois passaram a ser derivados**, não escolhidos: `slot_lead_hours_min` = `ceil(ciclo_mínimo/60)`
-= 1 h; `slot_lead_hours_max` = `floor(ciclo_máximo/60)` = 8 h; `sla_minutes_picking` =
-`floor(triangular_p90(basket_lines_min, basket_lines_max+1, basket_lines_mode)) × minutes_per_line_picked`
-= 60. O `+1` não é detalhe: o gerador sorteia com `rng.triangular(low, high+1, mode)` e trunca.
-E `sla_picking_percentile = 0.90` entrou como **linha própria do seed**, para que a política
-fique visível — sem ela, o limiar seria um número livre entre 28 e 80, e ajustá-lo até o
-indicador agradar seria indistinguível de calibrá-lo.
+**Both became derived**, not chosen: `slot_lead_hours_min` = `ceil(min_cycle/60)` = 1 h;
+`slot_lead_hours_max` = `floor(max_cycle/60)` = 8 h; `sla_minutes_picking` =
+`floor(triangular_p90(basket_lines_min, basket_lines_max+1, basket_lines_mode)) ×
+minutes_per_line_picked` = 60. The `+1` is not a detail: the generator draws with
+`rng.triangular(low, high+1, mode)` and truncates. And `sla_picking_percentile = 0.90` came
+in as its **own seed row**, so the policy stays visible — without it, the threshold would be
+a free number between 28 and 80, and adjusting it until the indicator pleases would be
+indistinguishable from calibrating it.
 
-**O guarda contra o risco desta própria correção.** Depois de mexer aqui fica trivial continuar
-mexendo até o KPI ficar bonito, que é exatamente o proibido. Então
-`assert_order_premises_are_internally_coherent` afere a **derivação**, nunca o resultado, em
-quatro cláusulas independentes. Medido: trocar 60 por **75** — um valor plausível, dentro da
-banda que as outras cláusulas permitem — **reprova** na cláusula da derivação exata. Seis
-injeções foram tentadas e as seis reprovaram.
+**The guard against this very correction's own risk.** Once you touch this, it becomes
+trivial to keep touching it until the KPI looks good, which is exactly what's forbidden. So
+`assert_order_premises_are_internally_coherent` checks the **derivation**, never the
+result, across four independent clauses. Measured: swapping 60 for **75** — a plausible
+value, within the band the other clauses allow — **fails** on the exact-derivation clause.
+Six injections were attempted and all six failed.
 
-### Marco C: ruptura zero em 86.520 linhas — e a mesma falha recriada duas horas depois
+### Milestone C: zero stockouts across 86,520 lines — and the same failure recreated two hours later
 
-A primeira execução do job de estoque produziu **ruptura zero em 86.520 linhas**. Isso não era
-operação boa: `opening_days_of_demand` valia **7** e a janela observada tinha **5 dias**, então
-o estoque **inicial** cobria o período inteiro. Ruptura zero era **aritmética, não medição** —
-uma condição estruturalmente incapaz de produzir violação.
+The stock job's first run produced **zero stockouts across 86,520 lines**. That was not
+good operations: `opening_days_of_demand` was **7** and the observed window was **5
+days**, so the **opening** stock covered the whole period. Zero stockout was **arithmetic,
+not measurement** — a condition structurally incapable of producing a violation.
 
-**É exatamente a mesma família do `orders_breaching_sla` estruturalmente zero que o Marco B
-tinha acabado de corrigir** — recriada no domínio de estoque duas horas depois, por quem tinha
-escrito a correção. Um limiar que nenhuma cesta alcança e um estoque que nenhuma janela consome
-são a mesma coisa: um número que só pode dar um resultado. Por isso a regra virou **teste** em
-vez de virar parágrafo: `assert_stock_window_can_exercise_replenishment` exige que a janela
-observada seja **maior** que a cobertura inicial.
+**It's exactly the same family as the structurally-zero `orders_breaching_sla` that
+Milestone B had just fixed** — recreated in the stock domain two hours later, by the same
+person who had written the fix. A threshold no basket reaches and a stock no window
+consumes are the same thing: a number that can only give one result. That's why the rule
+became a **test** instead of a paragraph: `assert_stock_window_can_exercise_replenishment`
+requires the observed window to be **greater** than the opening coverage.
 
-**O que esse teste deliberadamente NÃO exige:** que **haja** ruptura. Uma operação que não rompe
-é um estado legítimo do mundo, e exigir ruptura seria pedir que o modelo produzisse o número que
-agrada. O que ele exige é que a ruptura seja **possível** — que o resultado dependa da demanda e
-não da aritmética das premissas.
+**What this test deliberately does NOT require:** that a stockout **occur**. Operations
+that don't run out of stock are a legitimate state of the world, and requiring a stockout
+would be asking the model to produce the number that pleases. What it requires is that a
+stockout be **possible** — that the result depend on demand and not on the assumptions'
+arithmetic.
 
-**Zero violações não é evidência de qualidade operacional.** É a primeira coisa a desconfiar.
+**Zero violations is not evidence of operational quality.** It's the first thing to
+suspect.
 
-Hoje o ledger mede: 5.038 unidades de ruptura em 590 das 173.970 linhas. Sete injeções foram
-tentadas contra os três testes do ledger (conservação do saldo, respeito ao `lead_time`,
-exercibilidade da janela) e as sete reprovaram.
+Today the ledger measures: 5,038 units of stockout across 590 of the 173,970 lines. Seven
+injections were attempted against the ledger's three tests (balance conservation,
+`lead_time` compliance, window exercisability) and all seven failed.
 
-### Marco D: a regeração única, e o que a correção passou a medir
+### Milestone D: the single regeneration, and what the correction started measuring
 
-A janela final é **derivada**, não escolhida: tem de exceder `opening_days_of_demand` (7 dias,
-senão cai no defeito acima) e o teto é externo — **2026-09-01**, até onde o catálogo observado
-alcança. Baixar a política de estoque para caber mais ciclos seria escolher uma premissa pelo
-efeito dela no gráfico.
+The final window is **derived**, not chosen: it has to exceed `opening_days_of_demand`
+(7 days, otherwise it falls into the defect above) and the ceiling is external —
+**2026-09-01**, as far as the observed catalog reaches. Lowering the stock policy to fit
+more cycles would be choosing an assumption for its effect on the chart.
 
-Resultado: 9 dias, **206.523 pedidos**, 3.892.062 linhas, 1.433.723 eventos, com os **três folds
-concordando** — lote, projeção Iceberg e sink Postgres.
+Result: 9 days, **206,523 orders**, 3,892,062 lines, 1,433,723 events, with the **three
+folds agreeing** — batch, Iceberg projection, and Postgres sink.
 
-**A correção do Marco B passou a medir algo**, e os números foram declarados como consequência
-antes de serem medidos:
+**Milestone B's fix started measuring something**, and the numbers were declared as a
+consequence before being measured:
 
-| indicador | antes | agora |
+| indicator | before | now |
 |---|---:|---:|
-| entregas **antes** de a janela abrir | 84,0% | 42,5% |
-| entregas **dentro** da janela | 8,5% fixo | **24,8%**, e varia |
-| violações de SLA de separação | 0 (estrutural) | **19.136 = 9,694%** |
+| deliveries **before** the window opens | 84.0% | 42.5% |
+| deliveries **within** the window | 8.5% fixed | **24.8%**, and it varies |
+| picking SLA violations | 0 (structural) | **19,136 = 9.694%** |
 
-O 9,694% é contra 9,747% teóricos derivados do p90 declarado da distribuição da cesta —
-concordância na terceira casa. Isso virou `assert_picking_breach_rate_matches_the_declared_percentile`,
-um teste de conformidade **distribucional**, e não de contagem.
+The 9.694% is against a theoretical 9.747% derived from the basket distribution's
+declared p90 — a difference of 0.053 point, within the sampling noise expected for
+197,402 orders (standard error ≈ 0.065 point). **Correction to this very sentence, found in
+a later audit**: the previous version said "agreement to the third decimal," which is
+arithmetically false — 9.694 and 9.747 already diverge at the first decimal place. What
+the agreement shows is more modest and still real: both round to 9.7%, and the distance
+between them is what sampling would predict, not a systematic bias. This became
+`assert_picking_breach_rate_matches_the_declared_percentile`, a test of **distributional**
+conformance, not of counting.
 
-`make demand-reality-check` foi rodado depois: erro médio de **0,066 pt** em 34 grupos contra o
-MAPA. A correção do slot e do SLA **não moveu** a mistura de demanda, que é o certo — ela é de
-outro domínio.
+`make demand-reality-check` was run afterward: mean absolute error of **0.111 point**
+against the TARGET, across the volume table's 39 rows — a number read from
+[`docs/demand-evidence/README.md`](docs/demand-evidence/README.md), not copied by hand.
+("0.066 pt across 34 groups" used to be here; it didn't correspond to any run persisted in
+the repository — probably a leftover from an intermediate pass never reconciled with the
+final regeneration, found in the same audit.) The slot and SLA fix **did not move** the
+demand mix, which is correct — it belongs to a different domain.
 
-### Marco E: o parquet do Silver sobrevive à exclusão do modelo
+**A caveat the evidence page doesn't connect in the text, and worth logging here.** The
+biggest deviation in the volume table is HUEVOS (1.238 point), and HUEVOS's EUR/kg diverges
+from MAPA by 5.8× (22.24 against 3.85) — the worst in the whole document. Both things have
+the SAME cause, and it isn't price: `net_content_kg_l` is null for eggs sold by unit (no
+source measures weight per egg, correctly), and covers only 18% of HUEVOS lines — the
+liquid pasteurized egg whites. `eur_por_kg = revenue/kg` sums revenue over ALL lines and kg
+only over that 18%; the result is the whole category divided by a seventh of it, not an
+observed price. The page already warns that HUEVOS "doesn't measure the calibration, it
+measures the conversion's coverage" — but that caveat only lives in the volume table; the
+EUR/kg table, which advertises itself as "the comparable column with no conversion at
+all," doesn't inherit it. Trigger to fix: the same `linhas_sem_kg` group list already
+computed in `demand_check.py` needs to suppress (or flag) the EUR/kg of those groups, not
+just the volume deviation.
 
-Quando `silver_gate` tira `silver_stock_ledger` do build — porque a tabela Iceberg não existe
-nesta máquina — o **parquet da última construção bem-sucedida fica** no object storage. O export
-para o Snowflake o lê sem saber que é velho.
+### Milestone E: Silver's parquet survives the model's exclusion
 
-Aconteceu de verdade, e já tinha sido publicado: **`MART_STOCK_HEALTH` descrevia uma janela de 5
-dias enquanto todos os outros marts descreviam 9**, e **nenhum teste reprovou**. Todos os totais
-fechavam — dentro de cada domínio.
+When `silver_gate` pulls `silver_stock_ledger` from the build — because the Iceberg
+table doesn't exist on this machine — **the parquet from the last successful build stays
+behind** in object storage. The Snowflake export reads it without knowing it's stale.
 
-Mitigado por `assert_stock_ledger_covers_the_order_window`, que compara as janelas dos dois
-domínios **no warehouse**, que é onde eles finalmente se encontram. O teste novo reprovou contra
-o dado real na primeira execução — uma injeção natural, que é a única espécie que não se
-suspeita de ter sido escrita para passar.
+It happened for real, and it had already been published: **`MART_STOCK_HEALTH` was
+describing a 5-day window while every other mart described 9**, and **no test failed**.
+Every total balanced — within each domain.
 
-**Não está fechado, e não deve ser apresentado como fechado:** a mitigação é **por domínio** e a
-classe é **geral**. Qualquer modelo que o portão exclua deixa parquet velho para trás, e nada
-verifica isso de forma genérica. Fica na dívida como item aberto.
+Mitigated by `assert_stock_ledger_covers_the_order_window`, which compares the two
+domains' windows **in the warehouse**, which is where they finally meet. The new test
+failed against the real data on its first run — a natural injection, the only kind not
+suspected of having been written to pass.
 
-### O consumidor contava ESCRITAS e chamava de PEDIDOS
+**This is not closed, and shouldn't be presented as closed:** the mitigation is
+**per-domain** and the class is **general**. Any model the gate excludes leaves stale
+parquet behind, and nothing checks this generically. It stays in the debt list as an open
+item.
 
-O último defeito da fase, e o mais instrutivo. Consumindo os 1.433.723 eventos, o CLI imprimiu
-**`SLA estourado 31.908`** enquanto a projeção Iceberg e `silver_order` concordavam em
-**19.136**.
+### The consumer was counting WRITES and calling them ORDERS
 
-`orders` e `sla_breaches` eram **inteiros somados lote a lote**. Um pedido cujos eventos caem em
-lotes diferentes era contado **uma vez por lote** — e a partir do `order_picked` o estado carrega
-`sla_breached = true`, então todo lote seguinte que tocasse o pedido o reescrevia estourado, e a
-soma contava cada uma dessas escritas. Contagem de evento **é** aditiva entre lotes; contagem de
-pedido **não é**.
+The phase's last defect, and the most instructive one. Consuming the 1,433,723 events,
+the CLI printed **`SLA breached 31,908`** while the Iceberg projection and `silver_order`
+agreed on **19,136**.
 
-**Nada quebrou, e é esse o ponto.** O número era plausível, tinha a ordem de grandeza certa, e o
-rótulo dizia outra coisa do que ele media. Nenhum teste de contagem pega isso. Quem pegou foram
-**dois folds discordando** — pela terceira vez neste projeto, e as três vezes acharam defeito
-real.
+`orders` and `sla_breaches` were **integers summed batch by batch**. An order whose events
+fall across different batches was counted **once per batch** — and from `order_picked`
+onward the state carries `sla_breached = true`, so every subsequent batch touching the
+order rewrote it as breached, and the sum counted each of those writes. Event counting
+**is** additive across batches; order counting **is not**.
 
-Corrigido trocando os inteiros por **conjuntos de identificadores**, com `orders` e
-`sla_breaches` virando propriedades derivadas do tamanho do conjunto. O teste que congela isso
-precisou de um **quarto** lote para reproduzir o defeito: o pedido só passa a estourar no
-`order_picked`, que é o terceiro.
+**Nothing broke, and that's the point.** The number was plausible, had the right order of
+magnitude, and the label said something different from what it measured. No counting test
+catches this. What caught it was **two folds disagreeing** — for the third time in this
+project, and all three times they found a real defect.
 
-### Marco G: o RAW é selado, não reproduzido
+Fixed by swapping the integers for **sets of identifiers**, with `orders` and
+`sla_breaches` becoming properties derived from the set's size. The test that pins this down
+needed a **fourth** batch to reproduce the defect: an order only starts being breached at
+`order_picked`, which is the third one.
 
-`make freeze` percorre o RAW, lê cada `_manifest.json` e escreve
-[`docs/FREEZE.md`](docs/FREEZE.md): **81 partições, 2.221.069 registros, 2,29 GB**, com um
-`capture_id` agregado — `cec10cb5931f284f463a68ccc707c7612da1bab81caf4d41936a7a7f0ec568ef`.
-`make freeze-check` relê o RAW e compara.
+### Milestone G: RAW is sealed, not reproduced
 
-**O selo cobre o dado, não a execução.** Cada `content_sha256` é o hash da lista **ordenada** de
-`(path, sha256, bytes, records)`; `run_id`, `started_at_utc`, `finished_at_utc`,
-`duration_seconds` e `history` ficam **deliberadamente de fora**. Incluí-los faria um re-land de
-dado byte-idêntico quebrar o selo, e um alarme que dispara sem causa treina quem revisa a
-ignorá-lo — a mesma razão pela qual o `CONTRACT.md` do painel carrega o sha256 da origem e não a
-data da geração.
+`make freeze` walks RAW, reads every `_manifest.json`, and writes
+[`docs/FREEZE.md`](docs/FREEZE.md): **81 partitions, 2,221,069 records, 2.29 GB**, with an
+aggregate `capture_id` —
+`cec10cb5931f284f463a68ccc707c7612da1bab81caf4d41936a7a7f0ec568ef`. `make freeze-check`
+rereads RAW and compares.
 
-**A propriedade que isto garante é `mesmo RAW congelado → downstream reproduzível`**, e não que o
-RAW seja reproduzível: a API da Mercadona é viva, o Callejero é download manual semestral, e a
-URL do MAPA aponta para "últimos datos". Numa máquina nova o operador roda `make freeze` e sela a
-captura **dele**.
+**The seal covers the data, not the run.** Each `content_sha256` is the hash of the
+**ordered** list of `(path, sha256, bytes, records)`; `run_id`, `started_at_utc`,
+`finished_at_utc`, `duration_seconds`, and `history` are **deliberately left out**.
+Including them would make a byte-identical re-land break the seal, and an alarm that fires
+with no cause trains reviewers to ignore it — the same reason the dashboard's
+`CONTRACT.md` carries the source's sha256 and not the generation date.
 
-**Se uma regeração fizer `make freeze-check` reprovar, o certo é não consertar o selo.** Esse
-comportamento é intencional: uma janela que cresce depois do fechamento invalida todo número já
-publicado sobre ela. Uma injeção de nome de partição foi recusada; alterar um byte reprova.
+**The property this guarantees is `same frozen RAW → reproducible downstream`**, not that
+RAW is reproducible: the Mercadona API is live, the Callejero is a semiannual manual
+download, and MAPA's URL points to "últimos datos" (the latest data). On a fresh machine
+the operator runs `make freeze` and seals **their own** capture.
 
-### Marco H: 3.910 linhas de documentação de estado viraram 1.328
+**If a regeneration makes `make freeze-check` fail, the right move is not to fix the
+seal.** That behavior is intentional: a window that grows after closing invalidates every
+number already published about it. A partition-name injection was refused; changing one
+byte fails it.
 
-O README tinha 1.435 linhas e o ARCHITECTURE 2.475, com o **mesmo assunto em dois lugares
-envelhecendo em ritmos diferentes**. O tamanho é, por si, um questionamento de complexidade.
+### Milestone H: 3,910 lines of state documentation became 1,328
 
-A narrativa foi para este arquivo — **17 seções movidas literalmente, nada reescrito e nada
-perdido** — o escopo futuro foi para o [BACKLOG.md](BACKLOG.md), e um **teto de linhas testado**
-impede os dois de voltarem a crescer sem que isso seja uma decisão que apareça no diff.
+The README had 1,435 lines and ARCHITECTURE had 2,475, with the **same subject in two
+places aging at different rates**. The size is, by itself, a challenge to complexity.
 
-> **Nota do fechamento documental, 2026-09-02.** O README voltou a crescer, de propósito e uma
-> vez: entrou a seção *"As quatorze perguntas do fechamento"*, um índice de uma linha por
-> pergunta apontando para onde a evidência mora, e o teto subiu de 700 para 760 linhas. A
-> mudança do teto está no diff de `test_documentacao.py`, que é exatamente o que o mecanismo
-> foi feito para provocar.
+The narrative moved to this file — **17 sections moved literally, nothing rewritten and
+nothing lost** — future scope went to [BACKLOG.md](BACKLOG.md), and a **tested line
+ceiling** keeps the two from growing back without that being a decision that shows up in
+the diff.
 
-**A mudança expôs duas classes de referência que nunca eram conferidas.** `LinksRelativosTest`
-verificava que o **arquivo** existe — e uma âncora quebrada aponta para um arquivo que existe,
-então ela passava e o leitor caía no topo do documento sem saber que errou de lugar. Um índice
-inteiro pode apodrecer assim. Dois verificadores novos cobrem rótulo `§ "…"` e âncora, em todos
-os níveis de título e nas âncoras HTML explícitas.
+> **Note from the documentation closing, 2026-09-02.** The README grew again, on purpose
+> and once: the section *"The fourteen closing questions"* came in, a one-line-per-question
+> index pointing to where the evidence lives, and the ceiling rose from 700 to 760 lines. The
+> ceiling change is in `test_documentacao.py`'s diff, which is exactly what the mechanism
+> was built to provoke.
 
-E vale registrar contra mim: a **primeira versão** desses verificadores estava errada duas vezes
-— só varria `##`, reportando dois falsos positivos, e não conhecia `<a id="...">`, reportando 22.
-Um verificador errado custa mais caro que verificador nenhum, porque ensina a ignorar o
-resultado.
+**The change exposed two classes of reference that were never checked.**
+`LinksRelativosTest` verified that the **file** exists — and a broken anchor points at a
+file that exists, so it passed and the reader landed at the top of the document with no
+idea they'd missed their spot. An entire index can rot this way. Two new checkers cover the
+`§ "…"` label and the anchor, across every heading level and explicit HTML anchors.
 
-### A dívida subiu de cinco para oito, e isso é resultado
+And it's worth logging against myself: the **first version** of those checkers was wrong
+twice — it only scanned `##`, reporting two false positives, and it didn't know about
+`<a id="...">`, reporting 22. A wrong checker costs more than no checker, because it
+teaches people to ignore the result.
 
-**Três dos itens novos foram descobertos pela Fase 7, e dois deles medem o que ela mesma
-construiu.** Uma lista de dívidas que só encolhe é sinal de que ninguém está procurando. A lista
-corrente, com problema, impacto, status e próximo passo, está no
-[ARCHITECTURE.md § "Dívida técnica"](ARCHITECTURE.md).
+### Debt went from five to eight, and that is a result
 
-O item mais desconfortável é o único lugar do projeto onde **volume realmente doeu**: a
-reconstrução da projeção é **O(n²)** — 414 commits e ~55 min para 206.523 pedidos, porque cada
-lote faz `upsert` contra a tabela inteira. Na Fase 3, com 6.400 pedidos, isso levava segundos e
-era invisível. A ironia vale escrita: a justificativa do Spark diz que o gatilho de volume não
-disparou, e ele disparou **aqui**, no caminho em Python, e não na análise.
+**Three of the new items were discovered by Phase 7, and two of them measure what it
+built itself.** A debt list that only shrinks is a sign nobody is looking. The current
+list, with problem, impact, status, and next step, is in
+[ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md).
+
+The most uncomfortable item is the one place in the project where **volume actually
+hurt**: rebuilding the projection is **O(n²)** — 414 commits and ~55 min for 206,523
+orders, because every batch does an `upsert` against the whole table. In Phase 3, with
+6,400 orders, this took seconds and was invisible. The irony is worth writing down: Spark's
+justification says the volume trigger didn't fire, and it fired **here**, in the Python
+path, and not in the analysis.
 
 ---
 
-## Change request — como mudar alguma coisa depois do freeze
+## Change request — how to change something after the freeze
 
-O projeto está congelado. Isso não quer dizer imutável; quer dizer que mudança passa por um
-registro, e não por um impulso. Copie o bloco abaixo e responda **todas** as linhas — se
-alguma não puder ser respondida, a mudança não está pronta para ser feita.
+The project is frozen. That doesn't mean immutable; it means a change goes through a
+record, not an impulse. Copy the block below and answer **every** line — if any of them
+can't be answered, the change isn't ready to be made.
 
 ```
-## CR-NNN · <título>
+## CR-NNN · <title>
 
-Necessidade      Que problema concreto existe?
-Evidência        Que teste, log ou medição demonstra que ele existe?
-Insuficiência    Por que a solução atual não basta?
-Componente       Quem deve ser responsável pela mudança?
-Contratos        Que contratos de dados são afetados?
-Regressão        Que testes podem quebrar?
-Semântica        Algum campo muda de significado?
-Proveniência     Continuaremos sabendo de onde veio o dado?
-Reprodutibilidade O mesmo input continua produzindo o mesmo resultado?
-Custo            A complexidade acrescentada se justifica?
-Prova            Que teste demonstrará que a mudança melhorou o sistema?
-Perda            O que deixa de ser verdade?
+Need             What concrete problem exists?
+Evidence         What test, log, or measurement demonstrates it exists?
+Insufficiency    Why isn't the current solution enough?
+Component        Who should be responsible for the change?
+Contracts        What data contracts are affected?
+Regression       What tests might break?
+Semantics        Does any field change meaning?
+Provenance       Will we still know where the data came from?
+Reproducibility  Does the same input keep producing the same result?
+Cost             Is the added complexity justified?
+Proof            What test will demonstrate the change improved the system?
+Loss             What stops being true?
 ```
 
-**O que não vale como necessidade**, e a lista é literal: *"é usado no mercado"*, *"fica mais
-profissional"*, *"é uma best practice"*, *"empresas usam"*, *"pode ser útil no futuro"*,
-*"fica bom no currículo"*.
+**What doesn't count as a need**, and the list is literal: *"it's used in the
+market,"* *"it looks more professional,"* *"it's a best practice,"* *"companies use it,"*
+*"it might be useful in the future,"* *"it looks good on a résumé."*
 
-Ideia sem CR vai para o [BACKLOG.md](BACKLOG.md).
+An idea with no CR goes to [BACKLOG.md](BACKLOG.md).
+
+### CR-001 · Chain `warehouse_load` after `mercadona_catalog_daily`
+
+```
+Need             The Mercadona catalog already had a daily cron and already finished by
+                 rebuilding Silver — but Snowflake (RETAIL.MART, what the dashboard reads)
+                 only updated with a manual `make warehouse-trigger`. Without someone
+                 remembering, MART sat stale.
+Evidence         orchestration/airflow/dags/warehouse_load.py already anticipated the hook,
+                 in its own docstring: "Whoever wants to chain it uses TriggerDagRunOperator."
+                 Not a new feature — activating an extension point that already existed.
+Insufficiency    Manual triggering depends on someone remembering; without that, MART ages
+                 silently, with no test or alarm noticing.
+Component        Orchestration (Airflow). One file: mercadona_catalog_daily.py.
+Contracts        None. No dbt model, SQL, or schema changed — only the orchestration.
+Regression       make test (1,095/1,095 green), airflow dags list-import-errors (zero),
+                 airflow tasks list --tree confirming the new chain.
+Semantics        No field changes meaning.
+Provenance       Unchanged — the same chain land → verify-landing → silver-build →
+                 export-snowflake → load-snowflake → dbt build, just triggered on its own.
+Reproducibility  Yes. The same input keeps producing the same output; only the trigger changed.
+Cost             One task (TriggerDagRunOperator), zero new services, zero new cron on
+                 warehouse_load (still schedule=None, fired by trigger).
+Proof            Ran live, not just as a dry run: docs/screens/airflow-warehouse-load-trigger.png
+                 shows the new chain in the real Airflow graph, and
+                 docs/screens/minio-mercadona-partitions-09-04.png shows the partitions for
+                 2026-09-03 and 2026-09-04 already landed by the cron — after the freeze,
+                 exactly as the plan predicted.
+Loss             docs/FREEZE.md stops matching the live RAW byte-for-byte starting on
+                 2026-09-02 — DOCUMENTED and expected behavior of the seal (Milestone G), not
+                 a regression from this change: make freeze-check will flag the new Mercadona
+                 partitions as "outside the seal," because that's exactly what it's for.
+                 Orders and synthetic customers stay frozen; only the real catalog grows.
+```
+
+Decision logged on 2026-09-04. Implemented, verified live against Airflow and MinIO, and
+queried afterward via `docs/screens/snowflake-price-evolution-query.png` — the newly loaded
+MART answering a real `RETAIL_READER` query against `MART_PRICE_EVOLUTION`, 1,697 rows, with
+`snapshot_date` already covering 2026-09-01.
+
+### CR-002 · Translate the project to English (reading layer only)
+
+```
+Need             The project was entirely in Portuguese. A prior pass this same session had
+                 already translated the dashboard to Spanish; the request changed to English
+                 for the whole project before any screenshot collection was done.
+Evidence         docs/screens/dashboard-commercial-en.png and
+                 docs/screens/dashboard-inventory-en.png — the live dashboard, driven with a
+                 headless browser (Playwright/Chromium) against the real Snowflake account,
+                 zero console errors, every UI label in English.
+Insufficiency    A dashboard-only translation leaves README/ARCHITECTURE/DECISIONS/BACKLOG/
+                 AI_ENGINEERING_CONSTRAINTS.md and the 5 generated evidence pages in
+                 Portuguese — inconsistent for an English-speaking reader.
+Component        Documentation (5 root docs), the 5 evidence-page generator scripts under
+                 platform/src/retail_platform/, and streamlit/{app.py,indicators.py,
+                 contract.py}. FAQ.md deliberately excluded — personal, Portuguese,
+                 gitignored, out of scope by explicit request.
+Contracts        None. No dbt model, SQL structure, or Snowflake schema changed. The one
+                 gray area: display-only string literals embedded in indicators.py's SQL
+                 (funnel stage names, leakage reasons, loss causes, delivery-window
+                 outcomes — e.g. 'Colocado' -> 'Placed') were translated, because they are
+                 constructed inline (`select 'Label' as column`) and never compared against
+                 anything downstream. Genuine warehouse-computed enum values
+                 (`change_type`, `sex_label`, category and product names) were left
+                 untouched on purpose — those come from dbt models and real Mercadona/INE
+                 data; translating them would mean editing warehouse SQL and rebuilding
+                 Snowflake data, which is out of scope for a text-only pass.
+Regression       make test (1,095/1,095 green), make dashboard-check against the live
+                 account (13 metrics / 7 tabs / 20 tables / 0 warnings, zero exception),
+                 platform/tests/test_documentacao.py (10/10 — cross-file section citations
+                 and anchors all resolve after every heading translation).
+Semantics        None.
+Provenance       Unaffected.
+Reproducibility  Unaffected — same SQL, same data, same tests; only prose and display
+                 labels changed language.
+Cost             A large one-time editing effort across roughly 30 files (5 root docs, 5
+                 evidence-page/generator pairs, 3 dashboard files, and a handful of test
+                 files whose assertions hardcoded Portuguese report strings). No new
+                 abstraction, no new dependency, no ongoing cost.
+Proof            The two screenshots above, plus every test run listed under Regression.
+Loss             The Spanish-language dashboard screenshots taken earlier this same session
+                 (docs/screens/, timestamps 10:22-10:28) are now stale against the English
+                 UI. Left in place rather than deleted — that's the user's call, not the
+                 agent's.
+```
+
+### CR-003 · Screenshot proof for four demonstrations that were only ever prose
+
+```
+Need             The dashboard screenshots (CR-002) covered the read path. Four other
+                 demonstrations this project makes — RBAC isolation, the Spark/Iceberg
+                 interop spike, the OLTP transaction-atomicity proof, and Kafka stream
+                 semantics (transport, delivery, idempotent replay) — existed only as prose
+                 claims and test-suite green checks, never as captured terminal output a
+                 reader could look at directly.
+Evidence         docs/screens/proof-rbac-isolation.png — a live probe against the real
+                 Snowflake account: RETAIL_READER reading MART_CUSTOMER_BASE (286,826 rows)
+                 and being refused on GOLD.DIM_CUSTOMER and STAGE.STG_CUSTOMER with the
+                 literal Snowflake error ("002003 (02000): SQL compilation error"), same for
+                 RETAIL_LOADER denied on MART and GOLD. Session opened with
+                 `use secondary roles none` — without it the check passes by accident, see
+                 `check_isolation`'s own docstring.
+                 docs/screens/proof-spark-iceberg-interop.png — `make spike-spark-iceberg`,
+                 18/18 checks green (VEREDITO: APROVADO), against the real Iceberg catalog
+                 the pyiceberg writer built.
+                 docs/screens/proof-oltp-atomicity.png — `make orders-prove-atomicity`, all
+                 checks green (APROVADO): two independent trigger-injected failures (outbox
+                 insert, orders insert) each roll back cleanly, a full partition replays
+                 idempotently, and an out-of-sequence event is refused rather than silently
+                 skipped.
+                 docs/screens/proof-stream-semantics.png — `make orders-prove-stream` after a
+                 full stream-plane reset (below): transport fidelity holds for all 36
+                 partitions (topic reread reproduces every manifest sha256), at-least-once
+                 duplication is reproduced on demand (500 events, exactly), duplicate
+                 consumption is a no-op on the projection, replay over an already-built
+                 projection changes nothing, a forged out-of-sequence event is refused, and
+                 the three independent folds (Silver, OLTP, streaming projection) agree on
+                 206,523 orders. The one check that stays red — "no order breaches the
+                 declared 60-minute picking SLA" — is, per the script's own comment, an
+                 intentional, permanent characteristic: the mechanism runs correctly and
+                 measures a real 80.00-minute maximum separation, but the script's author
+                 chose not to adjust the declared threshold or the data just to make the
+                 check go green, calling that "the opposite of verifying." `make
+                 orders-prove-stream` therefore exits 1 in its correct, steady state — the
+                 screenshot's own footer shows exactly that, and only that one line.
+Insufficiency    Terminal output alone doesn't reproduce the run; it documents that a
+                 specific run, on a specific date, against a specific live account (or
+                 local containers), produced this exact output. The commands are
+                 reproducible; the screenshot is a snapshot of one execution of them.
+Component        docs/screens/ only. No code, no test, no documentation prose changed. The
+                 stream plane's live state (Kafka topic, OLTP replica, Postgres projection)
+                 was reset and rebuilt as an operational side effect of capturing proof 4 —
+                 not a code or schema change, and confined to this project's own Docker
+                 containers.
+Contracts        None. All four commands are read-only or self-contained (the atomicity
+                 proof empties and rebuilds its own OLTP tables; the RBAC probe only runs
+                 `select count(*)`; the Spark spike creates and deletes its own namespace,
+                 verified by its own H5/H6 checks that production tables were untouched;
+                 the stream proof consumes and republishes but never touches Silver or the
+                 warehouse).
+Regression       Re-running each command reproduced the same verdict; no test suite was
+                 touched. `make test` still 1,095/1,095 after the stream-plane reset.
+Semantics        None.
+Provenance       Unaffected.
+Reproducibility  Unaffected — no data, model, or script changed, only screenshots added.
+Cost             Four terminal captures via the same Playwright pipeline built for CR-002,
+                 rendered as styled terminal screenshots instead of browser screenshots.
+                 The fourth cost substantially more than a screenshot: see Loss.
+Proof            The four screenshots above.
+Loss             The first attempt at proof 4 FAILED (7 checks red) — not because the
+                 underlying mechanism is broken, but because the Kafka topic and OLTP
+                 replica had been up and exercised manually for hours this session before
+                 this agent touched them; the topic held more messages than a single fresh
+                 publish of the full 36-partition log would produce, so the
+                 transport-fidelity check (topic reread = manifest sha256) failed, and that
+                 cascaded into the fold-agreement checks. A separate, unprompted
+                 `orders-prove-atomicity` run moments earlier compounded this by emptying
+                 the OLTP replica down to a single partition. Asked the user before taking
+                 the destructive fix (delete+recreate the Kafka topic, reset the OLTP
+                 tables, truncate the Postgres projection, reload all 36 partitions,
+                 republish once) — user said yes. After the reset, the same command passed
+                 every check except the one documented above as permanent by design. The
+                 stream plane is left in this fully-reloaded, freshly-published state;
+                 nothing was torn back down.
+```

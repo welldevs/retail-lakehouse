@@ -165,7 +165,7 @@ class ComparacaoTest(unittest.TestCase):
     def test_particao_selada_que_sumiu(self):
         problemas = freeze.comparar(self.selado, self.selado[:1])
         self.assertEqual(len(problemas), 1)
-        self.assertIn("AUSENTE do RAW", problemas[0])
+        self.assertIn("MISSING from RAW", problemas[0])
 
     def test_particao_nova_fora_do_selo(self):
         """UMA JANELA QUE CRESCE DEPOIS DO FECHAMENTO invalida todo numero ja publicado
@@ -173,13 +173,13 @@ class ComparacaoTest(unittest.TestCase):
         atual = self.selado + [dict(self.selado[0], partition_key="ingestion_date=2026-08-26")]
         problemas = freeze.comparar(self.selado, atual)
         self.assertEqual(len(problemas), 1)
-        self.assertIn("NOVA, fora do selo", problemas[0])
+        self.assertIn("NEW partition, outside the seal", problemas[0])
 
     def test_conteudo_alterado_numa_particao_selada(self):
         atual = [dict(self.selado[0], content_sha256="ff" * 32), self.selado[1]]
         problemas = freeze.comparar(self.selado, atual)
         self.assertEqual(len(problemas), 1)
-        self.assertIn("conteudo MUDOU", problemas[0])
+        self.assertIn("content CHANGED", problemas[0])
 
 
 class SeedTest(unittest.TestCase):

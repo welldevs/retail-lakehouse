@@ -58,10 +58,10 @@ class SecaoDeCoorteTest(unittest.TestCase):
         # O erro que isto pega e o mesmo que o §7 da fase anterior existia para impedir, um
         # eixo adiante: um relatorio que publica so a dimensao em que nada mudou.
         pagina = "\n".join(dc._cohort_section(_snapshot(), None))
-        self.assertIn("Propensao por coorte", pagina)
+        self.assertIn("Propensity by buyer cohort", pagina)
         self.assertIn("LT35", pagina)
         self.assertIn("GE65", pagina)
-        self.assertIn("Frequencia por comunidade", pagina)
+        self.assertIn("Frequency by autonomous community", pagina)
 
     def test_a_razao_entre_faixas_e_calculada_e_ordena_a_tabela(self):
         # A coluna que resume a fase inteira numa linha. Com 10% contra 50% de vinho, a
@@ -74,7 +74,7 @@ class SecaoDeCoorteTest(unittest.TestCase):
         # Uma janela gerada por um modelo anterior nao tem o carimbo. Omitir a secao faria
         # a pagina parecer completa; declarar a ausencia diz por que ela nao esta la.
         pagina = "\n".join(dc._cohort_section(_snapshot(com_coorte=False), None))
-        self.assertIn("Ausente nesta janela", pagina)
+        self.assertIn("Not present in this window", pagina)
         self.assertNotIn("| VINO |", pagina)
 
     def test_pedidos_por_armazem_aparecem_com_o_denominador_certo(self):

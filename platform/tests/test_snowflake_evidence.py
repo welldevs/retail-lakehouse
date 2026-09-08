@@ -71,16 +71,16 @@ class PapeisEmExecucaoTest(unittest.TestCase):
         query_history do Snowflake nao guarda mais de sete dias, e uma semana parada
         apaga a evidencia sem apagar a propriedade."""
         texto = render(_dados(papeis=(["ROLE_NAME"], [])))
-        self.assertIn("Nenhuma execução de papel", texto)
-        self.assertIn("sete dias", texto)
+        self.assertIn("No `RETAIL%` role executed", texto)
+        self.assertIn("seven days", texto)
 
     def test_erro_ao_ler_o_historico_aparece_como_erro(self):
         """Mesma regra das amostras: falha que se disfarca de vazio e a unica coisa pior
         que falha."""
         texto = render(_dados(papeis=(["erro"], [("Insufficient privileges",)])))
-        self.assertIn("Não foi possível ler o histórico", texto)
+        self.assertIn("Could not read the history", texto)
         self.assertIn("Insufficient privileges", texto)
-        self.assertNotIn("Nenhuma execução de papel", texto)
+        self.assertNotIn("No `RETAIL%` role executed", texto)
 
 
 class RelatorioTest(unittest.TestCase):
@@ -103,7 +103,7 @@ class RelatorioTest(unittest.TestCase):
             ("STAGE", "A", "RETAIL_LOADER", 7),
             ("GOLD", "B", "RETAIL_TRANSFORMER", 35),
         ]))
-        self.assertIn("42 linhas", texto)
+        self.assertIn("42 rows", texto)
 
     def test_tabela_sem_contagem_nao_estoura_nem_vira_zero_silencioso(self):
         texto = render(_dados(objetos=[("GOLD", "V", "RETAIL_TRANSFORMER", None)]))
@@ -112,13 +112,13 @@ class RelatorioTest(unittest.TestCase):
     def test_isolamento_quebrado_aparece_em_destaque(self):
         """O pior desfecho possivel seria um relatorio bonito sobre um controle furado."""
         texto = render(_dados(isolamento=["RETAIL_READER: NAO deveria ler GOLD e leu"]))
-        self.assertIn("NÃO confere", texto)
+        self.assertIn("does NOT check out", texto)
         self.assertIn("RETAIL_READER", texto)
 
     def test_isolamento_intacto_e_declarado_como_tal(self):
         texto = render(_dados())
-        self.assertIn("confere inteira", texto)
-        self.assertNotIn("NÃO confere", texto)
+        self.assertIn("checks out completely", texto)
+        self.assertNotIn("does NOT check out", texto)
 
     def test_a_matriz_publicada_cobre_os_tres_papeis(self):
         texto = render(_dados())

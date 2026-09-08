@@ -1,39 +1,39 @@
-"""O SELO DA CAPTURA: `make freeze` e `make freeze-check`.
+"""THE CAPTURE SEAL: `make freeze` and `make freeze-check`.
 
-O PROBLEMA QUE ISTO RESOLVE, e ele nao e teorico.
+THE PROBLEM THIS SOLVES, and it is not theoretical.
 
-As tres ultimas revisoes de documentacao deste projeto existiram pelo mesmo motivo: uma
-regeracao mudou numeros que ja estavam escritos, e nada avisou. A disciplina "nao mexa no
-RAW depois de fechar" foi respeitada por atencao, nunca por verificacao — e atencao nao
-reprova build nenhum.
+The last three documentation revisions of this project existed for the same reason: a
+regeneration changed numbers that were already written, and nothing warned about it. The
+discipline "don't touch RAW after closing" was honored by attention, never by verification —
+and attention fails no build.
 
-Isto transforma a disciplina em teste.
+This turns the discipline into a test.
 
-O QUE E SELADO, E O QUE E DELIBERADAMENTE IGNORADO.
+WHAT IS SEALED, AND WHAT IS DELIBERATELY IGNORED.
 
-Cada `_manifest.json` do RAW declara os arquivos da particao com `path`, `sha256`, `bytes` e
-`records`. O selo cobre EXATAMENTE isso — os dados. Ficam de fora, de proposito:
+Each RAW `_manifest.json` declares the partition's files with `path`, `sha256`, `bytes` and
+`records`. The seal covers EXACTLY that — the data. Deliberately left out:
 
     run_id, started_at_utc, finished_at_utc, duration_seconds, history
 
-Sao metadados de EXECUCAO. Inclui-los faria um re-land de dado byte-identico quebrar o selo,
-e um selo que quebra num no-op treina quem revisa a ignora-lo — o mesmo defeito do carimbo de
-data que o CONTRACT do painel tinha, e pela mesma razao: um alarme que dispara sem causa e
-pior que nenhum alarme.
+These are EXECUTION metadata. Including them would make a byte-identical re-land of the data
+break the seal, and a seal that breaks on a no-op trains reviewers to ignore it — the same
+defect the dashboard's CONTRACT had with its timestamp, and for the same reason: an alarm
+that fires without cause is worse than no alarm.
 
-POR QUE O RAW E SELADO E NAO REPRODUZIDO. Ele NAO e reproduzivel, e prometer que seja seria
-falso: a API da Mercadona e viva, o Callejero e download manual semestral, e a URL do MAPA
-aponta para "ultimos datos". Tudo a JUSANTE e deterministico dada a mesma RAW. O `capture_id`
-e o que da nome a essa condicao: numa maquina nova o operador roda `make freeze` e sela a
-CAPTURA DELE, e o teste passa a guardar a dele.
+WHY RAW IS SEALED AND NOT REPRODUCED. It is NOT reproducible, and promising that it were
+would be false: the Mercadona API is live, the Callejero is a semiannual manual download, and
+the MAPA URL points to "latest data". Everything DOWNSTREAM is deterministic given the same
+RAW. `capture_id` is what names that condition: on a new machine the operator runs `make
+freeze` and seals THEIR capture, and the test starts guarding theirs.
 
-DOIS ARTEFATOS, e a duplicidade tem motivo:
+TWO ARTIFACTS, and the duplication has a reason:
 
-    docs/FREEZE.md                          para quem le
-    platform/dbt/seeds/frozen_capture_seed.csv   para quem verifica
+    docs/FREEZE.md                          for a human to read
+    platform/dbt/seeds/frozen_capture_seed.csv   for SQL to verify
 
-O markdown nao e legivel por SQL, e o CSV nao e legivel por gente. Os dois saem da MESMA
-coleta, no mesmo comando — nao ha um segundo lugar onde a verdade mora.
+The markdown isn't readable by SQL, and the CSV isn't readable by a human. Both come out of
+the SAME collection, in the same command — there is no second place where the truth lives.
 """
 
 from __future__ import annotations
@@ -55,16 +55,16 @@ CAMPOS = ("source", "partition_key", "files", "records", "bytes", "content_sha25
 
 
 class FreezeError(RuntimeError):
-    """Falha ao selar ou conferir a captura."""
+    """Failure sealing or checking the capture."""
 
 
 def _sha256_do_conteudo(manifesto: dict) -> str:
-    """sha256 da lista ORDENADA de (path, sha256, bytes, records) declarada no manifesto.
+    """sha256 of the SORTED list of (path, sha256, bytes, records) declared in the manifest.
 
-    Ordenada porque a ordem em que a Source lista os arquivos e detalhe de implementacao —
-    duas execucoes com o mesmo dado podem enumerar diferente, e o selo nao pode depender
-    disso. Canonico via JSON com separadores fixos: `json.dumps` com espaco variavel mudaria
-    o hash sem nenhum byte de dado ter mudado.
+    Sorted because the order in which the Source lists the files is an implementation
+    detail — two runs over the same data can enumerate differently, and the seal cannot
+    depend on that. Canonical via JSON with fixed separators: `json.dumps` with variable
+    spacing would change the hash without a single byte of data having changed.
     """
     entradas = sorted(
         (str(f.get("path")), str(f.get("sha256")), int(f.get("bytes") or 0),
@@ -76,7 +76,7 @@ def _sha256_do_conteudo(manifesto: dict) -> str:
 
 
 def collect(config=None) -> list[dict]:
-    """Percorre o RAW e devolve uma linha por particao selada, em ordem estavel."""
+    """Walks RAW and returns one row per sealed partition, in stable order."""
     from .config import from_env
 
     config = config or from_env()
@@ -105,17 +105,17 @@ def collect(config=None) -> list[dict]:
     registros.sort(key=lambda r: (r["source"], r["partition_key"]))
     if not registros:
         raise FreezeError(
-            f"nenhum _manifest.json em s3://{config.raw_bucket}/. Nada foi aterrissado — "
-            "rode `make daily` (ou os alvos de land) antes de selar."
+            f"no _manifest.json under s3://{config.raw_bucket}/. Nothing has landed — "
+            "run `make daily` (or the land targets) before sealing."
         )
     return registros
 
 
 def capture_id(registros: list[dict]) -> str:
-    """sha256 agregado sobre os selos de particao. UM numero nomeia a captura inteira.
+    """Aggregate sha256 over the partition seals. ONE number names the whole capture.
 
-    Ele existe para que uma conversa sobre "os 4.939 produtos" possa dizer DE QUAL captura
-    esses 4.939 sao, sem repetir uma tabela de 81 linhas.
+    It exists so that a conversation about "the 4,939 products" can say WHICH capture
+    those 4,939 belong to, without repeating an 81-row table.
     """
     corpo = json.dumps(
         [[r["source"], r["partition_key"], r["content_sha256"]] for r in registros],
@@ -141,7 +141,7 @@ def ler_seed(origem: str = DEFAULT_SEED) -> list[dict]:
     caminho = origem if os.path.isabs(origem) else os.path.join(REPO, origem)
     if not os.path.exists(caminho):
         raise FreezeError(
-            f"{origem} nao existe: a captura nunca foi selada. Rode `make freeze`."
+            f"{origem} does not exist: the capture was never sealed. Run `make freeze`."
         )
     with open(caminho, encoding="utf-8") as arquivo:
         return [
@@ -153,20 +153,20 @@ def ler_seed(origem: str = DEFAULT_SEED) -> list[dict]:
 
 
 def comparar(selado: list[dict], atual: list[dict]) -> list[str]:
-    """Diferencas entre o selo e o RAW de agora. Lista vazia = a captura esta intacta."""
+    """Differences between the seal and today's RAW. Empty list = the capture is intact."""
     por_chave = lambda lista: {(r["source"], r["partition_key"]): r for r in lista}  # noqa: E731
     a, b = por_chave(selado), por_chave(atual)
     problemas: list[str] = []
     for chave in sorted(set(a) - set(b)):
-        problemas.append(f"particao SELADA e AUSENTE do RAW: {chave[0]}/{chave[1]}")
+        problemas.append(f"partition SEALED but MISSING from RAW: {chave[0]}/{chave[1]}")
     for chave in sorted(set(b) - set(a)):
-        problemas.append(f"particao NOVA, fora do selo: {chave[0]}/{chave[1]}")
+        problemas.append(f"NEW partition, outside the seal: {chave[0]}/{chave[1]}")
     for chave in sorted(set(a) & set(b)):
         if a[chave]["content_sha256"] != b[chave]["content_sha256"]:
             problemas.append(
-                f"conteudo MUDOU em {chave[0]}/{chave[1]}: "
-                f"selado={a[chave]['content_sha256'][:16]}... "
-                f"atual={b[chave]['content_sha256'][:16]}..."
+                f"content CHANGED in {chave[0]}/{chave[1]}: "
+                f"sealed={a[chave]['content_sha256'][:16]}... "
+                f"current={b[chave]['content_sha256'][:16]}..."
             )
     return problemas
 
@@ -178,49 +178,50 @@ def render(registros: list[dict]) -> str:
         por_fonte.setdefault(r["source"], []).append(r)
 
     linhas = [
-        "# A captura selada",
+        "# The sealed capture",
         "",
-        "**Gerado por `make freeze`.** Não editar à mão.",
+        "**Generated by `make freeze`.** Do not edit by hand.",
         "",
         f"**`capture_id` = `{identidade}`**",
         "",
-        f"Selado em {datetime.now(timezone.utc).strftime('%Y-%m-%d')} · "
-        f"{len(registros)} partições · "
-        f"{sum(r['records'] for r in registros):,} registros · "
+        f"Sealed on {datetime.now(timezone.utc).strftime('%Y-%m-%d')} · "
+        f"{len(registros)} partitions · "
+        f"{sum(r['records'] for r in registros):,} records · "
         f"{sum(r['bytes'] for r in registros) / (1024**3):.2f} GB".replace(",", "."),
         "",
-        "## O que este selo é, e o que ele não é",
+        "## What this seal is, and what it is not",
         "",
-        "**O RAW deste projeto não é reproduzível, e prometer que fosse seria falso.** A API",
-        "da Mercadona é viva, o Callejero é um download manual semestral, e a URL do MAPA",
-        "aponta para \"últimos datos\". Rodar a extração amanhã produz outra captura — e isso",
-        "não é defeito, é a natureza de fontes públicas.",
+        "**This project's RAW is not reproducible, and promising that it were would be",
+        "false.** The Mercadona API is live, the Callejero is a semiannual manual download,",
+        "and the MAPA URL points to \"latest data\". Running the extraction tomorrow produces",
+        "another capture — and that is not a defect, it is the nature of public sources.",
         "",
-        "O que **é** garantido: tudo a jusante é determinístico **dada a mesma RAW**. O",
-        "`capture_id` é o nome dessa condição. Numa máquina nova, o operador roda `make",
-        "freeze` e sela a captura **dele**; `make freeze-check` passa a guardar a dele.",
+        "What **is** guaranteed: everything downstream is deterministic **given the same",
+        "RAW**. `capture_id` is the name for that condition. On a new machine, the operator",
+        "runs `make freeze` and seals **their** capture; `make freeze-check` starts guarding",
+        "theirs.",
         "",
-        "**O selo cobre os dados, não a execução.** Cada `content_sha256` é o hash da lista",
-        "ordenada de `(path, sha256, bytes, records)` declarada no manifesto da partição.",
-        "Ficam deliberadamente de fora `run_id`, `started_at_utc`, `finished_at_utc`,",
-        "`duration_seconds` e `history`: incluí-los faria um re-land de dado byte-idêntico",
-        "quebrar o selo, e um alarme que dispara sem causa é pior que nenhum alarme — a mesma",
-        "razão pela qual o `CONTRACT.md` do painel carrega o sha256 da origem e não a data da",
-        "geração.",
+        "**The seal covers the data, not the run.** Each `content_sha256` is the hash of the",
+        "sorted list of `(path, sha256, bytes, records)` declared in the partition's",
+        "manifest. Deliberately left out are `run_id`, `started_at_utc`, `finished_at_utc`,",
+        "`duration_seconds` and `history`: including them would make a byte-identical",
+        "re-land of the data break the seal, and an alarm that fires without cause is worse",
+        "than no alarm — the same reason `CONTRACT.md` for the dashboard carries the source's",
+        "sha256 and not the generation date.",
         "",
-        "## Como conferir",
+        "## How to check",
         "",
         "```bash",
-        "make freeze-check   # relê o RAW e compara com este selo; sai 1 em qualquer diferença",
+        "make freeze-check   # rereads RAW and compares it with this seal; exits 1 on any difference",
         "```",
         "",
-        "Alterar um único byte de uma partição selada reprova. Acrescentar uma partição nova",
-        "também — porque uma janela que cresce depois do fechamento invalida todo número já",
-        "publicado sobre ela.",
+        "Changing a single byte of a sealed partition fails it. Adding a new partition does",
+        "too — because a window that keeps growing after closing invalidates every number",
+        "already published about it.",
         "",
-        "## Resumo por source",
+        "## Summary by source",
         "",
-        "| Source | Partições | Registros | GB |",
+        "| Source | Partitions | Records | GB |",
         "|---|---|---|---|",
     ]
     for fonte in sorted(por_fonte):
@@ -230,10 +231,10 @@ def render(registros: list[dict]) -> str:
             + f"{sum(r['records'] for r in grupo):,}".replace(",", ".")
             + f" | {sum(r['bytes'] for r in grupo) / (1024**3):.3f} |"
         )
-    linhas += ["", "## Partições", ""]
+    linhas += ["", "## Partitions", ""]
     for fonte in sorted(por_fonte):
         linhas += [f"### `{fonte}`", "",
-                   "| Partição | Arquivos | Registros | Bytes | `content_sha256` |",
+                   "| Partition | Files | Records | Bytes | `content_sha256` |",
                    "|---|---|---|---|---|"]
         for r in por_fonte[fonte]:
             linhas.append(

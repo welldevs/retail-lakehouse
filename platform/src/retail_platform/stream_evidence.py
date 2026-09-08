@@ -1,30 +1,30 @@
-"""Evidencia do plano de stream: OLTP, broker, projecao — e os tres folds concordando.
+"""Evidence for the stream plane: OLTP, broker, projection — and the three folds agreeing.
 
-POR QUE ESTE MODULO EXISTE, e por que ele nao e o irmao gemeo de `snowflake_evidence.py`.
+WHY THIS MODULE EXISTS, and why it is not the twin of `snowflake_evidence.py`.
 
-O motivo la era EXPIRACAO: a conta e um trial, e quando ela morrer os modelos do warehouse
-viram quatorze arquivos que ninguem consegue provar que rodaram. Aqui o motivo e outro, e e
-o que o proprio ARCHITECTURE.md ja registrou como divida deliberada: a metade em streaming
-NAO E COBERTA OFFLINE. `make test` roda sem rede — e invariante do repo — entao broker,
-OLTP e Iceberg so existem enquanto `make stream-up` estiver de pe. Os duplos em memoria
-(`fake_kafka`, `fake_pg`, `fake_iceberg`) cobrem a FORMA do codigo: a ordem da transacao, o
-protocolo de dedup, a construcao do SQL. O que eles nao podem cobrir e a SEMANTICA dos
-motores reais — que o Kafka preserva ordem por chave, que o Postgres desfaz de verdade, que
-o Iceberg recusa um commit sobre snapshot velho.
+The reason there was EXPIRATION: the account is a trial, and once it dies the warehouse
+models turn into fourteen files nobody can prove ever ran. Here the reason is different, and
+it is what ARCHITECTURE.md itself already recorded as deliberate debt: the streaming half is
+NOT COVERED OFFLINE. `make test` runs without network — that is a repo invariant — so the
+broker, OLTP and Iceberg only exist while `make stream-up` is up. The in-memory doubles
+(`fake_kafka`, `fake_pg`, `fake_iceberg`) cover the code's SHAPE: transaction ordering, the
+dedup protocol, SQL construction. What they cannot cover is the SEMANTICS of the real
+engines — that Kafka preserves order by key, that Postgres really does undo, that Iceberg
+refuses a commit over a stale snapshot.
 
-Esta pagina e o registro de que a semantica foi exercida contra os motores de verdade. Ela
-substitui o "confie em mim" por um numero datado, do mesmo jeito que a evidencia do
-warehouse — mas o gatilho para regenera-la e diferente: la e "antes que a conta expire",
-aqui e "depois de qualquer execucao que valha registrar".
+This page is the record that the semantics were exercised against the real engines. It
+replaces "trust me" with a dated number, the same way the warehouse evidence does — but the
+trigger to regenerate it is different: there it is "before the account expires", here it is
+"after any run worth recording".
 
-O QUE ESTE MODULO NAO E: nao valida nada, nao conserta nada, e nao sobe servico nenhum. Ele
-OBSERVA os tres planos e escreve o que observou. Quem valida sao as 273 checagens da suite
-de plataforma, os tres scripts de prova (`orders-prove-*`) e `orders-reconcile`.
+WHAT THIS MODULE IS NOT: it validates nothing, fixes nothing, and starts no service. It
+OBSERVES the three planes and writes down what it observed. What validates is the platform
+suite's 273 checks, the three proof scripts (`orders-prove-*`), and `orders-reconcile`.
 
-E TOLERANTE A PLANO DESLIGADO, DE PROPOSITO. Se o Kafka nao estiver de pe, a secao do
-broker diz isso em vez de derrubar o relatorio: uma evidencia parcial e util e uma
-evidencia que nao existe nao e. O que ele NUNCA faz e inventar o numero que nao conseguiu
-observar — cada secao ausente aparece como ausencia declarada.
+IT IS TOLERANT OF A PLANE BEING DOWN, ON PURPOSE. If Kafka is not up, the broker section says
+so instead of bringing down the report: partial evidence is useful, and evidence that does
+not exist is not. What it NEVER does is invent the number it could not observe — every
+missing section shows up as a declared absence.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _tabela(colunas: list[str], linhas: list) -> list[str]:
 
 
 # --------------------------------------------------------------------------------------
-# Observacao, plano a plano
+# Observation, plane by plane
 # --------------------------------------------------------------------------------------
 # Cada bloco devolve `{"erro": "..."}` em vez de propagar a excecao. O relatorio precisa
 # poder ser gerado com o plano meio de pe — e precisa DIZER que estava meio de pe.
@@ -144,7 +144,7 @@ def _observar_reconciliacao(config, dsn=None) -> dict:
 
 
 def collect(config=None, *, bootstrap=None, topic=None, groups=None, dsn=None) -> dict:
-    """Observa os tres planos. Nao formata nada, nao levanta nada."""
+    """Observes the three planes. Formats nothing, raises nothing."""
     from . import orders_stream
     from .config import from_env
 
@@ -165,49 +165,50 @@ def collect(config=None, *, bootstrap=None, topic=None, groups=None, dsn=None) -
 
 
 # --------------------------------------------------------------------------------------
-# Relatorio
+# Report
 # --------------------------------------------------------------------------------------
 
 def _secao_ausente(nome: str, erro: str) -> list[str]:
     return [
-        f"> **{nome} nao observado.** `{erro}`",
+        f"> **{nome} not observed.** `{erro}`",
         ">",
-        "> A secao esta ausente, e nao estimada. Suba o plano com `make stream-up` e",
-        "> regenere com `make stream-evidence`.",
+        "> The section is absent, not estimated. Bring the plane up with `make stream-up`",
+        "> and regenerate with `make stream-evidence`.",
         "",
     ]
 
 
 def render(dados: dict) -> str:
-    """Markdown. Nenhum numero escrito a mao: tudo vem do que foi observado."""
+    """Markdown. No number written by hand: everything comes from what was observed."""
     linhas = [
-        "# Evidência do plano de stream",
+        "# Stream plane evidence",
         "",
-        "Gerado por `make stream-evidence` contra o OLTP, o broker e a projeção **vivos** no",
-        "momento da captura. **Não é documentação escrita à mão** — todo número desta página",
-        "saiu de uma consulta a um dos três.",
+        "Generated by `make stream-evidence` against the OLTP, the broker and the projection",
+        "**live** at the moment of capture. **This is not hand-written documentation** —",
+        "every number on this page came from a query against one of the three.",
         "",
-        "Existe porque a metade em streaming é dívida declarada: `make test` roda sem rede, e",
-        "os duplos em memória (`fake_kafka`, `fake_pg`, `fake_iceberg`) cobrem a **forma** do",
-        "código — a ordem da transação, o protocolo de dedup, a construção do SQL. O que eles",
-        "não podem cobrir é a **semântica** dos motores reais: que o Kafka preserva ordem por",
-        "chave, que o Postgres desfaz de verdade, que o Iceberg recusa um commit sobre",
-        "snapshot velho. Isto aqui é o registro de que ela foi exercida contra eles.",
+        "It exists because the streaming half is declared debt: `make test` runs without",
+        "network, and the in-memory doubles (`fake_kafka`, `fake_pg`, `fake_iceberg`) cover",
+        "the **shape** of the code — transaction ordering, the dedup protocol, SQL",
+        "construction. What they cannot cover is the **semantics** of the real engines: that",
+        "Kafka preserves order by key, that Postgres really does undo, that Iceberg refuses a",
+        "commit over a stale snapshot. This is the record that it was exercised against them.",
         "",
-        f"| capturado em | {dados['capturado_em']} |",
+        f"| captured at | {dados['capturado_em']} |",
         "|---|---|",
         "",
     ]
 
     # ---- OLTP -------------------------------------------------------------------------
     linhas += [
-        "## Plano transacional — OLTP e outbox",
+        "## Transactional plane — OLTP and outbox",
         "",
-        "O evento nasce **dentro da mesma transação** que muda `orders` e `order_line`. Não é",
-        "o log sendo republicado: é a mudança de estado e o evento gravados atomicamente, que",
-        "é a única forma de os dois não divergirem. `outbox.event_id` é único, e o insert do",
-        "outbox vem **primeiro** — `rowcount = 0` significa evento já aplicado, e a transação",
-        "inteira é desfeita.",
+        "The event is born **inside the same transaction** that changes `orders` and",
+        "`order_line`. It is not the log being republished: it is the state change and the",
+        "event written atomically, which is the only way the two cannot diverge.",
+        "`outbox.event_id` is unique, and the outbox insert comes **first** —",
+        "`rowcount = 0` means the event was already applied, and the whole transaction is",
+        "rolled back.",
         "",
     ]
     oltp = dados["oltp"]
@@ -215,174 +216,176 @@ def render(dados: dict) -> str:
         linhas += _secao_ausente("OLTP", oltp["erro"])
     else:
         linhas += _tabela(["", ""], [
-            ("pedidos em `orders`", f"{oltp['orders']:,}"),
-            ("linhas em `order_line`", f"{oltp['order_lines']:,}"),
-            ("eventos no `outbox`", f"{oltp['outbox_rows']:,}"),
-            ("ainda não publicados", f"{oltp['unpublished']:,}"),
-            ("pedidos distintos no outbox", f"{oltp['orders_in_outbox']:,}"),
-            ("primeira publicação", oltp["published_from"]),
-            ("última publicação", oltp["published_to"]),
+            ("orders in `orders`", f"{oltp['orders']:,}"),
+            ("rows in `order_line`", f"{oltp['order_lines']:,}"),
+            ("events in `outbox`", f"{oltp['outbox_rows']:,}"),
+            ("still unpublished", f"{oltp['unpublished']:,}"),
+            ("distinct orders in the outbox", f"{oltp['orders_in_outbox']:,}"),
+            ("first publication", oltp["published_from"]),
+            ("last publication", oltp["published_to"]),
         ])
-        linhas += ["", "### Eventos no outbox, por tipo", ""]
-        linhas += _tabela(["event_type", "eventos"],
+        linhas += ["", "### Events in the outbox, by type", ""]
+        linhas += _tabela(["event_type", "events"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["by_event_type"].items())])
-        linhas += ["", "### Estado replicado, por fold do OLTP", ""]
-        linhas += _tabela(["status do pedido", "pedidos"],
+        linhas += ["", "### Replicated state, by OLTP fold", ""]
+        linhas += _tabela(["order status", "orders"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["orders_by_status"].items())])
         linhas += [""]
-        linhas += _tabela(["status da linha", "linhas"],
+        linhas += _tabela(["line status", "lines"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["lines_by_status"].items())])
         linhas += [""]
 
     # ---- Broker -----------------------------------------------------------------------
     linhas += [
-        "## Transporte — Kafka",
+        "## Transport — Kafka",
         "",
-        "`key = order_id`, e a chave é **carregável**: o Kafka garante ordem dentro da",
-        "partição, e é isso que permite a dedup do consumidor ser limitada — comparar",
-        "`sequence_no` contra o `last_sequence_no` já gravado, sem conjunto de `event_id` que",
-        "cresce nem janela de expiração. Entrega é **at-least-once** do outbox para o broker",
-        "(publica → ack → marca, nunca marca → publica); o consumo é **effectively-once**",
-        "porque o offset só é commitado depois da escrita.",
+        "`key = order_id`, and the key is **loadable**: Kafka guarantees order within the",
+        "partition, and that is what lets the consumer's dedup stay bounded — comparing",
+        "`sequence_no` against the already-recorded `last_sequence_no`, with no growing set",
+        "of `event_id` and no expiration window. Delivery is **at-least-once** from the",
+        "outbox to the broker (publish → ack → mark, never mark → publish); consumption is",
+        "**effectively-once** because the offset is only committed after the write.",
         "",
     ]
     broker = dados["broker"]
     if "erro" in broker:
         linhas += _secao_ausente("Broker", broker["erro"])
     else:
-        linhas += [f"Tópico `{broker['topic']}` em `{broker['bootstrap']}`.", ""]
-        linhas += ["### Marcas d'água por partição", ""]
+        linhas += [f"Topic `{broker['topic']}` on `{broker['bootstrap']}`.", ""]
+        linhas += ["### Watermarks by partition", ""]
         marcas = broker["watermarks"]
         linhas += _tabela(
-            ["partição", "low", "high", "mensagens"],
+            ["partition", "low", "high", "messages"],
             [(p, m["low"], m["high"], f"{m['high'] - m['low']:,}")
              for p, m in sorted(marcas.items())],
         )
         total = sum(m["high"] - m["low"] for m in marcas.values())
-        linhas += ["", f"Total no tópico: **{total:,} mensagens**.", ""]
+        linhas += ["", f"Total in the topic: **{total:,} messages**.", ""]
         linhas += [
-            "A soma pode exceder a contagem de eventos do log, e isso é **correto**: a",
-            "entrega do outbox para o broker é at-least-once por desenho, então uma queda",
-            "entre o ack e a marcação de `published_at` republica o lote. O que a torna",
-            "inofensiva é a dedup por `sequence_no` do outro lado.",
+            "The sum can exceed the log's event count, and that is **correct**: delivery",
+            "from the outbox to the broker is at-least-once by design, so a crash between",
+            "the ack and marking `published_at` republishes the batch. What makes that",
+            "harmless is the dedup by `sequence_no` on the other side.",
             "",
-            "### Lag por grupo de consumo",
+            "### Lag by consumer group",
             "",
-            "Dois grupos, e a diferença entre eles é o par lambda: cada sink consome o mesmo",
-            "tópico no seu próprio ritmo, com offset próprio. É o ponto de desacoplamento — o",
-            "sink Iceberg (~4min48s por passada, copy-on-write) não segura o sink Postgres",
-            "(~14s), e nenhum dos dois perde mensagem por causa do outro.",
+            "Two groups, and the difference between them is the point of the lambda pair:",
+            "each sink consumes the same topic at its own pace, with its own offset. That is",
+            "the decoupling point — the Iceberg sink (~4min48s per pass, copy-on-write) does",
+            "not hold back the Postgres sink (~14s), and neither loses a message because of",
+            "the other.",
             "",
-            "**Lag alto não é projeção atrasada quando a tabela foi reconstruída em lote.**",
-            "`orders-rebuild-projection` é o SEGUNDO escritor: ele escreve o estado final",
-            "direto do RAW, sem passar pelo tópico, e o offset do grupo de consumo não se",
-            "move com isso. Depois de uma regeração, drenar o tópico pelo sink Iceberg",
-            "reprocessaria centenas de milhares de eventos para descartar todos como",
-            "iguais-ou-mais-velhos — o merge é monotônico. O que prova a convergência dos",
-            "três caminhos é `make orders-reconcile`, e não o offset de um consumidor.",
+            "**High lag is not a stale projection when the table was rebuilt in batch.**",
+            "`orders-rebuild-projection` is the SECOND writer: it writes the final state",
+            "straight from RAW, without going through the topic, and the consumer group's",
+            "offset does not move with it. After a rebuild, draining the topic through the",
+            "Iceberg sink would reprocess hundreds of thousands of events only to discard",
+            "them all as equal-or-older — the merge is monotonic. What proves the three",
+            "paths converge is `make orders-reconcile`, not a consumer's offset.",
             "",
         ]
         for grupo, lag in broker["lags"].items():
             linhas += [f"**`{grupo}`**", ""]
             if "erro" in lag:
-                linhas += [f"- não observado: `{lag['erro']}`", ""]
+                linhas += [f"- not observed: `{lag['erro']}`", ""]
                 continue
             linhas += _tabela(
-                ["partição", "offset commitado", "high", "lag"],
+                ["partition", "committed offset", "high", "lag"],
                 [(p, d["committed"], d["high"], d["lag"]) for p, d in sorted(lag.items())],
             )
-            linhas += ["", f"Lag total: **{sum(d['lag'] for d in lag.values()):,}**.", ""]
+            linhas += ["", f"Total lag: **{sum(d['lag'] for d in lag.values()):,}**.", ""]
 
     # ---- Projecao ---------------------------------------------------------------------
     linhas += [
-        "## Projeção — Iceberg",
+        "## Projection — Iceberg",
         "",
-        "O gatilho escrito para o Iceberg era *\"um segundo engine precisar escrever a mesma",
-        "tabela\"*. Ele disparou por **concorrência, não por volume**: neste volume um parquet",
-        "reescrito com `os.replace` atômico funcionaria. O que o Iceberg compra é isolamento",
-        "de snapshot entre dois escritores e um leitor concorrente, mais time travel.",
+        "The trigger written for Iceberg was *\"a second engine needing to write the same",
+        "table\"*. It fired due to **concurrency, not volume**: at this volume a parquet",
+        "rewritten with atomic `os.replace` would work. What Iceberg buys is snapshot",
+        "isolation between two writers and a concurrent reader, plus time travel.",
         "",
-        "`written_by` é a prova de que os dois escritores existem de fato, e é **consultável**",
-        "em vez de anedótica.",
+        "`written_by` is the proof that the two writers actually exist, and it is",
+        "**queryable** rather than anecdotal.",
         "",
     ]
     projecao = dados["projecao"]
     if "erro" in projecao:
-        linhas += _secao_ausente("Projeção", projecao["erro"])
+        linhas += _secao_ausente("Projection", projecao["erro"])
     else:
         linhas += _tabela(["", ""], [
-            ("tabela", f"`{projecao['table']}`"),
-            ("linhas", f"{projecao['rows']:,}"),
+            ("table", f"`{projecao['table']}`"),
+            ("rows", f"{projecao['rows']:,}"),
             ("snapshots", f"{projecao['snapshots']:,}"),
-            ("snapshot corrente", projecao["current_snapshot_id"]),
-            ("metadado corrente", f"`{projecao['metadata_location']}`"),
+            ("current snapshot", projecao["current_snapshot_id"]),
+            ("current metadata", f"`{projecao['metadata_location']}`"),
         ])
         linhas += [
             "",
-            "O caminho do metadado vem do **catálogo**, nunca de uma varredura do storage. O",
-            "DuckDB recusa adivinhar qual metadado é o corrente — *\"globbing the filesystem…",
-            "could result in reading uncommitted data\"* — e o atalho existe",
-            "(`unsafe_enable_version_guessing`), foi medido e foi **recusado**: ler metadado",
-            "não commitado é exatamente o que uma leitura concorrente não pode fazer.",
+            "The metadata path comes from the **catalog**, never from a storage scan. DuckDB",
+            "refuses to guess which metadata is current — *\"globbing the filesystem…",
+            "could result in reading uncommitted data\"* — and the shortcut exists",
+            "(`unsafe_enable_version_guessing`), was measured, and was **rejected**: reading",
+            "uncommitted metadata is exactly what a concurrent read cannot do.",
             "",
-            "### Proveniência: quem escreveu cada linha",
+            "### Provenance: who wrote each row",
             "",
         ]
-        linhas += _tabela(["written_by", "linhas"],
+        linhas += _tabela(["written_by", "rows"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(projecao["written_by"].items())])
-        linhas += ["", "### Estado na projeção viva", ""]
-        linhas += _tabela(["status", "pedidos"],
+        linhas += ["", "### State in the live projection", ""]
+        linhas += _tabela(["status", "orders"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(projecao["by_status"].items())])
         linhas += [""]
 
     # ---- Reconciliacao ----------------------------------------------------------------
     linhas += [
-        "## Os três folds",
+        "## The three folds",
         "",
-        "O mesmo estado de pedido é calculado por três caminhos, e `make orders-reconcile`",
-        "compara os três coluna a coluna:",
+        "The same order state is computed by three paths, and `make orders-reconcile`",
+        "compares the three column by column:",
         "",
-        "- **`silver_order`** — window functions em SQL sobre o log inteiro;",
-        "- **`orders`/`order_line` no OLTP** — máquina de estados transacional, evento a evento;",
-        "- **`live_order_state`** — fold em streaming sobre o tópico.",
+        "- **`silver_order`** — SQL window functions over the whole log;",
+        "- **`orders`/`order_line` in the OLTP** — transactional state machine, event by event;",
+        "- **`live_order_state`** — streaming fold over the topic.",
         "",
-        "Só o primeiro **não compartilha código** com nenhum dos outros. É contra ele que a",
-        "comparação vale como verificação; o acordo entre a projeção e o OLTP vale como",
-        "evidência de transporte, não de correção — os dois compartilham o fold.",
+        "Only the first **shares no code** with either of the others. It is against that one",
+        "that the comparison counts as verification; agreement between the projection and",
+        "the OLTP counts as evidence of transport, not of correctness — the two share the",
+        "fold.",
         "",
     ]
     rec = dados["reconciliacao"]
     if "erro" in rec:
-        linhas += _secao_ausente("Reconciliação", rec["erro"])
+        linhas += _secao_ausente("Reconciliation", rec["erro"])
     else:
-        linhas += _tabela(["fonte", "pedidos"],
+        linhas += _tabela(["source", "orders"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(rec["orders"].items())])
-        linhas += ["", f"Comparados: **{rec['compared']:,} pedidos**.", ""]
+        linhas += ["", f"Compared: **{rec['compared']:,} orders**.", ""]
         if rec["ok"]:
-            linhas += ["Resultado: **os três concordam em todos os pedidos comparados** — "
-                       "zero divergências, zero ausências.", ""]
+            linhas += ["Result: **all three agree on every order compared** — "
+                       "zero divergences, zero absences.", ""]
         else:
-            linhas += [f"**Divergências: {rec['divergence_count']}.**", ""]
+            linhas += [f"**Divergences: {rec['divergence_count']}.**", ""]
             if rec["divergences"]:
                 colunas = list(rec["divergences"][0].keys())
                 linhas += _tabela(colunas,
                                   [tuple(d[c] for c in colunas) for d in rec["divergences"]])
                 linhas += [""]
             for nome, ausentes in rec.get("missing", {}).items():
-                linhas += [f"- ausentes de `{nome}`: {', '.join(map(str, ausentes))}", ""]
+                linhas += [f"- missing from `{nome}`: {', '.join(map(str, ausentes))}", ""]
 
     linhas += [
         "---",
         "",
-        "Regenere com `make stream-evidence` depois de qualquer execução que valha registrar.",
-        "As provas que sustentam cada afirmação acima rodam em separado:",
+        "Regenerate with `make stream-evidence` after any run worth recording. The proofs",
+        "that back each claim above run separately:",
         "`make orders-prove-atomicity`, `make orders-prove-stream`, `make orders-prove-projection`.",
     ]
     return "\n".join(linhas) + "\n"
 
 
 def write(dados: dict, out: str = DEFAULT_OUT) -> str:
-    """Escreve o relatorio. Cria o diretorio; devolve o caminho."""
+    """Writes the report. Creates the directory; returns the path."""
     destino = os.path.abspath(out)
     os.makedirs(os.path.dirname(destino), exist_ok=True)
     # Escrita atomica pelo mesmo motivo do resto do repo: um relatorio truncado por

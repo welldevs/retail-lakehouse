@@ -5,7 +5,7 @@
 
 POR QUE SEPARADO DE `make test`. A suite offline (`test_dashboard_indicators.py`) confere o
 que da para conferir sem rede: estrutura, parametro ligado, e a sincronia entre o CONTRACT e
-`indicators.py`. O que ela NAO pode conferir e se as 19 consultas rodam — isso exige conta, e
+`indicators.py`. O que ela NAO pode conferir e se as 25 consultas rodam — isso exige conta, e
 `make test` sem rede e invariante do repositorio.
 
 Este script fecha a metade que falta, e fecha do jeito honesto: roda o script do Streamlit de
@@ -24,7 +24,14 @@ APP = os.path.join(RAIZ, "streamlit", "app.py")
 
 # Minimos exigidos. Nao sao numeros de negocio — sao a prova de que a tela renderizou em vez
 # de morrer no meio. Cravar o valor exato quebraria a cada indicador novo, sem ganho.
-MINIMOS = {"metric": 5, "tabs": 7, "dataframe": 8, "warning": 4}
+# Recalibrado em 2026-09-04, quando app.py deixou de ser bancada de conferencia (SQL na
+# tela, armadilhas por grafico, sonda de RBAC, aba "Fora de alcance") e virou painel de
+# producao: renderizado de verdade agora da 13 metricas / 7 abas / 20 tabelas / 0 avisos
+# — zero por desenho, nao por acidente, porque os avisos eram exatamente a camada de
+# metodologia que saiu da tela. Se um `st.warning` voltar a aparecer aqui, e sinal de que
+# uma ressalva tecnica vazou de volta para o painel de producao. Margem abaixo do real,
+# nao o valor exato — o proprio motivo deste dict e nao quebrar a cada indicador novo.
+MINIMOS = {"metric": 10, "tabs": 7, "dataframe": 16, "warning": 0}
 
 
 def main() -> int:

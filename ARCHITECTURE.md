@@ -1,186 +1,191 @@
-# Arquitetura — o estado corrente
+# Architecture — the current state
 
-O que a plataforma **é hoje**: as camadas, o motor, as tecnologias adotadas com a data e o
-gatilho de cada uma que continua ausente, as restrições medidas que moldaram o desenho, e a
-dívida técnica declarada.
+What the platform **is today**: the layers, the engine, the technologies adopted with the
+date and the trigger for each one that's still absent, the measured constraints that shaped
+the design, and the declared technical debt.
 
-**Este documento guarda estado. A história mora em [DECISIONS.md](DECISIONS.md)** — o que se
-decidiu, contra que evidência, e o que se perdeu. A separação é verificada por teste, e
-existe porque os dois cresciam juntos: o mesmo texto aparecia nos dois lugares e envelhecia
-em ritmos diferentes. Três revisões de documentação foram gastas nisso.
+**This document holds state. The history lives in [DECISIONS.md](DECISIONS.md)** — what was
+decided, against what evidence, and what was lost. The separation is verified by test, and
+exists because the two were growing together: the same text appeared in both places and aged
+at different rates. Three documentation revisions were spent on this.
 
-**Onde um número pode morar.** Estrutural — grão, invariante, razão por construção — pode
-ficar aqui. Propriedade **desta captura** (contagens, percentuais medidos) só em página
-gerada, ou datada explicitamente. O RAW não é reproduzível; numa máquina nova os números
-mudam, e [`docs/FREEZE.md`](docs/FREEZE.md) é o que dá nome à captura que produziu os que
-estão publicados.
+**Where a number can live.** Structural — grain, invariant, ratio by construction — can stay
+here. A property **of this capture** (counts, measured percentages) only in a generated page,
+or explicitly dated. RAW is not reproducible; on a new machine the numbers change, and
+[`docs/FREEZE.md`](docs/FREEZE.md) is what names the capture that produced the ones published.
 
-**Relógio de parede é o caso extremo dessa regra**, e ele já produziu divergência entre dois
-documentos deste repositório: o mesmo comando medido duas vezes dá dois números. Por isso a
-prosa aqui carrega a **magnitude** — "segundos", "~1,5 s" — e o decimal mora só na página
-gerada que o mediu. Ver [DECISIONS.md § "O que a medição publica contra o Spark"](DECISIONS.md).
+**Wall-clock time is the extreme case of this rule**, and it has already produced divergence
+between two documents in this repository: the same command measured twice gives two numbers.
+That's why the prose here carries the **magnitude** — "seconds", "~1,5 s" — and the decimal
+lives only in the generated page that measured it. See
+[DECISIONS.md § "What the measurement publishes against Spark"](DECISIONS.md).
 
-Última revisão: **2026-09-02** — fechamento documental da Fase 7. O estado técnico é o de
-2026-09-01; o que mudou depois foi só documentação, evidência e a estrutura da dívida.
+Last revised: **2026-09-02** — documentation closeout for Phase 7. The technical state is
+that of 2026-09-01; what changed afterward was only documentation, evidence, and the
+structure of the debt.
 
-## Escala real
+## Real scale
 
-**Medida em 2026-08-24**, sobre as três partições do catálogo que existiam então. É a escala
-que justificou o motor, e continua sendo a pergunta certa — o volume nunca cresceu o
-bastante para mudar a resposta:
+**Measured on 2026-08-24**, over the three catalog partitions that existed then. It's the
+scale that justified the engine, and it's still the right question — volume never grew
+enough to change the answer:
 
-| Métrica | Valor |
+| Metric | Value |
 |---|---|
-| Volume por partição | ~8,3 MB, 152 arquivos |
-| Linhas por partição | ~4.600 (4.329 produtos únicos) |
-| Crescimento | ~3 GB/ano se rodar todo dia |
-| Duração de uma extração | 227 s (152 requisições a 1,5 s) |
-| Silver completo (3 partições, 4 modelos, 36 testes) | ~6 s |
+| Volume per partition | ~8,3 MB, 152 files |
+| Rows per partition | ~4.600 (4.329 unique products) |
+| Growth | ~3 GB/year if run every day |
+| Duration of one extraction | 227 s (152 requests at 1,5 s) |
+| Full Silver (3 partitions, 4 models, 36 tests) | ~6 s |
 
-**Onde está hoje, medido em 2026-09-01**, na captura selada por
+**Where it stands today, measured on 2026-09-01**, in the capture sealed by
 [`docs/FREEZE.md`](docs/FREEZE.md) (`capture_id cec10cb5…`):
 
-| Métrica | Valor |
+| Metric | Value |
 |---|---|
-| Clientes (`silver_customer`) | 286.826, em 4 AUFs |
-| Pedidos, janela de 9 dias | 206.523 · 3.892.062 linhas · 1.433.723 eventos |
-| Ledger de estoque | 173.970 linhas · 17.397 séries · 10 dias |
-| RAW selado | 81 partições · 2.221.069 registros |
-| `make silver` | 25 modelos, 16 seeds, 391 nós — **53 s** |
-| `make warehouse` | 24 modelos, 199 nós — **131 s** |
-| Suítes Python, offline | 1.095 |
+| Customers (`silver_customer`) | 286.826, across 4 AUFs |
+| Orders, 9-day window | 206.523 · 3.892.062 rows · 1.433.723 events |
+| Stock ledger | 173.970 rows · 17.397 series · 10 days |
+| Sealed RAW | 81 partitions · 2.221.069 records |
+| `make silver` | 25 models, 16 seeds, 391 nodes — **53 s** |
+| `make warehouse` | 24 models, 199 nodes — **131 s** |
+| Python suites, offline | 1.095 |
 
-**Nenhuma tecnologia distribuída é justificada por este volume, e isso é resultado e não
-premissa.** Os pedidos cresceram 32× desde que a Fase 3 os mediu (6.400 → 206.523), e o
-`dbt build` do Silver inteiro continua em menos de um minuto. O self-join de cesta — o
-candidato natural a "grande demais para um nó" — dobrou para 37,9 M pares e continua em
-**~1,5 s** (o decimal corrente está em [`docs/spark-evidence/`](docs/spark-evidence/README.md)).
+**No distributed technology is justified by this volume, and that's a result, not an
+assumption.** Orders grew 32× since Phase 3 measured them (6.400 → 206.523), and the full
+Silver `dbt build` still runs in under a minute. The basket self-join — the natural
+candidate for "too big for one node" — doubled to 37,9 M pairs and still runs in **~1,5 s**
+(the current decimal is in [`docs/spark-evidence/`](docs/spark-evidence/README.md)).
 
-**Onde o volume DOEU, e é um só lugar.** A reconstrução da projeção Iceberg custou **414
-commits e ~55 min** para os 206.523 pedidos: cada lote faz `upsert` contra a tabela inteira,
-então o custo cresce com o que já foi escrito. Na Fase 3, com 6.400 pedidos, isso levava
-segundos e era invisível. A ironia vale escrita: a justificativa do Spark diz que o gatilho de
-volume não disparou, e ele disparou aqui — no caminho em Python, e não na análise. Correção
-declarada no [BACKLOG.md](BACKLOG.md).
+**Where volume HURT, and it's a single place.** Rebuilding the Iceberg projection cost **414
+commits and ~55 min** for the 206.523 orders: each batch does an `upsert` against the entire
+table, so the cost grows with what's already been written. In Phase 3, with 6.400 orders,
+this took seconds and was invisible. The irony is worth writing down: Spark's justification
+says the volume trigger didn't fire, and it fired here — in the Python path, not in the
+analysis. Correction declared in [BACKLOG.md](BACKLOG.md).
 
-O que segue não é recusa — é a condição em que cada tecnologia passa a valer.
+What follows is not a refusal — it's the condition under which each technology becomes
+worth it.
 
-## Camadas adotadas
+## Adopted layers
 
 ```
-L0  Source        API -> partição canônica em disco, manifesto, validate
-                  5 pacotes FROZEN (dependencies = []) em sources/
-                  4 entregam FOTOGRAFIA; simulated_orders entrega LOG DE EVENTOS
-L1  RAW           partição byte-idêntica no object storage, sha256 conferido pós-PUT
+L0  Source        API -> canonical partition on disk, manifest, validate
+                  5 FROZEN packages (dependencies = []) in sources/
+                  4 deliver a SNAPSHOT; simulated_orders delivers an EVENT LOG
+L1  RAW           byte-identical partition in object storage, sha256 checked post-PUT
                   s3://retail-raw/mercadona_catalog_api/ingestion_date=…/wh=…/
-    ┌─────────── plano operacional, sob demanda (`make stream-up`) ────────────┐
-    │ OLTP    Postgres `oltp`: orders, order_line, outbox                     │
-    │         `orders-apply` — estado + outbox NA MESMA transação, por evento │
-    │         o outbox reconstitui o log byte a byte (sha256 do manifesto)    │
-    │ Broker  Kafka  retail.orders.events.v1  (4 partições, key = order_id)   │
-    │         `orders-publish` — at-least-once, e a janela é demonstrada      │
-    │ Read    Postgres `projection` OU Iceberg `projection.live_order_state`  │
-    │ model   `orders-project` — dedup por (order_id, sequence_no)            │
-    │         `orders-rebuild-projection` — o SEGUNDO escritor da tabela      │
-    │         fusão monotônica: o que não avança `last_sequence_no` cai       │
-    └──────────────────────────────────────────────────────────────────────────┘
-L2  Silver        parquet tipado + 1 modelo temporal          · DuckDB
-                  s3://retail-lakehouse/silver/…                7.098.881 linhas · 205 MB
-─────────────────── fronteira física: COPY INTO, nunca ref() ───────────────────
-L3  Stage         espelho 1:1 de um RECORTE do Silver         · Snowflake
-                  RETAIL.STAGE.STG_*                            3.327.809 linhas (46,9%)
-L4  Gold          DIM_* / FACT_* conformados, SCD2            · dbt-snowflake
-L5  Mart          MART_*, grão declarado por tabela           · dbt-snowflake
+    ┌─────────────── operational plane, on demand (`make stream-up`) ────────────────┐
+    │ OLTP    Postgres `oltp`: orders, order_line, outbox                            │
+    │         `orders-apply` — state + outbox in the SAME transaction, per event     │
+    │         the outbox reconstitutes the log byte for byte (manifest sha256)       │
+    │ Broker  Kafka  retail.orders.events.v1  (4 partitions, key = order_id)         │
+    │         `orders-publish` — at-least-once, and the window is demonstrated       │
+    │ Read    Postgres `projection` OR Iceberg `projection.live_order_state`         │
+    │ model   `orders-project` — dedup by (order_id, sequence_no)                    │
+    │         `orders-rebuild-projection` — the SECOND writer of the table           │
+    │         monotonic merge: whatever doesn't advance `last_sequence_no` drops out │
+    └────────────────────────────────────────────────────────────────────────────────┘
+L2  Silver        typed parquet + 1 temporal model             · DuckDB
+                  s3://retail-lakehouse/silver/…                7.098.881 rows · 205 MB
+─────────────────── physical boundary: COPY INTO, never ref() ───────────────────
+L3  Stage         1:1 mirror of a CUT of the Silver             · Snowflake
+                  RETAIL.STAGE.STG_*                              3.327.809 rows (46,9%)
+L4  Gold          conformed DIM_* / FACT_*, SCD2                · dbt-snowflake
+L5  Mart          MART_*, grain declared per table                 · dbt-snowflake
 ```
 
-O RAW é o ponto de não-retorno: tudo a jusante é reconstruível a partir dele sem tocar a
-API novamente. Isso importa mais aqui do que no caso geral, porque **esta fonte não
-permite releitura do passado** — ver "Backfill" abaixo.
+RAW is the point of no return: everything downstream is reconstructible from it without
+touching the API again. This matters more here than in the general case, because **this
+source doesn't allow rereading the past** — see "Backfill" below.
 
-A fronteira L2→L3 é **física, não lógica**, e é o mesmo mecanismo da fronteira
-Source↔plataforma um nível acima: nenhum modelo do Snowflake pode `ref()` um modelo do
-Silver, porque adaptadores diferentes não se cruzam numa execução do dbt. A ligação é
-`COPY INTO` mais `source()`. O Snowflake é, na prática, **o quarto consumidor que não
-alcança o Lakehouse** — os outros três são as Sources FROZEN.
+The L2→L3 boundary is **physical, not logical**, and it's the same mechanism as the
+Source↔platform boundary one level up: no Snowflake model can `ref()` a Silver model,
+because different adapters don't cross within a single dbt run. The link is `COPY INTO`
+plus `source()`. Snowflake is, in practice, **the fourth consumer that doesn't reach the
+Lakehouse** — the other three are the FROZEN Sources.
 
-## Motor: DuckDB + dbt-duckdb
+## Engine: DuckDB + dbt-duckdb
 
-Adotado. In-process, lê o MinIO direto via `httpfs`, escreve parquet, roda os 4 modelos em
-~6 s. O layout hive que a Source já produz (`ingestion_date=…/wh=…`) é consumido com
-`hive_partitioning=1`, então `ingestion_date` e `wh` viram colunas **sem parsing manual** —
-a obrigação 4.3 do contrato sai de graça.
+Adopted. In-process, reads MinIO directly via `httpfs`, writes parquet, runs the 4 models in
+~6 s. The hive layout the Source already produces (`ingestion_date=…/wh=…`) is consumed
+with `hive_partitioning=1`, so `ingestion_date` and `wh` become columns **with no manual
+parsing** — contract obligation 4.3 comes for free.
 
-O SQL do dbt é o ativo portável: os mesmos modelos rodam em `dbt-spark` e `dbt-snowflake`
-sem reescrita. É isso que torna as trocas abaixo configuração, e não projeto novo.
+The dbt SQL is the portable asset: the same models run on `dbt-spark` and `dbt-snowflake`
+without rewriting. That's what makes the swaps below configuration, not a new project.
 
-## O que não entrou, e quando entra
+## What didn't get in, and when it gets in
 
-| Tecnologia | O que compra | Por que não agora | Gatilho | Onde a troca acontece |
+| Technology | What it buys | Why not now | Trigger | Where the swap happens |
 |---|---|---|---|---|
-| **Iceberg** | Isolamento de snapshot entre escritores concorrentes, time travel, interop entre engines | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 6). O gatilho que disparou foi o literal — *"um segundo engine precisar escrever a mesma tabela"*: `live_order_state` é escrita pelo consumidor em streaming e pela reconstrução em lote, com o DuckDB lendo enquanto os dois escrevem. **Disparou por CONCORRÊNCIA, não por volume** — neste volume um parquet com `os.replace` atômico serviria. Precedido por `make spike-iceberg`, um experimento fechado que mediu catálogo, upsert, conflito, isolamento e leitura pelo DuckDB antes de a projeção existir. O gatilho antigo (`dim_product` SCD2 por `MERGE`) continua sem disparar: o SCD2 é derivado da história completa, não acumulado. |
-| **Kafka** | Transporte de eventos, replay, ponto de desacoplamento | — | — | **Adotado em 2026-08-28** (Fase 3, Marco 5). O gatilho que disparou foi o literal — *"CDC de um OLTP"*: o evento nasce na transação que muda o pedido (Marco 4) e um consumidor stateful mantém um read model abaixo do lote. Ficou provada a **semântica de transporte**: at-least-once demonstrado reproduzindo a janela de duplicação, consumo idempotente sem conjunto que cresce, buraco recusado, replay sem efeito, 16 sha256 reproduzidos. **Não** ficou provado, e está escrito: que alguém precise da latência, e que o broker seja a origem — o log canônico continua nascendo em disco. |
-| **Spark** | Um motor fora do Python escrevendo o catálogo, e uma forma de cálculo que o SQL não expressa | — | — | **Adotado em 2026-09-01** (Fase 7). **O gatilho declarado NÃO disparou, e isso está medido**: o self-join de cesta — 37,9 M pares, o candidato natural a "partição que o DuckDB não segura" — roda em **~1,5 s e ~2,4 GB** num nó. A janela final dobrou esse número em relação à intermediária (18,3 M) e o tempo continuou em segundos, o que torna a afirmação mais forte e não mais fraca. Entrou por outras duas razões. **Primeira, a interop:** o Iceberg foi justificado por *interop entre engines* desde a Fase 3, e essa metade estava afirmada e nunca demonstrada — os dois escritores eram Python. **Segunda, a forma:** o ledger de estoque é uma soma corrida cujas *entradas são geradas por decisões tomadas a partir do próprio estado* (saldo baixo → ordem → chegada em N dias → muda o saldo seguinte); window function lê a partition mas não escreve de volta nela, e isso foi medido — a soma corrida em SQL diverge em 14 de 30 dias do caso de teste e chega a −70 de saldo. Precedido por `make spike-spark-iceberg`, com **os dois desfechos declarados antes**: se o Spark não lesse o catálogo do pyiceberg, ele não entraria **e** a cláusula de interop sairia desta tabela. `make spark-evidence` publica o mesmo job nos dois motores, **inclusive quando o Python puro ganha**. **Não** ficou provado, e está escrito: escala. Ele roda `local[*]`, sem shuffle entre nós. |
-| **Snowflake** | SQL governado, RBAC, conectividade BI | — | — | **Adotado em 2026-08-27** (Fase 2). Recebe um recorte por escopo, não o Silver inteiro — a razão medida saiu de 3,85% para 46,9% entre a Fase 2 e a Fase 6 sem nenhuma regra mudar, porque ela é função de quais sources cabem no escopo. O atrito antigo — "não alcança um MinIO local" — foi resolvido sem S3 real nem storage integration: **stage interno** (`PUT file://`) inverte o sentido, e quem empurra os bytes é o processo local, que enxerga os dois lados. |
-| **Airflow** | Retry, exit codes, pools, SLA, histórico de execução | — | **Adotado.** Pesado para um job diário de 4 min, e assumido com essa consciência: o valor está no contrato operacional (o pool de 1 slot e o tratamento de exit code não têm equivalente em cron). | — |
+| **Iceberg** | Snapshot isolation between concurrent writers, time travel, interop between engines | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 6). The trigger that fired was the literal one — *"a second engine needing to write the same table"*: `live_order_state` is written by the streaming consumer and by the batch rebuild, with DuckDB reading while both write. **It fired due to CONCURRENCY, not volume** — at this volume an atomic `os.replace` parquet would do. Preceded by `make spike-iceberg`, a closed experiment that measured catalog, upsert, conflict, isolation and reading by DuckDB before the projection existed. The old trigger (`dim_product` SCD2 via `MERGE`) still hasn't fired: the SCD2 is derived from the full history, not accumulated. |
+| **Kafka** | Event transport, replay, decoupling point | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 5). The trigger that fired was the literal one — *"CDC of an OLTP"*: the event is born in the same transaction that changes the order (Milestone 4) and a stateful consumer keeps a read model below the batch. What got proven was **transport semantics**: at-least-once demonstrated by reproducing the duplication window, idempotent consumption with no ever-growing set, a gap refused, replay with no effect, 16 sha256 reproduced. **Not** proven, and it's written down: that anyone needs the latency, and that the broker is the origin — the canonical log is still born on disk. |
+| **Spark** | An engine outside Python writing the catalog, and a form of computation SQL doesn't express | — | — | **Adopted on 2026-09-01** (Phase 7). **The declared trigger did NOT fire, and that's measured**: the basket self-join — 37,9 M pairs, the natural candidate for "a partition DuckDB can't hold" — runs in **~1,5 s and ~2,4 GB** on one node. The final window doubled that number relative to the intermediate one (18,3 M) and the time stayed in seconds, which makes the claim stronger, not weaker. It got in for two other reasons. **First, interop:** Iceberg was justified by *interop between engines* since Phase 3, and that half was claimed and never demonstrated — both writers were Python. **Second, the shape:** the stock ledger is a running sum whose *inputs are generated by decisions made from the state itself* (low balance → order → arrival in N days → changes the next balance); a window function reads the partition but doesn't write back into it, and that was measured — the SQL running sum diverges on 14 of 30 days from the test case and reaches a balance of −70. Preceded by `make spike-spark-iceberg`, with **both outcomes declared beforehand**: if Spark couldn't read the pyiceberg catalog, it wouldn't get in **and** the interop clause would come out of this table. `make spark-evidence` publishes the same job on both engines, **including when plain Python wins**. **Not** proven, and it's written down: scale. It runs `local[*]`, with no shuffle across nodes. |
+| **Snowflake** | Governed SQL, RBAC, BI connectivity | — | — | **Adopted on 2026-08-27** (Phase 2). Receives a cut by scope, not the entire Silver — the measured ratio went from 3,85% to 46,9% between Phase 2 and Phase 6 with no rule changing, because it's a function of which sources fit the scope. The old friction — "can't reach a local MinIO" — was resolved without real S3 or a storage integration: an **internal stage** (`PUT file://`) reverses the direction, and it's the local process pushing the bytes, which sees both sides. |
+| **Airflow** | Retry, exit codes, pools, SLA, execution history | — | **Adopted.** Heavy for a 4-minute daily job, and taken on with that awareness: the value is in the operational contract (the 1-slot pool and exit-code handling have no cron equivalent). | — |
 
-## Quatro restrições medidas que moldaram o desenho
+## Four measured constraints that shaped the design
 
-Não são preferências. São comportamento observado, e cada uma está imposta em código.
+These aren't preferences. They're observed behavior, and each one is enforced in code.
 
-### 1. Backfill é impossível
+### 1. Backfill is impossible
 
-A API serve apenas o preço de **hoje**. Um DAG run datado de 2026-08-17 gravaria os preços
-de hoje sob a chave de 08-17 — dado silenciosamente errado, e internamente consistente, o
-que significa que nenhum teste a jusante o pegaria.
+The API serves only **today's** price. A DAG run dated 2026-08-17 would write today's
+prices under the 08-17 key — silently wrong data, and internally consistent, which means
+no downstream test would catch it.
 
-Há um vão real de 8 dias entre `2026-08-16` e `2026-08-24`: os dias 08-17 a 08-23
-**não existem e não podem ser recuperados**. É a razão prática do agendamento — cada dia
-sem ele é histórico de preço que não volta.
+There's a real 8-day gap between `2026-08-16` and `2026-08-24`: the days 08-17 through
+08-23 **don't exist and can't be recovered**. That's the practical reason for the
+scheduling — every day without it is price history that doesn't come back.
 
-Imposto por três camadas, verificadas: o Airflow recusa `execution_date` no futuro;
-`catchup=False` + `start_date` impedem runs anteriores ao início; e `guard_date` recusa
-disparo manual de qualquer data ≠ hoje. Enquanto `start_date` == hoje a terceira é
-redundante — ela passa a ser a única proteção no dia seguinte.
+Enforced by three layers, verified: Airflow refuses a future `execution_date`;
+`catchup=False` + `start_date` prevent runs before the start; and `guard_date` refuses a
+manual trigger for any date ≠ today. While `start_date` == today the third is redundant —
+it becomes the only protection the following day.
 
-### 2. O throttle é por processo, não entre processos
+### 2. The throttle is per process, not across processes
 
-O cliente da Source limita a `1/delay` req/s medindo do início da requisição anterior —
-dentro do **processo**. Dois `extract` concorrentes dobram a taxa real contra o host.
+The Source client limits to `1/delay` req/s, measured from the start of the previous
+request — within the **process**. Two concurrent `extract` runs double the real rate
+against the host.
 
-Medido: 152 requisições em 9 s produziram ~20% de `403` e bloqueio intermitente por
-minutos; sequencial a 1,5 s deu 0 falhas em execuções repetidas.
+Measured: 152 requests in 9 s produced ~20% `403`s and intermittent blocking for minutes;
+sequential at 1,5 s gave 0 failures across repeated runs.
 
-Com mais de um armazém, o pool do Airflow com **1 slot** é a única coisa preservando a taxa
-segura. Não é enfeite de configuração.
+With more than one warehouse, the Airflow pool with **1 slot** is the only thing preserving
+the safe rate. It's not a configuration decoration.
 
-O DAG cobre **quatro** armazéns (`WAREHOUSES = ["mad1", "bcn1", "vlc1", "svq1"]`), então o
-pool está sob pressão real: são 4 × 152 ≈ 608 requisições, ~15 min sequenciais. Ele existia
-antes de ser necessário, de propósito. Teto conhecido: os 7 armazéns que servem catálogo
-dariam ≈ 27 min, o que ainda cabe folgado numa janela diária.
+The DAG covers **four** warehouses (`WAREHOUSES = ["mad1", "bcn1", "vlc1", "svq1"]`), so
+the pool is under real pressure: that's 4 × 152 ≈ 608 requests, ~15 min sequential. It
+existed before it was needed, on purpose. Known ceiling: the 7 warehouses that serve a
+catalog would take ≈ 27 min, which still fits comfortably in a daily window.
 
-### 2.1. Quais armazéns, e por quê esses
+### 2.1. Which warehouses, and why these
 
-A fonte serve **7 armazéns** — `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1` — mais
-`vlc2` e `pmi1`, que o servidor reconhece mas que não têm catálogo. Medido em `2026-08-24`.
+The source serves **7 warehouses** — `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1`
+— plus `vlc2` and `pmi1`, which the server recognizes but which have no catalog. Measured
+on `2026-08-24`.
 
-A escolha dos quatro é por **divergência de sortimento**, não por tamanho de mercado, porque
-sortimento e preço se comportam em níveis diferentes:
+The choice of the four is by **assortment divergence**, not market size, because assortment
+and price behave at different levels:
 
-- **Sortimento é propriedade da cidade.** Os três armazéns de Madrid têm conjuntos de produto
-  **idênticos** entre si (0 exclusivos); `bcn1` difere de `mad1` em 12,0% (551 produtos).
-- **Preço varia dentro da mesma cidade.** Medido nas categorias de perecíveis, `mad3` diverge
-  de `mad1` em 18,4% dos preços, contra 26,4% de Madrid↔Barcelona **nas mesmas categorias** —
-  ou seja, 70% da magnitude entre cidades acontece dentro de uma só. Esses dois números são
-  comparáveis entre si por serem do mesmo recorte; não são comparáveis com os da matriz
-  abaixo, que é de catálogo inteiro.
+- **Assortment is a property of the city.** The three Madrid warehouses have **identical**
+  product sets among themselves (0 exclusives); `bcn1` differs from `mad1` by 12,0% (551
+  products).
+- **Price varies within the same city.** Measured on perishable categories, `mad3` diverges
+  from `mad1` by 18,4% of prices, against 26,4% for Madrid↔Barcelona **in the same
+  categories** — that is, 70% of the magnitude between cities happens within a single one.
+  These two numbers are comparable to each other since they're from the same cut; they
+  aren't comparable to the ones in the matrix below, which is for the whole catalog.
 
-Logo um segundo armazém da mesma cidade paga 152 requisições para agregar um eixo só. Entre
-cidades, os dois variam.
+So a second warehouse in the same city pays 152 requests to add just one axis. Between
+cities, both vary.
 
-Matriz par a par, **calculada sobre o catálogo inteiro a partir do Silver** em `2026-08-24`
-(reproduzível com uma query sobre `silver_product_price`):
+Pairwise matrix, **calculated over the whole catalog from Silver** on `2026-08-24`
+(reproducible with a query against `silver_product_price`):
 
-| par | sortimento | preço |
+| pair | assortment | price |
 |---|---|---|
 | bcn1 / svq1 | 13,8% | 3,3% |
 | svq1 / vlc1 | 13,6% | 2,8% |
@@ -189,467 +194,476 @@ Matriz par a par, **calculada sobre o catálogo inteiro a partir do Silver** em 
 | bcn1 / mad1 | 12,0% | 3,1% |
 | bcn1 / vlc1 | 10,0% | 3,1% |
 
-`svq1` aparece nos **três pares mais divergentes**, e sua menor divergência ao resto do
-conjunto é 13,0% — a maior mínima disponível. É o que justifica tê-lo escolhido.
+`svq1` appears in the **three most divergent pairs**, and its smallest divergence from the
+rest of the set is 13,0% — the largest minimum available. That's what justifies choosing it.
 
-**`alc1` foi descartado** por duplicar `vlc1` — mesma comunidade autônoma, 170 km. Ressalva
-honesta sobre esse número: `alc1` **não foi extraído**, então ele não está nesta matriz. A
-comparação vem de uma sondagem em 2 categorias, onde `vlc1/alc1` deu 34,4% contra 52,3% de
-`vlc1/svq1`. Aquela sondagem tinha **viés de seleção** — as categorias foram escolhidas por
-concentrarem exclusivos entre `mad1` e `bcn1`, o que inflou esse par especificamente (deu
-78,6% lá contra 12,0% aqui). O viés não atinge o par `alc1` vs `svq1`, medido nas mesmas
-categorias sem ser critério de seleção, então a **ordenação** entre os dois se sustenta; as
-magnitudes daquela sondagem, não. `alc1` segue como o candidato óbvio se um quinto entrar, e
-medi-lo direito exigiria extraí-lo.
+**`alc1` was discarded** for duplicating `vlc1` — same autonomous community, 170 km. Honest
+caveat about this number: `alc1` **was not extracted**, so it isn't in this matrix. The
+comparison comes from a probe over 2 categories, where `vlc1/alc1` gave 34,4% against
+52,3% for `vlc1/svq1`. That probe had **selection bias** — the categories were chosen for
+concentrating exclusives between `mad1` and `bcn1`, which inflated that specific pair (it
+gave 78,6% there against 12,0% here). The bias doesn't reach the `alc1` vs `svq1` pair,
+measured on the same categories without being a selection criterion, so the **ordering**
+between the two holds; the magnitudes from that probe don't. `alc1` remains the obvious
+candidate if a fifth one gets in, and measuring it properly would require extracting it.
 
-### 2.2. Dois fatos da fonte que mudam como se opera isto
+### 2.2. Two facts about the source that change how this is operated
 
-**`wh` inválido não falha.** A fonte não recusa código desconhecido: devolve `200` caindo em
-`vlc1`, que é o seu default. Medido — `zzz9`, `mad9` e a requisição *sem `wh` nenhum* devolvem
-conteúdo idêntico. A consequência operacional é que um erro de digitação em `WAREHOUSES` não
-produz erro nenhum: produz uma partição rotulada `wh=<erro>` **contendo dados de Valência**,
-internamente consistente e portanto invisível para todo teste a jusante. Um código reconhecido
-porém sem catálogo se distingue por `/categories/?wh=X` responder `content-length: 52` (árvore
-vazia) em vez da árvore cheia.
+**An invalid `wh` doesn't fail.** The source doesn't refuse an unknown code: it returns
+`200`, falling back to `vlc1`, its default. Measured — `zzz9`, `mad9` and the request *with
+no `wh` at all* return identical content. The operational consequence is that a typo in
+`WAREHOUSES` produces no error at all: it produces a partition labeled `wh=<typo>`
+**containing Valencia's data**, internally consistent and therefore invisible to every
+downstream test. A recognized code with no catalog is distinguished by
+`/categories/?wh=X` answering `content-length: 52` (empty tree) instead of the full tree.
 
-**A árvore de categorias é byte-idêntica nos 7 armazéns.** É estrutura nacional, não regional.
-Cada armazém gasta 1 requisição numa árvore já conhecida, e `silver_category` carrega 151
-linhas redundantes por armazém. Inofensivo no volume atual, e registrado aqui como desperdício
-conhecido em vez de descoberto depois.
+**The category tree is byte-identical across the 7 warehouses.** It's national structure,
+not regional. Each warehouse spends 1 request on an already-known tree, and
+`silver_category` carries 151 redundant rows per warehouse. Harmless at the current volume,
+and recorded here as known waste rather than discovered later.
 
-### 3. Reexecutar `extract` numa partição completa retorna exit 2
+### 3. Re-running `extract` on a complete partition returns exit 2
 
-A partição completa é imutável (garantia 5 do contrato). Um retry ingênuo do orquestrador
-marcaria como falha um dia que deu certo. Por isso a idempotência vem do marcador
-`_SUCCESS`, e `retries=0` no `extract`.
+A complete partition is immutable (contract guarantee 5). A naive retry by the orchestrator
+would mark a day that succeeded as a failure. That's why idempotency comes from the
+`_SUCCESS` marker, and `retries=0` on `extract`.
 
-O gate do DAG olha o **destino**, não o disco local: reusa `verify-landing` como
-short-circuit. Exit 0 → nada a fazer; exit 1 → aterrissada mas divergente, segue e o
-`land` conserta; exit 2 → nem existe localmente, segue para extract. Checar o `_SUCCESS`
-local ali seria um erro — pularia o `land` de uma partição extraída à mão e nunca
-aterrissada.
+The DAG's gate looks at the **destination**, not the local disk: it reuses
+`verify-landing` as a short-circuit. Exit 0 → nothing to do; exit 1 → landed but divergent,
+proceeds and `land` fixes it; exit 2 → doesn't even exist locally, proceeds to extract.
+Checking the local `_SUCCESS` there would be a mistake — it would skip `land` for a
+partition extracted by hand and never landed.
 
-### 4. A Source grava com modo 600, e isso define o UID do container
+### 4. The Source writes with mode 600, and that dictates the container's UID
 
-`canonical.py` faz escrita atômica com `tempfile.mkstemp()`, que cria o arquivo com modo
-**0600**, e `os.replace` preserva esse modo. Medido: **153 dos 155 arquivos** de uma
-partição são `-rw-------` (só `_run.log`, escrito com `open()` comum, é 664).
+`canonical.py` does an atomic write with `tempfile.mkstemp()`, which creates the file with
+mode **0600**, and `os.replace` preserves that mode. Measured: **153 of the 155 files** in
+a partition are `-rw-------` (only `_run.log`, written with a plain `open()`, is 664).
 
-A consequência é operacional e não tem meio-termo: **qualquer consumidor precisa rodar com
-o UID do dono dos arquivos.** Não existe fallback por grupo. Por isso o container do
-Airflow roda como `${AIRFLOW_UID}` e não como o `airflow` (50000) padrão da imagem.
+The consequence is operational and has no middle ground: **any consumer needs to run with
+the UID of the files' owner.** There's no group fallback. That's why the Airflow container
+runs as `${AIRFLOW_UID}` and not as the image's default `airflow` (50000).
 
-Duas armadilhas conhecidas nesse caminho, ambas encontradas em execução:
+Two known traps along this path, both found in execution:
 
-- **O compose não lê o `.env` da raiz por conta própria.** O project dir é `infra/`, então
-  `${AIRFLOW_UID}` caía no default 50000 e o container não conseguia ler a partição. O
-  `Makefile` passa `--env-file .env` explicitamente.
-- **Sobrescrever `entrypoint` num serviço do Airflow quebra o usuário.** O `/entrypoint`
-  da imagem é quem cria a entrada em `/etc/passwd` para o UID escolhido; sem ela o Airflow
-  morre em `getpass.getuser()`. Use `command`, nunca `entrypoint`.
+- **Compose doesn't read the root `.env` on its own.** The project dir is `infra/`, so
+  `${AIRFLOW_UID}` fell back to the default 50000 and the container couldn't read the
+  partition. The `Makefile` passes `--env-file .env` explicitly.
+- **Overriding `entrypoint` on an Airflow service breaks the user.** The image's
+  `/entrypoint` is what creates the `/etc/passwd` entry for the chosen UID; without it
+  Airflow dies at `getpass.getuser()`. Use `command`, never `entrypoint`.
 
-Alterar o modo na Source resolveria de forma mais direta, mas ela está FROZEN — então o
-UID é que se ajusta.
+Changing the mode in the Source would resolve this more directly, but it's FROZEN — so it's
+the UID that adjusts instead.
 
-## Verificação em vez de confiança
+## Verification instead of trust
 
-Padrão herdado do `validate.py` da Source, que recalcula em vez de aceitar valores
-gravados. Repetido em cada fronteira:
+A pattern inherited from the Source's `validate.py`, which recalculates instead of
+accepting recorded values. Repeated at every boundary:
 
-| Fronteira | O que é reprocessado |
+| Boundary | What gets reprocessed |
 |---|---|
-| disco → RAW | sha256 do arquivo local conferido **antes** do PUT; `ChecksumSHA256` validado no servidor |
-| RAW | `verify-landing` baixa todo objeto e recalcula sha256, tamanho e inventário |
-| RAW → Silver | teste dbt reconcilia a contagem derivada contra `totals` do manifesto |
-| Silver | 36 testes (7 singulares + 29 do schema), incluindo unicidade do grão composto e linhagem redundante |
+| disk → RAW | local file sha256 checked **before** the PUT; `ChecksumSHA256` validated on the server |
+| RAW | `verify-landing` downloads every object and recalculates sha256, size and inventory |
+| RAW → Silver | a dbt test reconciles the derived count against the manifest's `totals` |
+| Silver | 36 tests (7 singular + 29 schema), including uniqueness of the composite grain and redundant lineage |
 
-Cada verificação foi provada capaz de **falhar**: adulterar um byte no destino reprova o
-`verify-landing` (exit 1); remover um objeto de catálogo reprova o teste de reconciliação.
-Verificação que nunca falhou não é verificação.
+Every check has been proven capable of **failing**: tampering with one byte at the
+destination fails `verify-landing` (exit 1); removing a catalog object fails the
+reconciliation test. A check that has never failed is not a check.
 
-## Fronteira Source ↔ plataforma
+## Source ↔ platform boundary
 
-A Source está FROZEN e mantém `dependencies = []`, imposto por AST em
-`tests/test_dependencies.py`. A plataforma tem `pyproject.toml` e venv próprios.
+The Source is FROZEN and keeps `dependencies = []`, enforced by AST in
+`tests/test_dependencies.py`. The platform has its own `pyproject.toml` and venv.
 
-A fronteira não é a pasta. É imposta por:
+The boundary isn't the folder. It's enforced by:
 
-1. **A plataforma nunca importa `mercadona_catalog_source`.** Consome o contrato físico
-   (JSON canônico + `_manifest.json`), como um consumidor externo. `platform/…/manifest.py`
-   implementa as obrigações da seção 4 do contrato como código, não como comentário.
-2. **`make source-test` roda no Python do sistema, sem venv.** Se passar, a Source
-   continua sem dependência de terceiros. É a fronteira verificada, não afirmada.
-3. **Zero dependência tem retorno prático:** a Source roda no próprio interpretador do
-   worker do Airflow via `PYTHONPATH`, sem conflitar com as dependências pinadas dele.
+1. **The platform never imports `mercadona_catalog_source`.** It consumes the physical
+   contract (canonical JSON + `_manifest.json`), like an external consumer.
+   `platform/…/manifest.py` implements section 4's contract obligations as code, not as a
+   comment.
+2. **`make source-test` runs on the system Python, with no venv.** If it passes, the
+   Source still has no third-party dependency. It's the boundary verified, not claimed.
+3. **Zero dependencies pays off in practice:** the Source runs in the Airflow worker's own
+   interpreter via `PYTHONPATH`, without conflicting with its pinned dependencies.
 
-## Painel de conferência (Streamlit sobre o MART)
+## Verification panel (Streamlit over the MART)
 
-Bancada de **conferência** dos indicadores antes de reconstruí-los no Power BI, e não uma
-entrega de BI. São 22 indicadores em 7 grupos. Lê **somente** `RETAIL.MART`, com `RETAIL_READER` e
-`use secondary roles none` — a sessão é recusada em GOLD e STAGE, e o painel roda uma
-sonda ao vivo que demonstra a recusa em vez de afirmá-la.
+A **verification** bench for the indicators before rebuilding them in Power BI, not a BI
+deliverable. It's 22 indicators in 7 groups. Reads **only** `RETAIL.MART`, with
+`RETAIL_READER` and `use secondary roles none` — the session is refused on GOLD and STAGE,
+and the panel runs a live probe that demonstrates the refusal instead of asserting it.
 
-A fonte única é [`streamlit/indicators.py`](streamlit/indicators.py): o SQL e a
-explicação moram juntos, e [`CONTRACT.md`](streamlit/CONTRACT.md) é **gerado** dele. Se a
-explicação vivesse num markdown escrito à mão, os dois divergiriam no primeiro ajuste de
-SQL — e a conferência continuaria passando, porque ninguém lê um SQL e um texto lado a
-lado procurando desacordo.
+The single source is [`streamlit/indicators.py`](streamlit/indicators.py): the SQL and the
+explanation live together, and [`CONTRACT.md`](streamlit/CONTRACT.md) is **generated** from
+it. If the explanation lived in a hand-written markdown, the two would diverge at the first
+SQL tweak — and verification would keep passing, because nobody reads a SQL and a text side
+by side looking for disagreement.
 
-Cada indicador carrega **armadilhas**: os casos em que a medida óbvia produz um número
-plausível e errado. É a única classe de erro que nenhum teste pega, e é o que torna o
-painel útil para quem vai reconstruir o modelo em outra ferramenta.
+Each indicator carries **traps**: the cases where the obvious measure produces a plausible,
+wrong number. It's the only class of error no test catches, and it's what makes the panel
+useful for whoever rebuilds the model in another tool.
 
-A lista *Fora de alcance* é parte da entrega: cada ausência traz o **gatilho** que a
-destravaria. Ausência sem gatilho é desculpa; com gatilho é decisão.
+The *Out of reach* list is part of the deliverable: every absence carries the **trigger**
+that would unlock it. An absence with no trigger is an excuse; with a trigger it's a
+decision.
 
-`make dashboard-check` roda o app de verdade via `AppTest` e exige zero exceção contra a
-conta viva: é a única forma de as 25 consultas serem exercidas como o Streamlit as executa,
-com os parâmetros ligados, em vez de conferidas como texto.
+`make dashboard-check` runs the real app via `AppTest` and requires zero exceptions against
+the live account: it's the only way for the 25 queries to be exercised the way Streamlit
+runs them, with parameters bound, instead of checked as text.
 
-## Dívida técnica
+## Technical debt
 
-Revisada em **2026-09-01**, depois da Fase 7, e **reestruturada em 2026-09-02** para que cada
-item declare status e próximo passo em vez de só motivo. **Oito itens em aberto**, todos
-deliberados. O resto da tabela é histórico: fica porque o que foi fechado e *como* foi fechado
-é a parte que se aprende.
+Reviewed on **2026-09-01**, after Phase 7, and **restructured on 2026-09-02** so every item
+declares status and next step instead of just a reason. **Eight open items**, all
+deliberate. The rest of the table is history: it stays because what got closed and *how*
+it got closed is the part worth learning from.
 
-**A contagem subiu de cinco para oito, e isso é resultado e não regressão.** Três dos itens
-novos foram *descobertos* pela Fase 7 — dois deles medindo o que ela mesma construiu. Uma
-lista de dívidas que só encolhe é sinal de que ninguém está procurando.
+**The count went from five to eight, and that's a result, not a regression.** Three of the
+new items were *discovered* by Phase 7 — two of them by measuring what it built itself. A
+debt list that only shrinks is a sign nobody's looking.
 
-Cada item traz **problema, impacto, status e próximo passo**, e nada mais. O status é um de
-quatro: **mitigado** (o dano está contido, a causa não), **aceito** (não vai ser corrigido, e o
-motivo está escrito), **aberto** (falta trabalho identificado) ou **fora do escopo**.
+Each item carries **problem, impact, status, and next step**, and nothing else. Status is
+one of four: **mitigated** (the damage is contained, the cause isn't), **accepted** (won't
+be fixed, and the reason is written down), **open** (identified work remains), or **out of
+scope**.
 
-| # | Problema | Impacto | Status | Próximo passo |
+| # | Problem | Impact | Status | Next step |
 |---|---|---|---|---|
-| 1 | `models/warehouse/` não tem teste offline | Dois defeitos reais só apareceram na primeira execução contra a conta viva; um espelho DuckDB os teria pegado | **Mitigado** por `make warehouse-evidence` — evidência datada, não um segundo motor | Nenhum. A resposta **não** é um espelho: ver a seção abaixo |
-| 2 | A conta Snowflake é um trial | Expira, e com ela toda a metade da direita do pipeline | **Aceito** — é aberta por natureza | Nenhum. O destino é trocável por `.env.snowflake`, e isso está verificado |
-| 3 | Não há CI | A suíte offline depende de alguém rodar `make test` | **Aberto**, bloqueado por não haver remoto — escrever um workflow que nunca rodou seria afirmar uma verificação que ninguém viu | O repositório ganhar um remoto; o workflow cobre `make test` + `make silver`, nunca a metade Snowflake |
-| 4 | Aviso `CustomKeyInConfigDeprecation` no `dbt build` | Ruído no log | **Aceito** — cosmético e alheio: config do `dbt-duckdb`, sem forma suportada publicada | Acompanhar o `dbt-duckdb` |
-| 5 | Nenhum mart junta cliente com pedido | Sem recompra, RFM, LTV nem coorte. O elo existe em `FACT_ORDER.customer_sk`, no GOLD, fora do alcance do papel de BI | **Aberto** — é a lacuna funcional mais acionável, e a única que se fecha escrevendo SQL | Um mart com grão de cliente (`MART_CUSTOMER_ORDERS`), com o rótulo `synthetic` viajando em cada coluna. Ver [BACKLOG.md](BACKLOG.md) |
-| 6 | A reconstrução da projeção é **O(n²)** | 414 commits e ~55 min para 206.523 pedidos: cada lote faz `upsert` contra a tabela inteira. Numa máquina nova é um imposto de 55 min | **Aberto.** É o **único lugar do projeto onde volume realmente doeu** — e a ironia vale registrar: a justificativa do Spark diz que o gatilho de volume não disparou, e ele disparou aqui, no caminho em Python | Um caminho de `append` em lote único quando `--reset` é usado: a tabela começa vazia e não há escritor concorrente, então não há contra o que fazer `upsert`. Ver [BACKLOG.md](BACKLOG.md) |
-| 7 | A ruptura do ledger é independente das linhas `unavailable` do pedido | Uma não causa a outra, e cruzá-las produziria uma correlação inventada | **Aceito**, e declarado no dado: o gerador remove linha a taxa fixa sorteada, sem olhar saldo | Um gerador de segunda passada que releia o saldo. **Inverteria a dependência do projeto** — hoje pedido gera estoque —, e é isso que segura o item |
-| 8 | O parquet do Silver sobrevive à exclusão do modelo pelo portão | Aconteceu de verdade: `MART_STOCK_HEALTH` descreveu 5 dias enquanto os outros marts descreviam 9, **sem um único teste reprovar** — cada domínio fechava sozinho | **Mitigado por domínio, classe em aberto.** `assert_stock_ledger_covers_the_order_window` compara as janelas dos dois domínios no warehouse. A classe é geral: **qualquer** modelo excluído deixa parquet velho para trás | Uma verificação genérica — para cada modelo que o portão exclui, comparar a idade do parquet contra a do build corrente. Não foi feita porque exigiria o portão publicar o que excluiu, e a fase fechou |
+| 1 | `models/warehouse/` has no offline test | Two real defects only showed up on the first run against the live account; a DuckDB mirror would have caught them | **Mitigated** by `make warehouse-evidence` — dated evidence, not a second engine | None. The answer is **not** a mirror: see the section below |
+| 2 | The Snowflake account is a trial | It expires, and with it the entire right half of the pipeline | **Accepted** — it's open by nature | None. The destination is swappable via `.env.snowflake`, and that's verified |
+| 3 | There's no CI | The offline suite depends on someone running `make test` | **Open**, blocked by having no remote — writing a workflow that never ran would be claiming a check nobody saw | The repository gaining a remote; the workflow covers `make test` + `make silver`, never the Snowflake half |
+| 4 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Accepted** — cosmetic and external: `dbt-duckdb` config, with no supported form published | Track `dbt-duckdb` |
+| 5 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
+| 6 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206.523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
+| 7 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
+| 8 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
 
-| Item | Situação |
+| Item | Status |
 |---|---|
-| Cobertura de teste | **Fechada.** 19 → 416 testes na plataforma, com duplo de S3 em memória |
-| Caminho de extração em container | **Fechado.** `bcn1` extraído, validado, aterrissado e transformado dentro do container |
-| Ambientes redundantes | **Removidos.** 265 MB (`venv/` quebrado e `orchestration/.venv`) |
-| Credenciais de desenvolvimento | **Endurecidas.** Portas em loopback, chaves aleatórias, compose recusa subir sem elas |
-| Divergência de `data/` | **Contida.** O padrão `data/` do `.gitignore` casa em qualquer nível |
-| Fanout de homônimo em `silver_ine_population_by_municipality` | **Fechado** em 2026-08-27, no mesmo dia em que foi achado |
-| Modelo Silver e DAG do OLTP simulado | **Fechados** na Fase 2 (`silver_customer`, `silver_oltp_manifest`, `simulated_oltp_customers.py`) |
-| Var `currency` declarada para o Gold e nunca usada | **Fechada.** `FACT_PRICE_SNAPSHOT` carrega a coluna: a premissa viaja junto do número |
-| Papéis do Snowflake criados e verificados, mas não vestidos | **Fechada.** A carga roda como `RETAIL_LOADER` e o dbt como `RETAIL_TRANSFORMER`; quatro defeitos apareceram ao vestir |
-| Identidade da conta cravada no `profiles.yml` | **Fechada.** `SNOWFLAKE_ACCOUNT`/`SNOWFLAKE_USER` sem default; a conta é trocável por `.env.snowflake` |
-| Warehouse com `auto_suspend` de 300 s | **Fechada.** O `bootstrap` fixa X-Small e 60 s, como o plano da Fase 2 previa e nunca aplicou |
-| `warehouse_load` nunca tinha rodado em container | **Fechada.** Imagem sem as dependências da Fase 2 e sem credencial; a lista de dependências deixou de ser duplicada |
-| **Árvore `models/warehouse/` sem teste offline** | **Em aberto**, e é consequência de uma escolha. Mitigada por `make warehouse-evidence` |
-| **Conta Snowflake é trial** | **Em aberto por natureza**, e o destino é trocável — verificado, não afirmado |
-| Aviso `CustomKeyInConfigDeprecation` do dbt | **Em aberto, cosmético.** Config do `dbt-duckdb`, sem forma suportada ainda |
-| **CI** | **Em aberto, e bloqueada por não haver remoto.** Cobriria a metade offline (`make test` + `make silver`), nunca a metade Snowflake |
-| Modelo Silver e DAG dos pedidos simulados | **Fechados** na Fase 3 (4 modelos, 8 testes singulares, `simulated_orders_events.py`) |
-| **Metade em streaming sem teste offline** | **Parcialmente fechada** nos Marcos 4, 5 e 6: `fake_pg.py` cobre a fronteira da transação, `fake_kafka.py` a ordem entre escrita e commit de offset, e `fake_iceberg.py` a fusão monotônica e o laço de retry — offline, em `make test`. Continua em aberto o que nenhum duplo cobre: que `rollback` desfaz, que o broker preserva ordem por chave, e que o Iceberg recusa commit de snapshot velho. Isso é `make orders-prove-atomicity`, `make orders-prove-stream` e `make orders-prove-projection` |
-| **Silver de pedidos afirmava separação que o log não declara** | **Fechada** no Marco 4, no dia em que foi achada: 5.508 linhas de 298 pedidos. Achada por dois folds independentes discordando, não por teste |
-| Gold e marts dos pedidos | **Fechados** no Marco 7: 4 STAGE, 4 FACT, 3 MART e 5 testes, cada um provado capaz de reprovar por `make warehouse-prove-tests` |
-| **`TIMESTAMP` atravessava a fronteira 56 milhões de anos no futuro** | **Fechada** no Marco 7, no dia em que foi achada. `use_logical_type = true` no `COPY INTO`; o DuckDB anota a unidade só no `LogicalType` moderno e o Snowflake caía no `ConvertedType` legado. **166 nós do dbt construíram em verde por cima do defeito** — quem apontou foi um humano lendo um mart. Guardado agora por `assert_order_milestones_are_plausible_against_the_order_date` |
-| Contagem de eventos virando `FLOAT` no parquet | **Fechada** no Marco 7. `sum()` devolve `HUGEINT`, o parquet não tem `INT128`, a escrita rebaixa para `DOUBLE`. Achada pelo DDL ser derivado do próprio recorte |
-| **Premissa do gerador vivendo em dois lugares** | **Evitada** no Marco 7 em vez de fechada: `STG_ORDER_PREMISE`/`FACT_ORDER_PREMISE` carregam o seed inteiro para o warehouse, então `MART_FULFILLMENT_SLA` mede contra o mesmo número que gerou as durações. Uma var do dbt teria criado a cópia |
-| **O portão do `dbt build` do Silver morava em seis arquivos** | **Fechado em 2026-08-31**, no dia em que a DAG reprovou. Ver abaixo |
-| Papel `RETAIL_READER` criado, verificado e sem nenhum consumidor | **Fechada em 2026-08-31.** O painel Streamlit é o primeiro a vesti-lo, e prova a recusa em GOLD/STAGE na própria tela |
-| **Nenhum mart junta cliente com pedido** | **Em aberto, e é a lacuna mais acionável do modelo.** Sem ela não há recompra, LTV, coorte nem receita por cliente. O elo existe em `FACT_ORDER.customer_sk`, no GOLD, fora do alcance do papel de BI. Não exige fonte nova — exige um mart com grão de cliente |
-| **Metade em streaming sem registro de execução real** | **Fechada** no Marco 8. `make stream-evidence` escreve `docs/stream-evidence/README.md` a partir dos três planos vivos — nenhum número à mão, e seção ausente aparece como ausência declarada, nunca como zero |
-| Todo cliente comprava a mesma cesta esperada | **Fechada** na Fase 5: o mix passou a ser condicional à coorte (idade × comunidade), calibrado por IPF para o agregado não se mover |
-| **Recém-nascido com cadastro de titular** | **Fechada** na Fase 6, e ela corrigiu o domínio que a Fase 5 errou. A Fase 5 barrou o menor no *pedido* (`min_buyer_age`) e deixou o cadastro intacto; `min_customer_age` mora agora em `customer_premises_seed.csv`, e 3.602 menores viraram 0 |
-| **Base de clientes sem densidade** | **Fechada** na Fase 6. Eram 5.000 por armazém para AUFs que diferem por 4,6× em população — nada reprovava, porque densidade não aparece em nenhum total. Hoje é `população municipal × share adulto da província × 2,2%`, e o total é consequência, não cota |
-| Lista de prints do Snowflake, 1 de 6 capturados | **Fechada em 2026-09-01.** Cinco dos seis itens já eram cobertos pela evidência gerada; o sexto virou a seção **Papéis em execução** de `make warehouse-evidence`, lida do `query_history`. `PRINTS.md` foi removido: era uma lista de tarefas morando no repositório |
-| Variáveis de ambiente lidas pelo código e declaradas em lugar nenhum | **Fechada em 2026-09-01.** Dezenove delas — de `AWS_ACCESS_KEY_ID` a `RETAIL_DASHBOARD_TTL`. Todas têm default no código, então nada quebrava: elas simplesmente não existiam para quem clonasse o repositório. Estão em `.env.example` como sobrescritas comentadas, e `TodaVariavelDeAmbienteEDeclarada` varre o código atrás de `os.environ`/`getenv` e reprova se aparecer uma nova sem declaração |
-| `streamlit/CONTRACT.md` eternamente "modificado" no git | **Fechada em 2026-09-01.** O cabeçalho trazia a data da geração, então o arquivo derivado mudava a cada execução e o teste de sincronia precisava **isentar aquela linha** — uma faixa cega dentro do próprio teste que existe para não haver faixa cega. Passou a trazer o sha256 de `indicators.py`: a comparação virou byte a byte |
-| Quatro seeds versionados sem procedência executável | **Fechada em 2026-09-01.** Os `scripts/derive_*.py` existiam, com docstring bom, e **nenhum alvo no Makefile** — a origem de quatro CSVs só se descobria abrindo um arquivo que o README não dizia como executar. Viraram `make seed-province-map`, `seed-service-area`, `seed-municipality-codes` e `seed-ambiguous-series`; os quatro reproduziram o CSV versionado byte a byte |
-| Documentação conferida só por leitura | **Fechada em 2026-09-01.** `test_documentacao.py` varre o que dá para verificar por máquina: todo caminho da árvore do README existe, todo link relativo resolve, nada de log/artefato versionado, todo alvo do Makefile aparece no `make help`, todo script tem alvo, toda variável do Makefile é usada. Seis injeções vistas vermelhas |
-| **Interop entre engines: afirmada por quatro fases, nunca demonstrada** | **Fechada na Fase 7.** O Iceberg foi justificado por interop desde a Fase 3 e os dois escritores eram Python, usando a mesma biblioteca. `make spike-spark-iceberg` mediu 18 perguntas contra o stack real, com **os dois desfechos declarados antes**: se reprovasse, o Spark não entraria **e** a cláusula sairia desta tabela. Hoje o catálogo tem três escritores, e `written_by` torna isso consultável |
-| **Premissas do pedido contradizendo umas às outras** | **Fechada na Fase 7**, depois de três fases "registradas em vez de corrigidas". 84% das entregas chegavam antes de a janela abrir; o limiar de SLA valia 90 contra um teto possível de 80. Faltava a distinção entre *ajustar até a saída agradar* e *tornar duas premissas coerentes* — a primeira se recusa, a segunda é correção de modelo. Guardada por `assert_order_premises_are_internally_coherent`, que afere a **derivação** e nunca o resultado |
-| **Estoque, ruptura, giro e cobertura fora de alcance** | **Fechada na Fase 7, com ressalva que viaja no dado.** O gatilho declarado era "uma fonte de saldo ou movimento" e ele **não** foi cumprido: o ledger é *calculado* a partir do consumo observado mais uma política declarada. `stock_label = 'synthetic'` está em toda linha do mart |
-| **"Não mexa no RAW depois de fechar" era disciplina, não verificação** | **Fechada na Fase 7.** Três revisões de documentação existiram porque uma regeração mudou números já escritos e nada avisou. `make freeze` sela a captura e `make freeze-check` reprova se ela mudar. O selo cobre o **dado**, não a execução: `run_id` e timestamps ficam de fora, senão um re-land byte-idêntico quebraria o selo |
-| **Referência por nome de seção e âncora nunca eram conferidas** | **Fechada em 2026-09-01.** `LinksRelativosTest` confere que o ARQUIVO existe, e uma âncora quebrada aponta para um arquivo que existe — então ela passava, e o leitor caía no topo do documento. Achado ao mover 17 seções para `DECISIONS.md`: uma referência ficou órfã. Dois testes novos cobrem rótulo `§ "…"` e âncora, em todos os níveis de título e nas âncoras HTML explícitas do CONTRACT |
-| **README e ARCHITECTURE explicando a mesma coisa duas vezes** | **Fechada em 2026-09-01.** 1.435 + 2.475 linhas, com o mesmo assunto em dois lugares envelhecendo em ritmos diferentes. A narrativa foi para `DECISIONS.md`, o escopo futuro para `BACKLOG.md`, e um teto de linhas testado impede os dois de voltarem a crescer sem que seja uma decisão |
-| **O parquet do Silver sobrevive à exclusão do modelo pelo portão** | **Em aberto, mitigada.** Quando `silver_gate` tira `silver_stock_ledger` (ou `silver_live_order_state`) do build, o parquet da última construção bem-sucedida **fica** no object storage — e o export para o Snowflake o lê sem saber que é velho. Aconteceu de verdade: `MART_STOCK_HEALTH` descreveu uma janela de 5 dias enquanto todos os outros marts descreviam 9, sem um único teste reprovar. Mitigada por `assert_stock_ledger_covers_the_order_window`, que compara as janelas dos dois domínios no warehouse — que é onde eles finalmente se encontram. Não fechada porque a mitigação é por domínio, e a classe é geral: qualquer modelo excluído deixa parquet velho para trás |
+| Test coverage | **Closed.** 19 → 416 tests on the platform, with an in-memory S3 double |
+| Extraction path in container | **Closed.** `bcn1` extracted, validated, landed and transformed inside the container |
+| Redundant environments | **Removed.** 265 MB (broken `venv/` and `orchestration/.venv`) |
+| Development credentials | **Hardened.** Loopback ports, random keys, compose refuses to start without them |
+| `data/` divergence | **Contained.** The `data/` pattern in `.gitignore` matches at any level |
+| Homonym fanout in `silver_ine_population_by_municipality` | **Closed** on 2026-08-27, the same day it was found |
+| Silver model and simulated OLTP DAG | **Closed** in Phase 2 (`silver_customer`, `silver_oltp_manifest`, `simulated_oltp_customers.py`) |
+| `currency` var declared for Gold and never used | **Closed.** `FACT_PRICE_SNAPSHOT` carries the column: the assumption travels with the number |
+| Snowflake roles created and verified, but never worn | **Closed.** The load runs as `RETAIL_LOADER` and dbt as `RETAIL_TRANSFORMER`; four defects surfaced when they were put on |
+| Account identity hardcoded in `profiles.yml` | **Closed.** `SNOWFLAKE_ACCOUNT`/`SNOWFLAKE_USER` with no default; the account is swappable via `.env.snowflake` |
+| Warehouse with `auto_suspend` of 300 s | **Closed.** `bootstrap` sets X-Small and 60 s, as the Phase 2 plan called for and never applied |
+| `warehouse_load` had never run in a container | **Closed.** Image missing Phase 2's dependencies and no credential; the dependency list stopped being duplicated |
+| **`models/warehouse/` tree with no offline test** | **Open**, and it's the consequence of a choice. Mitigated by `make warehouse-evidence` |
+| **Snowflake account is a trial** | **Open by nature**, and the destination is swappable — verified, not claimed |
+| dbt `CustomKeyInConfigDeprecation` warning | **Open, cosmetic.** `dbt-duckdb` config, with no supported form yet |
+| **CI** | **Open, and blocked by having no remote.** Would cover the offline half (`make test` + `make silver`), never the Snowflake half |
+| Silver model and simulated orders DAG | **Closed** in Phase 3 (4 models, 8 singular tests, `simulated_orders_events.py`) |
+| **Streaming half with no offline test** | **Partially closed** in Milestones 4, 5 and 6: `fake_pg.py` covers the transaction boundary, `fake_kafka.py` the order between write and offset commit, and `fake_iceberg.py` the monotonic merge and the retry loop — offline, in `make test`. What no double covers remains open: that `rollback` actually undoes, that the broker preserves order per key, and that Iceberg refuses to commit a stale snapshot. That's `make orders-prove-atomicity`, `make orders-prove-stream` and `make orders-prove-projection` |
+| **Orders Silver claimed a separation the log doesn't declare** | **Closed** in Milestone 4, the day it was found: 5.508 rows from 298 orders. Found by two independent folds disagreeing, not by a test |
+| Gold and orders marts | **Closed** in Milestone 7: 4 STAGE, 4 FACT, 3 MART and 5 tests, each proven capable of failing via `make warehouse-prove-tests` |
+| **`TIMESTAMP` crossed the boundary 56 million years into the future** | **Closed** in Milestone 7, the day it was found. `use_logical_type = true` on `COPY INTO`; DuckDB annotates the unit only on the modern `LogicalType` and Snowflake was falling back to the legacy `ConvertedType`. **166 dbt nodes built green on top of the defect** — a human reading a mart is who caught it. Now guarded by `assert_order_milestones_are_plausible_against_the_order_date` |
+| Event count turning into `FLOAT` in parquet | **Closed** in Milestone 7. `sum()` returns `HUGEINT`, parquet has no `INT128`, the write downgrades to `DOUBLE`. Found because the DDL is derived from the cut itself |
+| **Generator assumption living in two places** | **Avoided** in Milestone 7 instead of closed: `STG_ORDER_PREMISE`/`FACT_ORDER_PREMISE` carry the entire seed to the warehouse, so `MART_FULFILLMENT_SLA` measures against the same number that generated the durations. A dbt var would have created the copy |
+| **The Silver `dbt build` gate lived in six files** | **Closed on 2026-08-31**, the day the DAG failed. See below |
+| `RETAIL_READER` role created, verified and with no consumer | **Closed on 2026-08-31.** The Streamlit panel is the first to wear it, and proves the refusal on GOLD/STAGE right on the screen |
+| **No mart joins customer with order** | **Open, and it's the model's most actionable gap.** Without it there's no repurchase, LTV, cohort or revenue per customer. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role. It requires no new source — it requires a customer-grain mart |
+| **Streaming half with no record of real execution** | **Closed** in Milestone 8. `make stream-evidence` writes `docs/stream-evidence/README.md` from the three live planes — no number by hand, and a missing section shows up as a declared absence, never as a zero |
+| Every customer bought the same expected basket | **Closed** in Phase 5: the mix became conditional on the cohort (age × community), calibrated by IPF so the aggregate wouldn't move |
+| **Newborn with a primary-holder registration** | **Closed** in Phase 6, and it fixed the domain Phase 5 got wrong. Phase 5 blocked the minor at the *order* (`min_buyer_age`) and left the registration untouched; `min_customer_age` now lives in `customer_premises_seed.csv`, and 3.602 minors became 0 |
+| **Customer base with no density** | **Closed** in Phase 6. It was 5.000 per warehouse for AUFs that differ by 4,6× in population — nothing failed, because density doesn't show up in any total. Today it's `municipal population × the province's adult share × 2,2%`, and the total is a consequence, not a quota |
+| Snowflake screenshot list, 1 of 6 captured | **Closed on 2026-09-01.** Five of the six items were already covered by the generated evidence; the sixth became the **Roles in execution** section of `make warehouse-evidence`, read from `query_history`. `PRINTS.md` was removed: it was a to-do list living in the repository |
+| Environment variables read by the code and declared nowhere | **Closed on 2026-09-01.** Nineteen of them — from `AWS_ACCESS_KEY_ID` to `RETAIL_DASHBOARD_TTL`. All have a default in the code, so nothing broke: they simply didn't exist for anyone who cloned the repository. They're in `.env.example` as commented-out overrides, and `TodaVariavelDeAmbienteEDeclarada` scans the code for `os.environ`/`getenv` and fails if a new one appears undeclared |
+| `streamlit/CONTRACT.md` eternally "modified" in git | **Closed on 2026-09-01.** The header carried the generation date, so the derived file changed on every run and the sync test had to **exempt that line** — a blind spot inside the very test that exists so there'd be no blind spot. It now carries the sha256 of `indicators.py`: the comparison became byte for byte |
+| Four versioned seeds with no executable provenance | **Closed on 2026-09-01.** The `scripts/derive_*.py` existed, with a good docstring, and **no Makefile target** — the origin of four CSVs was only discoverable by opening a file the README never said how to run. They became `make seed-province-map`, `seed-service-area`, `seed-municipality-codes` and `seed-ambiguous-series`; all four reproduced the versioned CSV byte for byte |
+| Documentation checked only by reading | **Closed on 2026-09-01.** `test_documentacao.py` scans what can be verified by machine: every path in the README's tree exists, every relative link resolves, no log/artifact is versioned, every Makefile target appears in `make help`, every script has a target, every Makefile variable is used. Six injections seen red |
+| **Interop between engines: claimed for four phases, never demonstrated** | **Closed in Phase 7.** Iceberg was justified by interop since Phase 3 and both writers were Python, using the same library. `make spike-spark-iceberg` measured 18 questions against the real stack, with **both outcomes declared beforehand**: if it failed, Spark wouldn't get in **and** the clause would come out of this table. Today the catalog has three writers, and `written_by` makes that queryable |
+| **Order assumptions contradicting one another** | **Closed in Phase 7**, after three phases "logged instead of fixed". 84% of deliveries arrived before the window even opened; the SLA threshold was set to 90 against a possible ceiling of 80. What was missing was the distinction between *tweaking until the output looks nice* and *making two assumptions coherent* — the first is refused, the second is a model correction. Guarded by `assert_order_premises_are_internally_coherent`, which checks the **derivation** and never the result |
+| **Stock, stockout, turnover and coverage out of reach** | **Closed in Phase 7, with a caveat that travels in the data.** The declared trigger was "a source of balance or movement" and it was **not** met: the ledger is *calculated* from observed consumption plus a declared policy. `stock_label = 'synthetic'` is on every row of the mart |
+| **"Don't touch RAW after closing" was discipline, not verification** | **Closed in Phase 7.** Three documentation revisions happened because a regeneration changed numbers already written and nothing flagged it. `make freeze` seals the capture and `make freeze-check` fails if it changes. The seal covers the **data**, not the execution: `run_id` and timestamps are left out, otherwise a byte-identical re-land would break the seal |
+| **References by section name and anchor were never checked** | **Closed on 2026-09-01.** `LinksRelativosTest` checks that the FILE exists, and a broken anchor points to a file that exists — so it passed, and the reader landed at the top of the document. Found while moving 17 sections to `DECISIONS.md`: one reference was left orphaned. Two new tests cover the `§ "…"` label and the anchor, at every heading level and in CONTRACT's explicit HTML anchors |
+| **README and ARCHITECTURE explaining the same thing twice** | **Closed on 2026-09-01.** 1.435 + 2.475 lines, with the same subject in two places aging at different rates. The narrative went to `DECISIONS.md`, the future scope to `BACKLOG.md`, and a tested line-count ceiling keeps both from growing back without it being a decision |
+| **Silver's parquet survives the gate excluding the model** | **Open, mitigated.** When `silver_gate` drops `silver_stock_ledger` (or `silver_live_order_state`) from the build, the parquet from the last successful build **stays** in object storage — and the export to Snowflake reads it without knowing it's stale. It actually happened: `MART_STOCK_HEALTH` described a 5-day window while every other mart described 9, with not a single test failing. Mitigated by `assert_stock_ledger_covers_the_order_window`, which compares the two domains' windows in the warehouse — which is where they finally meet. Not closed because the mitigation is per domain, and the class is general: any excluded model leaves stale parquet behind |
 
-### Vestir os papéis: o que só aparece quando se para de rodar como administrador
+### Wearing the roles: what only shows up once you stop running as admin
 
-Os três papéis existiam desde a Fase 2, com os grants certos e a matriz de isolamento
-verificada por `check_isolation`. E **nenhuma execução passava por eles** — a carga e o dbt
-rodavam como `ACCOUNTADMIN`. É a diferença entre governança verificada e governança
-adotada, e ela custou quatro defeitos, todos invisíveis enquanto o administrador rodava
-tudo:
+The three roles had existed since Phase 2, with the right grants and the isolation matrix
+verified by `check_isolation`. And **no execution ever went through them** — the load and
+dbt ran as `ACCOUNTADMIN`. It's the difference between verified governance and adopted
+governance, and it cost four defects, all invisible while the admin ran everything:
 
-| Sintoma | Causa | Por que não aparecia antes |
+| Symptom | Cause | Why it didn't show up before |
 |---|---|---|
-| `No active warehouse selected` na carga | Os papéis não tinham `usage` no **warehouse** | Administrador enxerga todo warehouse. Dado sem compute não se move, e o erro aponta para a sessão, não para o grant |
-| `schema ausente: GOLD, MART` | `require_schemas` conferia os três schemas | Era o **isolamento funcionando**: `information_schema` devolve só o que o papel vê, e o carregador não vê GOLD. Verificação mais ampla que a necessidade transforma controle em falha |
-| 8 modelos com `must have OWNERSHIP granted on TABLE` | `grant all` concede os privilégios **aplicáveis**, e posse não é um deles | `create or replace table` exige posse. Numa conta nova é inócuo — quem cria já nasce dono; só aparece em conta onde o admin criou antes |
-| `information_schema` vazio para o administrador | Os papéis customizados não estavam pendurados em `SYSADMIN` | Só surgiu **depois** de a posse sair do admin e os papéis secundários serem desligados. Não dá erro: apenas apaga os objetos da vista de quem administra |
+| `No active warehouse selected` on load | The roles had no `usage` on the **warehouse** | An admin sees every warehouse. Data doesn't move without compute, and the error points at the session, not the grant |
+| `schema missing: GOLD, MART` | `require_schemas` checked all three schemas | It was **isolation working**: `information_schema` returns only what the role sees, and the loader can't see GOLD. A check broader than the need turns a control into a failure |
+| 8 models with `must have OWNERSHIP granted on TABLE` | `grant all` grants the **applicable** privileges, and ownership isn't one of them | `create or replace table` requires ownership. On a fresh account it's harmless — whoever creates is born the owner; it only shows up on an account where the admin created it first |
+| `information_schema` empty for the admin | The custom roles weren't hung off `SYSADMIN` | It only surfaced **after** ownership left the admin and secondary roles were switched off. It throws no error: it just erases the objects from the administrator's view |
 
-O quarto é o mais instrutivo dos quatro, porque é o único que **não falha** — herança de
-papel sobe (`SYSADMIN` passa a ver `MART`) e nunca desce (`RETAIL_READER` continua sem
-`GOLD`), então a correção não afrouxa nada, e a ausência dela teria passado como "está
-tudo certo" até alguém precisar administrar a conta.
+The fourth is the most instructive of the four, because it's the only one that **doesn't
+fail** — role inheritance flows up (`SYSADMIN` starts seeing `MART`) and never down
+(`RETAIL_READER` still has no `GOLD`), so the fix doesn't loosen anything, and its absence
+would have passed as "everything's fine" until someone needed to administer the account.
 
-Os quatro viraram teste em `test_snowflake_load.py` (16 → 29), pelo mesmo critério do
-resto do arquivo: nenhum falha de forma óbvia se voltar atrás.
+All four became tests in `test_snowflake_load.py` (16 → 29), by the same criterion as the
+rest of the file: none fails obviously if it regresses.
 
-**O que ainda não é isolamento de verdade:** há um usuário só, com os três papéis. O
-isolamento real seria um usuário de serviço por papel, sem `ACCOUNTADMIN` — mas isso é
-decisão de quem administra a conta, não do repositório. O que o repositório garante é que
-`default_secondary_roles = ()` está aplicado: sem isso, contas Snowflake modernas ativam
-**todos** os papéis do usuário além do primário, e vestir o papel seria decorativo. Medido
-nesta conta antes da correção: `current_secondary_roles()` devolvia
-`ORGADMIN, RETAIL_READER, RETAIL_TRANSFORMER, RETAIL_LOADER`.
+**What still isn't real isolation:** there's a single user, holding all three roles. Real
+isolation would be one service user per role, with no `ACCOUNTADMIN` — but that's a
+decision for whoever administers the account, not for the repository. What the repository
+guarantees is that `default_secondary_roles = ()` is applied: without it, modern Snowflake
+accounts activate **all** of a user's roles besides the primary, and wearing the role would
+be decorative. Measured on this account before the fix: `current_secondary_roles()`
+returned `ORGADMIN, RETAIL_READER, RETAIL_TRANSFORMER, RETAIL_LOADER`.
 
-### `warehouse_load` compilava e não rodava
+### `warehouse_load` compiled and didn't run
 
-A DAG foi escrita na Fase 2 e verificada como as outras quatro: importa, monta o grafo,
-`airflow dags list` a enxerga. **Compilar não é executar** — e só o caminho pelo host
-(`make warehouse-refresh`) tinha sido exercitado de verdade. Na primeira execução real ela
-parou em `load_stage` com `exit 2`:
+The DAG was written in Phase 2 and verified like the other four: it imports, builds the
+graph, `airflow dags list` sees it. **Compiling is not running** — and only the path
+through the host (`make warehouse-refresh`) had actually been exercised. On its first real
+run it stopped at `load_stage` with `exit 2`:
 
 ```
 ERRO: snowflake-connector-python nao esta instalado neste venv.
 ```
 
-Duas causas independentes, e a segunda só apareceria depois de corrigida a primeira:
+Two independent causes, and the second would only show up once the first was fixed:
 
-1. **`infra/Dockerfile.airflow` duplicava a lista de dependências** de
-   `platform/pyproject.toml`. A Fase 2 acrescentou `dbt-snowflake` e
-   `snowflake-connector-python` ao pyproject; a imagem continuou com a lista da Fase 1. A
-   duplicação fez o que duplicação faz, e o custo foi pago em runtime, dias depois, com o
-   dado parado no meio do caminho.
-2. **Não havia credencial no container.** `~/.snowflake` não estava montado, então nem o
-   conector nem o dbt teriam como autenticar.
+1. **`infra/Dockerfile.airflow` duplicated the dependency list** from
+   `platform/pyproject.toml`. Phase 2 added `dbt-snowflake` and
+   `snowflake-connector-python` to the pyproject; the image stayed with Phase 1's list. The
+   duplication did what duplication does, and the cost was paid at runtime, days later,
+   with the data stuck halfway through.
+2. **There was no credential in the container.** `~/.snowflake` wasn't mounted, so neither
+   the connector nor dbt would have any way to authenticate.
 
-A correção da primeira não é "acrescentar dois pacotes": é **ler o `pyproject.toml`** no
-build, o que elimina a classe inteira do problema, e importar os dois adaptadores mais o
-conector como último passo do `RUN` — se uma dependência sumir, o **build** quebra, não a
-DAG.
+The fix for the first isn't "add two packages": it's **reading the `pyproject.toml`** at
+build time, which eliminates the entire class of problem, and importing both adapters plus
+the connector as the last step of `RUN` — if a dependency goes missing, the **build**
+breaks, not the DAG.
 
-A da segunda monta `~/.snowflake` **no mesmo caminho** de dentro e de fora
-(`${HOME}/.snowflake:${HOME}/.snowflake:ro`), com `SNOWFLAKE_HOME` apontando para lá. É o
-que faz `private_key_file` do `config.toml` e `SNOWFLAKE_PRIVATE_KEY_PATH` do
-`.env.snowflake` resolverem idênticos nos dois lados — nenhum caminho precisa ser
-reescrito em lugar nenhum. Só leitura: o orquestrador lê a chave e nunca a reescreve, e
-como o container roda com `AIRFLOW_UID` (o uid do host), nenhuma permissão do arquivo modo
-600 precisa ser afrouxada.
+The fix for the second mounts `~/.snowflake` **at the same path** inside and outside
+(`${HOME}/.snowflake:${HOME}/.snowflake:ro`), with `SNOWFLAKE_HOME` pointing there. That's
+what makes `config.toml`'s `private_key_file` and `.env.snowflake`'s
+`SNOWFLAKE_PRIVATE_KEY_PATH` resolve identically on both sides — no path needs rewriting
+anywhere. Read-only: the orchestrator reads the key and never rewrites it, and since the
+container runs with `AIRFLOW_UID` (the host's uid), no permission on the mode-600 file
+needs loosening.
 
-A identidade da conta entra por `env_file` com `required: false`, e **não** por
-`environment:` — no bloco de mapa, uma variável ausente vira presente-e-vazia no
-container, e `env_var('SNOWFLAKE_ACCOUNT')` sem default devolveria o vazio em vez de
-abortar. É a mesma armadilha já documentada no Makefile, um nível acima. Com
-`required: false`, quem não tem conta Snowflake continua subindo `make up` e as quatro DAGs
-de source normalmente.
+The account identity comes in via `env_file` with `required: false`, and **not** via
+`environment:` — in the map block, a missing variable becomes present-and-empty in the
+container, and `env_var('SNOWFLAKE_ACCOUNT')` with no default would return empty instead of
+aborting. It's the same trap already documented in the Makefile, one level up. With
+`required: false`, anyone without a Snowflake account still brings up `make up` and the
+four source DAGs normally.
 
-Medido depois da correção: a DAG fecha as quatro tarefas, e o `query_history` mostra a
-separação de papéis no **tipo** de query — `RETAIL_LOADER` com `PUT_FILES`/`COPY`,
-`RETAIL_TRANSFORMER` com `CREATE_TABLE_AS_SELECT`, `RETAIL_READER` só com `SELECT`.
+Measured after the fix: the DAG completes all four tasks, and `query_history` shows the
+role separation in the query **type** — `RETAIL_LOADER` with `PUT_FILES`/`COPY`,
+`RETAIL_TRANSFORMER` with `CREATE_TABLE_AS_SELECT`, `RETAIL_READER` with only `SELECT`.
 
-### O destino é trocável — verificado, não afirmado
+### The destination is swappable — verified, not claimed
 
-A conta é um trial, e a resposta a isso não é evitar depender dela: é garantir que trocá-la
-seja barato. Duas coisas contradiziam isso e foram corrigidas.
+The account is a trial, and the response to that isn't avoiding depending on it: it's
+making sure swapping it is cheap. Two things contradicted that and were fixed.
 
-`profiles.yml` trazia `SNOWFLAKE_ACCOUNT` e `SNOWFLAKE_USER` **cravados como default**.
-Quem clonasse o repositório sem configurar nada não receberia "configure a conta" —
-receberia uma tentativa de conexão contra a conta de outra pessoa, falhando com
-`Object does not exist` bem longe da causa. Para o MinIO o default faz sentido (`minioadmin`
-é convenção local que o `.env.example` repete); para uma conta Snowflake não existe default
-que sirva a outro. Sem default, o dbt aborta dizendo `Env var required but not provided:
-'SNOWFLAKE_ACCOUNT'`.
+`profiles.yml` carried `SNOWFLAKE_ACCOUNT` and `SNOWFLAKE_USER` **hardcoded as defaults**.
+Anyone cloning the repository without configuring anything wouldn't get "configure the
+account" — they'd get a connection attempt against someone else's account, failing with
+`Object does not exist` far from the actual cause. For MinIO the default makes sense
+(`minioadmin` is a local convention that `.env.example` repeats); for a Snowflake account
+there's no default that serves anyone else. With no default, dbt aborts saying `Env var
+required but not provided: 'SNOWFLAKE_ACCOUNT'`.
 
-Trocar de conta hoje é: editar [.env.snowflake.example](.env.snowflake.example) copiado
-para `.env.snowflake`, o bloco correspondente de `~/.snowflake/config.toml`, e rodar
-`make warehouse-bootstrap`. **Nenhum modelo, nenhum SQL e nenhum teste muda** — é a
-fronteira física L2→L3 pagando por si.
+Swapping accounts today is: edit [.env.snowflake.example](.env.snowflake.example) copied to
+`.env.snowflake`, the corresponding block of `~/.snowflake/config.toml`, and run
+`make warehouse-bootstrap`. **No model, no SQL and no test changes** — it's the physical
+L2→L3 boundary paying for itself.
 
-Verificado nos dois sentidos: `dbt parse --target dev` passa com todas as variáveis do
-Snowflake ausentes, e `--target snowflake` falha nomeando a que falta.
+Verified in both directions: `dbt parse --target dev` passes with every Snowflake variable
+missing, and `--target snowflake` fails naming the one that's missing.
 
-### `models/warehouse/` sem teste offline — e por que a resposta não é um espelho DuckDB
+### `models/warehouse/` with no offline test — and why the answer isn't a DuckDB mirror
 
-Um espelho em DuckDB dos 24 modelos teria **passado** nos dois erros que quebraram a
-primeira execução real: `FILTER (WHERE ...)` e `WINDOW ... AS`, que o DuckDB aceita e o
-Snowflake não. Um teste que não reproduz o modo de falha não é teste — é uma segunda
-implementação para manter, e daria confiança falsa exatamente onde não há.
+A DuckDB mirror of the 24 models would have **passed** on the two errors that broke the
+first real run: `FILTER (WHERE ...)` and `WINDOW ... AS`, which DuckDB accepts and
+Snowflake doesn't. A test that doesn't reproduce the failure mode isn't a test — it's a
+second implementation to maintain, and it would give false confidence exactly where there
+is none.
 
-A mitigação é outra: [`make warehouse-evidence`](docs/warehouse-evidence/README.md)
-registra o resultado da execução **real** — posse objeto a objeto, volume, matriz de
-isolamento e amostra de cada mart — com data e identidade da conta. Converte "código sem
-teste" em "código executado, com a prova anexada e datada". É regenerável: vincular outra
-conta e rodar de novo produz a evidência daquela conta.
+The mitigation is different: [`make warehouse-evidence`](docs/warehouse-evidence/README.md)
+records the result of the **real** run — ownership object by object, volume, isolation
+matrix and a sample of each mart — with date and account identity. It converts "code with
+no test" into "code that ran, with the proof attached and dated". It's regenerable:
+pointing at another account and running again produces that account's evidence.
 
-O que continua verdadeiro: o recorte (`snowflake_export.py`) e o transporte
-(`snowflake_load.py`) são cobertos offline, e é neles que moram os erros silenciosos —
-agregado somado junto do detalhe, escopo esquecido, coluna casada por posição. O SQL do
-warehouse falha alto quando falha.
+What's still true: the cut (`snowflake_export.py`) and the transport (`snowflake_load.py`)
+are covered offline, and that's where the silent errors live — an aggregate summed together
+with the detail, a forgotten scope, a column matched by position. The warehouse SQL fails
+loud when it fails.
 
-### Fanout de homônimo no Silver de população
+### Homonym fanout in the population Silver
 
-`silver_ine_population_by_municipality.sql` casava a tabela RAW com o seed de códigos
-usando `inner join ... on e.municipality_name = c.municipality_name` — **só por nome**. O
-comentário do próprio modelo justificava que isso era seguro porque "o seed já vem escopado
-a 08/28/41/46, onde nenhuma colisão foi medida". A medição confirma que o seed realmente
-não tem colisão interna (0 nas 4 províncias), mas **a conclusão não seguia**: o lado RAW é
-**nacional** (~8.200 municípios) e traz homônimos de outras províncias com `Nombre`
-idêntico. O docstring de `scripts/derive_municipality_codes.py` já antecipava exatamente
-isso ("um join Espanha-inteira por nome sozinho fosse ambíguo para 3 desses 18 nomes"); o
-que passou despercebido é que o modelo faz esse join Espanha-inteira, porque a extração
-não filtra nada. Três municípios recebiam duas linhas:
+`silver_ine_population_by_municipality.sql` joined the RAW table with the code seed using
+`inner join ... on e.municipality_name = c.municipality_name` — **by name alone**. The
+model's own comment justified this as safe because "the seed already comes scoped to
+08/28/41/46, where no collision was measured". The measurement confirms the seed really has
+no internal collision (0 across the 4 provinces), but **the conclusion didn't follow**: the
+RAW side is **national** (~8,200 municipalities) and brings in homonyms from other
+provinces with an identical `Nombre`. The docstring of
+`scripts/derive_municipality_codes.py` had already anticipated exactly this ("a Spain-wide
+join by name alone would be ambiguous for 3 of these 18 names"); what went unnoticed is
+that the model does exactly that Spain-wide join, because the extraction filters nothing.
+Three municipalities got two rows:
 
-| Município na AUF | Série correta | Série intrusa |
+| Municipality in the AUF | Correct series | Intruding series |
 |---|---|---|
 | Arroyomolinos (28/015) | `DPOP12967` = 38.075 | `DPOP4729` = 816 (Cáceres, 10023) |
 | Molar, El (28/086) | `DPOP13174` = 9.999 | `DPOP19423` = 295 (Tarragona, 43085) |
 | Torrent (46/244) | `DPOP21778` = 90.928 | `DPOP7960` = 182 (Girona, 17197) |
 
-Efeito: `mad1` devolvia 130 linhas para 128 municípios e `vlc1`, 64 para 63.
+Effect: `mad1` returned 130 rows for 128 municipalities and `vlc1`, 64 for 63.
 
-**Por que o teste de grão não pegou.** O grão testado é
-`(ingestion_date, series_code, year, fk_periodo)`, e as duas séries têm `series_code`
-diferente — o grão continuava único. O teste que faltava, agora existe:
-`assert_ine_population_by_municipality_has_one_series_per_municipality` afirma uma linha
-por `(município, sexo, ano)`, que é o invariante real.
+**Why the grain test didn't catch it.** The tested grain is
+`(ingestion_date, series_code, year, fk_periodo)`, and the two series have different
+`series_code` — the grain stayed unique. The test that was missing now exists:
+`assert_ine_population_by_municipality_has_one_series_per_municipality` asserts one row per
+`(municipality, sex, year)`, which is the real invariant.
 
-**Correção: pelo código oficial da própria fonte, não por heurística.** O payload de
-`DATOS_TABLA/29005` só tem `COD`, `Nombre`, `FK_Escala`, `FK_Unidad` e `Data` — sem
-província, sem `MetaData` (verificado). Mas `GET /ES/VALORES_SERIE/{COD}` devolve, para
-cada série, o **código oficial INE do município** (província+município), o mesmo esquema do
-Callejero e dos seeds `warehouse_*`. [scripts/derive_ambiguous_series.py](scripts/derive_ambiguous_series.py)
-identifica offline quais nomes são ambíguos no RAW *e* existem no seed das 4 províncias
-(hoje 3 nomes, 18 séries), consulta essas séries e grava
-`ine_ambiguous_series_seed.csv`. O modelo passa a filtrar: série de nome ambíguo só entra
-se o código oficial bater com o do seed; nome não ambíguo continua resolvido por nome.
+**Fix: by the source's own official code, not by heuristic.** The `DATOS_TABLA/29005`
+payload only has `COD`, `Nombre`, `FK_Escala`, `FK_Unidad` and `Data` — no province, no
+`MetaData` (verified). But `GET /ES/VALORES_SERIE/{COD}` returns, for each series, the
+**official INE municipality code** (province+municipality), the same schema as the
+Callejero and the `warehouse_*` seeds.
+[scripts/derive_ambiguous_series.py](scripts/derive_ambiguous_series.py) identifies offline
+which names are ambiguous in RAW *and* exist in the 4-province seed (today 3 names, 18
+series), queries those series, and writes `ine_ambiguous_series_seed.csv`. The model now
+filters: a series with an ambiguous name only gets in if its official code matches the
+seed's; a non-ambiguous name is still resolved by name.
 
-Medido depois da correção: 128/133/46/63 municípios por warehouse, uma série cada. Os
-`customers.json` das quatro partições saíram **byte a byte idênticos** aos anteriores — a
-defesa provisória do export ("fica o maior valor") vinha acertando, mas por coincidência
-de porte, não por saber qual série era qual. `export-oltp-reference` deixou de deduplicar:
-agora apenas **reconfere** o invariante e **recusa** se ele cair, em vez de escolher um
-valor por conta própria.
+Measured after the fix: 128/133/46/63 municipalities per warehouse, one series each. The
+`customers.json` files for the four partitions came out **byte for byte identical** to the
+earlier ones — the export's provisional defense ("keep the larger value") had been getting
+it right, but by coincidence of size, not by knowing which series was which.
+`export-oltp-reference` stopped deduplicating: it now just **rechecks** the invariant and
+**refuses** if it breaks, instead of picking a value on its own.
 
-### Cobertura de teste
+### Test coverage
 
-**Sem contagem por módulo, de propósito.** A tabela que morava aqui trazia um inteiro por
-módulo, copiado à mão, e apodreceu: dizia 131 testes na plataforma quando eram 389, listava
-`verify.py` e `query.py` como se tivessem arquivo próprio (não têm — são exercitados de
-dentro de `test_landing_roundtrip.py` e `test_config.py`), e afirmava 29 e 16 para
-`snowflake_load.py` em dois parágrafos da **mesma seção**. Um número mantido à mão em dois
-lugares é uma contradição esperando a data; a lista abaixo diz o que cada suíte prova, que é
-a parte que não muda a cada teste novo. O total sai de `make test`, medido, não escrito.
+**No count per module, on purpose.** The table that used to live here carried an integer
+per module, copied by hand, and it rotted: it said 131 tests on the platform when there
+were 389, listed `verify.py` and `query.py` as if they had their own file (they don't —
+they're exercised from inside `test_landing_roundtrip.py` and `test_config.py`), and
+claimed 29 and 16 for `snowflake_load.py` in two paragraphs of the **same section**. A
+number kept by hand in two places is a contradiction waiting for its date; the list below
+says what each suite proves, which is the part that doesn't change with every new test. The
+total comes from `make test`, measured, not written.
 
-| Arquivo | O que a suíte prova |
+| File | What the suite proves |
 |---|---|
-| `test_manifest.py` | Obrigações do contrato do consumidor, e as recusas |
-| `test_land.py` · `test_landing_roundtrip.py` | Upload, idempotência, auto-correção, abortar antes de `_SUCCESS`, e a releitura que reconfere (`verify.py`) |
-| `test_config.py` | Precedência de credencial, o `.env` não sobrepor o ambiente, a conversão de endpoint (`query.py`), e toda variável lida estar declarada |
-| `test_prune_local.py` | Só apaga a cópia local depois de duas conferências independentes |
-| `test_oltp_reference.py` | As queries do export contra fixtures DuckDB reais, a alocação por população e o share adulto medido antes do corte |
-| `test_orders_reference.py` · `test_demand_profile.py` · `test_demand_check.py` | O calendário de preço, o IPF, os dois checksums da extração do MAPA e o reality check |
-| `test_orders_oltp.py` · `test_orders_stream.py` · `test_orders_projection.py` | A fronteira da transação, a ordem entre escrita e commit de offset, a fusão monotônica |
-| `test_snowflake_export.py` | O recorte: agregado `'Total'`, escopo AUF, dedup, DDL derivado do próprio recorte |
-| `test_snowflake_load.py` | Stage qualificado, `OVERWRITE`, casamento por nome, reconferência, e os 4 defeitos de papel |
-| `test_snowflake_evidence.py` · `test_stream_evidence.py` | Totais somados e não escritos, isolamento quebrado em destaque, e o que falhou não virar vazio |
-| `test_silver_gate.py` | O portão do `dbt build` decidindo num lugar só |
-| `test_dashboard_indicators.py` | O `CONTRACT.md` byte a byte igual ao que o gerador produz, e todo parâmetro ligado |
-| `test_cli.py` | Os defaults da linha de comando, incluindo `--count` **não** ter um |
+| `test_manifest.py` | Consumer contract obligations, and the refusals |
+| `test_land.py` · `test_landing_roundtrip.py` | Upload, idempotency, self-correction, aborting before `_SUCCESS`, and the reread that rechecks (`verify.py`) |
+| `test_config.py` | Credential precedence, `.env` not overriding the environment, endpoint conversion (`query.py`), and every read variable being declared |
+| `test_prune_local.py` | Only deletes the local copy after two independent checks |
+| `test_oltp_reference.py` | The export's queries against real DuckDB fixtures, the population-based allocation and the adult share measured before the cut |
+| `test_orders_reference.py` · `test_demand_profile.py` · `test_demand_check.py` | The price calendar, the IPF, the MAPA extraction's two checksums, and the reality check |
+| `test_orders_oltp.py` · `test_orders_stream.py` · `test_orders_projection.py` | The transaction boundary, the order between write and offset commit, the monotonic merge |
+| `test_snowflake_export.py` | The cut: `'Total'` aggregate, AUF scope, dedup, DDL derived from the cut itself |
+| `test_snowflake_load.py` | Qualified stage, `OVERWRITE`, matching by name, rechecking, and the 4 role defects |
+| `test_snowflake_evidence.py` · `test_stream_evidence.py` | Totals summed and not written, broken isolation highlighted, and a failure not turning into an empty value |
+| `test_silver_gate.py` | The `dbt build` gate deciding in a single place |
+| `test_dashboard_indicators.py` | `CONTRACT.md` byte for byte equal to what the generator produces, and every parameter bound |
+| `test_cli.py` | The command-line defaults, including `--count` **not** having one |
 
-Fechado com um duplo de cliente S3 em memória (`platform/tests/fake_s3.py`), no espírito do
-duplo de HTTP que a Source já usa. O duplo **valida o `ChecksumSHA256` declarado**, como o
-servidor real faz: um erro na conversão hex→base64 falharia em teste, não em produção.
+Closed with an in-memory S3 client double (`platform/tests/fake_s3.py`), in the spirit of
+the HTTP double the Source already uses. The double **validates the declared
+`ChecksumSHA256`**, like the real server does: an error in the hex→base64 conversion would
+fail in test, not in production.
 
-Confirmado não-vazio por mutação: desligar a comparação de sha256 em `verify.py` faz
-`test_catches_a_tampered_object` falhar.
+Confirmed non-empty by mutation: turning off the sha256 comparison in `verify.py` makes
+`test_catches_a_tampered_object` fail.
 
-**O que ainda não é coberto**, e a lista cresceu com a Fase 2:
+**What's still not covered**, and the list grew with Phase 2:
 
-- **O caminho `dbt` do Silver** — os testes de dados exigem object storage de pé.
-- **As DAGs** — nenhum teste importa o módulo do Airflow. As seis compilam via `DagBag`
-  no container, o que pega erro de import mas não comportamento.
-- **A árvore `models/warehouse/`** — os 24 modelos e seus testes só rodam **contra o
-  Snowflake**. Não há equivalente offline, e não é oversight: um espelho em DuckDB seria
-  uma segunda materialização da mesma verdade, e foi justamente a diferença entre os dois
-  motores (`FILTER`, `WINDOW`) que os quebrou na primeira execução — um espelho DuckDB teria
-  passado e escondido exatamente esses erros. **A consequência é real e fica registrada: sem
-  conta Snowflake, `make warehouse` não roda e essa metade do projeto não é verificável.**
-  O que atenua é que o recorte que a alimenta (`snowflake_export.py`) e o transporte
-  (`snowflake_load.py`) são cobertos offline, e é neles que moram os erros silenciosos — o
-  SQL do Gold falha alto quando falha.
+- **The Silver `dbt` path** — the data tests require object storage to be up.
+- **The DAGs** — no test imports the Airflow module. All six compile via `DagBag` in the
+  container, which catches import errors but not behavior.
+- **The `models/warehouse/` tree** — the 24 models and their tests only run **against
+  Snowflake**. There's no offline equivalent, and it's not an oversight: a DuckDB mirror
+  would be a second materialization of the same truth, and it was precisely the difference
+  between the two engines (`FILTER`, `WINDOW`) that broke them on the first real run — a
+  DuckDB mirror would have passed and hidden exactly those errors. **The consequence is
+  real and stays on record: with no Snowflake account, `make warehouse` doesn't run and
+  that half of the project isn't verifiable.** What softens it is that the cut feeding it
+  (`snowflake_export.py`) and the transport (`snowflake_load.py`) are covered offline, and
+  that's where the silent errors live — the Gold SQL fails loud when it fails.
 
-Os três foram verificados manualmente, em execução real.
+All three were verified manually, in a real run.
 
-### Endurecimento do stack local
+### Hardening the local stack
 
-- **Portas em `127.0.0.1`** por padrão (`BIND_ADDR`). Antes escutavam em `0.0.0.0` com
-  `minioadmin/minioadmin` e `admin/admin` — qualquer máquina da rede alcançava o console do
-  MinIO e a UI do Airflow.
-- **`AIRFLOW_SECRET_KEY` e `AIRFLOW_FERNET_KEY` aleatórias**, geradas por `make secrets` no
-  `.env` (modo 600, fora do versionamento). O compose usa interpolação `:?` e **recusa
-  subir sem elas**, de modo que não existe caminho em que um valor de exemplo vire a chave
-  real por esquecimento.
-- **`DUCKDB_PATH` do orquestrador vive dentro do container**, não no repositório montado. O
-  DuckDB é single-writer: com o arquivo compartilhado, uma janela de DBeaver esquecida no
-  host derrubaria a tarefa `silver` do DAG.
+- **Ports on `127.0.0.1`** by default (`BIND_ADDR`). They used to listen on `0.0.0.0` with
+  `minioadmin/minioadmin` and `admin/admin` — any machine on the network could reach the
+  MinIO console and the Airflow UI.
+- **Random `AIRFLOW_SECRET_KEY` and `AIRFLOW_FERNET_KEY`**, generated by `make secrets` into
+  `.env` (mode 600, outside version control). Compose uses `:?` interpolation and **refuses
+  to start without them**, so there's no path where an example value becomes the real key
+  by oversight.
+- **The orchestrator's `DUCKDB_PATH` lives inside the container**, not in the mounted
+  repository. DuckDB is single-writer: with the file shared, a DBeaver window left open on
+  the host would take down the DAG's `silver` task.
 
-### Sem CI
+### No CI
 
-Nenhum `.github/workflows`, e **nenhum remoto configurado** (`git remote -v` é vazio). A
-fronteira depende de alguém rodar `make test` — e o alvo `source-test` existe exatamente
-para ser um job que não instala nada. Dois jobs (Source sem dependência, plataforma com
-venv) tornariam a fronteira verificada a cada push em vez de por disciplina.
+No `.github/workflows`, and **no remote configured** (`git remote -v` is empty). The
+boundary depends on someone running `make test` — and the `source-test` target exists
+precisely to be a job that installs nothing. Two jobs (Source with no dependency, platform
+with a venv) would make the boundary verified on every push instead of by discipline.
 
-Não está escrito porque **um workflow que nunca rodou é o oposto do que este repositório
-faz com teste**: seria um arquivo afirmando uma verificação que ninguém viu acontecer, nem
-verde nem vermelha. O gatilho é literal — no dia em que houver remoto, os dois jobs entram
-e a primeira execução é a prova.
+It's not written because **a workflow that has never run is the opposite of what this
+repository does with testing**: it would be a file claiming a check nobody ever saw happen,
+neither green nor red. The trigger is literal — the day there's a remote, both jobs get in
+and the first run is the proof.
 
-### A conta Snowflake é um trial — **aberta, por natureza**
+### The Snowflake account is a trial — **open, by nature**
 
-Trial de 14 dias a partir de 2026-08-27. Quando expirar, `make warehouse` para de rodar e
-com ele os 24 modelos e os testes do Gold/Mart. **O lakehouse não é afetado**: `make silver`
-e as suítes Python continuam offline, sem credencial e sem custo — foi para isso que a
-fronteira L2→L3 é física. Um trial anterior já expirou durante esta fase e o sintoma foi
-`390913`, com o login autenticando e nenhum warehouse disponível.
+A 14-day trial starting 2026-08-27. When it expires, `make warehouse` stops running and
+with it the 24 models and the Gold/Mart tests. **The lakehouse isn't affected**:
+`make silver` and the Python suites keep running offline, with no credential and no cost —
+that's exactly why the L2→L3 boundary is physical. An earlier trial already expired during
+this phase and the symptom was `390913`, with the login authenticating and no warehouse
+available.
 
-### Aviso de depreciação do dbt — **aberta, cosmética**
+### dbt deprecation warning — **open, cosmetic**
 
-`dbt build` emite 16 ocorrências de `CustomKeyInConfigDeprecation` por causa de
-`+format: parquet` em `dbt_project.yml`. É config do `dbt-duckdb`, não do dbt-core, e mover
-para `config.meta` como o aviso sugere pode quebrar a materialização `external`. Deixado
-como está até o `dbt-duckdb` publicar a forma suportada; o aviso é ruído, não sintoma.
+`dbt build` emits 16 occurrences of `CustomKeyInConfigDeprecation` because of
+`+format: parquet` in `dbt_project.yml`. It's `dbt-duckdb` config, not dbt-core's, and
+moving it to `config.meta` as the warning suggests can break the `external`
+materialization. Left as is until `dbt-duckdb` publishes the supported form; the warning is
+noise, not a symptom.
 
-## Fora de escopo
+## Out of scope
 
-**Gold — ENTROU na Fase 2**, e o que estava registrado aqui como "a nomear quando entrar"
-foi cumprido: o SCD2 de `DIM_PRODUCT` é chaveado em `source_product_id` e portanto modela o
-ciclo de vida **da chave da fonte**, não do item comercial. Os casos de `name_seen_before`
-(7 na base atual) produzem "um produto morreu, outro nasceu" — a dimensão carrega
-`identity_ambiguous` para que isso seja consultável em vez de herdado sem saber. O nome
-`fct_price_daily` foi **descartado**: virou `FACT_PRICE_SNAPSHOT`, porque "daily"
-prometeria uma continuidade que a fonte não tem.
+**Gold — GOT IN during Phase 2**, and what was recorded here as "to be named once it gets
+in" has been fulfilled: `DIM_PRODUCT`'s SCD2 is keyed on `source_product_id` and therefore
+models the lifecycle **of the source's key**, not of the commercial item. The
+`name_seen_before` cases (7 in the current base) produce "one product died, another was
+born" — the dimension carries `identity_ambiguous` so that's queryable instead of inherited
+unknowingly. The name `fct_price_daily` was **discarded**: it became
+`FACT_PRICE_SNAPSHOT`, because "daily" would promise a continuity the source doesn't have.
 
-**Fato de venda — ENTROU na Fase 3, e continua sintético.** A fonte não expõe venda, pedido
-ou estoque em nenhum endpoint conhecido; isso não mudou e não vai mudar. O que mudou é que o
-fato transacional agora existe, **e está dito em vez de implícito**: o pedido é sintético, e
-o cliente, o produto e o preço que ele carrega são observados. A tabela de premissas
-(`order_premises_seed.csv`) é a lista fechada do que foi inventado, rotulada `synthetic` linha
-a linha, e o export recusa qualquer outro rótulo.
+**Sales fact — GOT IN during Phase 3, and it's still synthetic.** The source exposes no
+sale, order, or stock in any known endpoint; that hasn't changed and won't change. What
+changed is that the transactional fact now exists, **and it's stated instead of
+implicit**: the order is synthetic, and the customer, product, and price it carries are
+observed. The assumptions table (`order_premises_seed.csv`) is the closed list of what was
+invented, labeled `synthetic` row by row, and the export refuses any other label.
 
-O Gold **os recebeu** no fim da Fase 3: `FACT_ORDER` (accumulating snapshot),
-`FACT_ORDER_ITEM`, `FACT_ORDER_EVENT` e `FACT_ORDER_PREMISE`, mais três marts. É o que
-finalmente faz o SCD2 pagar por si — até então as duas dimensões versionadas não tinham
-nenhum fato apontando para uma versão.
+Gold **received them** at the end of Phase 3: `FACT_ORDER` (accumulating snapshot),
+`FACT_ORDER_ITEM`, `FACT_ORDER_EVENT` and `FACT_ORDER_PREMISE`, plus three marts. That's
+what finally makes the SCD2 pay for itself — until then the two versioned dimensions had no
+fact pointing at a version.
 
-**Moeda.** A fonte não a declara. O Silver não inventa. A var `currency` do projeto dbt
-existe como **premissa do consumidor** e é o Gold que a materializa: `FACT_PRICE_SNAPSHOT`
-carrega uma coluna `currency` com o valor da var, para que a premissa viaje junto do número
-em vez de morar só num arquivo de configuração. Trocar de moeda é editar a var, não caçar
-`EUR` espalhado por modelo.
+**Currency.** The source doesn't declare it. Silver doesn't invent it. The dbt project's
+`currency` var exists as a **consumer assumption**, and it's Gold that materializes it:
+`FACT_PRICE_SNAPSHOT` carries a `currency` column with the var's value, so the assumption
+travels with the number instead of living only in a config file. Switching currency means
+editing the var, not hunting down `EUR` scattered across models.

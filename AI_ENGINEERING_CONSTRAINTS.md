@@ -1,56 +1,67 @@
-# Restrições de engenharia para IA/agentes
+# Engineering constraints for AI/agents
 
-**Este documento não é meu.** O corpo abaixo é o texto de contraposição técnica escrito por
-**welton.ferreira** e entregue ao agente em **2026-09-01**, transcrito **sem alteração** da
-mensagem que o continha. Ele não estava versionado, e um contrato que só existe numa conversa
-não governa o repositório: um agente futuro clona o projeto e não o encontra. Por isso ele
-está aqui — e a autoria é a razão pela qual o texto **não** foi reformatado, resumido nem
-"melhorado".
+**This document is not mine.** The body below is the technical counter-position text written
+by **welton.ferreira** and delivered to the agent on **2026-09-01**, transcribed **without
+alteration** from the message that contained it. It was not version-controlled, and a
+contract that only exists in a conversation doesn't govern the repository: a future agent
+clones the project and never sees it. That's why it's here — and authorship is the reason the
+text was **not** reformatted, summarized, or "improved."
 
-**Precedência.** Este documento prevalece sobre a preferência de qualquer agente. A hierarquia
-de decisão está na sua própria seção 22, e a preferência da IA é o **último** critério.
+**Translation note (2026-09-04).** The paragraph above, and the body that follows, were
+originally written in Portuguese. At the author's own request, the whole project — this
+document included — is being translated to English. This is a faithful, meaning-preserving
+translation, not a rewrite: nothing was added, removed, softened, or reinterpreted. The
+original Portuguese text is preserved byte-for-byte in the git history of this file. If any
+line here reads as ambiguous against the author's intent, the original Portuguese commit is
+the tiebreaker, not this translation.
 
-**Onde ele foi exercido.** A Fase 7 inteira foi conduzida contra este texto, e o registro de
-cada decisão — com a seção que a causou — está em [DECISIONS.md](DECISIONS.md). O template de
-*change request* exigido pelo STATUS fecha aquele arquivo. Escopo que não entra vive em
-[BACKLOG.md](BACKLOG.md).
+**Precedence.** This document overrides any agent's preference. The decision hierarchy is in
+its own section 22, and AI preference is the **last** criterion.
 
-> **Confira esta transcrição.** Ela foi recuperada do log da sessão, não de um arquivo que
-> você tenha commitado. Se algum parágrafo não for o seu texto, o seu texto é o que vale.
+**Where it was exercised.** All of Phase 7 was conducted against this text, and the record of
+each decision — with the section that caused it — is in [DECISIONS.md](DECISIONS.md). The
+*change request* template required by STATUS closes that file. Scope that doesn't make the
+cut lives in [BACKLOG.md](BACKLOG.md).
+
+> **Check this transcript.** It was recovered from the session log, not from a file you had
+> committed. If any paragraph isn't your text, your text is what governs.
 
 ---
 
 AI_ENGINEERING_CONSTRAINTS.md
 
-Documento de contraposição técnica — Fase 7 e congelamento
+Technical counter-position document — Phase 7 and freeze
 
-Objetivo: estabelecer limites para qualquer IA/agente que continue trabalhando no projeto.
+Purpose: establish limits for any AI/agent that continues working on the project.
 
-Este documento prevalece como conjunto de restrições de engenharia para a etapa final. A IA deve preservar as decisões já demonstradas e não introduzir mudanças arquiteturais apenas por preferência, novidade tecnológica ou "melhor prática" genérica.
+This document overrides as the set of engineering constraints for the final stage. The AI
+must preserve decisions already demonstrated and must not introduce architectural changes
+merely out of preference, technological novelty, or generic "best practice."
 
-1. Regra principal
+1. Main rule
 
-Antes de modificar arquitetura, tecnologia, contrato de dados ou premissa operacional, a IA deve responder:
+Before modifying architecture, technology, data contract, or operational assumption, the AI
+must answer:
 
-Qual problema concreto existe?
+What concrete problem exists?
 
-Qual evidência demonstra que ele existe?
+What evidence demonstrates that it exists?
 
-Por que a solução atual não é suficiente?
+Why isn't the current solution sufficient?
 
-Qual é o custo da mudança?
+What is the cost of the change?
 
-Qual teste provará que a mudança melhorou o sistema?
+What test will prove the change improved the system?
 
-O que será perdido ou alterado com a mudança?
+What will be lost or altered by the change?
 
-Se essas perguntas não puderem ser respondidas, não alterar.
+If these questions cannot be answered, do not make the change.
 
-2. O projeto não deve virar uma coleção de tecnologias
+2. The project must not become a technology collection
 
-Tecnologia não é justificativa.
+Technology is not justification.
 
-Não adicionar:
+Do not add:
 
 Spark;
 
@@ -74,217 +85,223 @@ Databricks;
 
 Redis;
 
-qualquer novo banco, framework ou serviço
+any new database, framework, or service
 
-apenas para aumentar a quantidade de ferramentas.
+just to increase the tool count.
 
-Cada tecnologia precisa possuir uma responsabilidade arquitetural explícita e uma evidência de necessidade.
+Every technology needs an explicit architectural responsibility and evidence of necessity.
 
-3. Regra para o Spark
+3. Rule for Spark
 
-O Spark não deve ser defendido pelo volume atual dos dados.
+Spark must not be defended by the current data volume.
 
-O caso de uso é o stock ledger / replenishment, no qual o estado futuro depende do estado anterior:
+The use case is the stock ledger / replenishment, where future state depends on prior state:
 
 consumption -> balance -> reorder -> receipt -> future balance
 
-Esse encadeamento constitui o argumento técnico para processamento distribuído/stateful.
+This chain is the technical argument for distributed/stateful processing.
 
-O Spark deve:
+Spark must:
 
-ler/escrever no mesmo catálogo Iceberg utilizado pelo projeto;
+read/write the same Iceberg catalog used by the project;
 
-produzir dados verificáveis;
+produce verifiable data;
 
-manter provenance;
+maintain provenance;
 
-funcionar sob perfil explícito;
+run under an explicit profile;
 
-não tornar o caminho padrão do projeto dependente de Spark.
+not make the project's default path depend on Spark.
 
-Não transformar DuckDB em "errado" apenas porque Spark foi introduzido.
+Do not turn DuckDB into "wrong" just because Spark was introduced.
 
-O objetivo do spike é demonstrar interoperabilidade e adequação do engine ao problema, não provar que Spark é mais rápido.
+The spike's goal is to demonstrate interoperability and engine fit for the problem, not to
+prove Spark is faster.
 
-4. Regra para Iceberg
+4. Rule for Iceberg
 
-Iceberg é o mecanismo de tabela/concurrency do projeto.
+Iceberg is the project's table/concurrency mechanism.
 
-Não fazer:
+Do not:
 
-guessing de metadata_location;
+guess `metadata_location`;
 
-reconstrução manual de metadata;
+manually reconstruct metadata;
 
-overwrite cego após conflito;
+blind-overwrite after a conflict;
 
-retry que possa substituir estado novo por estado antigo.
+retry in a way that could replace newer state with older state.
 
-Em conflito otimista:
+On optimistic conflict:
 
-detectar conflito;
+detect the conflict;
 
-recarregar estado;
+reload state;
 
-reaplicar a operação;
+reapply the operation;
 
-respeitar monotonicidade de sequência;
+respect sequence monotonicity;
 
-tentar novamente.
+retry.
 
-A regra é:
+The rule is:
 
 older seq MUST NOT overwrite newer seq.
 
-5. Regra para Kafka
+5. Rule for Kafka
 
-Kafka é transporte, não fonte canônica.
+Kafka is transport, not the canonical source.
 
-Semântica adotada:
+Adopted semantics:
 
 publish -> broker ack -> mark outbox
 
-A possibilidade de duplicação no intervalo entre ACK e marcação do outbox é aceita.
+The possibility of duplication in the window between ACK and marking the outbox is accepted.
 
-Portanto:
+Therefore:
 
-não prometer exactly-once end-to-end;
+do not promise end-to-end exactly-once;
 
-manter deduplicação no consumidor;
+keep deduplication in the consumer;
 
-respeitar ordenação por order_id;
+respect ordering by order_id;
 
-seq <= last -> descartar;
+seq <= last -> discard;
 
-seq == last + 1 -> aplicar;
+seq == last + 1 -> apply;
 
-seq > last + 1 -> detectar gap e interromper processamento daquela sequência.
+seq > last + 1 -> detect a gap and stop processing that sequence.
 
-Não alterar a semântica para "exactly once" sem uma demonstração técnica completa.
+Do not change the semantics to "exactly once" without a complete technical demonstration.
 
-6. Regra para Outbox
+6. Rule for Outbox
 
-Estado de negócio e evento devem possuir atomicidade transacional.
+Business state and event must have transactional atomicity.
 
-A operação deve manter:
+The operation must keep:
 
 business state + outbox event
 
-na mesma transação.
+in the same transaction.
 
-Rollback deve desfazer ambos.
+Rollback must undo both.
 
-Routing columns devem permanecer consistentes com o payload.
+Routing columns must stay consistent with the payload.
 
-last_sequence_no deve preservar ordenação.
+last_sequence_no must preserve ordering.
 
-7. Regra para fontes
+7. Rule for sources
 
-Fontes congeladas são contratos.
+Frozen sources are contracts.
 
-Não modificar silenciosamente:
+Do not silently modify:
 
-formato;
+format;
 
-semântica;
+semantics;
 
-identificadores;
+identifiers;
 
-partições;
+partitions;
 
 checksums;
 
-conteúdo RAW.
+RAW content.
 
-RAW deve permanecer como representação fiel da origem.
+RAW must remain a faithful representation of the origin.
 
-Se uma interpretação analítica for necessária, ela deve acontecer downstream.
+If an analytical interpretation is needed, it must happen downstream.
 
-8. Regra para INE / Callejero
+8. Rule for INE / Callejero
 
-Não interpretar Callejero como uma tabela simples de "uma linha por rua".
+Do not interpret Callejero as a simple "one row per street" table.
 
-TRAM pode possuir múltiplas linhas legítimas para a mesma rua porque representa trechos/faixas de numeração e pode diferenciar:
+TRAM can have multiple legitimate rows for the same street because it represents
+segments/numbering ranges and can differentiate:
 
-seção censitária;
+census section;
 
-tipo de numeração;
+numbering type;
 
-número inicial/final;
+start/end number;
 
-código postal;
+postal code;
 
-trecho.
+segment.
 
-Portanto:
+Therefore:
 
 street-level != tramo-level
 
-Não deduplicar essas linhas sem preservar a granularidade.
+Do not deduplicate these rows without preserving the granularity.
 
-A relação warehouse/service-area pertence à simulação de negócio e não deve ser artificialmente atribuída pelo source Callejero.
+The warehouse/service-area relationship belongs to the business simulation and must not be
+artificially assigned by the Callejero source.
 
-9. Regra para Customer
+9. Rule for Customer
 
-Customer é sintético.
+Customer is synthetic.
 
-Sua geografia deve ser ancorada em dados reais do Lakehouse, mas a associação com warehouse representa uma premissa da simulação.
+Its geography must be anchored to real Lakehouse data, but the association with a warehouse
+represents a simulation assumption.
 
-Não apresentar clientes sintéticos como dados reais.
+Do not present synthetic customers as real data.
 
-Manter separação entre:
+Keep separation between:
 
 source key;
 
 business identity;
 
-referência geográfica real;
+real geographic reference;
 
-entidade sintética.
+synthetic entity.
 
-10. Regra para Orders
+10. Rule for Orders
 
-Orders são dados sintéticos, mas devem possuir:
+Orders are synthetic data, but must have:
 
-coerência temporal;
+temporal coherence;
 
-coerência entre header e lines;
+coherence between header and lines;
 
-eventos;
+events;
 
-estados;
+states;
 
-quantidades;
+quantities;
 
-preços;
+prices;
 
-relações com produtos/clientes.
+relationships to products/customers.
 
-Não alterar a semântica de campos apenas para produzir números "mais bonitos".
+Do not change field semantics just to produce "prettier" numbers.
 
-Quando houver divergência entre folds, corrigir a semântica e reconciliar.
+When there's divergence between folds, fix the semantics and reconcile.
 
-11. Regra de demanda / MAPA
+11. Demand / MAPA rule
 
-MAPA é benchmark de calibração, não uma cópia literal do carrinho de ecommerce.
+MAPA is a calibration benchmark, not a literal copy of the e-commerce basket.
 
-A lógica deve distinguir:
+The logic must distinguish:
 
-consumo observado;
+observed consumption;
 
-benchmark de consumo;
+consumption benchmark;
 
-conversão para kg/L;
+conversion to kg/L;
 
-comportamento de ecommerce;
+e-commerce behavior;
 
-dados sintéticos.
+synthetic data.
 
-Não utilizar preço como mecanismo oculto para produzir share de demanda.
+Do not use price as a hidden mechanism to produce demand share.
 
-O preço observado deve ser consequência econômica do produto escolhido, não mecanismo escondido de seleção.
+Observed price must be an economic consequence of the chosen product, not a hidden selection
+mechanism.
 
-Para produtos vendidos por peso/unidade, preservar a semântica RAW e derivar campos analíticos adequados, como:
+For products sold by weight/unit, preserve RAW semantics and derive appropriate analytical
+fields, such as:
 
 purchasable_unit_price;
 
@@ -292,17 +309,17 @@ price_basis;
 
 net_content_kg_l.
 
-O benchmark deve calibrar principalmente volume; valor é consequência do preço observado.
+The benchmark must calibrate volume primarily; value is a consequence of observed price.
 
-Quando o benchmark não tiver granularidade suficiente, declarar explicitamente a heurística utilizada.
+When the benchmark lacks sufficient granularity, explicitly declare the heuristic used.
 
-12. Regra de dados observados versus sintéticos
+12. Observed versus synthetic data rule
 
-Nunca esconder a origem dos dados.
+Never hide data origin.
 
-A documentação deve deixar claro:
+The documentation must make clear:
 
-Real / observado
+Real / observed
 
 Mercadona catalog;
 
@@ -312,9 +329,9 @@ Callejero;
 
 MAPA;
 
-demais fontes oficiais efetivamente utilizadas.
+other official sources actually used.
 
-Sintético
+Synthetic
 
 Customers;
 
@@ -324,322 +341,324 @@ Stock;
 
 Delivery;
 
-eventos simulados;
+simulated events;
 
-comportamento de negócio não fornecido pelas fontes.
+business behavior not provided by the sources.
 
-O projeto é uma plataforma de engenharia baseada em dados reais + universos sintéticos controlados.
+The project is an engineering platform based on real data + controlled synthetic universes.
 
-Isso é uma característica, não uma deficiência a ser escondida.
+That is a feature, not a deficiency to hide.
 
-13. Regra de reprodutibilidade
+13. Reproducibility rule
 
-As fontes externas podem não ser reproduzíveis.
+External sources may not be reproducible.
 
-Por isso:
+Therefore:
 
 external source -> frozen capture -> deterministic downstream
 
-A etapa final deve registrar evidência de:
+The final stage must record evidence of:
 
-partição;
+partition;
 
 SHA-256;
 
-contagem;
+count;
 
-intervalo temporal;
+time range;
 
-estado da captura.
+capture state.
 
-O downstream deve ser determinístico quando recebe a mesma RAW.
+Downstream must be deterministic when given the same RAW.
 
-Não prometer reprodução da fonte externa quando ela depende de API viva, download manual ou alteração do fornecedor.
+Do not promise reproduction of the external source when it depends on a live API, manual
+download, or a change by the provider.
 
-14. Regra de validação
+14. Validation rule
 
-Teste não é decoração.
+A test is not decoration.
 
-Qualquer alteração relevante deve possuir evidência.
+Any relevant change must have evidence.
 
-Devem continuar existindo testes para:
+Tests must keep existing for:
 
 schema;
 
-integridade referencial;
+referential integrity;
 
-temporalidade;
+temporality;
 
-atomicidade;
+atomicity;
 
-ordenação;
+ordering;
 
-deduplicação;
+deduplication;
 
 gaps;
 
-concorrência;
+concurrency;
 
-invariantes de estoque;
+stock invariants;
 
 provenance;
 
-congelamento;
+freeze;
 
-reconciliação entre folds.
+reconciliation between folds.
 
-Testes negativos são importantes.
+Negative tests matter.
 
-Uma implementação que "sempre passa" não prova qualidade.
+An implementation that "always passes" proves no quality.
 
-15. Regra de documentação
+15. Documentation rule
 
-A documentação final deve ser curta e operacional.
+The final documentation must be short and operational.
 
-Estrutura esperada:
+Expected structure:
 
-README — visão geral e execução;
+README — overview and how to run;
 
-ARCHITECTURE — arquitetura e fluxos;
+ARCHITECTURE — architecture and flows;
 
-DECISIONS — decisões e trade-offs;
+DECISIONS — decisions and trade-offs;
 
-evidências/testes — provas executáveis.
+evidence/tests — executable proof.
 
-Não duplicar a mesma explicação em cinco documentos.
+Do not duplicate the same explanation across five documents.
 
-Não escrever documentação promocional.
+Do not write promotional documentation.
 
-Documentar:
+Document:
 
 decision -> reason -> evidence -> trade-off
 
-16. Regra contra overengineering
+16. Rule against overengineering
 
-Antes de criar um componente, perguntar:
+Before creating a component, ask:
 
-"Que problema real do projeto esse componente resolve?"
+"What real project problem does this component solve?"
 
-Se a resposta for apenas:
+If the answer is only:
 
-"é usado no mercado";
+"it's used in the industry";
 
-"fica mais profissional";
+"it looks more professional";
 
-"é uma best practice";
+"it's a best practice";
 
-"empresas usam";
+"companies use it";
 
-"pode ser útil no futuro";
+"might be useful someday";
 
-"fica bom no currículo";
+"looks good on a résumé";
 
-a implementação deve ser rejeitada.
+the implementation must be rejected.
 
-17. Observabilidade
+17. Observability
 
-Observabilidade é desejável, mas não deve interromper o fechamento funcional do projeto.
+Observability is desirable, but must not delay the project's functional closure.
 
-Se implementada:
+If implemented:
 
 application -> OpenTelemetry -> Collector/Alloy -> backend
 
-Grafana/Prometheus devem possuir propósito operacional claro.
+Grafana/Prometheus must have a clear operational purpose.
 
-Não adicionar dashboards apenas para gerar screenshots.
+Do not add dashboards just to generate screenshots.
 
-Primeiro provar que existem sinais úteis:
+First prove useful signals exist:
 
-latência;
+latency;
 
-erro;
+error;
 
 throughput;
 
-falhas;
+failures;
 
-processamento;
+processing;
 
-estado dos pipelines.
+pipeline state.
 
 18. Snowflake
 
-Snowflake deve receber a camada analítica/serving apropriada.
+Snowflake must receive the appropriate analytical/serving layer.
 
-Não copiar RAW indiscriminadamente para Snowflake apenas porque o projeto possui Snowflake.
+Do not copy RAW into Snowflake indiscriminately just because the project has Snowflake.
 
-A arquitetura conceitual é:
+The conceptual architecture is:
 
 RAW/Silver -> curated/serving -> Snowflake
 
-O warehouse deve responder perguntas analíticas.
+The warehouse must answer analytical questions.
 
-Não transformar Snowflake em segunda cópia arbitrária do Data Lake.
+Do not turn Snowflake into an arbitrary second copy of the Data Lake.
 
 19. BI
 
-O dashboard deve demonstrar consumo do dado.
+The dashboard must demonstrate data consumption.
 
-Prioridade:
+Priority:
 
-qualidade do modelo;
+model quality;
 
-métricas corretas;
+correct metrics;
 
-rastreabilidade;
+traceability;
 
-clareza visual.
+visual clarity.
 
-Ferramenta de BI não deve determinar a arquitetura upstream.
+The BI tool must not drive upstream architecture.
 
-Power BI/Tableau/Streamlit são camadas de consumo.
+Power BI/Tableau/Streamlit are consumption layers.
 
-20. Critério de encerramento
+20. Closing criterion
 
-Depois que a Fase 7 cumprir seus gates, o projeto deve ser CONGELADO.
+Once Phase 7 meets its gates, the project must be FROZEN.
 
-Não abrir uma nova fase simplesmente porque existe outra tecnologia interessante.
+Do not open a new phase simply because another interesting technology exists.
 
-Novas ideias devem ir para:
+New ideas must go to:
 
 BACKLOG / FUTURE WORK
 
-e não para o código principal.
+and not into the main codebase.
 
-21. Perguntas obrigatórias antes de qualquer mudança
+21. Mandatory questions before any change
 
-A IA deve responder internamente:
+The AI must answer internally:
 
-Necessidade
+Need
 
-Qual problema estou corrigindo?
+What problem am I fixing?
 
-Evidência
+Evidence
 
-Qual teste/log/métrica demonstra o problema?
+What test/log/metric demonstrates the problem?
 
-Arquitetura
+Architecture
 
-Qual componente deve ser responsável?
+Which component should be responsible?
 
-Compatibilidade
+Compatibility
 
-Que contratos existentes serão afetados?
+What existing contracts will be affected?
 
-Regressão
+Regression
 
-Quais testes podem quebrar?
+What tests might break?
 
-Semântica
+Semantics
 
-Estou alterando o significado de algum dado?
+Am I changing the meaning of any data?
 
 Provenance
 
-Continuaremos sabendo de onde veio o dado?
+Will we still know where the data came from?
 
-Reprodutibilidade
+Reproducibility
 
-O mesmo input continuará produzindo o mesmo resultado?
+Will the same input keep producing the same result?
 
-Custo
+Cost
 
-A complexidade adicionada é justificável?
+Is the added complexity justifiable?
 
-Encerramento
+Closure
 
-Isso é necessário para o objetivo do projeto ou é apenas uma melhoria futura?
+Is this necessary for the project's goal, or is it just a future improvement?
 
-22. Hierarquia de decisão
+22. Decision hierarchy
 
-Quando houver conflito entre "melhor prática" genérica e evidência do projeto:
+When there's conflict between generic "best practice" and the project's evidence:
 
-contrato de dados;
+data contract;
 
-invariantes;
+invariants;
 
-testes;
+tests;
 
-evidência experimental;
+experimental evidence;
 
-decisão arquitetural registrada;
+recorded architectural decision;
 
-simplicidade;
+simplicity;
 
-preferência da IA.
+AI preference.
 
-A preferência da IA é o último critério.
+AI preference is the last criterion.
 
-23. Proibição explícita
+23. Explicit prohibition
 
-A IA NÃO deve:
+The AI must NOT:
 
-reescrever arquitetura inteira;
+rewrite the entire architecture;
 
-trocar tecnologias por preferência;
+swap technologies out of preference;
 
-adicionar serviços sem necessidade;
+add services without need;
 
-remover componentes sem analisar suas responsabilidades;
+remove components without analyzing their responsibilities;
 
-alterar semântica de campos silenciosamente;
+silently change field semantics;
 
-deduplicar dados legítimos por aparência;
+deduplicate legitimate data by appearance;
 
-alegar performance sem benchmark;
+claim performance without a benchmark;
 
-alegar production-grade sem evidência operacional;
+claim production-grade without operational evidence;
 
-tratar dados sintéticos como reais;
+treat synthetic data as real;
 
-transformar benchmark em ground truth;
+turn a benchmark into ground truth;
 
-implementar "future proofing" sem requisito;
+implement "future proofing" without a requirement;
 
-criar novas features durante o freeze.
+create new features during the freeze.
 
-24. Objetivo final
+24. Final objective
 
-O objetivo deste projeto não é possuir o maior número possível de tecnologias.
+This project's goal is not to have the largest possible number of technologies.
 
-O objetivo é demonstrar que o engenheiro consegue:
+The goal is to demonstrate that the engineer can:
 
-modelar um problema;
+model a problem;
 
-construir pipelines;
+build pipelines;
 
-preservar contratos;
+preserve contracts;
 
-lidar com falhas;
+handle failures;
 
-garantir idempotência;
+guarantee idempotency;
 
-trabalhar com eventos;
+work with events;
 
-lidar com concorrência;
+handle concurrency;
 
-reconciliar diferentes caminhos de dados;
+reconcile different data paths;
 
-explicar trade-offs;
+explain trade-offs;
 
-medir antes de afirmar;
+measure before asserting;
 
-distinguir dado real de dado sintético;
+distinguish real data from synthetic data;
 
-escolher ferramentas de acordo com o problema.
+choose tools according to the problem.
 
-Uma arquitetura menor que consegue provar suas propriedades é superior a uma arquitetura maior que apenas parece sofisticada.
+A smaller architecture that can prove its properties is superior to a larger architecture
+that only looks sophisticated.
 
 STATUS
 
-Fase 7: encerramento técnico
+Phase 7: technical closure
 
-Após os gates finais:
+After the final gates:
 
 FREEZE
 
-Qualquer alteração posterior deve ser tratada como:
+Any later change must be treated as:
 
-change request
+a change request
 
-e exigir justificativa, impacto, testes e decisão registrada.
+and require justification, impact, tests, and a recorded decision.

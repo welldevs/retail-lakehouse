@@ -1,27 +1,12 @@
-"""Painel estrategico sobre o MART do Snowflake — para avaliar os indicadores antes do Power BI.
+"""Operations dashboard over Snowflake's MART.
 
-O QUE ESTE PAINEL E, e o que ele nao e.
+Reads RETAIL.MART live and shows KPI, table, and chart — what whoever runs the business
+looks at day to day. Holds no state, writes nothing, exposes no SQL and no layer metadata.
 
-E uma BANCADA DE CONFERENCIA. Cada indicador aparece com a pergunta que responde, o grao da
-fonte, se o dado e observado ou sintetico, e — sobretudo — as ARMADILHAS de reconstrui-lo em
-outra ferramenta. O objetivo declarado e que quem for montar isto no Power BI ja saiba onde a
-medida obvia produz um numero plausivel e errado, que e a unica classe de erro que nenhum
-teste pega.
-
-Nao e camada de aplicacao, nao guarda estado e nao escreve nada. Le o MART e mostra.
-
-TRES DECISOES QUE MERECEM ESTAR NO TOPO DO ARQUIVO:
-
-  1. VESTE `RETAIL_READER`, e prova isso na tela. O papel de BI le MART e mais nada; o painel
-     roda uma sonda ao vivo que confirma a recusa em GOLD e STAGE. Um painel que afirma
-     respeitar um limite sem demonstrar esta pedindo confianca.
-
-  2. LE AO VIVO, com o relogio a mostra. O cache tem TTL curto e ha um botao que o limpa. O
-     painel mostra a hora da leitura e a contagem de linhas de cada mart, para que uma carga
-     nova apareca como MUDANCA DE BASE e nao como numero diferente sem explicacao.
-
-  3. AS ARMADILHAS NAO FICAM EM RODAPE. Cada indicador carrega as suas, vindas do mesmo
-     modulo que carrega o SQL — entao nao ha como o aviso envelhecer em relacao a consulta.
+This dashboard's technical counterpart (the question each indicator answers, the source
+grain, what's observed vs. synthetic, and the gotchas of rebuilding it in another tool)
+still exists — in `indicators.py`, versioned alongside the same SQL, and published in
+`streamlit/CONTRACT.md`. It just doesn't show up on this screen.
 """
 
 from __future__ import annotations
@@ -35,459 +20,453 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import indicators as I  # noqa: E402
-from connection import (  # noqa: E402
-    DATABASE,
-    DashboardError,
-    identity,
-    open_session,
-    probe_isolation,
-    run,
-)
+from connection import DATABASE, DashboardError, identity, open_session, run  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
 
-st.set_page_config(page_title="Retail Lakehouse — MART", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Retail — Operations Dashboard", page_icon="📦", layout="wide")
 
 
 # ------------------------------------------------------------------------------------
-# Leitura
+# Reading
 # ------------------------------------------------------------------------------------
-# `st.cache_resource` para a CONEXAO (uma por sessao) e `st.cache_data` para o DADO (TTL
-# curto). Sao coisas diferentes: reusar a conexao e economia; reusar o dado por muito tempo
-# seria mentir sobre o que esta no destino agora.
-
 @st.cache_resource(show_spinner=False)
-def _sessao():
+def _session():
     return open_session()
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def consulta(sql: str, params: dict | None = None) -> pd.DataFrame:
-    return run(_sessao(), sql, params)
+def query(sql: str, params: dict | None = None) -> pd.DataFrame:
+    return run(_session(), sql, params)
 
 
-def numerico(df: pd.DataFrame, colunas) -> pd.DataFrame:
-    """Decimal do Snowflake chega como object; Altair precisa de float."""
-    saida = df.copy()
-    for coluna in colunas:
-        if coluna in saida.columns:
-            saida[coluna] = pd.to_numeric(saida[coluna], errors="coerce")
-    return saida
+def numeric(df: pd.DataFrame, columns) -> pd.DataFrame:
+    """Snowflake decimals arrive as object; Altair needs float."""
+    out = df.copy()
+    for column in columns:
+        if column in out.columns:
+            out[column] = pd.to_numeric(out[column], errors="coerce")
+    return out
 
 
-def armadilhas(ind: I.Indicador) -> None:
-    """As ressalvas do indicador, vindas do MESMO modulo que carrega o SQL."""
-    with st.expander(f"Grao, tipo e armadilhas — {ind.titulo}", expanded=False):
-        st.markdown(
-            f"**Pergunta que responde.** {ind.pergunta}\n\n"
-            f"**Grao da fonte.** `{ind.grao}`\n\n"
-            f"**Tipo do dado.** {ind.tipo}\n\n"
-            f"**Marts.** {', '.join(f'`{m}`' for m in ind.marts)}"
-        )
-        if ind.armadilhas:
-            st.markdown("**Ao reconstruir no Power BI:**")
-            for item in ind.armadilhas:
-                st.markdown(f"- {item}")
-        st.code(ind.sql.strip(), language="sql")
+def fmt_int(value) -> str:
+    return f"{int(value):,}".replace(",", ".")
+
+
+def fmt_currency(value) -> str:
+    return f"{float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 # ------------------------------------------------------------------------------------
-# Conexao
+# Connection
 # ------------------------------------------------------------------------------------
 try:
-    ident = identity(_sessao())
+    ident = identity(_session())
 except DashboardError as exc:
     st.error(str(exc))
     st.stop()
 
 # ------------------------------------------------------------------------------------
-# Barra lateral: filtros, frescor e a sonda de isolamento
+# Sidebar: filters
 # ------------------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown(f"### `{DATABASE}.MART`")
-    st.caption(f"papel **{ident['papel']}** · lido em {ident['lido_em']}")
+    st.markdown("### Filters")
 
-    if st.button("Reler o destino agora", type="primary", width="stretch"):
+    if st.button("Refresh data", type="primary", width="stretch"):
         st.cache_data.clear()
         st.rerun()
-    st.caption(f"Cache de {TTL}s. O botao o limpa e forca uma leitura nova.")
 
     st.divider()
 
-    janela = consulta(I.JANELA)
-    inicio_min = pd.to_datetime(janela.iloc[0, 0]).date()
-    fim_max = pd.to_datetime(janela.iloc[0, 1]).date()
+    window = query(I.JANELA)
+    start_min = pd.to_datetime(window.iloc[0, 0]).date()
+    end_max = pd.to_datetime(window.iloc[0, 1]).date()
 
-    periodo = st.date_input(
-        "Periodo", value=(inicio_min, fim_max),
-        min_value=inicio_min, max_value=fim_max, format="YYYY-MM-DD",
+    period = st.date_input(
+        "Period", value=(start_min, end_max),
+        min_value=start_min, max_value=end_max, format="YYYY-MM-DD",
     )
-    if isinstance(periodo, tuple) and len(periodo) == 2:
-        inicio, fim = periodo
+    if isinstance(period, tuple) and len(period) == 2:
+        start, end = period
     else:
-        inicio, fim = inicio_min, fim_max
+        start, end = start_min, end_max
 
-    lista_wh = consulta(I.ARMAZENS).iloc[:, 0].tolist()
-    armazens = st.multiselect("Armazens", lista_wh, default=lista_wh)
-    if not armazens:
-        st.warning("Selecione ao menos um armazem.")
+    warehouse_list = query(I.ARMAZENS).iloc[:, 0].tolist()
+    warehouses = st.multiselect("Warehouses", warehouse_list, default=warehouse_list)
+    if not warehouses:
+        st.warning("Select at least one warehouse.")
         st.stop()
 
-    P = {"inicio": str(inicio), "fim": str(fim), "armazens": ",".join(armazens)}
+    P = {"inicio": str(start), "fim": str(end), "armazens": ",".join(warehouses)}
 
     st.divider()
-    st.markdown("**Frescor da base**")
-    frescor = consulta(I.FRESCOR)
-    st.dataframe(frescor, hide_index=True, width="stretch")
+    freshness = query(I.FRESCOR)
+    latest_date = pd.to_datetime(freshness["FIM"], errors="coerce").max()
     st.caption(
-        "Contagem e janela de cada mart, lidas agora. Uma carga nova muda estes numeros — "
-        "e por isso que eles ficam a vista, e nao escondidos num rodape."
+        f"Data through {latest_date:%Y-%m-%d}" if pd.notna(latest_date)
+        else "No data yet"
     )
-
-    st.divider()
-    with st.expander("Isolamento do papel, ao vivo"):
-        for alvo, ok, resultado in probe_isolation(_sessao()):
-            st.markdown(f"{'✅' if ok else '❌'} `{alvo}` — {resultado}")
-        st.caption(
-            "`RETAIL_READER` le MART e mais nada. A recusa em GOLD e STAGE e do motor, com "
-            "`use secondary roles none` — sem isso a verificacao passaria por engano."
-        )
+    st.caption(f"Read at {ident['lido_em']}")
 
 # ------------------------------------------------------------------------------------
-# Cabecalho e KPIs
+# Header and KPIs
 # ------------------------------------------------------------------------------------
-st.title("Indicadores estrategicos — camada MART")
-st.caption(
-    f"{inicio} a {fim} · {len(armazens)} armazem(ns) · conta `{ident['conta']}` "
-    f"({ident['regiao']}) · papel `{ident['papel']}`"
-)
-
-st.info(
-    "**O pedido e sintetico; o cliente, o produto, o preco e o endereco nao.** Cada indicador "
-    "declara o proprio tipo no bloco de armadilhas. O que NAO da para exibir esta na aba "
-    "*Fora de alcance*, com o gatilho que destravaria cada item.",
-    icon="ℹ️",
-)
+st.title("Operations Dashboard")
+st.caption(f"{start} to {end} · {len(warehouses)} warehouse(s)")
 
 ind = {i.chave: i for i in I.INDICADORES}
-resumo = consulta(ind["resumo_comercial"].sql, P)
-if resumo.empty or pd.isna(resumo.iloc[0]["PEDIDOS_COLOCADOS"]):
-    st.warning("Nenhum pedido no periodo selecionado. Amplie o intervalo.")
+summary = query(ind["resumo_comercial"].sql, P)
+if summary.empty or pd.isna(summary.iloc[0]["PEDIDOS_COLOCADOS"]):
+    st.warning("No orders in the selected period. Widen the range.")
     st.stop()
-r = resumo.iloc[0]
-moeda = r["MOEDA"] or ""
+r = summary.iloc[0]
+currency = r["MOEDA"] or ""
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Pedidos colocados", f"{int(r['PEDIDOS_COLOCADOS']):,}".replace(",", "."))
-c2.metric("Entregues", f"{int(r['PEDIDOS_ENTREGUES']):,}".replace(",", "."),
-          f"{float(r['TAXA_ENTREGA'])*100:.2f}% do colocado")
-c3.metric(f"Receita apurada ({moeda})",
-          f"{float(r['RECEITA_APURADA']):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-c4.metric(f"Ticket medio ({moeda})",
-          f"{float(r['TICKET_MEDIO']):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-          help="Receita apurada / pedidos SEPARADOS. Sobre pedidos colocados daria outro "
-               "numero, e ele mede uma coisa que nao existe — ver as armadilhas.")
-c5.metric("Nao apurado",
-          f"{float(r['VALOR_COLOCADO']) - float(r['RECEITA_APURADA']):,.2f}"
-          .replace(",", "X").replace(".", ",").replace("X", "."),
-          help="Colocado menos apurado. A decomposicao por CAUSA esta na aba Comercial — "
-               "um numero unico mistura duas perdas de areas diferentes.")
-armadilhas(ind["resumo_comercial"])
+c1.metric("Orders placed", fmt_int(r["PEDIDOS_COLOCADOS"]))
+c2.metric("Delivered", fmt_int(r["PEDIDOS_ENTREGUES"]),
+          f"{float(r['TAXA_ENTREGA'])*100:.2f}% of placed")
+c3.metric(f"Fulfilled revenue ({currency})", fmt_currency(r["RECEITA_APURADA"]))
+c4.metric(f"Average ticket ({currency})", fmt_currency(r["TICKET_MEDIO"]),
+          help="Fulfilled revenue divided by orders that were actually picked.")
+c5.metric("Unfulfilled",
+          fmt_currency(float(r["VALOR_COLOCADO"]) - float(r["RECEITA_APURADA"])),
+          help="Placed value that never became revenue — cancellation, declined payment, "
+               "or a basket reduced during picking.")
 
 # ------------------------------------------------------------------------------------
-# Abas
+# Tabs
 # ------------------------------------------------------------------------------------
-abas = st.tabs([
-    "A. Comercial", "B. Operacao", "C. Cesta", "D. Sortimento e preco",
-    "E. Oferta x demanda", "F. Base e cobertura", "Fora de alcance",
+tabs = st.tabs([
+    "Commercial", "Operations", "Basket", "Assortment and price",
+    "Supply and demand", "Customers", "Inventory",
 ])
 
-# ---------------------------------------------------------------- A. Comercial
-with abas[0]:
-    esq, dir_ = st.columns([3, 2])
+# ---------------------------------------------------------------- Commercial
+with tabs[0]:
+    left, right = st.columns([3, 2])
 
-    with esq:
-        st.subheader("Funil, por marco alcancado")
-        funil = numerico(consulta(ind["funil"].sql, P), ["PEDIDOS", "TAXA"])
-        funil["rotulo"] = funil.apply(
-            lambda x: f"{int(x['PEDIDOS']):,}".replace(",", ".") + f"  ({x['TAXA']*100:.1f}%)",
-            axis=1,
-        )
+    with left:
+        st.subheader("Funnel, by milestone reached")
+        funnel = numeric(query(ind["funil"].sql, P), ["PEDIDOS", "TAXA"])
         st.dataframe(
-            funil[["ETAPA", "PEDIDOS", "TAXA"]].rename(
-                columns={"ETAPA": "Etapa", "PEDIDOS": "Pedidos", "TAXA": "Sobre o colocado"}),
+            funnel[["ETAPA", "PEDIDOS", "TAXA"]].rename(
+                columns={"ETAPA": "Stage", "PEDIDOS": "Orders",
+                         "TAXA": "Share of placed"}),
             hide_index=True, width="stretch",
-            column_config={"Sobre o colocado": st.column_config.ProgressColumn(
+            column_config={"Share of placed": st.column_config.ProgressColumn(
                 format="percent", min_value=0.0, max_value=1.0)},
         )
-        armadilhas(ind["funil"])
 
-    with dir_:
-        st.subheader("Por onde escapa")
-        vaz = numerico(consulta(ind["vazamento"].sql, P), ["PEDIDOS", "SOBRE_COLOCADOS"])
+    with right:
+        st.subheader("Leakage points")
+        leak = numeric(query(ind["vazamento"].sql, P), ["PEDIDOS", "SOBRE_COLOCADOS"])
         st.dataframe(
-            vaz.rename(columns={"MOTIVO": "Motivo", "PEDIDOS": "Pedidos",
-                                "SOBRE_COLOCADOS": "Sobre o colocado"}),
+            leak.rename(columns={"MOTIVO": "Reason", "PEDIDOS": "Orders",
+                                "SOBRE_COLOCADOS": "Share of placed"}),
             hide_index=True, width="stretch",
         )
-        st.caption("Estas contagens NAO somam com as etapas do funil: o devolvido atravessou "
-                   "o funil inteiro antes de sair.")
-        armadilhas(ind["vazamento"])
 
     st.divider()
-    st.subheader("Perda de valor, decomposta por causa")
-    perda = numerico(consulta(ind["decomposicao_perda"].sql, P),
+    st.subheader("Value loss, by cause")
+    loss = numeric(query(ind["decomposicao_perda"].sql, P),
                      ["VALOR", "PEDIDOS_AFETADOS", "POR_PEDIDO"])
     st.dataframe(
-        perda[["CAUSA", "VALOR", "PEDIDOS_AFETADOS", "POR_PEDIDO"]].rename(columns={
-            "CAUSA": "Causa", "VALOR": f"Valor ({moeda})",
-            "PEDIDOS_AFETADOS": "Pedidos", "POR_PEDIDO": f"Por pedido ({moeda})"}),
+        loss[["CAUSA", "VALOR", "PEDIDOS_AFETADOS", "POR_PEDIDO"]].rename(columns={
+            "CAUSA": "Cause", "VALOR": f"Amount ({currency})",
+            "PEDIDOS_AFETADOS": "Orders", "POR_PEDIDO": f"Per order ({currency})"}),
         hide_index=True, width="stretch",
     )
-    st.warning(
-        "**`SUM(gross) - SUM(net)` mistura duas perdas com causas opostas.** Uma e operacao "
-        "de loja (a cesta encolheu na separacao); a outra e pagamento e cancelamento (o "
-        "pedido morreu antes de alguem toca-lo). Um numero unico esconde qual esta "
-        "acontecendo — e a soma das duas fecha exatamente com o total.",
-        icon="⚠️",
-    )
-    armadilhas(ind["decomposicao_perda"])
 
     st.divider()
-    st.subheader("Serie diaria")
-    serie = numerico(consulta(ind["serie_diaria"].sql, P),
+    st.subheader("Daily series")
+    series = numeric(query(ind["serie_diaria"].sql, P),
                      ["ORDERS_PLACED", "ORDERS_DELIVERED", "NET_AMOUNT_PICKED",
                       "AMOUNT_DELTA", "TICKET_MEDIO", "DELIVERY_RATE"])
-    serie["ORDER_DATE"] = pd.to_datetime(serie["ORDER_DATE"])
+    series["ORDER_DATE"] = pd.to_datetime(series["ORDER_DATE"])
+    series = series.rename(columns={
+        "ORDER_DATE": "Date", "WH": "Warehouse",
+        "ORDERS_PLACED": "Orders placed", "ORDERS_DELIVERED": "Orders delivered",
+        "NET_AMOUNT_PICKED": "Fulfilled revenue", "AMOUNT_DELTA": "Amount variance",
+        "TICKET_MEDIO": "Average ticket", "DELIVERY_RATE": "Delivery rate",
+    })
     e, d = st.columns(2)
-    e.caption(f"Receita apurada por dia ({moeda})")
-    e.bar_chart(serie, x="ORDER_DATE", y="NET_AMOUNT_PICKED", color="WH", stack=False)
-    d.caption("Pedidos entregues por dia")
-    d.bar_chart(serie, x="ORDER_DATE", y="ORDERS_DELIVERED", color="WH", stack=False)
-    st.dataframe(serie, hide_index=True, width="stretch")
-    armadilhas(ind["serie_diaria"])
+    e.caption(f"Fulfilled revenue by day ({currency})")
+    e.bar_chart(series, x="Date", y="Fulfilled revenue", color="Warehouse", stack=False)
+    d.caption("Orders delivered by day")
+    d.bar_chart(series, x="Date", y="Orders delivered", color="Warehouse", stack=False)
+    st.dataframe(series, hide_index=True, width="stretch")
 
-# ---------------------------------------------------------------- B. Operacao
-with abas[1]:
-    st.subheader("SLA de separacao")
-    sla = numerico(consulta(ind["sla_separacao"].sql, P),
+# ---------------------------------------------------------------- Operations
+with tabs[1]:
+    st.subheader("Picking SLA")
+    sla = numeric(query(ind["sla_separacao"].sql, P),
                    ["LIMIAR_DECLARADO_MIN", "MAXIMO_OBSERVADO_MIN", "VIOLACOES",
                     "PEDIDOS_COM_SEPARACAO"])
     s = sla.iloc[0]
     a, b, cc, dd = st.columns(4)
-    a.metric("Limiar declarado", f"{s['LIMIAR_DECLARADO_MIN']:.0f} min",
-             help="Vem de FACT_ORDER_PREMISE — o mesmo seed que o gerador leu.")
-    b.metric("Maximo observado", f"{s['MAXIMO_OBSERVADO_MIN']:.0f} min")
-    cc.metric("Violacoes", f"{int(s['VIOLACOES']):,}".replace(",", "."))
-    dd.metric("Pedidos com separacao", f"{int(s['PEDIDOS_COM_SEPARACAO']):,}".replace(",", "."))
-    st.warning(
-        "**Zero violacoes, e nao porque a operacao seja boa.** O limiar declarado e 90 min e "
-        "o teto ARITMETICO da separacao e 80 (`basket_lines_max` 40 x "
-        "`minutes_per_line_picked` 2). As tres premissas nao se cruzam. Ler o zero sem o "
-        "limiar e o maximo ao lado e ler uma operacao impecavel que nao existe.",
-        icon="⚠️",
-    )
-    armadilhas(ind["sla_separacao"])
+    a.metric("Threshold", f"{s['LIMIAR_DECLARADO_MIN']:.0f} min")
+    b.metric("Maximum observed", f"{s['MAXIMO_OBSERVADO_MIN']:.0f} min")
+    cc.metric("Breaches", fmt_int(s["VIOLACOES"]))
+    dd.metric("Orders with picking", fmt_int(s["PEDIDOS_COM_SEPARACAO"]))
 
     st.divider()
     e, d = st.columns([3, 2])
     with e:
-        st.subheader("Tempo por etapa")
-        pct = numerico(consulta(ind["percentis_etapa"].sql, P),
+        st.subheader("Time per stage")
+        pct = numeric(query(ind["percentis_etapa"].sql, P),
                        ["MEDIA_P50", "MEDIA_P90", "PEDIDOS"])
         st.dataframe(
             pct[["ETAPA", "MEDIA_P50", "MEDIA_P90", "PEDIDOS"]].rename(columns={
-                "ETAPA": "Etapa", "MEDIA_P50": "media p50 (min)",
-                "MEDIA_P90": "media p90 (min)", "PEDIDOS": "Pedidos"}),
+                "ETAPA": "Stage", "MEDIA_P50": "average p50 (min)",
+                "MEDIA_P90": "average p90 (min)", "PEDIDOS": "Orders"}),
             hide_index=True, width="stretch",
         )
-        st.caption("`media p90`, e nao `p90`: percentil nao soma nem tira media. O nome da "
-                   "coluna diz o que a coluna e.")
-        armadilhas(ind["percentis_etapa"])
 
     with d:
-        st.subheader("Janela de entrega")
-        jan = numerico(consulta(ind["janela_entrega"].sql, P), ["ENTREGAS"])
-        total = jan["ENTREGAS"].sum()
-        jan["Sobre as entregas"] = jan["ENTREGAS"] / total if total else 0
+        st.subheader("Delivery window")
+        win = numeric(query(ind["janela_entrega"].sql, P), ["ENTREGAS"])
+        total = win["ENTREGAS"].sum()
+        win["Share of deliveries"] = win["ENTREGAS"] / total if total else 0
         st.dataframe(
-            jan[["RESULTADO", "ENTREGAS", "Sobre as entregas"]].rename(
-                columns={"RESULTADO": "Resultado", "ENTREGAS": "Entregas"}),
+            win[["RESULTADO", "ENTREGAS", "Share of deliveries"]].rename(
+                columns={"RESULTADO": "Result", "ENTREGAS": "Deliveries"}),
             hide_index=True, width="stretch",
-            column_config={"Sobre as entregas": st.column_config.ProgressColumn(
+            column_config={"Share of deliveries": st.column_config.ProgressColumn(
                 format="percent", min_value=0.0, max_value=1.0)},
         )
-        st.warning(
-            "**O desvio e para CEDO, nao para tarde.** A maioria das entregas chega ANTES de "
-            "a janela abrir. Uma taxa unica de aderencia convida a concluir o inverso do "
-            "fato.",
-            icon="⚠️",
-        )
-        armadilhas(ind["janela_entrega"])
 
-# ---------------------------------------------------------------- C. Cesta
-with abas[2]:
-    st.subheader("Receita por categoria")
-    cat = numerico(consulta(ind["receita_categoria"].sql, P),
+# ---------------------------------------------------------------- Basket
+with tabs[2]:
+    st.subheader("Revenue by category")
+    cat = numeric(query(ind["receita_categoria"].sql, P),
                    ["RECEITA_APURADA", "VALOR_PEDIDO", "VALOR_PERDIDO",
                     "LINHAS_PEDIDAS", "UNIDADES_ENTREGUES"])
-    topo = cat.head(20)
-    st.caption(f"20 maiores por receita apurada ({moeda}) — de {len(cat)} categorias")
-    st.bar_chart(topo, x="CATEGORIA", y="RECEITA_APURADA", horizontal=True)
+    cat = cat.rename(columns={
+        "CATEGORIA": "Category", "RECEITA_APURADA": "Fulfilled revenue",
+        "VALOR_PEDIDO": "Order value", "VALOR_PERDIDO": "Lost value",
+        "LINHAS_PEDIDAS": "Lines placed", "UNIDADES_ENTREGUES": "Units delivered",
+        "DIAS": "Days",
+    })
+    top = cat.head(20)
+    st.caption(f"Top 20 by fulfilled revenue ({currency}) — of {len(cat)} categories")
+    st.bar_chart(top, x="Category", y="Fulfilled revenue", horizontal=True)
     st.dataframe(cat, hide_index=True, width="stretch")
-    st.info("`orders_touching_category` NAO e aditivo entre categorias e por isso nao esta "
-            "nesta consulta. Contagem de pedidos vem de MART_ORDER_FUNNEL.", icon="ℹ️")
-    armadilhas(ind["receita_categoria"])
 
     st.divider()
-    st.subheader("Substituicao e remocao")
-    sub = numerico(consulta(ind["substituicao_categoria"].sql, P),
+    st.subheader("Substitution and line removal")
+    sub = numeric(query(ind["substituicao_categoria"].sql, P),
                    ["LINHAS_PEDIDAS", "LINHAS_SUBSTITUIDAS", "LINHAS_REMOVIDAS",
                     "LINHAS_NUNCA_SEPARADAS", "TAXA_SUBSTITUICAO", "TAXA_REMOCAO"])
-    st.dataframe(sub, hide_index=True, width="stretch")
-    st.warning(
-        "**Estas taxas sao PREMISSA declarada, nao observacao.** Nenhuma fonte deste "
-        "repositorio mede disponibilidade. A variacao entre categorias e ruido sobre uma taxa "
-        "constante — ranquear categorias por 'risco de ruptura' com este dado e inventar.",
-        icon="⚠️",
+    st.dataframe(
+        sub.rename(columns={
+            "CATEGORIA": "Category", "LINHAS_PEDIDAS": "Lines placed",
+            "LINHAS_SUBSTITUIDAS": "Lines substituted",
+            "LINHAS_REMOVIDAS": "Lines removed",
+            "LINHAS_NUNCA_SEPARADAS": "Lines never picked",
+            "TAXA_SUBSTITUICAO": "Substitution rate", "TAXA_REMOCAO": "Removal rate",
+        }),
+        hide_index=True, width="stretch",
     )
-    armadilhas(ind["substituicao_categoria"])
 
     st.divider()
-    st.subheader("Perfil de consumo por faixa etaria do comprador")
-    perfil = numerico(consulta(ind["perfil_por_faixa"].sql, P),
+    st.subheader("Consumption profile by age band")
+    profile = numeric(query(ind["perfil_por_faixa"].sql, P),
                       ["PCT_LT35", "PCT_35_49", "PCT_50_64", "PCT_GE65", "LINHAS_TOTAL"])
-    st.caption(
-        "Fatia de cada grupo DENTRO da faixa, em % das linhas. Ordenado pela razao "
-        "GE65/LT35: no topo, o que a faixa mais velha leva desproporcionalmente."
-    )
-    if not perfil.empty:
-        extremos = pd.concat([perfil.head(8), perfil.tail(8)])
-        st.bar_chart(extremos, x="GRUPO", y=["PCT_LT35", "PCT_GE65"], horizontal=True)
-    st.dataframe(perfil, hide_index=True, width="stretch")
-    st.info(
-        "**O agregado nao muda entre faixas, de proposito.** A calibracao por coorte e "
-        "neutra no total — procurar o efeito dela num total nao encontra nada. Ele esta "
-        "inteiro na comparacao ENTRE colunas da mesma linha.",
-        icon="ℹ️",
-    )
-    armadilhas(ind["perfil_por_faixa"])
+    profile = profile.rename(columns={
+        "GRUPO": "Group", "PCT_LT35": "% <35", "PCT_35_49": "% 35-49",
+        "PCT_50_64": "% 50-64", "PCT_GE65": "% ≥65", "LINHAS_TOTAL": "Total lines",
+    })
+    if not profile.empty:
+        extremes = pd.concat([profile.head(8), profile.tail(8)])
+        st.bar_chart(extremes, x="Group", y=["% <35", "% ≥65"], horizontal=True)
+    st.dataframe(profile, hide_index=True, width="stretch")
 
     st.divider()
-    st.subheader("Pedidos por armazem")
-    regiao = numerico(consulta(ind["pedidos_por_regiao"].sql, P),
+    st.subheader("Orders by warehouse")
+    region = numeric(query(ind["pedidos_por_regiao"].sql, P),
                       ["DIAS", "LINHAS", "UNIDADES", "RECEITA"])
-    st.dataframe(regiao, hide_index=True, width="stretch")
-    st.info(
-        "A diferenca entre armazens e OBSERVADA e deliberada: o consumo per capita por "
-        "comunidade autonoma do informe do MAPA — Cataluna 620,82 kg-L por pessoa e ano "
-        "contra 505,86 de Madrid — inclina quantos clientes pedem. O total da janela nao "
-        "muda: o indice e renormalizado sobre as quatro comunidades servidas.",
-        icon="ℹ️",
+    st.dataframe(
+        region.rename(columns={
+            "ARMAZEM": "Warehouse", "DIAS": "Days", "LINHAS": "Lines",
+            "UNIDADES": "Units", "RECEITA": "Revenue",
+        }),
+        hide_index=True, width="stretch",
     )
-    armadilhas(ind["pedidos_por_regiao"])
 
-# ---------------------------------------------------------------- D. Sortimento
-with abas[3]:
-    st.subheader("Sortimento por armazem")
-    sort = numerico(consulta(ind["sortimento_armazem"].sql, P),
+# ---------------------------------------------------------------- Assortment
+with tabs[3]:
+    st.subheader("Assortment by warehouse")
+    assortment = numeric(query(ind["sortimento_armazem"].sql, P),
                     ["DIAS_OBSERVADOS", "PRODUTOS_MEDIA_DIA", "PRODUTOS_MAXIMO_DIA",
                      "EXCLUSIVOS_MEDIA_DIA", "PRECO_MEDIO", "NOVIDADES_PERIODO"])
-    st.dataframe(sort, hide_index=True, width="stretch")
-    armadilhas(ind["sortimento_armazem"])
+    st.dataframe(
+        assortment.rename(columns={
+            "ARMAZEM": "Warehouse", "DIAS_OBSERVADOS": "Days observed",
+            "PRODUTOS_MEDIA_DIA": "Products, avg/day",
+            "PRODUTOS_MAXIMO_DIA": "Products, max/day",
+            "EXCLUSIVOS_MEDIA_DIA": "Exclusive, avg/day",
+            "PRECO_MEDIO": "Average price", "NOVIDADES_PERIODO": "New arrivals in period",
+        }),
+        hide_index=True, width="stretch",
+    )
 
     st.divider()
     e, d = st.columns([2, 3])
     with e:
-        st.subheader("Movimento do catalogo")
-        mov = numerico(consulta(ind["movimento_catalogo"].sql, P),
+        st.subheader("Catalog movement")
+        movement = numeric(query(ind["movimento_catalogo"].sql, P),
                        ["PRODUTOS", "PRODUTOS_DISTINTOS", "DIAS"])
-        st.dataframe(mov, hide_index=True, width="stretch")
-        armadilhas(ind["movimento_catalogo"])
+        st.dataframe(
+            movement.rename(columns={
+                "TIPO_DE_MUDANCA": "Change type", "PRODUTOS": "Products",
+                "PRODUTOS_DISTINTOS": "Distinct products", "DIAS": "Days",
+            }),
+            hide_index=True, width="stretch",
+        )
     with d:
-        st.subheader("Maiores variacoes de preco")
-        var = numerico(consulta(ind["variacao_preco"].sql, P),
+        st.subheader("Largest price changes")
+        var = numeric(query(ind["variacao_preco"].sql, P),
                        ["PRECO_ANTERIOR", "PRECO", "VARIACAO", "VARIACAO_PCT",
                         "DIAS_DESDE_O_ANTERIOR"])
-        st.dataframe(var.head(50), hide_index=True, width="stretch")
-        st.caption("`dias_desde_o_anterior` e obrigatorio na leitura: ha lacunas de ate 8 "
-                   "dias, e sem essa coluna uma variacao de 8 dias se passa por uma de 1.")
-        armadilhas(ind["variacao_preco"])
+        st.dataframe(
+            var.head(50).rename(columns={
+                "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "PRODUTO": "Product",
+                "CATEGORIA": "Category", "PRECO_ANTERIOR": "Previous price",
+                "PRECO": "Price", "VARIACAO": "Change", "VARIACAO_PCT": "Change %",
+                "DIAS_DESDE_O_ANTERIOR": "Days since previous",
+                "TIPO_DE_MUDANCA": "Change type",
+                "IDENTIDADE_AMBIGUA": "Identity ambiguous",
+            }),
+            hide_index=True, width="stretch",
+        )
 
-# ---------------------------------------------------------------- E. Oferta x demanda
-with abas[4]:
-    st.subheader("Oferta x demanda, no mesmo grao")
-    od = numerico(consulta(ind["oferta_demanda"].sql, P),
+# ---------------------------------------------------------------- Supply and demand
+with tabs[4]:
+    st.subheader("Supply x demand")
+    sd = numeric(query(ind["oferta_demanda"].sql, P),
                   ["PRODUTOS_OFERTADOS", "PRODUTOS_PEDIDOS", "COBERTURA_DEMANDA",
                    "LINHAS_PEDIDAS", "RECEITA_APURADA"])
-    st.caption("Os dois marts tem grao (data, wh, category_id) exatamente para permitir isto "
-               "sem reagregacao.")
-    st.scatter_chart(od.head(60), x="PRODUTOS_OFERTADOS", y="RECEITA_APURADA",
-                     size="LINHAS_PEDIDAS")
-    st.dataframe(od, hide_index=True, width="stretch")
-    st.warning(
-        "**A demanda e sintetica e a escolha de produto e UNIFORME.** Consequencia declarada: "
-        "o mix por categoria espelha o TAMANHO DO SORTIMENTO. Ler cobertura de demanda como "
-        "preferencia de cliente e ler a premissa de volta.",
-        icon="⚠️",
+    sd = sd.rename(columns={
+        "CATEGORIA": "Category", "PRODUTOS_OFERTADOS": "Products offered",
+        "PRODUTOS_PEDIDOS": "Products ordered",
+        "COBERTURA_DEMANDA": "Demand coverage",
+        "LINHAS_PEDIDAS": "Lines placed", "RECEITA_APURADA": "Fulfilled revenue",
+    })
+    st.scatter_chart(sd.head(60), x="Products offered", y="Fulfilled revenue",
+                     size="Lines placed")
+    st.dataframe(
+        sd,
+        hide_index=True, width="stretch",
     )
-    armadilhas(ind["oferta_demanda"])
 
-# ---------------------------------------------------------------- F. Base
-with abas[5]:
-    st.info("Os dois indicadores desta aba NAO tem eixo de data: trazem a versao vigente. Os "
-            "filtros de periodo da barra lateral nao se aplicam a eles.", icon="ℹ️")
+# ---------------------------------------------------------------- Customers
+with tabs[5]:
+    st.caption("Current version of the base — the period filter doesn't apply on this tab.")
     e, d = st.columns(2)
     with e:
-        st.subheader("Base de clientes")
-        base = numerico(consulta(ind["base_clientes"].sql), ["CLIENTES", "IDADE_MEDIA",
+        st.subheader("Customer base")
+        base = numeric(query(ind["base_clientes"].sql), ["CLIENTES", "IDADE_MEDIA",
                                                             "MUNICIPIOS", "CEPS"])
-        st.bar_chart(base, x="FAIXA_ETARIA", y="CLIENTES", color="ARMAZEM", stack=True)
+        base = base.rename(columns={
+            "ARMAZEM": "Warehouse", "FAIXA_ETARIA": "Age band", "SEXO": "Sex",
+            "CLIENTES": "Customers", "IDADE_MEDIA": "Average age",
+            "MUNICIPIOS": "Municipalities", "CEPS": "Postal codes",
+        })
+        st.bar_chart(base, x="Age band", y="Customers", color="Warehouse", stack=True)
         st.dataframe(base, hide_index=True, width="stretch")
-        armadilhas(ind["base_clientes"])
     with d:
-        st.subheader("Cobertura municipal")
-        cob = numerico(consulta(ind["cobertura_municipal"].sql),
+        st.subheader("Municipal coverage")
+        cov = numeric(query(ind["cobertura_municipal"].sql),
                        ["MUNICIPIOS_NA_AUF", "MUNICIPIOS_SEM_CLIENTE", "CLIENTES",
                         "POPULACAO_AUF", "CLIENTES_POR_10K"])
-        st.dataframe(cob, hide_index=True, width="stretch")
-        st.warning(
-            "**`clientes_por_10k` tem numerador SINTETICO e denominador OBSERVADO.** Mede "
-            "densidade da simulacao, nunca penetracao de mercado. E o numero mais facil de "
-            "citar fora de contexto de todo o painel.",
-            icon="⚠️",
+        st.dataframe(
+            cov.rename(columns={
+                "ARMAZEM": "Warehouse", "PROVINCIA": "Province",
+                "MUNICIPIOS_NA_AUF": "Municipalities in service area",
+                "MUNICIPIOS_SEM_CLIENTE": "Municipalities without customers",
+                "CLIENTES": "Customers",
+                "POPULACAO_AUF": "Service area population",
+                "CLIENTES_POR_10K": "Customers per 10,000 pop.",
+            }),
+            hide_index=True, width="stretch",
         )
-        armadilhas(ind["cobertura_municipal"])
 
-# ---------------------------------------------------------------- Fora de alcance
-with abas[6]:
-    st.subheader("O que este painel NAO exibe, e por que")
-    st.markdown(
-        "Uma lista de ausencias declaradas vale mais que um indicador inventado. Cada item "
-        "traz o **gatilho** que o destravaria, para que a conversa seja sobre o que falta e "
-        "nao sobre o que poderia ser aproximado."
-    )
-    for titulo, motivo, gatilho in I.FORA_DE_ALCANCE:
-        with st.container(border=True):
-            st.markdown(f"**{titulo}**")
-            st.markdown(motivo)
-            st.caption(f"Gatilho: {gatilho}")
+# ---------------------------------------------------------------- Inventory
+with tabs[6]:
+    coverage = numeric(query(ind["cobertura_estoque"].sql, P),
+                         ["UNIDADES_EM_ESTOQUE", "DIAS_DE_COBERTURA",
+                          "COBERTURA_DO_PRODUTO_TIPICO", "PARES_PRODUTO_DIA"])
+    stockout = numeric(query(ind["ruptura_estoque"].sql, P),
+                       ["UNIDADES_PEDIDAS", "UNIDADES_ATENDIDAS", "UNIDADES_EM_FALTA",
+                        "PRODUTOS_COM_FALTA", "PRODUTOS_NO_DIA", "TAXA_DE_ATENDIMENTO"])
+    replenishment = numeric(query(ind["reposicao_estoque"].sql, P),
+                         ["ORDENS_EMITIDAS", "UNIDADES_PEDIDAS_AO_FORNECEDOR",
+                          "PRODUTOS_NO_DIA", "FRACAO_DE_PRODUTOS_REPONDO"])
+    turnover = numeric(query(ind["giro_estoque"].sql, P),
+                    ["GIRO_DIARIO", "UNIDADES_VENDIDAS", "SALDO_ABERTURA",
+                     "SALDO_FECHAMENTO", "UNIDADES_EM_FALTA"])
 
-    st.divider()
-    st.markdown(
-        "**A lacuna mais acionavel** e a terceira: nenhum mart junta cliente com pedido. O "
-        "elo existe em `FACT_ORDER.customer_sk`, no GOLD, que `RETAIL_READER` nao alcanca por "
-        "desenho. Fechar isso nao exige fonte nova — exige um mart novo com grao de cliente e "
-        "medidas de pedido. Sem ele, nao ha recompra, LTV, coorte nem receita por cliente."
-    )
+    if stockout.empty:
+        st.warning("No inventory data in the selected period. Widen the range.")
+    else:
+        demand_total = stockout["UNIDADES_PEDIDAS"].sum()
+        fulfilled_total = stockout["UNIDADES_ATENDIDAS"].sum()
+        short_total = stockout["UNIDADES_EM_FALTA"].sum()
+        orders_total = replenishment["ORDENS_EMITIDAS"].sum() if not replenishment.empty else 0
 
-# ------------------------------------------------------------------------------------
-st.divider()
-st.caption(
-    f"`{ident['database']}.{ident['schema']}` · conta `{ident['conta']}` · "
-    f"usuario `{ident['usuario']}` · papel `{ident['papel']}` · "
-    f"warehouse `{ident['warehouse']}` · regiao `{ident['regiao']}` · "
-    f"lido em {ident['lido_em']} · cache {TTL}s · "
-    f"{len(I.INDICADORES)} indicadores. Consultas e ressalvas em `streamlit/CONTRACT.md`, "
-    f"gerado de `indicators.py`."
-)
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("Units ordered", fmt_int(demand_total))
+        g2.metric("Units short", fmt_int(short_total))
+        g3.metric("Fulfillment rate",
+                  f"{(fulfilled_total / demand_total * 100) if demand_total else 0:.2f}%")
+        g4.metric("Replenishment orders issued", fmt_int(orders_total))
+
+        st.divider()
+        st.subheader("Stock coverage by category")
+        worst = coverage.sort_values("DIAS_DE_COBERTURA", na_position="last").head(20)
+        st.dataframe(
+            worst[["DIA", "ARMAZEM", "CATEGORIA", "UNIDADES_EM_ESTOQUE",
+                   "DIAS_DE_COBERTURA", "COBERTURA_DO_PRODUTO_TIPICO",
+                   "PARES_PRODUTO_DIA"]].rename(columns={
+                "DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
+                "UNIDADES_EM_ESTOQUE": "Units in stock",
+                "DIAS_DE_COBERTURA": "Days of coverage (category)",
+                "COBERTURA_DO_PRODUTO_TIPICO": "Typical product coverage",
+                "PARES_PRODUTO_DIA": "Product-day pairs",
+            }),
+            hide_index=True, width="stretch",
+        )
+        st.caption("20 lowest coverage figures in the period.")
+
+        st.divider()
+        st.subheader("Stockouts: units and categories affected")
+        st.dataframe(
+            stockout.sort_values("UNIDADES_EM_FALTA", ascending=False).head(20).rename(
+                columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
+                         "UNIDADES_PEDIDAS": "Ordered", "UNIDADES_ATENDIDAS": "Fulfilled",
+                         "UNIDADES_EM_FALTA": "Short",
+                         "PRODUTOS_COM_FALTA": "Products short"}),
+            hide_index=True, width="stretch",
+        )
+
+        st.divider()
+        e, d = st.columns(2)
+        with e:
+            st.subheader("Replenishment: orders issued")
+            st.dataframe(
+                replenishment.sort_values("ORDENS_EMITIDAS", ascending=False).head(20).rename(
+                    columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
+                             "ORDENS_EMITIDAS": "Orders",
+                             "UNIDADES_PEDIDAS_AO_FORNECEDOR": "Units to supplier"}),
+                hide_index=True, width="stretch",
+            )
+        with d:
+            st.subheader("Daily turnover by category")
+            st.dataframe(
+                turnover.sort_values("GIRO_DIARIO", ascending=False, na_position="last").head(20)
+                    .rename(columns={"DIA": "Day", "ARMAZEM": "Warehouse",
+                                      "CATEGORIA": "Category",
+                                      "GIRO_DIARIO": "Daily turnover"}),
+                hide_index=True, width="stretch",
+            )

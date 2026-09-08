@@ -259,9 +259,9 @@ def transfer_statements(table: str, parquet_path: str, database: str = DEFAULT_D
 # governada" uma afirmacao verificavel em vez de um slogan: sem os grants, o Snowflake aqui
 # seria um DuckDB caro.
 ROLES = {
-    "RETAIL_LOADER": "Carrega o recorte do Silver no STAGE. Nao le GOLD nem MART.",
-    "RETAIL_TRANSFORMER": "Le o STAGE e escreve GOLD e MART. E o papel do dbt.",
-    "RETAIL_READER": "So leitura de MART. E o papel de BI e de terceiros.",
+    "RETAIL_LOADER": "Loads the Silver cut into STAGE. Does not read GOLD or MART.",
+    "RETAIL_TRANSFORMER": "Reads STAGE and writes GOLD and MART. This is dbt's role.",
+    "RETAIL_READER": "Read-only on MART. This is the BI and third-party role.",
 }
 
 
