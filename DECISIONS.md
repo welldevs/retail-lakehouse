@@ -2791,3 +2791,84 @@ Decision logged on 2026-09-08. The Snowflake-side proof (`make warehouse-refresh
 `make warehouse-evidence`) ran against the live trial account with the user's explicit
 go-ahead, as a separate approval from the code change itself — the same distinction CR-001
 already drew between writing something and watching it run for real.
+
+### CR-005 · GitHub Actions CI for the offline half
+
+```
+Need             BACKLOG.md's own CI row already carried its trigger, written before this
+                 request existed: "The repository getting a remote." It fired on
+                 2026-09-08, when the project became public at
+                 github.com/welldevs/retail-lakehouse. ARCHITECTURE.md's "No CI" section
+                 already promised the shape: two jobs, covering `make test` + `make
+                 silver`, never the Snowflake half.
+Evidence         `git remote -v` went from empty to a real origin. No workflow had ever run
+                 against this repository — the offline boundary (5 Sources still
+                 dependency-free, Lakehouse half still builds clean) depended entirely on
+                 someone remembering to run `make test` by hand before pushing.
+Insufficiency    `make test`/`make silver` running locally is real, but unproven on every
+                 push and invisible to anyone who isn't the one running it. Nothing catches
+                 a change that silently breaks the offline half before it lands on main.
+Component        `.github/workflows/ci.yml` (new): `source-test` (system Python, nothing
+                 installed — proves the five Sources still have `dependencies = []`) and
+                 `platform` (`make venv` -> `make platform-test` -> `make up` -> `docker
+                 compose wait mc` -> `make silver` -> `make down`). No platform/source code
+                 changed for this CR's own sake — the one file it touched belongs to
+                 Regression below.
+Contracts        None. CI observes the existing `make test`/`make silver` targets; it adds
+                 no new check of its own and changes no data contract.
+Regression       The FIRST real run (commit b24c8fa, run 34262477063, 2026-09-08 18:20 UTC)
+                 went red on the `platform` job at `make platform-test` — not on
+                 `source-test`, and not on new code. Root cause: `test_todo_caminho_da_
+                 arvore_existe` (test_documentacao.py) checked every path in README.md's
+                 Structure tree against the LOCAL FILESYSTEM (`(RAIZ / c).exists()`), never
+                 against git. README documents `data/` as "extraction scratch, outside
+                 version control," and `.gitignore` line 36 confirms it's deliberate — the
+                 5 subdirectories under it exist on any machine that ever ran the pipeline,
+                 which is every developer machine that had touched this repository so far,
+                 and NEVER on a clean checkout. CI was the first clean checkout this test
+                 had ever run against. Fixed by checking `git check-ignore -q <path>/` for
+                 the data/ subtree instead of requiring it to exist — proving the "outside
+                 version control" claim stays true, rather than requiring the pipeline to
+                 have already run. Verified locally before the second push: moved data/
+                 aside entirely and reran just that test (passed), restored data/ and ran
+                 the full suite (1,095/1,095, exit 0).
+Semantics        N/A — no field changes meaning.
+Provenance       N/A — no data source involved.
+Reproducibility  Yes: same `make test`/`make silver` commands already run locally, now run
+                 by the same runner on every push instead of by discipline.
+Cost             One YAML file (53 lines) plus one test method widened by ~15 lines to
+                 check `git check-ignore` alongside the existing filesystem check. No new
+                 dependency, no new service, no version matrix, no cache/concurrency
+                 tuning in this first version — unmeasured convenience, deferred until a
+                 real run shows it's actually needed.
+                 EXPLICITLY REJECTED, and recorded rather than silently skipped: a `make
+                 warehouse*` job (no secret for the Snowflake trial account belongs in a
+                 public repository's CI) and the `stream` profile (`make
+                 orders-prove-stream` ends in exit 1 by correct, permanent design — CR-003
+                 already documented that. A job that always fails, correctly, is worse than
+                 no job: it teaches ignoring red).
+Proof            Two real runs against the live, public GitHub Actions, both observed via
+                 the GitHub API (`GET /repos/welldevs/retail-lakehouse/actions/runs`):
+                   - Run 34262477063 (commit b24c8fa, 2026-09-08 18:20 UTC):
+                     `source-test` green, `platform` RED at `make platform-test` — the
+                     `data/` bug above. `make down`, gated on `if: always()`, also failed
+                     as a direct consequence: `make up` never ran, so `.env` never existed
+                     for `docker compose down` to read `AIRFLOW_SECRET_KEY`/`FERNET_KEY`
+                     from — not a second, independent defect.
+                   - Run 34265312670 (commit bc6e8cc, 2026-09-08 18:49 UTC): BOTH jobs
+                     green — `source-test` in ~9 s, `platform` in ~2 min 18 s end to end.
+                 https://github.com/welldevs/retail-lakehouse/actions/runs/34265312670
+Loss             Nothing that was true stops being true. The offline boundary was verified
+                 by discipline before; it's verified by a machine on every push now — and
+                 the first real run is what finally exposed a gap that discipline alone had
+                 covered by accident for as long as the repository had no remote to prove
+                 otherwise.
+```
+
+Decision logged on 2026-09-08. Per this project's standing split of responsibility over
+this repository's git history, every commit and push behind both runs above — the first
+red one and the fix that turned it green — was the user's own action, never mine; the
+diagnosis (reading the run via the GitHub API, since raw log download needs repo-admin
+auth this session doesn't have) and the fix itself, in the working tree, were mine. CR-004
+and CR-005 share a release: both were written, reviewed, and closed in the same session,
+against the same freshly public repository.

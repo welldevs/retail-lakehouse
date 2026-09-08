@@ -220,7 +220,8 @@ made by whoever operates it, not a pipeline side effect.
 │   ├── spike_iceberg_duckdb.py            # the CLOSED experiment, run before Milestone 6
 │   ├── prove_iceberg_projection.py        # concurrency, monotonic merge, snapshot isolation
 │   ├── spike_spark_iceberg.py             # the Phase 7 GATE: can Spark read the pyiceberg catalog?
-│   └── prove_warehouse_orders_tests.py    # injects the defect each test claims to catch, into real data
+│   ├── prove_warehouse_orders_tests.py    # injects the defect each test claims to catch, into real data
+│   └── prove_observability_signals.py     # SIM/PARCIAL/NAO per required signal — CR-004, before instrumenting
 ├── jobs/spark/                         # the only code that runs outside the platform's venv
 │   ├── session.py                      # the session with the Iceberg catalog; the spike imports from here
 │   └── stock_ledger.py                 # balance, stockout, and replenishment — the shape SQL can't express
@@ -409,8 +410,8 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), and became a test.
 **Switching Snowflake accounts** means editing `.env.snowflake` and the matching block of
 `~/.snowflake/config.toml`, then running `make warehouse-bootstrap`. No model, no SQL, and
 no test changes: the L2→L3 boundary is physical. The Lakehouse half doesn't depend on
-this — `make silver` and the 1.068 checks in `make test` run with no Snowflake variable
-defined.
+this — `make silver` and every check in `make test` (see [Verification](#verification))
+run with no Snowflake variable defined.
 
 **Dated evidence.** The Snowflake half isn't reproducible offline the way the Lakehouse
 is, and the account used here is a trial. [`make warehouse-evidence`](docs/warehouse-evidence/README.md)

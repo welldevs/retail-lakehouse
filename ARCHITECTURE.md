@@ -313,12 +313,22 @@ decision.
 the live account: it's the only way for the 25 queries to be exercised the way Streamlit
 runs them, with parameters bound, instead of checked as text.
 
+**This panel is not where pipeline observability lives, and can't be.** The session runs as
+`RETAIL_READER` with `use secondary roles none` — refused on GOLD and STAGE by the same live
+probe mentioned above. `FACT_INGESTION_RUN` (duration, throughput, failure count per run —
+`DECISIONS.md § "CR-004"`) sits in GOLD, out of this role's reach on purpose. That evidence
+is read instead from `docs/warehouse-evidence/README.md` (`make warehouse-evidence`, dated
+snapshot against the live account) or `make observability-prove-signals` (SIM/PARCIAL/NAO
+per signal, offline). Building a second panel just to relocate a query this role can't run
+would be a workaround for an RBAC boundary the project keeps on purpose.
+
 ## Technical debt
 
 Reviewed on **2026-09-01**, after Phase 7, and **restructured on 2026-09-02** so every item
-declares status and next step instead of just a reason. **Eight open items**, all
-deliberate. The rest of the table is history: it stays because what got closed and *how*
-it got closed is the part worth learning from.
+declares status and next step instead of just a reason. **Seven open items**, all
+deliberate — CI closed on 2026-09-08 (`DECISIONS.md § "CR-005"`). The rest of the table is
+history: it stays because what got closed and *how* it got closed is the part worth
+learning from.
 
 **The count went from five to eight, and that's a result, not a regression.** Three of the
 new items were *discovered* by Phase 7 — two of them by measuring what it built itself. A
@@ -333,12 +343,11 @@ scope**.
 |---|---|---|---|---|
 | 1 | `models/warehouse/` has no offline test | Two real defects only showed up on the first run against the live account; a DuckDB mirror would have caught them | **Mitigated** by `make warehouse-evidence` — dated evidence, not a second engine | None. The answer is **not** a mirror: see the section below |
 | 2 | The Snowflake account is a trial | It expires, and with it the entire right half of the pipeline | **Accepted** — it's open by nature | None. The destination is swappable via `.env.snowflake`, and that's verified |
-| 3 | There's no CI | The offline suite depends on someone running `make test` | **Open**, blocked by having no remote — writing a workflow that never ran would be claiming a check nobody saw | The repository gaining a remote; the workflow covers `make test` + `make silver`, never the Snowflake half |
-| 4 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Accepted** — cosmetic and external: `dbt-duckdb` config, with no supported form published | Track `dbt-duckdb` |
-| 5 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
-| 6 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206.523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
-| 7 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
-| 8 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
+| 3 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Accepted** — cosmetic and external: `dbt-duckdb` config, with no supported form published | Track `dbt-duckdb` |
+| 4 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
+| 5 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206.523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
+| 6 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
+| 7 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
 
 | Item | Status |
 |---|---|
@@ -357,7 +366,7 @@ scope**.
 | **`models/warehouse/` tree with no offline test** | **Open**, and it's the consequence of a choice. Mitigated by `make warehouse-evidence` |
 | **Snowflake account is a trial** | **Open by nature**, and the destination is swappable — verified, not claimed |
 | dbt `CustomKeyInConfigDeprecation` warning | **Open, cosmetic.** `dbt-duckdb` config, with no supported form yet |
-| **CI** | **Open, and blocked by having no remote.** Would cover the offline half (`make test` + `make silver`), never the Snowflake half |
+| **CI** | **Closed on 2026-09-08 (CR-005).** Two jobs, `source-test` and `platform`, covering the offline half (`make test` + `make silver`), never the Snowflake half. The first real push run went red — not on new code, but on a pre-existing bug `test_todo_caminho_da_arvore_existe` never had a way to catch before: it checked the README's `data/` entries against the local filesystem, which only a machine that already ran the pipeline has, instead of against what a clean checkout gets. Fixed to check `git check-ignore` for that subtree instead. Second run: both jobs green |
 | Silver model and simulated orders DAG | **Closed** in Phase 3 (4 models, 8 singular tests, `simulated_orders_events.py`) |
 | **Streaming half with no offline test** | **Partially closed** in Milestones 4, 5 and 6: `fake_pg.py` covers the transaction boundary, `fake_kafka.py` the order between write and offset commit, and `fake_iceberg.py` the monotonic merge and the retry loop — offline, in `make test`. What no double covers remains open: that `rollback` actually undoes, that the broker preserves order per key, and that Iceberg refuses to commit a stale snapshot. That's `make orders-prove-atomicity`, `make orders-prove-stream` and `make orders-prove-projection` |
 | **Orders Silver claimed a separation the log doesn't declare** | **Closed** in Milestone 4, the day it was found: 5.508 rows from 298 orders. Found by two independent folds disagreeing, not by a test |
@@ -384,7 +393,7 @@ scope**.
 | **References by section name and anchor were never checked** | **Closed on 2026-09-01.** `LinksRelativosTest` checks that the FILE exists, and a broken anchor points to a file that exists — so it passed, and the reader landed at the top of the document. Found while moving 17 sections to `DECISIONS.md`: one reference was left orphaned. Two new tests cover the `§ "…"` label and the anchor, at every heading level and in CONTRACT's explicit HTML anchors |
 | **README and ARCHITECTURE explaining the same thing twice** | **Closed on 2026-09-01.** 1.435 + 2.475 lines, with the same subject in two places aging at different rates. The narrative went to `DECISIONS.md`, the future scope to `BACKLOG.md`, and a tested line-count ceiling keeps both from growing back without it being a decision |
 | **Silver's parquet survives the gate excluding the model** | **Open, mitigated.** When `silver_gate` drops `silver_stock_ledger` (or `silver_live_order_state`) from the build, the parquet from the last successful build **stays** in object storage — and the export to Snowflake reads it without knowing it's stale. It actually happened: `MART_STOCK_HEALTH` described a 5-day window while every other mart described 9, with not a single test failing. Mitigated by `assert_stock_ledger_covers_the_order_window`, which compares the two domains' windows in the warehouse — which is where they finally meet. Not closed because the mitigation is per domain, and the class is general: any excluded model leaves stale parquet behind |
-| **`FACT_INGESTION_RUN` had no duration or timestamps** | **Closed on 2026-09-08 (CR-005).** `started_at_utc`/`finished_at_utc`/`duration_seconds` already existed two layers upstream, in the three Silver manifest models — `snowflake_export.py`'s `STG_INGESTION_RUN` projection just never carried them forward. The fix was two widened `select` lists, not new data. Verified live: `docs/warehouse-evidence/README.md` § `FACT_INGESTION_RUN` shows 90 real rows with non-null values on all three columns |
+| **`FACT_INGESTION_RUN` had no duration or timestamps** | **Closed on 2026-09-08 (CR-004).** `started_at_utc`/`finished_at_utc`/`duration_seconds` already existed two layers upstream, in the three Silver manifest models — `snowflake_export.py`'s `STG_INGESTION_RUN` projection just never carried them forward. The fix was two widened `select` lists, not new data. Verified live: `docs/warehouse-evidence/README.md` § `FACT_INGESTION_RUN` shows 90 real rows with non-null values on all three columns |
 
 ### Wearing the roles: what only shows up once you stop running as admin
 
@@ -612,17 +621,12 @@ All three were verified manually, in a real run.
   repository. DuckDB is single-writer: with the file shared, a DBeaver window left open on
   the host would take down the DAG's `silver` task.
 
-### No CI
+### CI — closed 2026-09-08
 
-No `.github/workflows`, and **no remote configured** (`git remote -v` is empty). The
-boundary depends on someone running `make test` — and the `source-test` target exists
-precisely to be a job that installs nothing. Two jobs (Source with no dependency, platform
-with a venv) would make the boundary verified on every push instead of by discipline.
-
-It's not written because **a workflow that has never run is the opposite of what this
-repository does with testing**: it would be a file claiming a check nobody ever saw happen,
-neither green nor red. The trigger is literal — the day there's a remote, both jobs get in
-and the first run is the proof.
+`.github/workflows/ci.yml`: `source-test` (no dependency installed, proves the five Sources
+stay that way) and `platform` (`make venv` → `make platform-test` → `make up` → `make
+silver`), never the Snowflake half. See `DECISIONS.md § "CR-005"` for why it wasn't written
+before there was a remote to run it against, and what the first real run found.
 
 ### The Snowflake account is a trial — **open, by nature**
 
