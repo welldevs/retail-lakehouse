@@ -17,7 +17,7 @@ dated proof that the models ran; `make silver` and the suites keep running witho
 | session role | `ACCOUNTADMIN` |
 | warehouse | `COMPUTE_WH` |
 | database | `RETAIL` |
-| captured at | 2026-09-01 15:04:30 -07:00 |
+| captured at | 2026-09-08 11:10:55 -07:00 |
 
 The role above is the **capture's** role, not the pipeline's. Reading all three layers at
 once is exactly what no role in the project can do — that is the separation. The pipeline
@@ -37,43 +37,43 @@ existed, were verified, and no run ever went through them.
 | GOLD | `DIM_CUSTOMER` | `RETAIL_TRANSFORMER` | 573,652 |
 | GOLD | `DIM_DATE` | `RETAIL_TRANSFORMER` | 4,018 |
 | GOLD | `DIM_GEOGRAPHY` | `RETAIL_TRANSFORMER` | 699 |
-| GOLD | `DIM_PRODUCT` | `RETAIL_TRANSFORMER` | 5,002 |
+| GOLD | `DIM_PRODUCT` | `RETAIL_TRANSFORMER` | 5,038 |
 | GOLD | `DIM_WAREHOUSE` | `RETAIL_TRANSFORMER` | 4 |
-| GOLD | `FACT_INGESTION_RUN` | `RETAIL_TRANSFORMER` | 78 |
+| GOLD | `FACT_INGESTION_RUN` | `RETAIL_TRANSFORMER` | 90 |
 | GOLD | `FACT_ORDER` | `RETAIL_TRANSFORMER` | 206,523 |
 | GOLD | `FACT_ORDER_EVENT` | `RETAIL_TRANSFORMER` | 1,433,723 |
 | GOLD | `FACT_ORDER_ITEM` | `RETAIL_TRANSFORMER` | 3,892,062 |
 | GOLD | `FACT_ORDER_PREMISE` | `RETAIL_TRANSFORMER` | 32 |
 | GOLD | `FACT_POPULATION_MUNICIPALITY` | `RETAIL_TRANSFORMER` | 21,410 |
-| GOLD | `FACT_PRICE_CHANGE` | `RETAIL_TRANSFORMER` | 129,483 |
-| GOLD | `FACT_PRICE_SNAPSHOT` | `RETAIL_TRANSFORMER` | 146,482 |
+| GOLD | `FACT_PRICE_CHANGE` | `RETAIL_TRANSFORMER` | 181,263 |
+| GOLD | `FACT_PRICE_SNAPSHOT` | `RETAIL_TRANSFORMER` | 198,083 |
 | GOLD | `FACT_STOCK_LEDGER` | `RETAIL_TRANSFORMER` | 173,970 |
-| MART | `MART_ASSORTMENT_DAILY` | `RETAIL_TRANSFORMER` | 5,060 |
+| MART | `MART_ASSORTMENT_DAILY` | `RETAIL_TRANSFORMER` | 6,849 |
 | MART | `MART_BASKET_DAILY` | `RETAIL_TRANSFORMER` | 5,360 |
 | MART | `MART_CUSTOMER_BASE` | `RETAIL_TRANSFORMER` | 286,826 |
 | MART | `MART_DEMAND_COHORT` | `RETAIL_TRANSFORMER` | 5,902 |
 | MART | `MART_FULFILLMENT_SLA` | `RETAIL_TRANSFORMER` | 36 |
 | MART | `MART_MARKET_COVERAGE` | `RETAIL_TRANSFORMER` | 370 |
 | MART | `MART_ORDER_FUNNEL` | `RETAIL_TRANSFORMER` | 36 |
-| MART | `MART_PRICE_EVOLUTION` | `RETAIL_TRANSFORMER` | 146,482 |
+| MART | `MART_PRICE_EVOLUTION` | `RETAIL_TRANSFORMER` | 198,083 |
 | MART | `MART_STOCK_HEALTH` | `RETAIL_TRANSFORMER` | 5,988 |
 | STAGE | `STG_CATEGORY` | `RETAIL_LOADER` | 151 |
 | STAGE | `STG_CUSTOMER` | `RETAIL_LOADER` | 573,652 |
 | STAGE | `STG_GEOGRAPHY` | `RETAIL_LOADER` | 699 |
-| STAGE | `STG_INGESTION_RUN` | `RETAIL_LOADER` | 78 |
+| STAGE | `STG_INGESTION_RUN` | `RETAIL_LOADER` | 90 |
 | STAGE | `STG_ORDER` | `RETAIL_LOADER` | 206,523 |
 | STAGE | `STG_ORDER_EVENT` | `RETAIL_LOADER` | 1,433,723 |
 | STAGE | `STG_ORDER_LINE` | `RETAIL_LOADER` | 3,892,062 |
 | STAGE | `STG_ORDER_PREMISE` | `RETAIL_LOADER` | 32 |
 | STAGE | `STG_POPULATION_MUNICIPALITY` | `RETAIL_LOADER` | 21,410 |
-| STAGE | `STG_PRICE_CHANGE` | `RETAIL_LOADER` | 129,483 |
-| STAGE | `STG_PRODUCT_PRICE` | `RETAIL_LOADER` | 146,482 |
+| STAGE | `STG_PRICE_CHANGE` | `RETAIL_LOADER` | 181,263 |
+| STAGE | `STG_PRODUCT_PRICE` | `RETAIL_LOADER` | 198,083 |
 | STAGE | `STG_SERVICE_AREA` | `RETAIL_LOADER` | 370 |
 | STAGE | `STG_STOCK_LEDGER` | `RETAIL_LOADER` | 173,970 |
 | STAGE | `STG_STOCK_PREMISE` | `RETAIL_LOADER` | 4 |
 | STAGE | `STG_WAREHOUSE` | `RETAIL_LOADER` | 4 |
 
-Total at the destination: **13,621,992 rows**.
+Total at the destination: **13,882,204 rows**.
 
 ## Isolation verified role by role
 
@@ -109,23 +109,24 @@ instead of printing an empty table, which would read as "there is no separation"
 
 | role | query type | queries | last |
 |---|---|---|---|
-| `RETAIL_LOADER` | `SELECT` | 412 | 2026-09-01 14:49 |
-| `RETAIL_LOADER` | `PUT_FILES` | 166 | 2026-09-01 14:49 |
-| `RETAIL_LOADER` | `CREATE_TABLE` | 166 | 2026-09-01 14:49 |
-| `RETAIL_LOADER` | `COPY` | 165 | 2026-09-01 14:49 |
-| `RETAIL_LOADER` | `USE` | 17 | 2026-09-01 09:43 |
-| `RETAIL_READER` | `SELECT` | 810 | 2026-09-01 14:55 |
-| `RETAIL_READER` | `USE` | 37 | 2026-09-01 14:55 |
-| `RETAIL_READER` | `SHOW` | 3 | 2026-08-31 06:41 |
-| `RETAIL_TRANSFORMER` | `SELECT` | 3,040 | 2026-09-01 14:49 |
-| `RETAIL_TRANSFORMER` | `CREATE_TABLE_AS_SELECT` | 416 | 2026-09-01 14:49 |
-| `RETAIL_TRANSFORMER` | `SHOW` | 209 | 2026-09-01 14:49 |
-| `RETAIL_TRANSFORMER` | `USE` | 17 | 2026-09-01 09:43 |
+| `RETAIL_LOADER` | `SELECT` | 201 | 2026-09-08 11:09 |
+| `RETAIL_LOADER` | `PUT_FILES` | 90 | 2026-09-08 11:09 |
+| `RETAIL_LOADER` | `CREATE_TABLE` | 90 | 2026-09-08 11:09 |
+| `RETAIL_LOADER` | `COPY` | 90 | 2026-09-08 11:09 |
+| `RETAIL_LOADER` | `USE` | 3 | 2026-09-04 10:23 |
+| `RETAIL_READER` | `SELECT` | 761 | 2026-09-08 10:30 |
+| `RETAIL_READER` | `USE` | 22 | 2026-09-08 10:29 |
+| `RETAIL_READER` | `UNKNOWN` | 1 | 2026-09-04 05:28 |
+| `RETAIL_TRANSFORMER` | `SELECT` | 1,059 | 2026-09-08 11:10 |
+| `RETAIL_TRANSFORMER` | `CREATE_TABLE_AS_SELECT` | 144 | 2026-09-08 11:10 |
+| `RETAIL_TRANSFORMER` | `SHOW` | 40 | 2026-09-08 11:10 |
+| `RETAIL_TRANSFORMER` | `USE` | 3 | 2026-09-04 10:23 |
 
 ## Samples
 
-A few rows per mart, only so the content stays inspectable after the
-destination no longer exists. They do not replace the warehouse while it is alive.
+A few rows per table below (every MART, plus FACT_INGESTION_RUN from GOLD), only
+so the content stays inspectable after the destination no longer exists. They do
+not replace the warehouse while it is alive.
 
 ### `MART_MARKET_COVERAGE`
 
@@ -142,20 +143,20 @@ destination no longer exists. They do not replace the warehouse while it is aliv
 | SNAPSHOT_DATE | WH | DISPLAY_NAME | UNIT_PRICE | PRICE_DELTA | DAYS_SINCE_PREVIOUS_SNAPSHOT |
 |---|---|---|---|---|---|
 | 2026-08-28 | vlc1 | Merluza abierta en libro sin cabeza y sin espina | 17.25 | 4.14 | 1 |
-| 2026-08-28 | vlc1 | Merluza sin aletas y sin escamas | 17.25 | 4.14 | 1 |
 | 2026-08-28 | vlc1 | Merluza a rodajas | 17.25 | 4.14 | 1 |
+| 2026-08-28 | vlc1 | Merluza sin aletas y sin escamas | 17.25 | 4.14 | 1 |
 | 2026-08-24 | mad1 | Maquinilla de afeitar recargable Gillette Labs Body + Intimate 2 hojas | 12.90 | -4.00 | 8 |
-| 2026-09-01 | vlc1 | Rodajas de emperador pequeñas Hacendado ultracongeladas | 9.95 | -3.00 | 1 |
+| 2026-08-24 | mad1 | Leche de continuación en polvo 2 Nidina Nestlé | 14.95 | -3.00 | 8 |
 
 ### `MART_ASSORTMENT_DAILY`
 
 | SNAPSHOT_DATE | WH | CATEGORY_NAME | PRODUCTS | PRODUCTS_EXCLUSIVE_HERE | AVG_UNIT_PRICE |
 |---|---|---|---|---|---|
+| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
 | 2026-08-27 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
 | 2026-08-26 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
-| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
 | 2026-08-28 | bcn1 | Leche y bebidas vegetales | 120 | 13 | 3.7956 |
-| 2026-08-24 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
+| 2026-08-25 | bcn1 | Leche y bebidas vegetales | 120 | 15 | 3.7956 |
 
 ### `MART_DEMAND_COHORT`
 
@@ -225,4 +226,17 @@ destination no longer exists. They do not replace the warehouse while it is aliv
 | 2026-08-28 | mad1 | Pescado | 41 | 30 | 0 | 0 | 1.0000 | 1.08 | 1.08 | 0 | synthetic |
 | 2026-08-28 | vlc1 | Vino rosado | 75 | 90 | 0 | 0 | 1.0000 | 1.10 | 1.14 | 1 | synthetic |
 | 2026-08-28 | svq1 | Pescado | 10 | 21 | 0 | 0 | 1.0000 | 1.11 | 1.11 | 1 | synthetic |
+
+### `FACT_INGESTION_RUN`
+
+| SOURCE_NAME | INGESTION_DATE | WH | STARTED_AT_UTC | DURATION_SECONDS | DECLARED_ROWS | ROWS_PER_SECOND | COMPLETE | FAILURE_COUNT |
+|---|---|---|---|---|---|---|---|---|
+| mercadona_catalog_api | 2026-09-08 | vlc1 | 2026-09-08 12:09:17 | 226.9 | 4579 | 20.2 | True | 0 |
+| mercadona_catalog_api | 2026-09-08 | svq1 | 2026-09-08 12:05:11 | 245.3 | 4545 | 18.5 | True | 0 |
+| mercadona_catalog_api | 2026-09-08 | mad1 | 2026-09-08 12:01:23 | 226.9 | 4548 | 20.0 | True | 0 |
+| mercadona_catalog_api | 2026-09-08 | bcn1 | 2026-09-08 11:57:35 | 226.8 | 4577 | 20.2 | True | 0 |
+| mercadona_catalog_api | 2026-09-04 | svq1 | 2026-09-04 12:23:46 | 285.0 | 4551 | 16.0 | True | 0 |
+| mercadona_catalog_api | 2026-09-04 | bcn1 | 2026-09-04 12:19:58 | 226.8 | 4579 | 20.2 | True | 0 |
+| mercadona_catalog_api | 2026-09-04 | vlc1 | 2026-09-04 12:15:41 | 255.7 | 4590 | 18.0 | True | 0 |
+| mercadona_catalog_api | 2026-09-04 | mad1 | 2026-09-04 12:11:52 | 227.6 | 4553 | 20.0 | True | 0 |
 

@@ -196,7 +196,7 @@ models:
   - name: fact_ingestion_run
     description: >
       Grao (source_name, ingestion_date, wh). Distingue "nao houve preco" de "nao houve
-      observacao". 18 linhas; sem elas toda serie temporal interpola em silencio.
+      observacao". 24 linhas; sem elas toda serie temporal interpola em silencio.
     columns:
       - name: run_id
         tests: [not_null, unique]
@@ -207,6 +207,16 @@ models:
                 values: [true]
                 quote: false
       - name: is_valid_observation
+        tests: [not_null]
+      - name: duration_seconds
+        description: >
+          CR-005: promovido do Silver, onde ja existia. Zero nulo nas 90 particoes
+          historicas medidas (mercadona + oltp + orders) na revisao que acrescentou esta
+          coluna.
+        tests: [not_null]
+      - name: started_at_utc
+        tests: [not_null]
+      - name: finished_at_utc
         tests: [not_null]
 
   - name: fact_population_municipality

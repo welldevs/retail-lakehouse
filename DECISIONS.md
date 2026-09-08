@@ -2680,3 +2680,114 @@ Loss             The first attempt at proof 4 FAILED (7 checks red) — not beca
                  stream plane is left in this fully-reloaded, freshly-published state;
                  nothing was torn back down.
 ```
+
+### CR-004 · Close the six required observability signals with what already exists
+
+```
+Need             AI_ENGINEERING_CONSTRAINTS.md § 17 and BACKLOG.md's Observability row both
+                 require proving useful signals exist — latency, error, throughput,
+                 failures, processing, pipeline state — before instrumenting anything.
+                 Nobody had run that proof; absence was assumed, which is itself an
+                 unverified claim, the same disease this project rejects everywhere else.
+Evidence         `make observability-prove-signals` (new script, this CR) measured the six
+                 signals against the real system, not intention:
+                   - processing: 5/5 Sources covered, proportionally. Three have a
+                     contract-documented RunLogger mirroring timestamped progress to
+                     `_run.log` (mercadona_catalog_api 226.8-338.8 s, ine_population_api
+                     2,098-5,120 s, ine_callejero 0.4 s, all measured from local partitions).
+                     The two synthetic Sources (simulated_oltp 0.7-2.1 s, simulated_orders
+                     1.8-6.0 s) don't have one, and the same reasoning that justified
+                     RunLogger on the other three doesn't apply to them.
+                   - throughput/failures: already reached GOLD for the 3 sources with a `wh`
+                     axis, via FACT_INGESTION_RUN (declared_rows, failure_count,
+                     anomaly_count, complete) — measured present before this CR.
+                   - latency: duration_seconds/started_at_utc/finished_at_utc existed in
+                     raw_manifest.sql, silver_oltp_manifest.sql and
+                     silver_orders_manifest.sql (Silver, zero nulls across the 90 historical
+                     partitions measured) and were dropped by a fixed column list in
+                     snowflake_export.py's STG_INGESTION_RUN spec before reaching
+                     STAGE/GOLD — confirmed by reading the SQL, not inferred.
+                   - error: cli.py had exactly 5 `except Exception as exc:` blocks that
+                     printed only str(exc), never a traceback — reproduced live by forcing
+                     an unmapped RuntimeError through main()'s final handler.
+                   - pipeline state: grep across all 6 DAGs for `on_failure_callback`
+                     returned zero matches; a failed task left no record beyond the
+                     scheduler's own internal state.
+Insufficiency    Sufficient already for processing (5/5, proportional) and for
+                 throughput/failures at GOLD (3/5, the sources with a `wh` axis). NOT
+                 sufficient for: latency at GOLD (existed two layers upstream, silently
+                 dropped), error diagnosis in cli.py (traceback lost on every unmapped
+                 exception, defeating the exit-code-3 distinction this project already
+                 relies on elsewhere), and task-level pipeline state in Airflow (a failure
+                 left only the UI, no structured trace).
+Component        Platform (`retail_platform.snowflake_export`, `retail_platform.cli`,
+                 `retail_platform.snowflake_evidence`), dbt
+                 (`models/warehouse/gold/fact_ingestion_run.sql` + `schema.yml`),
+                 orchestration (all 6 DAG files), plus a new script
+                 (`scripts/prove_observability_signals.py`) and Makefile target
+                 (`observability-prove-signals`). The 5 Sources are explicitly OUT of this
+                 CR's component list — FROZEN, and the evidence showed they don't need it.
+Contracts        `STG_INGESTION_RUN` and `FACT_INGESTION_RUN` gain 3 columns
+                 (`started_at_utc`, `finished_at_utc`, `duration_seconds`), additive — no
+                 existing column changes name, type, or meaning. Two new `not_null` tests on
+                 the Gold model (zero nulls measured across 90 historical partitions before
+                 adding them). No Source CONTRACT.md changes — nothing about the manifest
+                 schema changed, only what the platform projects downstream from fields the
+                 manifest already declared.
+Regression       Found the hard way: widening the STAGE projection broke 7 tests in
+                 test_snowflake_export.py (fixture tables didn't have the 3 new columns —
+                 DuckDB BinderException) and 1 in test_snowflake_evidence.py
+                 (test_ha_amostra_para_cada_mart assumed a strict 1:1 between AMOSTRAS and
+                 mart files on disk, and FACT_INGESTION_RUN is deliberately not a mart).
+                 Fixed both — the fixtures now carry realistic timestamps, and the mart-count
+                 test names the one exception explicitly instead of loosening silently. `make
+                 test` back to 1,095/1,095 green. `make silver` (391/391) and `dbt build
+                 --target snowflake` (202/202, including the new not_null tests, against the
+                 real account) both green. `DagBag` reload against the live scheduler:
+                 zero import errors across all 6 DAGs after adding the callback.
+Semantics        No field changes meaning. `declared_rows` stays "rows/events declared by
+                 the source"; `duration_seconds` is simply visible one layer further
+                 downstream than before.
+Provenance       Unchanged. The 3 new Gold columns come from the same manifest the rest of
+                 FACT_INGESTION_RUN already reads; no new source of truth introduced.
+Reproducibility  Yes — the change is purely additive projection, not a new computation.
+Cost             Two SQL projections widened, one dbt model +6 lines (18 → 24, both prose
+                 headers updated to match), 5 exception sites in cli.py gained
+                 `logging.exception()` plus one `logging.basicConfig()` call (stdlib, zero
+                 new dependency), one small `_log_task_failure` function duplicated across 6
+                 DAG files (matching this project's own no-shared-module convention in that
+                 folder — `_run()` is already duplicated the same way), one entry added to
+                 `snowflake_evidence.py`'s existing `AMOSTRAS` dict. No new file format, no
+                 new service, no new dependency, no page created from scratch.
+                 EXPLICITLY REJECTED as part of this same CR, and recorded rather than
+                 silently skipped: extending FACT_INGESTION_RUN to ine_population_api and
+                 ine_callejero (no proven consumer — moved to BACKLOG.md with a trigger); the
+                 full `application -> OTel -> Collector -> Grafana/Prometheus` stack (no
+                 proven need for cross-service trace correlation or real-time alerting —
+                 BACKLOG.md's Observability row narrowed to name exactly that remainder).
+Proof            `make observability-prove-signals`, before → after: latency NAO → SIM,
+                 error NAO → SIM, pipeline state NAO → SIM (processing, throughput/failures
+                 were already SIM; coverage stays PARCIAL 3/5, by the decision above, not by
+                 gap). `make silver && make warehouse-refresh && make warehouse-evidence` run
+                 live against the real Snowflake trial account (2026-09-08): `dbt build
+                 --target snowflake` 202/202 including the 3 new not_null tests, and
+                 docs/warehouse-evidence/README.md § FACT_INGESTION_RUN shows 90 real rows,
+                 with the 8-row sample carrying non-null started_at_utc/duration_seconds and
+                 a computed rows_per_second (throughput) for every row — mercadona_catalog_api
+                 across 4 warehouses × 2 days, 226.8-285.0 s, 16.0-20.2 rows/s. A forced
+                 unmapped RuntimeError through cli.py's main() showed a full traceback where
+                 it previously showed one line. `DagBag(...).import_errors == {}` against the
+                 live scheduler, and `task.on_failure_callback` confirmed attached on a real
+                 task instance.
+Loss             `fact_ingestion_run.sql`'s "18 LINES" framing (and schema.yml's matching
+                 description) stopped matching the real line count and was updated in the
+                 same change, to the same discipline this project applies to every other
+                 hand-written number. Ingestion for ine_population_api and ine_callejero
+                 remains without a queryable "was this observed" fact — an accepted, recorded
+                 gap, not an oversight.
+```
+
+Decision logged on 2026-09-08. The Snowflake-side proof (`make warehouse-refresh` +
+`make warehouse-evidence`) ran against the live trial account with the user's explicit
+go-ahead, as a separate approval from the code change itself — the same distinction CR-001
+already drew between writing something and watching it run for real.

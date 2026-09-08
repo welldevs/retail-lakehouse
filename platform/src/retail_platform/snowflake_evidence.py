@@ -132,6 +132,18 @@ AMOSTRAS = {
         "from {db}.MART.MART_STOCK_HEALTH where units_demanded > 0 "
         "order by days_of_cover asc nulls last limit 8"
     ),
+    # CR-005: o unico fato de GOLD nesta lista, de proposito — os outros oito sao MART.
+    # duration_seconds/started_at_utc/finished_at_utc ja existiam duas camadas abaixo, no
+    # Silver, e eram descartados so por uma lista fixa de colunas na projecao do STAGE. A
+    # taxa (declared_rows/duration_seconds) e o sinal de THROUGHPUT que
+    # AI_ENGINEERING_CONSTRAINTS.md §17 pedia provado antes de qualquer coletor novo.
+    "FACT_INGESTION_RUN": (
+        "select source_name, ingestion_date, wh, started_at_utc, duration_seconds, "
+        "declared_rows, round(declared_rows / nullif(duration_seconds, 0), 1) as rows_per_second, "
+        "complete, failure_count "
+        "from {db}.GOLD.FACT_INGESTION_RUN "
+        "order by finished_at_utc desc nulls last limit 8"
+    ),
 }
 
 
@@ -307,8 +319,9 @@ def render(dados: dict) -> str:
     linhas += [
         "## Samples",
         "",
-        "A few rows per mart, only so the content stays inspectable after the",
-        "destination no longer exists. They do not replace the warehouse while it is alive.",
+        "A few rows per table below (every MART, plus FACT_INGESTION_RUN from GOLD), only",
+        "so the content stays inspectable after the destination no longer exists. They do",
+        "not replace the warehouse while it is alive.",
         "",
     ]
     for nome, (colunas_amostra, linhas_amostra) in dados["amostras"].items():

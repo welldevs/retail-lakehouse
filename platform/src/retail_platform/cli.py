@@ -39,6 +39,7 @@ orquestrador decida por codigo e nao por parsing de log:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -572,6 +573,7 @@ def _cmd_orders_project(args) -> int:
         if not isinstance(exc, OrdersProjectionError):
             raise
         print(f"ERRO: {exc}")
+        logging.exception("orders-project falhou")
         return EXIT_FAILED
 
     print(f"broker ........... {args.bootstrap}")
@@ -900,6 +902,7 @@ def _cmd_snowflake_bootstrap(args) -> int:
         feito = bootstrap(cursor, args.database, args.grant_to_user, args.warehouse)
     except Exception as exc:
         print(f"ERRO: o destino recusou: {exc}")
+        logging.exception("snowflake-bootstrap falhou")
         return EXIT_FAILED
     finally:
         cursor.close()
@@ -968,6 +971,7 @@ def _cmd_load_snowflake(args) -> int:
             return EXIT_FATAL
         except Exception as exc:
             print(f"ERRO: o destino recusou: {exc}")
+            logging.exception("snowflake-load falhou")
             return EXIT_FAILED
         finally:
             connection.close()
@@ -1113,6 +1117,7 @@ def _cmd_snowflake_evidence(args) -> int:
         )
     except Exception as exc:
         print(f"ERRO: o destino recusou: {exc}")
+        logging.exception("snowflake-evidence falhou")
         return EXIT_FAILED
     finally:
         connection.close()
@@ -1558,6 +1563,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # So o traceback: a linha ERRO curta continua indo por print(), que e o formato que o
+    # operador le. Sem isto, uma excecao que nenhum handler especifico mapeia sai como uma
+    # unica linha com str(exc) e nada mais — quem precisa diagnosticar tem de reproduzir
+    # localmente para saber onde, mesmo com o codigo de saida 3 ja dizendo "nao tratada".
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+
     args = build_parser().parse_args(argv)
     try:
         return args.handler(args)
@@ -1569,6 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_UNHANDLED
     except Exception as exc:
         print(f"ERRO NAO TRATADO: {type(exc).__name__}: {exc}")
+        logging.exception("excecao nao tratada em %s", getattr(args, "command", "?"))
         return EXIT_UNHANDLED
 
 

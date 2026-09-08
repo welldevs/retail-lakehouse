@@ -18,6 +18,7 @@ cron, igual a populacao — mas por um motivo estrutural diferente e ainda mais 
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from datetime import datetime, timedelta
@@ -81,6 +82,25 @@ def _run_platform(argv: list[str]) -> int:
     """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
     return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
                 {"PYTHONPATH": PLATFORM_SRC})
+
+
+def _log_task_failure(context: dict) -> None:
+    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
+    interno do scheduler. Usa o logger que a propria task ja escreve
+    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """
+    ti = context.get("task_instance")
+    exc = context.get("exception")
+    logging.getLogger("airflow.task").error(
+        "task failed dag_id=%s task_id=%s run_id=%s try_number=%s exception_type=%s "
+        "exception=%s",
+        context.get("dag").dag_id if context.get("dag") else "?",
+        ti.task_id if ti else "?",
+        context.get("run_id"),
+        ti.try_number if ti else "?",
+        type(exc).__name__ if exc is not None else "?",
+        exc,
+    )
 
 
 def partition_path(ingestion_date: str) -> str:
@@ -172,6 +192,7 @@ with DAG(
         "owner": "data-platform",
         "retries": 0,
         "retry_delay": timedelta(minutes=5),
+        "on_failure_callback": _log_task_failure,
     },
     tags=["source:ine", "layer:raw", "layer:silver"],
     doc_md=__doc__,

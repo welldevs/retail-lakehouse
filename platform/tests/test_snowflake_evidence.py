@@ -151,7 +151,13 @@ class AmostrasTest(unittest.TestCase):
             for nome in os.listdir(MART_DIR) if nome.endswith(".sql")
         }
         self.assertTrue(no_disco, f"nenhum mart encontrado em {MART_DIR}")
-        self.assertEqual(set(AMOSTRAS), no_disco)
+        # FACT_INGESTION_RUN e a UNICA excecao deliberada: e um fato de GOLD, nao um
+        # MART, que entrou via CR-005 para tornar latencia/throughput consultaveis sem
+        # coletor novo (AI_ENGINEERING_CONSTRAINTS.md secao 17). Nomeada aqui para que a
+        # excecao seja assercao, nao lacuna silenciosa que um AMOSTRAS futuro esconderia.
+        fora_do_mart = {"FACT_INGESTION_RUN"}
+        self.assertTrue(fora_do_mart <= set(AMOSTRAS), "excecao esperada desapareceu")
+        self.assertEqual(set(AMOSTRAS) - fora_do_mart, no_disco)
 
     def test_toda_amostra_e_limitada_e_parametrizada_pelo_database(self):
         """Sem limit, a 'amostra' viraria um extrato; sem {db}, o relatorio so serviria

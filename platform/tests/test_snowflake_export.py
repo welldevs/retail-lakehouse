@@ -106,17 +106,20 @@ create table silver_customer (
 create table raw_manifest (
     ingestion_date date, warehouse varchar, run_id varchar, complete boolean,
     source_name varchar, declared_product_rows bigint,
-    failure_count bigint, anomaly_count bigint
+    failure_count bigint, anomaly_count bigint,
+    started_at_utc timestamp, finished_at_utc timestamp, duration_seconds double
 );
 create table silver_oltp_manifest (
     ingestion_date date, wh varchar, run_id varchar, complete boolean,
     source_name varchar, declared_customer_rows bigint,
-    failure_count bigint, anomaly_count bigint
+    failure_count bigint, anomaly_count bigint,
+    started_at_utc timestamp, finished_at_utc timestamp, duration_seconds double
 );
 create table silver_orders_manifest (
     ingestion_date date, wh varchar, run_id varchar, complete boolean,
     source_name varchar, declared_event_rows bigint, declared_order_rows bigint,
-    failure_count bigint, anomaly_count bigint
+    failure_count bigint, anomaly_count bigint,
+    started_at_utc timestamp, finished_at_utc timestamp, duration_seconds double
 );
 create table silver_order (
     ingestion_date date, wh varchar, order_id varchar, customer_id varchar,
@@ -251,17 +254,20 @@ def popular(con):
 
     con.execute("""
         insert into raw_manifest values
-            ('2026-08-26','wh1','r1',true,'mercadona_catalog',3,0,0)
+            ('2026-08-26','wh1','r1',true,'mercadona_catalog',3,0,0,
+             '2026-08-26 06:00:00','2026-08-26 06:00:05',5.0)
     """)
     con.execute("""
         insert into silver_oltp_manifest values
-            ('2026-08-27','wh1','r2',true,'simulated_oltp',1,0,0)
+            ('2026-08-27','wh1','r2',true,'simulated_oltp',1,0,0,
+             '2026-08-27 06:00:00','2026-08-27 06:00:01',0.8)
     """)
     # ORDERS declara EVENTOS (7) e PEDIDOS (2). Mapear a coluna errada faria a
     # reconciliacao comparar duas grandezas diferentes e passar por engano.
     con.execute("""
         insert into silver_orders_manifest values
-            ('2026-08-27','wh1','r3',true,'simulated_orders',7,2,0,0)
+            ('2026-08-27','wh1','r3',true,'simulated_orders',7,2,0,0,
+             '2026-08-27 06:05:00','2026-08-27 06:05:02',1.9)
     """)
 
     # PEDIDOS em DUAS ingestion_date. Cada uma e um DIA DE OPERACAO, nao uma reingestao:

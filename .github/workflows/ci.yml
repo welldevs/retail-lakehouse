@@ -1,0 +1,52 @@
+name: CI
+
+# The two jobs ARCHITECTURE.md already promised, once the repository gained a remote
+# (DECISIONS.md § "CR-004"): one for the five zero-dependency Sources, one for the
+# platform's offline boundary (venv + make silver against a local MinIO). Never the
+# Snowflake half — no secret for a trial account is configured here, and it was never
+# part of the promised scope.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  source-test:
+    # No dependency to install, on purpose: this job's whole point is proving the five
+    # Sources still have `dependencies = []`, by running on the system Python with
+    # nothing installed first.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: make source-test
+
+  platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: make venv
+      - run: make platform-test
+      # Same first step README.md's own quickstart already documents: the compose file
+      # parses AIRFLOW_SECRET_KEY/AIRFLOW_FERNET_KEY even when only minio/mc are asked
+      # for, so `make up` alone fails on a clean runner without them.
+      - run: cp .env.example .env
+      - run: make secrets
+      - run: make up
+      # `make up` returns as soon as the containers start, not once `mc` (which creates
+      # the buckets and exits) has actually finished. Locally that race never showed up;
+      # in CI, where the next command runs immediately, it does.
+      - run: docker compose -f infra/docker-compose.yml --env-file .env wait mc
+      - run: make silver
+      - if: always()
+        run: make down

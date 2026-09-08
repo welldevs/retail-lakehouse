@@ -149,6 +149,7 @@ ORDERS_OVERWRITE       ?=
         stream-evidence \
         warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
         warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
+        observability-prove-signals \
         dashboard dashboard-venv dashboard-contract dashboard-check \
         demand-reality-check demand-check-mapping \
         seed-province-map seed-service-area seed-municipality-codes \
@@ -302,6 +303,11 @@ help:
 	@echo "  test            source-test + platform-test"
 	@echo "  source-test     suite das cinco Sources (sem rede, sem dependencias)"
 	@echo "  platform-test   testes da plataforma, sem rede"
+	@echo ""
+	@echo "observabilidade — a prova exigida por AI_ENGINEERING_CONSTRAINTS.md §17 antes de"
+	@echo "instrumentar qualquer coisa: os sinais ja existem, ou faltam de verdade?"
+	@echo "  observability-prove-signals   le o sistema real (data/, SQL, DAGs) e devolve"
+	@echo "                                SIM/PARCIAL/NAO por sinal, com --warehouse opcional"
 	@echo ""
 	@echo "  venv            cria platform/.venv e instala a plataforma"
 	@echo "  secrets         gera AIRFLOW_SECRET_KEY e AIRFLOW_FERNET_KEY no .env"
@@ -1043,6 +1049,12 @@ source-test:
 platform-test:
 	@echo "--- Plataforma ---"
 	cd platform && ../$(PLATFORM_PY) -m unittest discover -s tests -t .
+
+# So leitura: le data/, o SQL da plataforma e as DAGs, e devolve SIM/PARCIAL/NAO por sinal.
+# E o gatilho que AI_ENGINEERING_CONSTRAINTS.md §17 exige antes de montar qualquer coletor —
+# "prove useful signals exist" antes de "application -> OTel -> Collector -> backend".
+observability-prove-signals:
+	@$(PLATFORM_PY) scripts/prove_observability_signals.py
 
 # ---- setup -----------------------------------------------------------------
 venv:

@@ -1,4 +1,4 @@
--- 18 LINHAS QUE IMPEDEM UM MART MENTIR.
+-- 24 LINHAS QUE IMPEDEM UM MART MENTIR.
 --
 -- GRAO: (source_name, ingestion_date, wh). TIPO: observed (metadado operacional).
 --
@@ -8,8 +8,9 @@
 -- nunca podera olhar. Sem esta tabela, um produto ausente num dia e indistinguivel de um
 -- dia inteiro ausente, e qualquer serie temporal interpola a lacuna em silencio.
 --
--- E metadado promovido a fato de proposito. Custa 18 linhas; o que compra e a capacidade
--- de um mart dizer "nao sei" em vez de chutar.
+-- E metadado promovido a fato de proposito. Custa 24 linhas; o que compra e a capacidade
+-- de um mart dizer "nao sei" em vez de chutar. CR-005 acrescentou 6 delas para promover
+-- started_at_utc/finished_at_utc/duration_seconds, que ja existiam duas camadas abaixo.
 {{ config(materialized = 'table') }}
 
 select
@@ -22,6 +23,12 @@ select
     declared_rows,
     failure_count,
     anomaly_count,
+
+    -- CR-005: ja existiam duas camadas abaixo (Silver) e eram descartados so por uma
+    -- lista fixa de colunas na projecao do STAGE — nao dado ausente, projecao esquecida.
+    started_at_utc,
+    finished_at_utc,
+    duration_seconds,
 
     -- Uma execucao so e observacao valida se completou e nao registrou falha. Qualquer
     -- outra coisa e particao suspeita, e o consumidor precisa saber sem ter de ler duas

@@ -318,7 +318,10 @@ SPECS: list[dict] = [
                 complete,
                 declared_product_rows           as declared_rows,
                 failure_count,
-                anomaly_count
+                anomaly_count,
+                started_at_utc,
+                finished_at_utc,
+                duration_seconds
             from raw_manifest
 
             union all by name
@@ -331,7 +334,10 @@ SPECS: list[dict] = [
                 complete,
                 declared_customer_rows          as declared_rows,
                 failure_count,
-                anomaly_count
+                anomaly_count,
+                started_at_utc,
+                finished_at_utc,
+                duration_seconds
             from silver_oltp_manifest
 
             union all by name
@@ -349,7 +355,10 @@ SPECS: list[dict] = [
                 complete,
                 declared_event_rows             as declared_rows,
                 failure_count,
-                anomaly_count
+                anomaly_count,
+                started_at_utc,
+                finished_at_utc,
+                duration_seconds
             from silver_orders_manifest
 
             order by source_name, ingestion_date, wh
