@@ -32,18 +32,11 @@ HTTPS, sem necessidade de cliente de terceiros nem de chave de API.
 
 ## Localização
 
-Esta Source vive em `sources/ine-population-source/` de um monorepo, ao lado da camada de
-plataforma que a consome. Ela **permanece independente**: `pyproject.toml` próprio,
-`dependencies = []`, suíte própria, e nada fora daqui é importado.
-
-Comandos com `make` neste diretório continuam funcionando isolados, e é assim que a
-fronteira é verificada. Mas no dia a dia use o **Makefile da raiz**, que aponta `--out`
-para o `data/` compartilhado do monorepo:
-
-```bash
-make -C ../.. ine-extract ine-validate      # da raiz: escreve em <raiz>/data/ine
-make test                                   # daqui: suíte da Source, sem rede
-```
+Esta Source vive em `sources/ine-population-source/` do monorepo e permanece independente
+(`pyproject.toml` próprio, `dependencies = []`, suíte própria — ver
+[ARCHITECTURE.md](../../ARCHITECTURE.md)). No dia a dia use o **Makefile da raiz**
+(`make -C ../.. ine-extract ine-validate`), que aponta `--out` para o `data/` compartilhado
+do monorepo.
 
 ## Uso
 

@@ -147,12 +147,14 @@ ORDERS_OVERWRITE       ?=
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
-        warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
-        warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
-        warehouse-postgres-up warehouse-postgres-bootstrap warehouse-postgres-load \
-        warehouse-postgres warehouse-postgres-refresh \
+        warehouse-export warehouse-postgres-up warehouse-bootstrap warehouse-load \
+        warehouse warehouse-refresh warehouse-trigger \
+        warehouse-snowflake-bootstrap warehouse-snowflake-ddl warehouse-snowflake-load \
+        warehouse-snowflake warehouse-snowflake-refresh warehouse-snowflake-evidence \
+        warehouse-snowflake-prove-tests \
         observability-prove-signals \
         dashboard dashboard-venv dashboard-contract dashboard-check \
+        price-dashboard price-dashboard-contract price-dashboard-check \
         demand-reality-check demand-check-mapping \
         seed-province-map seed-service-area seed-municipality-codes \
         seed-ambiguous-series
@@ -266,33 +268,39 @@ help:
 	@echo "  demand-reality-check SNAPSHOT=before_mapa_2025_v1   congela o ANTES"
 	@echo "  demand-check-mapping      confere as 444 trincas do catalogo contra o de-para"
 	@echo ""
-	@echo "warehouse analitico (Snowflake, DB=$(SNOWFLAKE_DATABASE)) —"
-	@echo "recebe um RECORTE do Silver por escopo geografico, nunca o Silver inteiro:"
-	@echo "  warehouse-bootstrap       database, schemas, papeis e grants (1x, ACCOUNTADMIN)"
+	@echo "warehouse analitico (Postgres local, DB=$(WAREHOUSE_PG_DB)) — ALVO PADRAO —"
+	@echo "recebe um RECORTE do Silver por escopo geografico, nunca o Silver inteiro. O"
+	@echo "Snowflake era o alvo padrao ate o trial vencer; ver o par -snowflake abaixo."
+	@echo "  warehouse-postgres-up     sobe o container (perfil warehouse-postgres do compose)"
+	@echo "  warehouse-bootstrap       schemas, papeis e grants no Postgres local (idempotente)"
 	@echo "  warehouse-export          recorta o Silver para parquet em $(SNOWFLAKE_STAGE_DIR)"
-	@echo "  warehouse-ddl             imprime o DDL do STAGE (sem conectar em nada)"
-	@echo "  warehouse-load            PUT em stage interno + COPY INTO + reconferencia"
-	@echo "  warehouse                 dbt build --target snowflake (STAGE -> GOLD -> MART)"
-	@echo "  warehouse-refresh         os tres acima, em ordem"
-	@echo "  warehouse-prove-tests     injeta o defeito que cada teste diz pegar e exige o vermelho"
-	@echo "  warehouse-evidence        registra posse, volume e isolamento do destino, datado"
+	@echo "  warehouse-load            drop+create das tabelas STAGE + COPY FROM STDIN"
+	@echo "  warehouse                 dbt build --target postgres (STAGE -> GOLD -> MART)"
+	@echo "  warehouse-refresh         os quatro acima, em ordem"
+	@echo "  warehouse-trigger         dispara a DAG do warehouse no Airflow e acompanha"
 	@echo ""
-	@echo "warehouse analitico (Postgres local, fallback ao trial do Snowflake) —"
-	@echo "segundo alvo dbt, atras do profile opt-in 'warehouse-postgres' do compose:"
-	@echo "  warehouse-postgres-up       sobe o container (perfil warehouse-postgres)"
-	@echo "  warehouse-postgres-bootstrap  schemas, papeis e grants (idempotente)"
-	@echo "  warehouse-postgres-load     drop+create das tabelas STAGE + COPY FROM STDIN"
-	@echo "  warehouse-postgres          dbt build --target postgres (STAGE -> GOLD -> MART)"
-	@echo "  warehouse-postgres-refresh  export (reaproveitado) + os tres acima, em ordem"
+	@echo "warehouse analitico (Snowflake, DB=$(SNOWFLAKE_DATABASE)) — EM PAUSA, trial vencido —"
+	@echo "mesmo recorte de cima, contra a conta que um dia substituir o trial:"
+	@echo "  warehouse-snowflake-bootstrap    database, schemas, papeis e grants (1x, ACCOUNTADMIN)"
+	@echo "  warehouse-snowflake-ddl          imprime o DDL do STAGE (sem conectar em nada)"
+	@echo "  warehouse-snowflake-load         PUT em stage interno + COPY INTO + reconferencia"
+	@echo "  warehouse-snowflake             dbt build --target snowflake (STAGE -> GOLD -> MART)"
+	@echo "  warehouse-snowflake-refresh      os tres acima, em ordem"
+	@echo "  warehouse-snowflake-prove-tests  injeta o defeito que cada teste diz pegar, exige o vermelho"
+	@echo "  warehouse-snowflake-evidence     registra posse, volume e isolamento do destino, datado"
+	@echo "  ...trocar de conta:       edite .env.snowflake (veja .env.snowflake.example) e"
+	@echo "                            ~/.snowflake/config.toml; nenhum modelo ou teste muda"
 	@echo ""
-	@echo "painel estrategico (Streamlit sobre o MART, papel RETAIL_READER) —"
+	@echo "painel estrategico (Streamlit sobre o MART, papel retail_reader) —"
 	@echo "  dashboard-venv            instala streamlit/pandas/altair (extra, fora da imagem)"
 	@echo "  dashboard                 sobe o painel em http://localhost:$(DASHBOARD_PORT)"
 	@echo "  dashboard-contract        regenera streamlit/CONTRACT.md (sem conectar em nada)"
 	@echo "  dashboard-check           roda o painel de verdade e exige zero excecao (exige conta)"
-	@echo "  warehouse-trigger         dispara a DAG do warehouse no Airflow e acompanha"
-	@echo "  ...trocar de conta:       edite .env.snowflake (veja .env.snowflake.example) e"
-	@echo "                            ~/.snowflake/config.toml; nenhum modelo ou teste muda"
+	@echo ""
+	@echo "painel de precos (Streamlit sobre o MART, EXCLUSIVO — so oscilacao de preco) —"
+	@echo "  price-dashboard           sobe o painel em http://localhost:$(PRICE_DASHBOARD_PORT)"
+	@echo "  price-dashboard-contract  regenera streamlit/PRICE_CONTRACT.md (sem conectar em nada)"
+	@echo "  price-dashboard-check     roda o painel de verdade e exige zero excecao (exige conta)"
 	@echo ""
 	@echo "seeds derivados (sob demanda; o CSV versionado e a verdade, o script e a procedencia) —"
 	@echo "  seed-province-map         wh -> provincia/municipio, reconferido no Callejero"
@@ -314,8 +322,8 @@ help:
 	@echo "  source-test     suite das cinco Sources (sem rede, sem dependencias)"
 	@echo "  platform-test   testes da plataforma, sem rede"
 	@echo ""
-	@echo "observabilidade — a prova exigida por AI_ENGINEERING_CONSTRAINTS.md §17 antes de"
-	@echo "instrumentar qualquer coisa: os sinais ja existem, ou faltam de verdade?"
+	@echo "observabilidade — a prova exigida (BACKLOG.md) antes de instrumentar qualquer"
+	@echo "coisa: os sinais ja existem, ou faltam de verdade?"
 	@echo "  observability-prove-signals   le o sistema real (data/, SQL, DAGs) e devolve"
 	@echo "                                SIM/PARCIAL/NAO por sinal, com --warehouse opcional"
 	@echo ""
@@ -861,19 +869,57 @@ stream-evidence:
 	@$(PLATFORM_PY) -m retail_platform stream-evidence \
 	  --dsn "$(OLTP_DSN)" --out $(STREAM_EVIDENCE)
 
-# ---- warehouse analitico (Snowflake) -----------------------------------------
-# O Snowflake e o QUARTO consumidor que nao alcanca o Lakehouse — os outros tres sao as
-# Sources FROZEN. Nao recebe o Silver inteiro: recebe um RECORTE por ESCOPO GEOGRAFICO.
-# A razao nao e propriedade do recorte e nao para quieta — 3,85% na Fase 2, 46,9% na Fase 6,
-# sem nenhuma regra mudar: ela e funcao de quais sources cabem no escopo. A populacao do INE
-# e NACIONAL e entrega 1,8%; clientes e pedidos nascem dentro das 4 AUFs e entregam ~100%.
-# O numero do momento sai de `make warehouse-evidence`, nunca deste comentario.
+# ---- warehouse analitico: recorte do Silver (compartilhado pelos dois motores) --
+# O recorte por ESCOPO GEOGRAFICO nao tem nada de especifico ao motor de destino — so o
+# nome do diretorio e um resquicio historico do dia em que so existia o alvo Snowflake (ver
+# DECISIONS.md CR-006). Os dois carregadores abaixo leem o MESMO parquet.
 # Ver platform/src/retail_platform/snowflake_export.py.
-#
-#   make warehouse-export   (Silver -> parquet local; nao fala com o Snowflake)
-#   make warehouse-load     (PUT em stage interno + COPY INTO + reconferencia)
-#   make warehouse          (dbt build --target snowflake: STAGE -> GOLD -> MART)
 SNOWFLAKE_STAGE_DIR ?= data/snowflake-stage
+
+warehouse-export:
+	$(PLATFORM_PY) -m retail_platform export-snowflake --out $(SNOWFLAKE_STAGE_DIR)
+
+# ---- warehouse analitico (Postgres local) — ALVO PADRAO desde 2026-09 -----------
+# O Snowflake era um TRIAL, com prazo, e o prazo venceu: a DAG `warehouse_load` passou a
+# falhar de autenticacao ("Your free trial has ended..."). Os alvos SEM sufixo de motor
+# atendem agora o Postgres local — exatamente a troca que este segundo alvo dbt existia
+# para provar barata (ver DECISIONS.md CR-006 e CR-007). O par Snowflake continua logo
+# abaixo, com sufixo -snowflake, pronto para o dia em que outra conta substituir o trial —
+# nenhum modelo dbt muda nesse dia, so o --target e o carregador.
+#
+#   docker compose -f infra/docker-compose.yml --profile warehouse-postgres up -d warehouse-postgres
+#   make warehouse-bootstrap
+#   make warehouse-refresh
+WAREHOUSE_PG_HOST ?= localhost
+WAREHOUSE_PG_PORT ?= 5434
+WAREHOUSE_PG_DB   ?= retail
+
+warehouse-postgres-up:
+	$(COMPOSE) --profile warehouse-postgres up -d warehouse-postgres
+
+warehouse-bootstrap:
+	$(PLATFORM_PY) -m retail_platform postgres-bootstrap \
+	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
+
+warehouse-load:
+	$(PLATFORM_PY) -m retail_platform load-postgres \
+	  --stage-dir $(SNOWFLAKE_STAGE_DIR) \
+	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
+
+# `--target postgres` usa o MESMO guard `+enabled` do dbt_project.yml que `--target
+# snowflake` ja usava — nenhum modelo, teste ou regra de negocio muda entre os dois.
+warehouse:
+	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target postgres
+
+warehouse-refresh: warehouse-export warehouse-bootstrap warehouse-load warehouse
+	@echo ""
+	@echo "warehouse-refresh OK: STAGE carregado e GOLD/MART reconstruidos no Postgres local"
+
+# ---- warehouse analitico (Snowflake) — EM PAUSA, trial vencido em 2026-09 -------
+# O Snowflake foi o QUARTO consumidor que nao alcanca o Lakehouse — os outros tres sao as
+# Sources FROZEN. Nao recebia o Silver inteiro: recebia um RECORTE por ESCOPO GEOGRAFICO
+# (o mesmo `warehouse-export` de cima). Fica pronto para o dia em que outra conta (paga, ou
+# um trial novo) substituir esta — nenhum modelo dbt muda nesse dia. Ver DECISIONS.md CR-007.
 SNOWFLAKE_CONNECTION ?= spark_retail
 # Deliberadamente com o MESMO nome que profiles.yml le: por causa do `export` da linha 15,
 # mudar isto aqui muda o destino do COPY INTO e o target do dbt de uma vez so. E o jeito de
@@ -891,36 +937,31 @@ SNOWFLAKE_DATABASE  ?= RETAIL
 # required property" enquanto `dbt debug` fora do make passava. Dai o prefixo proprio:
 # nenhum nome daqui pode colidir com os que profiles.yml le.
 SNOWFLAKE_GRANT_USER ?=
-warehouse-bootstrap:
+warehouse-snowflake-bootstrap:
 	$(PLATFORM_PY) -m retail_platform snowflake-bootstrap \
 	  --database $(SNOWFLAKE_DATABASE) --connection $(SNOWFLAKE_CONNECTION) \
 	  $(if $(SNOWFLAKE_GRANT_USER),--grant-to-user $(SNOWFLAKE_GRANT_USER),)
 
-warehouse-export:
-	$(PLATFORM_PY) -m retail_platform export-snowflake --out $(SNOWFLAKE_STAGE_DIR)
-
 # Sem conexao nenhuma: o DDL e derivado do proprio recorte, entao pode ser revisado antes
 # de qualquer coisa tocar o Snowflake.
-warehouse-ddl:
+warehouse-snowflake-ddl:
 	@$(PLATFORM_PY) -m retail_platform snowflake-ddl --database $(SNOWFLAKE_DATABASE)
 
-warehouse-load:
+warehouse-snowflake-load:
 	$(PLATFORM_PY) -m retail_platform load-snowflake \
 	  --stage-dir $(SNOWFLAKE_STAGE_DIR) --database $(SNOWFLAKE_DATABASE) \
 	  --connection $(SNOWFLAKE_CONNECTION)
 
-# `--target snowflake` faz o guard `+enabled` do dbt_project.yml desligar a arvore inteira
-# do Silver: nenhum read_json sobre s3:// e tentado dentro do Snowflake.
-warehouse:
+warehouse-snowflake:
 	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target snowflake
 
 # A metade Snowflake nao e reproduzivel offline como a metade Lakehouse: depende de uma
-# conta viva, e a usada aqui e um trial. Este alvo registra o resultado da execucao REAL —
-# posse, volume, isolamento e amostra — com data e identidade da conta, para que os modelos
-# do warehouse continuem tendo prova depois que a conta expirar. Regeneravel: vincular
-# outra conta e rodar isto produz a evidencia daquela conta.
+# conta viva — e a usada aqui era um trial, que venceu. Este alvo registra o resultado da
+# execucao REAL — posse, volume, isolamento e amostra — com data e identidade da conta, para
+# que os modelos do warehouse continuem tendo prova depois que a conta expirar. Regeneravel:
+# vincular outra conta e rodar isto produz a evidencia daquela conta.
 SNOWFLAKE_EVIDENCE ?= docs/warehouse-evidence/README.md
-warehouse-evidence:
+warehouse-snowflake-evidence:
 	@$(PLATFORM_PY) -m retail_platform snowflake-evidence \
 	  --database $(SNOWFLAKE_DATABASE) --connection $(SNOWFLAKE_CONNECTION) \
 	  --out $(SNOWFLAKE_EVIDENCE)
@@ -932,55 +973,21 @@ warehouse-evidence:
 # Este alvo injeta, no dado REAL do warehouse, o defeito que cada teste diz pegar, exige o
 # vermelho, desfaz e exige o verde de volta. So mexe em GOLD e MART, que sao inteiramente
 # reconstruiveis por `dbt build`.
-warehouse-prove-tests:
+#
+# SO CONTRA O SNOWFLAKE (a injecao usa `dateadd`/`number`, Snowflake-only): o par Postgres
+# fica registrado como backlog em DECISIONS.md CR-007, nao bloqueia a troca do alvo padrao —
+# os 178 testes de dado do dbt ja rodam, verdes, contra os dois motores.
+warehouse-snowflake-prove-tests:
 	@$(PLATFORM_PY) scripts/prove_warehouse_orders_tests.py
 
-warehouse-refresh: warehouse-export warehouse-load warehouse
+warehouse-snowflake-refresh: warehouse-export warehouse-snowflake-load warehouse-snowflake
 	@echo ""
-	@echo "warehouse-refresh OK: STAGE carregado e GOLD/MART reconstruidos"
-
-# ---- warehouse analitico (Postgres local) --------------------------------------
-# SEGUNDO alvo de warehouse, ao lado do Snowflake acima — nao um substituto. A conta
-# Snowflake em uso e um TRIAL com prazo; este container prova, com um motor que nao expira,
-# que a arvore models/warehouse/ tambem troca de MOTOR e nao so de conta. Ver DECISIONS.md
-# e platform/src/retail_platform/postgres_load.py.
-#
-# `make warehouse-export` E REAPROVEITADO tal qual: o recorte do Silver nao tem nada de
-# Snowflake-especifico, entao produzi-lo de novo so para o Postgres duplicaria a mesma
-# consulta sem motivo. So o CARREGADOR muda por motor.
-#
-#   docker compose -f infra/docker-compose.yml --profile warehouse-postgres up -d warehouse-postgres
-#   make warehouse-postgres-bootstrap
-#   make warehouse-postgres-refresh
-WAREHOUSE_PG_HOST ?= localhost
-WAREHOUSE_PG_PORT ?= 5434
-WAREHOUSE_PG_DB   ?= retail
-
-warehouse-postgres-up:
-	$(COMPOSE) --profile warehouse-postgres up -d warehouse-postgres
-
-warehouse-postgres-bootstrap:
-	$(PLATFORM_PY) -m retail_platform postgres-bootstrap \
-	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
-
-warehouse-postgres-load:
-	$(PLATFORM_PY) -m retail_platform load-postgres \
-	  --stage-dir $(SNOWFLAKE_STAGE_DIR) \
-	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
-
-# `--target postgres` faz o mesmo guard `+enabled` do dbt_project.yml que `--target
-# snowflake` ja usava — nenhum modelo, teste ou regra de negocio muda entre os dois.
-warehouse-postgres:
-	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target postgres
-
-warehouse-postgres-refresh: warehouse-export warehouse-postgres-bootstrap warehouse-postgres-load warehouse-postgres
-	@echo ""
-	@echo "warehouse-postgres-refresh OK: STAGE carregado e GOLD/MART reconstruidos no Postgres local"
+	@echo "warehouse-snowflake-refresh OK: STAGE carregado e GOLD/MART reconstruidos"
 
 # ---- painel estrategico (Streamlit sobre o MART) -----------------------------
 # Bancada de CONFERENCIA dos indicadores antes de reconstrui-los no Power BI. Le so o MART, e
-# veste `RETAIL_READER` — o papel de BI, que este painel e o primeiro consumidor a vestir de
-# verdade (a carga ja vestia RETAIL_LOADER e o dbt RETAIL_TRANSFORMER).
+# veste `retail_reader` — o papel de BI, que este painel e o primeiro consumidor a vestir de
+# verdade (a carga ja vestia `retail_loader` e o dbt `retail_transformer`).
 #
 # As dependencias vivem em [project.optional-dependencies] de platform/pyproject.toml, FORA de
 # `dependencies`: o Dockerfile.airflow instala exatamente aquela lista, e ~150 MB de UI nao tem
@@ -996,7 +1003,7 @@ dashboard:
 	  --server.port $(DASHBOARD_PORT) --server.headless true
 
 # Sem conexao nenhuma: o CONTRACT e derivado de indicators.py, entao pode ser revisado antes
-# de qualquer coisa tocar o Snowflake — mesma propriedade de `make warehouse-ddl`.
+# de qualquer coisa tocar o warehouse — mesma propriedade de `make warehouse-snowflake-ddl`.
 dashboard-contract:
 	@$(PLATFORM_PY) streamlit/contract.py
 
@@ -1006,6 +1013,24 @@ dashboard-contract:
 # cliente. As 21 consultas (18 indicadores + 3 auxiliares) so sao exercitadas assim.
 dashboard-check:
 	@$(PLATFORM_PY) streamlit/smoke.py
+
+# ---- painel de precos (Streamlit sobre o MART) — EXCLUSIVO, nao uma aba a mais -----
+# Pedido como painel PROPRIO: oscilacao de preco do catalogo Mercadona, e mais nada — sem
+# funil, sem cesta, sem estoque. Mesma sessao (`connection.py`, `retail_reader`) do painel
+# de operacoes acima; catalogo de consultas proprio em price_indicators.py, porque as
+# perguntas sao outras. Ver streamlit/PRICE_CONTRACT.md.
+PRICE_DASHBOARD_PORT ?= 8502
+price-dashboard:
+	$(PLATFORM_PY) -m streamlit run streamlit/price_app.py \
+	  --server.port $(PRICE_DASHBOARD_PORT) --server.headless true
+
+# Sem conexao nenhuma, mesma propriedade de `dashboard-contract`.
+price-dashboard-contract:
+	@$(PLATFORM_PY) streamlit/price_contract.py
+
+# Mesmo motivo de `dashboard-check`: EXIGE CONTA VIVA, fora de `make test`.
+price-dashboard-check:
+	@$(PLATFORM_PY) streamlit/price_smoke.py
 
 warehouse-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause warehouse_load
@@ -1099,7 +1124,7 @@ platform-test:
 	cd platform && ../$(PLATFORM_PY) -m unittest discover -s tests -t .
 
 # So leitura: le data/, o SQL da plataforma e as DAGs, e devolve SIM/PARCIAL/NAO por sinal.
-# E o gatilho que AI_ENGINEERING_CONSTRAINTS.md §17 exige antes de montar qualquer coletor —
+# E o gatilho que BACKLOG.md exige antes de montar qualquer coletor —
 # "prove useful signals exist" antes de "application -> OTel -> Collector -> backend".
 observability-prove-signals:
 	@$(PLATFORM_PY) scripts/prove_observability_signals.py

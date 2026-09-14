@@ -56,7 +56,7 @@ class ArvoreDeEstruturaTest(unittest.TestCase):
 
     def test_todo_caminho_da_arvore_existe(self):
         caminhos = self._caminhos_da_arvore()
-        self.assertGreater(len(caminhos), 80, "a arvore encolheu — o parser provavelmente quebrou")
+        self.assertGreater(len(caminhos), 15, "a arvore encolheu — o parser provavelmente quebrou")
 
         # data/ e seus filhos sao a unica excecao: a propria arvore os marca "outside
         # version control" (.gitignore linha 36) porque sao scratch de extracao, nunca
@@ -181,11 +181,18 @@ class TetoDeLinhasTest(unittest.TestCase):
     perguntas do fechamento", um INDICE de uma linha por pergunta apontando para onde a
     evidencia mora. Ela nao duplica explicacao — e o oposto disso, e existe para que um leitor
     possa conferir se a documentacao sustenta o que afirma sem ler 3.000 linhas.
+
+    OS DOIS TETOS CAIRAM em 2026-09-14, numa revisao voltada para leitor externo (o
+    repositorio passou a ser anexado como demonstracao tecnica): a arvore de diretorios do
+    README foi condensada a top-level, e o ARCHITECTURE perdeu tres subsecoes de postmortem
+    (RBAC, `warehouse_load`, homonimos na populacao) e uma segunda tabela de historico que
+    duplicava o que `DECISIONS.md` ja narra por fase — nada foi perdido, so realocado para o
+    arquivo que ja existe para guardar historia.
     """
 
     TETOS = {
-        "README.md": 760,
-        "ARCHITECTURE.md": 700,
+        "README.md": 680,
+        "ARCHITECTURE.md": 560,
     }
 
     def test_nenhum_documento_de_estado_passa_do_teto(self):

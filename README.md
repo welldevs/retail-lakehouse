@@ -21,17 +21,15 @@ them through the physical contract — never importing any of their code. See
 packages, not a shared abstraction.
 
 The architecture decisions are in [ARCHITECTURE.md](ARCHITECTURE.md), with the adoption
-date of Snowflake, Kafka, Iceberg, and **Spark**. The history of each one — decision,
-reason, evidence, trade-off — is in [DECISIONS.md](DECISIONS.md), what does not go in is in
-[BACKLOG.md](BACKLOG.md), and the constraints governing any agent that continues the work
-are in [AI_ENGINEERING_CONSTRAINTS.md](AI_ENGINEERING_CONSTRAINTS.md). Spark's case is the
-most instructive of the four: the trigger declared for it — *"a partition DuckDB can't
-hold"* — **never fired, and that's measured** (37,9 M basket pairs in ~1,5 s and ~2,4 GB on
-a single node, over the final window). It got in for two other reasons: it's the first
-writer to the Iceberg catalog outside Python, and the shape of the job it carries — a
-running sum fed back by its own state — isn't expressible in SQL.
-[`make spark-evidence`](docs/spark-evidence/README.md) publishes the same job on both
-engines, **including when pure Python wins**.
+date of Snowflake, Postgres, Kafka, Iceberg, and **Spark**. The history of each one —
+decision, reason, evidence, trade-off — is in [DECISIONS.md](DECISIONS.md), and what does
+not go in is in [BACKLOG.md](BACKLOG.md). Spark's case is the most instructive of the four:
+the trigger declared for it — *"a partition DuckDB can't hold"* — **never fired, and that's
+measured** (37,9 M basket pairs in ~1,5 s and ~2,4 GB on a single node, over the final
+window). It got in for two other reasons: it's the first writer to the Iceberg catalog
+outside Python, and the shape of the job it carries — a running sum fed back by its own
+state — isn't expressible in SQL. [`make spark-evidence`](docs/spark-evidence/README.md)
+publishes the same job on both engines, **including when pure Python wins**.
 
 ## Layers
 
@@ -49,18 +47,67 @@ L1  RAW        byte-identical partition in MinIO/S3, checksum verified post-PUT
     └───────────────────────────────────────────────────────────────────────┘
 L2  Silver     typed parquet + order fold + price variation · DuckDB · 4,1 M rows
 ────────────── physical boundary: COPY INTO, never ref() ──────────────
-L3  Stage      1:1 mirror of a CUT of the Silver                 · Snowflake · 407 k rows
+L3  Stage      1:1 mirror of a CUT of the Silver           · Postgres (default) · 407 k rows
 L4  Gold       conformed DIM_* / FACT_*, SCD2 history
 L5  Mart       MART_*, with the grain declared in each table
 ```
 
-Snowflake does **not** receive the whole Silver: 3.327.809 of 7.098.881 rows cross the
-boundary (**46,9%** on 2026-09-01). The reason **is not a property of the pipeline** — it's
-a function of how much of each source falls within scope, which is why it moves on its
-own: it was 3,85% in Phase 2 and 9,95% in Phase 3, with nobody loosening the cut. The INE
-population is national and delivers 1,8%; orders and customers are born inside the four
-AUFs and deliver ~100%, and Phase 6 multiplied both by 14× and 14×. Without Orders, the cut
-is 19,2%. See [DECISIONS.md § "Phase 2"](DECISIONS.md).
+The analytical warehouse does **not** receive the whole Silver: 3.327.809 of 7.098.881 rows
+cross the boundary (**46,9%** on 2026-09-01). The reason **is not a property of the
+pipeline** — it's a function of how much of each source falls within scope, which is why it
+moves on its own: it was 3,85% in Phase 2 and 9,95% in Phase 3, with nobody loosening the
+cut. The INE population is national and delivers 1,8%; orders and customers are born
+inside the four AUFs and deliver ~100%, and Phase 6 multiplied both by 14× and 14×. Without
+Orders, the cut is 19,2%. See [DECISIONS.md § "Phase 2"](DECISIONS.md).
+
+**The engine behind L3-L5 is Postgres, not Snowflake.** The physical L2→L3 boundary
+(`COPY INTO`/`source()`, never `ref()`) was built so the destination could be swapped by
+configuration alone — the Snowflake trial this project started on expired on 2026-09-14, and
+`make warehouse*` now targets a local Postgres container by default. Same 24 models, same
+178 data tests, only the loader and the `--target` changed. `make warehouse-snowflake-*`
+keeps the original path working, one flag away, for the day a real account replaces the
+trial. See [DECISIONS.md § "CR-006"](DECISIONS.md) and [§ "CR-007"](DECISIONS.md).
+
+## The fourteen closing questions
+
+This is an **index**, not a new explanation: each answer fits on one line and points to
+where the evidence lives. It exists so a reader can check, without reading 3.000 lines,
+whether the documentation backs up what it claims — read this before anything else below.
+
+| | Question | Short answer | Where the evidence lives |
+|---|---|---|---|
+| 1 | What does the project do? | Ingests 5 sources, preserves the RAW, produces typed Silver, serves a dimensional model, and keeps a stream plane that converges to the same state as the batch | [Layers](#layers) |
+| 2 | Which data is **real**? | Mercadona's catalog and price; INE population; INE geography (sections, streets, clusters); the MAPA 2025 report, used as a **benchmark** | [The five Sources](#the-five-sources) · [`docs/README.md`](docs/README.md) |
+| 3 | Which data is **synthetic**? | Customers and orders — invented over real attributes (the address exists, the person doesn't); and the **stock ledger**, computed from observed consumption plus a policy in a seed. No source in this repository measures stock | seeds `*_premises_seed.csv`, all with a provenance column · `stock_label = 'synthetic'` in `MART_STOCK_HEALTH` |
+| 4 | Why does each technology exist? | Each one has an adoption date, the trigger that fired it, and what **wasn't** proven | [ARCHITECTURE.md § "What didn't get in, and when it gets in"](ARCHITECTURE.md) |
+| 5 | Why does Spark exist while **being slower**? | Three reasons, and performance is not one of them: cumulative state whose output depends on the prior state; Iceberg interop demonstrated by a spike; and the need to validate more than one engine writing the same catalog. At this volume pure Python is ~3× faster, and the number is published | [`docs/spark-evidence/`](docs/spark-evidence/README.md) · [DECISIONS.md § "Phase 7"](DECISIONS.md) |
+| 6 | What is **Kafka's** role? | **Transport**, never the canonical source. `publish → broker ack → mark the outbox`, at-least-once, with the duplication window reproduced in a test | [`docs/stream-evidence/`](docs/stream-evidence/README.md) |
+| 7 | What is **Iceberg's** role? | Atomic commit with optimistic concurrency between writers, and **interop between engines** — asserted in Phase 3, demonstrated in Phase 7 with three writers on the catalog (`platform`, `rebuild`, `spark`) | `make spike-iceberg` · `make spike-spark-iceberg` |
+| 8 | What is the **system of record** at each stage? | RAW in object storage is the point of no return; the OLTP is the origin of the event (state + outbox in the same transaction); Kafka is transport; the projection and the Silver are **derived** and disposable | [L1 — RAW](#l1--raw-in-object-storage) · [ARCHITECTURE.md](ARCHITECTURE.md) |
+| 9 | How does it handle **duplication**? | Consumer-side dedup by `(order_id, sequence_no)`: `seq <= last` is discarded. Duplication in the window between publishing and marking the outbox is **accepted and declared** — end-to-end exactly-once is not promised | `make orders-prove-stream` · `fake_kafka.py` |
+| 10 | How does it handle **gaps**? | `seq == last + 1` applies; `seq > last + 1` is a gap and **stops** instead of applying out of order | `make orders-prove-stream` |
+| 11 | How does it handle **concurrency**? | Optimistic conflict on Iceberg with the full cycle: detect → reload → reapply → retry, and an old `seq` **never** overwrites a newer `seq`. Demonstrated even **across different engines** | `make orders-prove-projection` · `make spike-spark-iceberg` |
+| 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 206.523 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
+| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 81 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
+| 14 | What **limitations** remain? | Seven debt items, each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
+
+### What is **not** demonstrated in this project
+
+Written in these words on purpose. The absence of proof is information, and erasing it
+would be the only way to make this list look nice:
+
+- **That Spark scales.** It runs `local[*]` — driver and executor on the same JVM, no
+  shuffle between nodes. **Not demonstrated in this project.**
+- **That anyone needs Kafka's latency, or that the broker is the origin.** The canonical
+  log still originates on disk. **Not demonstrated in this project.**
+- **End-to-end exactly-once.** It isn't promised, and the window where duplication happens
+  is reproduced in a test rather than hidden.
+- **That the RAW is reproducible.** It isn't, by the nature of the sources. What's
+  guaranteed is `same frozen RAW → reproducible downstream`.
+- **That the operation is production-grade.** There's no real traffic, SLO, on-call, or
+  incident. What exists is behavior verified in tests and dated execution evidence.
+- **That purchasing behavior is realistic.** Customer and order are synthetic, calibrated
+  against a **benchmark** that is never treated as ground truth.
 
 ## Requirements
 
@@ -99,7 +146,7 @@ own — an INE partition takes between 264 and 384 MB. After `land` + `verify-la
 object storage is the source of truth:
 
 ```bash
-make data-usage                                          # quanto cada source ocupa
+make data-usage                                          # how much each source occupies
 make prune-local PARTITION=data/ine/ingestion_date=2026-08-25
 ```
 
@@ -112,132 +159,32 @@ made by whoever operates it, not a pipeline side effect.
 
 ```
 .
-├── ARCHITECTURE.md                     # ADR: what didn't get in, and each one's trigger
-├── DECISIONS.md                        # the history: decision -> reason -> evidence -> trade-off
-├── BACKLOG.md                          # what does NOT get in, and each item's trigger
-├── AI_ENGINEERING_CONSTRAINTS.md       # the engineering constraints for AI/agents
-├── Makefile                            # the platform's entry point
-├── sources/
-│   ├── mercadona-catalog-source/       # Catalog Source, FROZEN, dependencies = []
-│   ├── ine-population-source/          # Population Source, FROZEN, dependencies = []
-│   ├── ine-callejero-source/           # Callejero Source, FROZEN, dependencies = [] — no API
-│   ├── simulated-oltp-source/          # Synthetic customers, FROZEN, dependencies = [] — derived from Silver
-│   └── simulated-orders-source/        # Orders as an EVENT LOG, FROZEN — derived from Silver
-├── .env.example                        # copy to .env; development-only credentials
-├── .env.snowflake.example              # copy to .env.snowflake; account identity, no secret
-├── docs/README.md                      # the MAPA benchmark: URL, sha256, how to re-extract
-├── docs/demand-evidence/               # BEFORE | MAPA | TARGET | AFTER — generated, plus the frozen BEFOREs
-├── docs/warehouse-evidence/            # the real run on Snowflake, dated — generated, not hand-written
-├── docs/stream-evidence/               # live OLTP, broker, and projection, dated — generated, not hand-written
+├── ARCHITECTURE.md      # state: layers, adopted tech with trigger and date, declared debt
+├── DECISIONS.md         # history: decision -> reason -> evidence -> trade-off, phase by phase
+├── BACKLOG.md           # what does NOT get in, and each item's trigger
+├── Makefile              # the platform's entry point — `make help` lists every target
+├── sources/               # 5 FROZEN packages, dependencies = [], each with its own CONTRACT.md
+├── .env.example           # copy to .env; development-only credentials
+├── .env.snowflake.example # copy to .env.snowflake; account identity, no secret
+├── docs/                  # generated evidence pages (spark, stream, warehouse, demand) + FREEZE.md
 ├── platform/
-│   ├── pyproject.toml                  # boto3, duckdb, dbt-core, dbt-duckdb, dbt-snowflake
-│   ├── src/retail_platform/
-│   │   ├── config.py                   # endpoint and credentials, from the environment
-│   │   ├── manifest.py                 # the consumer contract, in code — generic per source
-│   │   ├── land.py                     # partition -> object storage, verified
-│   │   ├── verify.py                   # independent re-read and re-check
-│   │   ├── query.py                    # configured connection + DuckDB secret
-│   │   ├── oltp_reference.py           # Silver -> 3 flat JSON files for the simulated OLTP source
-│   │   ├── orders_reference.py         # Silver -> 5 flat JSON files for the orders source
-│   │   ├── demand_profile.py           # mapping + MAPA benchmark -> weights per cohort (IPF)
-│   │   ├── demand_check.py             # reality check BEFORE | MAPA | TARGET | AFTER + cohort
-│   │   ├── orders_oltp.py              # the orders OLTP: state + outbox IN THE SAME transaction
-│   │   ├── orders_stream.py            # producer, consumer, and read model; delivery semantics
-│   │   ├── orders_projection.py        # the Iceberg projection: two writers, monotonic merge
-│   │   ├── snowflake_export.py         # the CUT: Silver -> parquet (10%), no business rule
-│   │   ├── snowflake_load.py           # transport: DDL, PUT to an internal stage, COPY INTO, roles
-│   │   ├── snowflake_evidence.py       # observes the destination and writes dated evidence
-│   │   ├── stream_evidence.py          # observes all THREE live planes; absence is declared
-│   │   ├── silver_gate.py              # what to exclude from the Silver dbt build — a SINGLE place
-│   │   └── cli.py                      # land / verify-landing / query / prune-local / has-data
-│   │                                   # / export-oltp-reference / export-orders-reference
-│   │                                   # / orders-oltp-ddl / orders-oltp-init
-│   │                                   # / orders-apply / orders-outbox
-│   │                                   # / export-snowflake / snowflake-ddl
-│   │                                   # / snowflake-bootstrap / load-snowflake / snowflake-evidence
-│   │                                   # / stream-evidence / silver-build
-│   ├── dbt/seeds/                      # 16 seeds, all with a provenance column
-│   │   ├── warehouse_province_map_seed.csv  # wh -> province/municipality (headquarters), INE codes
-│   │   ├── warehouse_service_area_seed.csv  # wh -> N municipalities in the same AUF (INE)
-│   │   ├── order_premises_seed.csv          # order generator assumptions, ALL `synthetic`
-│   │   ├── customer_premises_seed.csv       # who EXISTS: minimum age, denominator, allocation
-│   │   ├── ine_municipality_codes_seed.csv  # name (Tempus3) -> municipality code, 08/28/41/46
-│   │   ├── ine_ambiguous_series_seed.csv    # series -> official code, for homonymous names in Spain
-│   │   ├── ine_ccaa_map_seed.csv            # province -> autonomous community; no default target
-│   │   ├── demand_profile_seed.csv          # the demand model configuration, versioned
-│   │   ├── demand_category_mapping_seed.csv # Mercadona category -> MAPA group (444 triples)
-│   │   ├── demand_seasonality_seed.csv      # what the report does NOT publish per category, declared
-│   │   ├── mapa_2025_benchmark_seed.csv     # 64 rows from the report, each citing the section
-│   │   ├── mapa_2025_region_seed.csv        # per-capita consumption by autonomous community
-│   │   ├── demand_cohort_age_seed.csv       # volume x population by age bracket, `benchmark`
-│   │   └── demand_cohort_region_seed.csv    # same, by community; the PDF page in each row
-│   ├── dbt/macros/                     # generate_schema_name: absolute GOLD/MART, no prefix
-│   ├── dbt/models/silver/              # target dev (duckdb) — 25 models
-│   │   ├── warehouse_province_map.sql   # pass-through from the seed to object storage
-│   │   ├── warehouse_service_area.sql   # same, for the service area
-│   │   ├── order_premises.sql           # same, for the assumptions — carries through to the warehouse
-│   │   ├── customer_premises.sql        # same, for the REGISTRATION assumptions (a different domain)
-│   │   ├── mercadona/                   # 4 models, grain per wh
-│   │   ├── ine_population/              # population series by province AND by municipality
-│   │   ├── ine_callejero/               # sections, clusters, streets — official geography
-│   │   ├── simulated_oltp/              # synthetic customers + manifest with lineage
-│   │   └── simulated_orders/            # the log fold: event, order, line, manifest
-│   ├── dbt/models/warehouse/           # target snowflake — 24 models, linked via source()
-│   │   ├── sources.yml                  # the 15 STAGE tables: the boundary, declared
-│   │   ├── gold/                        # 6 DIM + 8 FACT, SCD2 derived from history
-│   │   └── mart/                        # 9 marts, grain in each one's header
-│   ├── dbt/tests/                      # Silver singular tests
-│   ├── dbt/tests/warehouse/            # same for Gold/Mart (separate: cross ref() doesn't compile)
-│   └── tests/                          # no network (in-memory doubles of S3 and Postgres)
-│       ├── fake_s3.py                   # validates ChecksumSHA256 the way the server would
-│       ├── fake_pg.py                   # RECORDS the transaction boundary: what only the engine
-│       │                                # proves (which rollback undoes) is left out, on purpose
-│       ├── fake_kafka.py                # a SHARED log: the order between writing and
-│       │                                # committing the offset is the delivery semantics
-│       └── fake_iceberg.py              # conflict on demand: exercises the monotonic merge
-├── orchestration/airflow/dags/         # 6 DAGs: 5 sources + warehouse_load
-│   ├── mercadona_catalog_daily.py      # daily cron
-│   ├── ine_population_on_demand.py     # no cron — manual trigger
-│   ├── ine_callejero_on_demand.py      # no cron — manual trigger, no API
-│   ├── simulated_oltp_customers.py     # no cron — the base changes when someone decides
-│   ├── simulated_orders_events.py      # no cron — streaming is NOT a DAG task
-│   └── warehouse_load.py               # the only one crossing the boundary between two engines
-├── streamlit/                          # operations dashboard over the MART (RETAIL_READER)
-│   ├── indicators.py                   # the SINGLE SOURCE: SQL and explanation together
-│   ├── CONTRACT.md                     # GENERATED from indicators.py — the verification doc
-│   ├── contract.py                     # the generator; imports nothing that connects
-│   ├── connection.py                   # RETAIL_READER session + `use secondary roles none`
-│   ├── smoke.py                        # runs the real app and requires zero exceptions
-│   └── app.py                          # the interface, 7 groups — KPI, table, chart, no SQL
-├── scripts/                            # each one has a Makefile target; none runs on its own
-│   ├── derive_warehouse_province_map.py   # derives the province/municipality seed from the Callejero
-│   ├── derive_warehouse_service_area.py   # derives each warehouse's AUF from the INE's AUF_mun.xlsx
-│   ├── derive_municipality_codes.py       # derives name (Tempus3) -> official municipality code
-│   ├── derive_ambiguous_series.py         # resolves national homonyms via the VALORES_SERIE code
-│   ├── gen-secrets.py                     # generates the Airflow keys in .env (mode 600)
-│   ├── prove_oltp_atomicity.py            # injects a DATABASE failure and proves both sides fall together
-│   ├── prove_stream_semantics.py          # reproduces the duplication window and proves the replay
-│   ├── spike_iceberg_duckdb.py            # the CLOSED experiment, run before Milestone 6
-│   ├── prove_iceberg_projection.py        # concurrency, monotonic merge, snapshot isolation
-│   ├── spike_spark_iceberg.py             # the Phase 7 GATE: can Spark read the pyiceberg catalog?
-│   ├── prove_warehouse_orders_tests.py    # injects the defect each test claims to catch, into real data
-│   └── prove_observability_signals.py     # SIM/PARCIAL/NAO per required signal — CR-004, before instrumenting
-├── jobs/spark/                         # the only code that runs outside the platform's venv
-│   ├── session.py                      # the session with the Iceberg catalog; the spike imports from here
-│   └── stock_ledger.py                 # balance, stockout, and replenishment — the shape SQL can't express
-├── infra/
-│   ├── docker-compose.yml              # MinIO + mc + Postgres + scheduler + webserver
-│   │                                   # + oltp-postgres and kafka (profile `stream`), and
-│   │                                   # spark (profile `spark`); the Iceberg catalog
-│   │                                   # lives in oltp-postgres itself
-│   ├── Dockerfile.airflow              # the orchestrator image: two runtimes
-│   └── Dockerfile.spark                # the Spark image: Iceberg + JDBC + S3FileIO, pinned versions
-└── data/                               # extraction scratch, outside version control
-    ├── mercadona/                       # ingestion_date=…/wh=…/
-    ├── ine/                             # ingestion_date=…/
-    ├── callejero/                       # ingestion_date=…/
-    ├── oltp-reference/                  # ingestion_date=…/ (ephemeral input, not a partition)
-    └── oltp/                            # ingestion_date=…/wh=…/
+│   ├── pyproject.toml     # boto3, duckdb, dbt-core, dbt-duckdb, dbt-snowflake, dbt-postgres
+│   ├── src/retail_platform/  # land/verify/query, the two warehouse loaders, the two orders planes,
+│   │                      # demand calibration, and the CLI that wires all of it together
+│   ├── dbt/seeds/         # 16 seeds, all with a provenance column
+│   ├── dbt/models/silver/     # target dev (duckdb) — 25 models, one tree per source
+│   ├── dbt/models/warehouse/  # target postgres (default) or snowflake — 24 models via source()
+│   ├── dbt/tests/ + dbt/tests/warehouse/  # singular tests, Silver and Gold/Mart separately
+│   └── tests/              # no network — in-memory doubles of S3, Postgres, Kafka, Iceberg
+├── orchestration/airflow/dags/  # 6 DAGs: 5 sources + warehouse_load
+├── streamlit/              # two dashboards over the MART (RETAIL_READER): operations + price-watch
+│   ├── indicators.py / price_indicators.py   # the SINGLE SOURCE: SQL and explanation together
+│   ├── CONTRACT.md / PRICE_CONTRACT.md       # GENERATED from the indicators — the verification doc
+│   └── app.py / price_app.py                 # the interfaces; no SQL on screen
+├── scripts/                # one Makefile target each; provenance, spikes, and adversarial proofs
+├── jobs/spark/              # the only code that runs outside the platform's venv
+├── infra/                   # docker-compose.yml, Dockerfile.airflow, Dockerfile.spark
+└── data/                    # extraction scratch, outside version control
 ```
 
 ## L1 — RAW in object storage
@@ -357,9 +304,9 @@ make stock-ledger             # observed consumption -> balance, stockout, and r
 make spark-evidence           # both engines, and both durations
 
 # 5. warehouse and dashboard
-make warehouse-refresh        # export -> load -> dbt on Snowflake
-make warehouse-prove-tests    # injects the defect each test claims to catch and demands red
-make dashboard                # http://localhost:8501
+make warehouse-refresh         # export -> load -> dbt, against the local Postgres container
+make dashboard                 # operations dashboard: http://localhost:8501
+make price-dashboard           # price-watch dashboard: http://localhost:8502
 
 # 6. close
 make freeze                   # seals the RAW capture
@@ -367,68 +314,54 @@ make freeze-check             # and confirms it hasn't changed
 ```
 
 
-## Analytical warehouse (Snowflake)
+## Analytical warehouse (Postgres, default — Snowflake, paused)
+
+The physical L2→L3 boundary (`COPY INTO`/`source()`, never `ref()`) exists so the
+destination is swappable by configuration alone. That claim was exercised for real on
+2026-09-14: the Snowflake trial this project started on expired, and `make warehouse*` now
+targets a local, free, reproducible Postgres container by default — same 24 models, same
+178 data tests, only the loader and the `--target` changed. See
+[DECISIONS.md § "CR-006"](DECISIONS.md) and [§ "CR-007"](DECISIONS.md).
 
 ```bash
-cp .env.snowflake.example .env.snowflake   # account, user, role — no secret in it
-make warehouse-bootstrap                   # once per account, requires ACCOUNTADMIN
-make warehouse-refresh                     # export -> load -> dbt
-make warehouse-evidence                    # records what landed at the destination, dated
+docker compose -f infra/docker-compose.yml --profile warehouse-postgres up -d  # once
+make warehouse-bootstrap                   # once: 3 schemas, 3 roles, grants — proves isolation
+make warehouse-refresh                     # export -> load -> dbt --target postgres
 ```
 
 **Three separate verbs**, for the same reason `land` and `verify-landing` are separate:
-`warehouse-export` reads the Silver and writes local parquet without talking to Snowflake;
-`warehouse-load` runs `PUT` to an internal stage plus `COPY INTO` and re-checks count
-against count; `warehouse` runs `dbt build --target snowflake`. A cut failure is a data
-failure and isn't retryable; a load failure is network and is.
-
-**Internal stage, not external.** A managed Snowflake can't see a MinIO on `localhost`;
-`PUT file://` reverses the direction and does away with real S3 and a storage integration.
-
-**Credential**: an RSA key pair, never a password — it's the recommended method for
-programmatic access and the only one that works for a DAG. The private key lives in
-`~/.snowflake/keys/` with mode 600, outside the repository; `config.toml` holds only the
-path.
+`warehouse-export` reads the Silver and writes local parquet without talking to the
+warehouse; `warehouse-load` transports it and re-checks count against count; `warehouse`
+runs `dbt build --target postgres`. A cut failure is a data failure and isn't retryable; a
+load failure is network and is.
 
 **Governance used, not just verified.** `warehouse-bootstrap` creates three roles, applies
-the grants, **and proves the isolation matrix** before returning success — with
-`use secondary roles none`, without which the check would pass by mistake. And the
-pipeline **wears** the roles: the load runs as `RETAIL_LOADER` and dbt as
-`RETAIL_TRANSFORMER`, never as `ACCOUNTADMIN`.
+the grants, **and proves the isolation matrix** before returning success. And the pipeline
+**wears** the roles: the load runs as `retail_loader` and dbt as `retail_transformer`,
+never as the database superuser.
 
 | Role | Can | Cannot |
 |---|---|---|
-| `RETAIL_LOADER` | write `STAGE` (owns the 13 tables) | read `GOLD` or `MART` |
-| `RETAIL_TRANSFORMER` | read `STAGE`, write `GOLD` and `MART` (owns the 21) | — |
-| `RETAIL_READER` | read `MART` | read `STAGE` or `GOLD` |
+| `retail_loader` | write `STAGE` | read `GOLD` or `MART` |
+| `retail_transformer` | read `STAGE`, write `GOLD` and `MART` | — |
+| `retail_reader` | read `MART` | read `STAGE` or `GOLD` |
 
-Stopping running as administrator exposed four defects no test would have caught before —
-missing `usage` on the warehouse, ownership confused with privilege, and one where the
-administrator simply **stops seeing** the objects with no error at all. They're described
-in [ARCHITECTURE.md](ARCHITECTURE.md), and became a test.
+Stopping running as an administrator account exposed real defects no test would have
+caught before — missing grants, ownership confused with privilege, an account that simply
+**stops seeing** the objects it no longer owns, with no error at all. They're described in
+[DECISIONS.md § "Phase 2"](DECISIONS.md), and became tests.
 
-**Switching Snowflake accounts** means editing `.env.snowflake` and the matching block of
-`~/.snowflake/config.toml`, then running `make warehouse-bootstrap`. No model, no SQL, and
-no test changes: the L2→L3 boundary is physical. The Lakehouse half doesn't depend on
-this — `make silver` and every check in `make test` (see [Verification](#verification))
-run with no Snowflake variable defined.
+**Switching engines back to Snowflake** — for the day a real account replaces the expired
+trial — means `cp .env.snowflake.example .env.snowflake`, then
+`make warehouse-snowflake-bootstrap` and `make warehouse-snowflake-refresh`. No model, no
+SQL, and no test changes: the L2→L3 boundary is physical, and the Snowflake path (RSA-key
+auth, an internal stage, dated evidence in
+[`docs/warehouse-evidence/`](docs/warehouse-evidence/README.md)) is kept working, one
+`--target` away, not deleted. The Lakehouse half doesn't depend on either — `make silver`
+and every check in `make test` (see [Verification](#verification)) run with no warehouse
+variable defined.
 
-**Dated evidence.** The Snowflake half isn't reproducible offline the way the Lakehouse
-is, and the account used here is a trial. [`make warehouse-evidence`](docs/warehouse-evidence/README.md)
-records ownership, volume, the isolation matrix, **execution roles as seen by the verb**,
-and a sample of each mart, with the date and account identity — so the models keep having
-proof after it expires. The roles table is what separates verified governance from adopted
-governance: it shows that `RETAIL_READER` only ever ran `SELECT`, and that whoever wrote
-GOLD was `RETAIL_TRANSFORMER` — never the administrator. The console capture at
-[docs/warehouse-evidence/screens/query-history.png](docs/warehouse-evidence/screens/query-history.png)
-is the same separation seen through the vendor's own interface, which is the one thing here
-the repository can't produce on its own.
-
-```bash
-make warehouse-ddl   # prints the STAGE DDL without connecting to anything (derived from the cut)
-```
-
-## Strategic dashboard (Streamlit over the MART)
+## Two dashboards (Streamlit over the MART)
 
 **Operations dashboard**, built for whoever looks at the business — not whoever audits the
 pipeline: KPI, table, chart, no SQL on screen and no methodology note interrupting each
@@ -441,9 +374,16 @@ make dashboard-contract   # regenerates streamlit/CONTRACT.md, without connectin
 make dashboard-check      # runs the real dashboard and demands zero exceptions (needs an account)
 ```
 
-**Wears `RETAIL_READER` for real** — it's the first consumer to wear the BI role, and the
-proof of that (the live probe confirming the refusal on `GOLD`/`STAGE` with
-`use secondary roles none`) lives in the test, not on the screen: `test_dashboard_indicators.py`
+**Price-watch dashboard**, a second, narrower Streamlit app dedicated to Mercadona price
+oscillation — drops, increases, daily movement, and category-level dispersion — reading two
+of the nine marts only, on purpose (`make price-dashboard`, port 8502). Same generated-doc
+discipline as the operations panel: [`streamlit/PRICE_CONTRACT.md`](streamlit/PRICE_CONTRACT.md)
+and `make price-dashboard-contract`/`price-dashboard-check`. See
+[`streamlit/README.md`](streamlit/README.md) for both.
+
+**Wears `retail_reader` for real** — it's the first consumer to wear the BI role, and the
+proof of that (a live probe confirming the refusal on `GOLD`/`STAGE`, via Postgres's
+session-level `SET ROLE`) lives in the test, not on the screen: `test_dashboard_indicators.py`
 and `connection.py::probe_isolation`. A manager doesn't need to see RBAC proven live; the
 engineering behind it didn't stop existing just because it left the interface.
 
@@ -564,18 +504,18 @@ history), not a side effect.
 ## Verification
 
 ```bash
-make test          # 1,095 tests, no network: 145 Mercadona + 136 INE population + 95 Callejero
-                   #                        + 140 simulated OLTP + 163 orders + 416 platform
+make test          # 1,134 tests, no network: 145 Mercadona + 136 INE population + 95 Callejero
+                   #                        + 140 simulated OLTP + 163 orders + 455 platform
 make silver        # dbt build on DuckDB: 25 models + 16 seeds + the data tests
-make warehouse     # dbt build on Snowflake: 24 models + the data tests
+make warehouse     # dbt build on Postgres (default): 24 models + the data tests
 ```
 
-`make test` and `make silver` read no Snowflake variable — that's what keeps the Lakehouse
-half reproducible when the account doesn't exist.
+`make test` and `make silver` read no warehouse variable — that's what keeps the Lakehouse
+half reproducible whether or not either engine is configured.
 
 The two dbt trees are **mutually exclusive per target** (`+enabled` guard in
-`dbt_project.yml`): `--target dev` sees only the Silver, `--target snowflake` only the
-warehouse. Confirmed with `dbt list`: zero overlap.
+`dbt_project.yml`): `--target dev` sees only the Silver, `--target postgres`/`snowflake`
+only the warehouse. Confirmed with `dbt list`: zero overlap.
 
 Known numbers, used as acceptance criteria:
 
@@ -692,43 +632,3 @@ repository), and the MAPA report PDF. Without them the standard path still runs 
 disappears is the analytical layer and the calibration, and each absence is declared where
 it would appear.
 
-## The fourteen closing questions
-
-This is an **index**, not a new explanation: each answer fits on one line and points to
-where the evidence lives. It exists because the project closed and a reader has the right
-to check, without reading 3.000 lines, whether the documentation backs up what it claims.
-
-| | Question | Short answer | Where the evidence lives |
-|---|---|---|---|
-| 1 | What does the project do? | Ingests 5 sources, preserves the RAW, produces typed Silver, serves a dimensional model, and keeps a stream plane that converges to the same state as the batch | [Layers](#layers) |
-| 2 | Which data is **real**? | Mercadona's catalog and price; INE population; INE geography (sections, streets, clusters); the MAPA 2025 report, used as a **benchmark** | [The five Sources](#the-five-sources) · [`docs/README.md`](docs/README.md) |
-| 3 | Which data is **synthetic**? | Customers and orders — invented over real attributes (the address exists, the person doesn't); and the **stock ledger**, computed from observed consumption plus a policy in a seed. No source in this repository measures stock | seeds `*_premises_seed.csv`, all with a provenance column · `stock_label = 'synthetic'` in `MART_STOCK_HEALTH` |
-| 4 | Why does each technology exist? | Each one has an adoption date, the trigger that fired it, and what **wasn't** proven | [ARCHITECTURE.md § "What didn't get in, and when it gets in"](ARCHITECTURE.md) |
-| 5 | Why does Spark exist while **being slower**? | Three reasons, and performance is not one of them: cumulative state whose output depends on the prior state; Iceberg interop demonstrated by a spike; and the need to validate more than one engine writing the same catalog. At this volume pure Python is ~3× faster, and the number is published | [`docs/spark-evidence/`](docs/spark-evidence/README.md) · [DECISIONS.md § "Phase 7"](DECISIONS.md) |
-| 6 | What is **Kafka's** role? | **Transport**, never the canonical source. `publish → broker ack → mark the outbox`, at-least-once, with the duplication window reproduced in a test | [`docs/stream-evidence/`](docs/stream-evidence/README.md) |
-| 7 | What is **Iceberg's** role? | Atomic commit with optimistic concurrency between writers, and **interop between engines** — asserted in Phase 3, demonstrated in Phase 7 with three writers on the catalog (`platform`, `rebuild`, `spark`) | `make spike-iceberg` · `make spike-spark-iceberg` |
-| 8 | What is the **system of record** at each stage? | RAW in object storage is the point of no return; the OLTP is the origin of the event (state + outbox in the same transaction); Kafka is transport; the projection and the Silver are **derived** and disposable | [L1 — RAW](#l1--raw-in-object-storage) · [ARCHITECTURE.md](ARCHITECTURE.md) |
-| 9 | How does it handle **duplication**? | Consumer-side dedup by `(order_id, sequence_no)`: `seq <= last` is discarded. Duplication in the window between publishing and marking the outbox is **accepted and declared** — end-to-end exactly-once is not promised | `make orders-prove-stream` · `fake_kafka.py` |
-| 10 | How does it handle **gaps**? | `seq == last + 1` applies; `seq > last + 1` is a gap and **stops** instead of applying out of order | `make orders-prove-stream` |
-| 11 | How does it handle **concurrency**? | Optimistic conflict on Iceberg with the full cycle: detect → reload → reapply → retry, and an old `seq` **never** overwrites a newer `seq`. Demonstrated even **across different engines** | `make orders-prove-projection` · `make spike-spark-iceberg` |
-| 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 206.523 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
-| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 81 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
-| 14 | What **limitations** remain? | Eight debt items, each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
-
-### What is **not** demonstrated in this project
-
-Written in these words on purpose. The absence of proof is information, and erasing it
-would be the only way to make this list look nice:
-
-- **That Spark scales.** It runs `local[*]` — driver and executor on the same JVM, no
-  shuffle between nodes. **Not demonstrated in this project.**
-- **That anyone needs Kafka's latency, or that the broker is the origin.** The canonical
-  log still originates on disk. **Not demonstrated in this project.**
-- **End-to-end exactly-once.** It isn't promised, and the window where duplication happens
-  is reproduced in a test rather than hidden.
-- **That the RAW is reproducible.** It isn't, by the nature of the sources. What's
-  guaranteed is `same frozen RAW → reproducible downstream`.
-- **That the operation is production-grade.** There's no real traffic, SLO, on-call, or
-  incident. What exists is behavior verified in tests and dated execution evidence.
-- **That purchasing behavior is realistic.** Customer and order are synthetic, calibrated
-  against a **benchmark** that is never treated as ground truth.

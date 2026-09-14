@@ -126,14 +126,18 @@ class ParametroLigadoTest(unittest.TestCase):
                 self.assertNotIn("}", indicador.sql)
 
     def test_o_painel_le_somente_o_schema_mart(self):
-        """A fronteira do papel `RETAIL_READER`, afirmada tambem no codigo: uma consulta que
+        """A fronteira do papel `retail_reader`, afirmada tambem no codigo: uma consulta que
         cite GOLD ou STAGE seria recusada pelo motor, mas falharia em execucao e contra a
-        conta viva. Aqui falha antes."""
+        conta viva. Aqui falha antes.
+
+        `"GOLD"`/`"STAGE"` citados (nao `.GOLD.`/`.STAGE.`): Postgres nao tem o database
+        prefixado de tres partes do Snowflake, so o schema — e e ele, citado em maiusculo,
+        que aparece na SQL real (ver I.MART em indicators.py)."""
         for indicador in I.INDICADORES:
             with self.subTest(indicador.chave):
-                self.assertNotIn(".GOLD.", indicador.sql.upper())
-                self.assertNotIn(".STAGE.", indicador.sql.upper())
-                self.assertIn(f"{I.DB}.MART.", indicador.sql)
+                self.assertNotIn('"GOLD"', indicador.sql)
+                self.assertNotIn('"STAGE"', indicador.sql)
+                self.assertIn(f"{I.MART}.", indicador.sql)
 
     def test_nenhuma_consulta_escreve(self):
         proibido = ("insert ", "update ", "delete ", "merge ", "create ", "drop ",

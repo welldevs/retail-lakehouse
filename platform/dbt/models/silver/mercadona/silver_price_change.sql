@@ -12,6 +12,18 @@
 --
 -- MEDE a variacao ligada a CHAVE DA FONTE, nao a de um item comercial. Ver a coluna
 -- name_seen_before e CONTRACT.md 4.5.
+--
+-- CHANGE_TYPE E OS DELTAS COMPARAM purchasable_unit_price, NAO unit_price CRU — corrigido
+-- depois da Fase 4 (ver DECISIONS.md, "Demand calibration against MAPA 2025"), que achou
+-- que `unit_price` e o TETO do seletor de peso (`reference_price * 99`) em 10 combinacoes
+-- produto x armazem, nao um preco que alguem paga. Aquela fase corrigiu a demanda; esta
+-- correcao fecha a MESMA lacuna aqui, que sobrevivera intacta: silver_price_change nunca
+-- foi tocado quando purchasable_unit_price entrou em silver_product_price, entao um
+-- congelado a 37 EUR/kg continuava capaz de aparecer como "preco alterado" de milhares de
+-- euros caso o teto oscilasse — medido que NAO oscilou nas particoes existentes, mas o
+-- mecanismo estava la, esperando. `unit_price`/`previous_unit_price`/`price_delta` CRUS
+-- continuam abaixo, sem alteracao — fidelidade da fonte e invariante deste modelo, exatamente
+-- como em silver_product_price.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_price_change',
     options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
@@ -27,9 +39,10 @@ with priced as (
         ingestion_date,
         warehouse,
         source_product_id,
-        any_value(display_name)         as display_name,
-        any_value(unit_price)           as unit_price,
-        count(*)                        as catalog_appearances
+        any_value(display_name)              as display_name,
+        any_value(unit_price)                as unit_price,
+        any_value(purchasable_unit_price)     as purchasable_unit_price,
+        count(*)                             as catalog_appearances
     from {{ ref('silver_product_price') }}
     group by 1, 2, 3
 
@@ -51,7 +64,8 @@ partition_pair as (
 curr as (
 
     select pp.warehouse, pp.curr_date, pp.prev_date,
-           p.source_product_id, p.display_name, p.unit_price, p.catalog_appearances
+           p.source_product_id, p.display_name, p.unit_price, p.purchasable_unit_price,
+           p.catalog_appearances
     from partition_pair pp
     join priced p
       on p.warehouse = pp.warehouse
@@ -63,7 +77,7 @@ curr as (
 prev as (
 
     select pp.warehouse, pp.curr_date, pp.prev_date,
-           p.source_product_id, p.display_name, p.unit_price
+           p.source_product_id, p.display_name, p.unit_price, p.purchasable_unit_price
     from partition_pair pp
     join priced p
       on p.warehouse = pp.warehouse
@@ -89,12 +103,21 @@ select
     v.unit_price                                        as previous_unit_price,
     c.unit_price                                        as unit_price,
     c.unit_price - v.unit_price                          as price_delta,
+
+    -- O PRECO QUE IMPORTA PARA DETECTAR VARIACAO. Igual a unit_price/previous_unit_price em
+    -- tudo, exceto nas linhas `bunch` (10 combinacoes produto x armazem, ver cabecalho) —
+    -- ali unit_price e o teto do seletor de peso, nunca o preco de um consumidor.
+    v.purchasable_unit_price                            as previous_purchasable_unit_price,
+    c.purchasable_unit_price                            as purchasable_unit_price,
+    c.purchasable_unit_price - v.purchasable_unit_price  as purchasable_price_delta,
     c.catalog_appearances,
 
+    -- COMPARA purchasable_unit_price, NAO unit_price cru: e o preco comparavel entre
+    -- particoes, e "o preco mudou" tem de significar isso, nao "o teto do seletor mudou".
     case
         when v.source_product_id is null then 'entrou'
         when c.source_product_id is null then 'saiu'
-        when c.unit_price <> v.unit_price then 'preco_alterado'
+        when c.purchasable_unit_price <> v.purchasable_unit_price then 'preco_alterado'
         else 'estavel'
     end                                                 as change_type,
 

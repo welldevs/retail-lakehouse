@@ -1,7 +1,7 @@
-"""Operations dashboard over Snowflake's MART.
+"""Operations dashboard over the warehouse's MART.
 
-Reads RETAIL.MART live and shows KPI, table, and chart — what whoever runs the business
-looks at day to day. Holds no state, writes nothing, exposes no SQL and no layer metadata.
+Reads MART live and shows KPI, table, and chart — what whoever runs the business looks at
+day to day. Holds no state, writes nothing, exposes no SQL and no layer metadata.
 
 This dashboard's technical counterpart (the question each indicator answers, the source
 grain, what's observed vs. synthetic, and the gotchas of rebuilding it in another tool)
@@ -20,7 +20,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import indicators as I  # noqa: E402
-from connection import DATABASE, DashboardError, identity, open_session, run  # noqa: E402
+from connection import DashboardError, identity, open_session, run  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
 
@@ -41,7 +41,7 @@ def query(sql: str, params: dict | None = None) -> pd.DataFrame:
 
 
 def numeric(df: pd.DataFrame, columns) -> pd.DataFrame:
-    """Snowflake decimals arrive as object; Altair needs float."""
+    """Decimal columns arrive as object (Decimal); Altair needs float."""
     out = df.copy()
     for column in columns:
         if column in out.columns:

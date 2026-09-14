@@ -77,5 +77,16 @@ retail_lakehouse:
       user: "{{ env_var('WAREHOUSE_PG_USER', 'retail') }}"
       password: "{{ env_var('WAREHOUSE_PG_PASSWORD', 'retail') }}"
       dbname: "{{ env_var('WAREHOUSE_PG_DB', 'retail') }}"
+      # MESMO MOTIVO do `role` do target snowflake acima: sem isto o dbt roda como
+      # `retail` (o superusuario do container, quem faz LOGIN) e toda tabela GOLD/MART
+      # nasceria dona DELE, nao de `retail_transformer` — os `alter default privileges
+      # for role retail_transformer ...` que `bootstrap()` cria (postgres_load.py) nunca
+      # disparariam, e `retail_reader` (o painel) ficaria sem select em NENHUMA tabela
+      # nova. Medido: com este campo ausente, `select` em MART.mart_order_funnel como
+      # retail_reader devolvia "permission denied for table mart_order_funnel" mesmo
+      # depois do bootstrap e de um `dbt build` limpo. dbt-postgres faz `set role` logo
+      # apos conectar (ver dbt/adapters/postgres/connections.py) — `retail` e superusuario
+      # e pode assumir qualquer papel sem exigir GRANT de membership antes.
+      role: "{{ env_var('WAREHOUSE_PG_ROLE', 'retail_transformer') }}"
       schema: gold
       threads: 4

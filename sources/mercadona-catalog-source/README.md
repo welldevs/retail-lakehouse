@@ -21,21 +21,12 @@ Python 3.12+ e nada mais. Somente biblioteca padrão. `dependencies = []` no
 
 ## Localização
 
-Esta Source vive em `sources/mercadona-catalog-source/` de um monorepo, ao lado da camada
-de plataforma que a consome. Ela **permanece independente**: `pyproject.toml` próprio,
-`dependencies = []`, suíte própria, e nada fora daqui é importado.
-
-Comandos com `make` neste diretório continuam funcionando isolados, e é assim que a
-fronteira é verificada. Mas no dia a dia use o **Makefile da raiz**, que aponta `--out`
-para o `data/` compartilhado do monorepo:
-
-```bash
-make -C ../..  extract validate      # da raiz: escreve em <raiz>/data/mercadona
-make test                            # daqui: suíte da Source, sem rede
-```
-
-Rodar `make extract` **daqui** cria um `data/mercadona/` dentro deste diretório, separado do
-`data/` da raiz. Útil para teste isolado, mas não é a partição que a plataforma consome.
+Esta Source vive em `sources/mercadona-catalog-source/` do monorepo e permanece independente
+(`pyproject.toml` próprio, `dependencies = []`, suíte própria — ver
+[ARCHITECTURE.md](../../ARCHITECTURE.md)). No dia a dia use o **Makefile da raiz**
+(`make -C ../.. extract validate`), que aponta `--out` para o `data/` compartilhado; rodar
+`make extract` **daqui** grava em vez disso um `data/mercadona/` local, útil só para teste
+isolado.
 
 ## Uso
 
@@ -421,15 +412,3 @@ Cada garantia do contrato tem teste correspondente: escrita atômica sob falha e
 imutabilidade, idioma fixo, retomada, arquivo truncado/vazio/adulterado, mudança de forma
 da fonte, detecção de órfãos, coerência de `_SUCCESS`, adulteração de totais e de
 fingerprint, partição sem nenhum produto, e ausência de dependência de terceiros.
-
-## Nota sobre o diretório raiz
-
-O diretório do workspace ainda se chama `Spark`, o que induz a interpretação de que há
-Apache Spark aqui — não há, e o [ARCHITECTURE.md](../../ARCHITECTURE.md) registra sob que
-condição passaria a haver.
-
-A sugestão anterior deste arquivo era renomear para `mercadona-catalog-source`. **Ela ficou
-obsoleta**: esse nome agora pertence a este subdiretório, e a raiz abriga a plataforma
-inteira. Um nome adequado para a raiz seria `retail-lakehouse`. O rename é ação do dono do
-workspace (afeta a sessão da IDE) e não foi executado; nada no código, no pacote ou nos
-dados depende dele.

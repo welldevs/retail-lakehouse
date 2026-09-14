@@ -1,10 +1,16 @@
-"""DAG do warehouse analitico: recorte do Silver -> Snowflake -> GOLD -> MART.
+"""DAG do warehouse analitico: recorte do Silver -> Postgres local -> GOLD -> MART.
 
-E a PRIMEIRA DAG deste repo que atravessa a fronteira entre dois motores. As outras tres
+E A PRIMEIRA DAG deste repo que atravessa a fronteira entre dois motores. As outras tres
 ficam inteiras do lado do lakehouse (fonte externa -> RAW -> Silver, tudo DuckDB); esta
 pega o Silver que qualquer uma delas produziu e o leva para outro banco, com outra
 credencial, em outra rede. E exatamente onde retry e codigo de saida importam, e por isso
 a aresta e do Airflow e nao de um script solto.
+
+MOTOR: Postgres local, nao Snowflake. Esta DAG apontava para o Snowflake ate 2026-09, quando
+o trial usado por este projeto venceu — a task `load_stage` passou a falhar de autenticacao
+("Your free trial has ended... virtual warehouses have been suspended"). O destino trocou
+(ver DECISIONS.md, CR-007); as tres decisoes abaixo, e a separacao export/load, continuam
+as mesmas, porque a arvore models/warehouse/ e neutra quanto ao motor.
 
 TRES DECISOES, cada uma com o motivo no ponto onde e imposta:
 
@@ -23,8 +29,8 @@ TRES DECISOES, cada uma com o motivo no ponto onde e imposta:
      como falha de conexao, e o retry insistiria numa coisa que retry nao conserta — por
      isso `export` tem retries=0 e `load` tem 2.
 
-O `bootstrap` (database, schemas, papeis, grants) NAO esta aqui de proposito: exige
-ACCOUNTADMIN e roda uma vez por conta, nao todo dia. Ver `make warehouse-bootstrap`.
+O `bootstrap` (schemas, papeis, grants) NAO esta aqui de proposito: roda uma vez por
+container, nao todo dia. Ver `make warehouse-bootstrap`.
 """
 
 from __future__ import annotations
@@ -51,12 +57,17 @@ PLATFORM_SRC = f"{REPO}/platform/src"
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
-SNOWFLAKE_DATABASE = os.environ.get("RETAIL_SNOWFLAKE_DATABASE", "RETAIL")
-SNOWFLAKE_CONNECTION = os.environ.get("RETAIL_SNOWFLAKE_CONNECTION", "spark_retail")
+# Os tres com default: ao contrario da conta Snowflake, `warehouse-postgres` e convencao do
+# proprio projeto (compose sobe o container, sem segredo real) — ver docker-compose.yml, que
+# sobrescreve HOST/PORT para o endereco DENTRO da rede do compose (o :5434 do .env so vale
+# para quem roda no host).
+WAREHOUSE_PG_HOST = os.environ.get("WAREHOUSE_PG_HOST", "localhost")
+WAREHOUSE_PG_PORT = os.environ.get("WAREHOUSE_PG_PORT", "5434")
+WAREHOUSE_PG_DB = os.environ.get("WAREHOUSE_PG_DB", "retail")
 # EXPLICITO na DAG, embora seja o default do carregador: e aqui que se le qual papel a
-# automacao usa. A conexao aponta para o papel administrativo porque e ela que roda o
-# bootstrap; a carga sobrescreve, e nao pode criar database nem ler GOLD.
-SNOWFLAKE_LOAD_ROLE = os.environ.get("RETAIL_SNOWFLAKE_LOAD_ROLE", "RETAIL_LOADER")
+# automacao usa. A carga sobrescreve, e nao pode criar schema nem ler GOLD/MART — mesmo
+# motivo do RETAIL_LOADER que este campo substituiu.
+WAREHOUSE_PG_LOAD_ROLE = os.environ.get("RETAIL_WAREHOUSE_PG_LOAD_ROLE", "retail_loader")
 
 # As sources cujo Silver o recorte le. Se nenhuma aterrissou, nao ha o que carregar e a DAG
 # curto-circuita em vez de falhar — mesmo criterio de `has-data` das outras tres.
@@ -131,30 +142,30 @@ def export_recorte(**_) -> None:
 
 
 def load_stage(**_) -> None:
-    """PUT em stage interno + COPY INTO + reconferencia contagem a contagem."""
+    """Drop+create das tabelas STAGE + COPY FROM STDIN + reconferencia contagem a contagem."""
     code = _run_platform([
-        "load-snowflake", "--stage-dir", STAGE_DIR,
-        "--database", SNOWFLAKE_DATABASE, "--connection", SNOWFLAKE_CONNECTION,
-        "--role", SNOWFLAKE_LOAD_ROLE,
+        "load-postgres", "--stage-dir", STAGE_DIR,
+        "--host", WAREHOUSE_PG_HOST, "--port", WAREHOUSE_PG_PORT, "--dbname", WAREHOUSE_PG_DB,
+        "--role", WAREHOUSE_PG_LOAD_ROLE,
     ])
     if code == EXIT_FATAL:
-        raise RuntimeError(f"load-snowflake falhou de forma fatal (exit {code})")
+        raise RuntimeError(f"load-postgres falhou de forma fatal (exit {code})")
     if code != EXIT_OK:
-        raise RuntimeError(f"load-snowflake reprovou a reconferencia (exit {code})")
+        raise RuntimeError(f"load-postgres reprovou a reconferencia (exit {code})")
 
 
 def build_gold(**_) -> None:
-    """`--target snowflake` desliga a arvore inteira do Silver pelo guard do dbt_project."""
+    """`--target postgres` desliga a arvore inteira do Silver pelo guard do dbt_project."""
     code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
-                 "--profiles-dir", f"{REPO}/platform/dbt", "--target", "snowflake"],
+                 "--profiles-dir", f"{REPO}/platform/dbt", "--target", "postgres"],
                 {"PYTHONPATH": PLATFORM_SRC})
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build --target snowflake falhou (exit {code})")
+        raise RuntimeError(f"dbt build --target postgres falhou (exit {code})")
 
 
 with DAG(
     dag_id="warehouse_load",
-    description="Recorte do Silver para o Snowflake e reconstrucao de GOLD e MART",
+    description="Recorte do Silver para o Postgres local e reconstrucao de GOLD e MART",
     # Sem cron: o warehouse deve ser atualizado DEPOIS de uma ingestao, nao num horario
     # fixo que pode cair no meio de uma. Encadeie com TriggerDagRunOperator a partir da
     # DAG de source, ou dispare a mao (`make warehouse-trigger`).
@@ -168,7 +179,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": _log_task_failure,
     },
-    tags=["layer:warehouse", "engine:snowflake"],
+    tags=["layer:warehouse", "engine:postgres"],
     doc_md=__doc__,
 ) as dag:
 

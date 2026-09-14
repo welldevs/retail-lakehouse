@@ -18,69 +18,22 @@ alongside `observed` and `synthetic`.
 | size | 30.086.039 bytes · 645 pages |
 | downloaded on | 2026-08-31 |
 
-**Why it is not versioned.** It is 29 MB of binary, and git history is permanent. What
-the repository needs to preserve is **traceability**, not the file: each of the 64
-lines of `platform/dbt/seeds/mapa_2025_benchmark_seed.csv` cites the report section the
-number came from, and `provenance` distinguishes `informe_table` (the section's header
-table) from `informe_prose` (a number cited in the text), `informe_chart` (a label
-printed on a chart), and `derived` (calculated from two published numbers, with the
-derivation written on the row itself). The cohort seeds cite the **PDF page**, not the
-section, because it's the page you open to double-check a chart label.
+**Every number traces back to this file, not to a hand-typed guess.** The 29 MB PDF
+itself is `.gitignore`d — what's versioned is `platform/dbt/seeds/mapa_2025_benchmark_seed.csv`,
+where each of the 64 rows cites the report section it came from and a `provenance`
+column (`informe_table`, `informe_prose`, `informe_chart`, `derived`) says how. The
+`sha256` above pins the exact edition: the URL serves "latest data" and will start
+serving MAPA's 2026 report the day it's published, so a re-download that no longer
+matches this hash means the seeds no longer describe the benchmark in force.
 
-**The URL points to "latest data" and will change.** When MAPA publishes the 2026
-report, this link will start serving the new file. The `sha256` above is what
-identifies the edition used; if it stops matching, the benchmark in force is not what
-the seeds describe, and the model version (`mapa_2025_v2`) needs to change along with
-it.
-
-**The report also sizes the customer base, not just the mix.** E-commerce's share of
-food volume (2,2%, section 3) is used as a penetration rate over the adult population
-of the four AUFs — it is the only observed number in this repository able to size a
-registry. It lives in a single line
-(`demand_profile_seed.channel_reference_pct`), and `customer_premises_seed`
-**points** to it instead of copying it. Two declared assumptions carry out the
-transposition from volume share to people share, and neither is measured: that the
-online buyer consumes like the average, and that these four warehouses model the
-AUF's entire channel and not one operator within it.
-
-**Provenance finding.** The PDF's cover page says *"Informe del consumo alimentario en
-España 2024"*, while the entire body reports the year **2025** ("A cierre del año
-2025…", "frente a los 26.823,4 millones del año 2024"). It's copy-paste residue from
-the previous edition on the credits page. The seeds cite the **body**. The
-discrepancy is recorded here and in the CONTRACT instead of being silently resolved.
-
-**How to extract again.** `pdftotext -layout` preserves the alignment of each
-section's header tables, which is where `Parte de mercado volumen (%)`, `Parte de
-mercado valor (%)` and `Precio medio (€/kg)` come from. The monthly and channel
-charts are **images**: only the axis labels come out in the text, which is why there
-is no seasonal profile by category.
-
-**The `Demográficos` blocks come in two formats, and the second requires reading the
-page.** Seventeen sections carry a compact table that `pdftotext` recovers whole; the
-rest carry bar charts. Those charts **carry a printed numeric label** — page 158 shows
-`8,89 / 2,63 · 30,33 / 18,19 · 31,34 / 34,55 · 29,44 / 44,63` — so reading them is
-extraction, not estimation. About 45 pages were read to cover the 39 weighable groups
-across the two cohort dimensions.
-
-**Two independent checksums verify every reading**, and are why the manual extraction
-is acceptable:
-
-1. the four **volume** age bands add up to 100,00;
-2. the **population** ones add up to `8,89 + 30,33 + 31,34 + 29,44 = 100,00`, and
-   those four numbers repeat in **every** section, because they are the universe and
-   not a category measurement.
-
-A misread digit breaks one of the two sums, and `demand_profile.load_cohort_age`
-fails. The region seed has no sum to close — it carries 4 of the 17 communities — so
-its check is the constancy of the population share, verified in
-`test_share_de_populacao_e_o_mesmo_em_todo_grupo`.
-
-**Two discrepancies from the source itself**, recorded rather than smoothed over:
-page 206 publishes `30,5 / 31,7 / 29,0` for population where every other page
-publishes `30,3 / 31,3 / 29,4`, and page 84 labels the Comunidad de Madrid `13,78`
-where the others label it `13,86`. Both are in the `note` column of the
-corresponding row, and the checksums' tolerance is wide enough to admit them and
-narrow enough to catch a swapped digit.
+**How to extract again.** `pdftotext -layout` recovers each section's header tables
+verbatim — that's where the volume/value/price shares come from. What it can't
+recover is the ~45 pages whose demographic breakdown is a bar chart, not a table;
+those were read by hand off the printed axis labels and checked against two
+independent sums that must both close to 100,00 (one per age band across volume,
+one across population) — a misread digit breaks one of them. Two source-side
+discrepancies (a population row on page 206, a region label on page 84) were caught
+this way and are recorded in the seed's `note` column rather than silently fixed.
 
 ## What the live sources return
 
@@ -142,7 +95,7 @@ editing them.
 | `docs/spark-evidence/` | `make spark-evidence` | the same job on both engines, **including when plain Python wins** |
 | `docs/FREEZE.md` | `make freeze` | the capture seal: partition, `content_sha256`, `capture_id` |
 
-**`docs/spark-evidence/` is the only one that exists to back a NEGATIVE claim** — "Spark
+**`docs/spark-evidence/` is the only one that exists to back a *negative* claim** — "Spark
 was not adopted for performance". A negative without a benchmark has the same disease
 as a hand-copied number, with the sign flipped, so the page publishes both times side
 by side no matter which one wins.

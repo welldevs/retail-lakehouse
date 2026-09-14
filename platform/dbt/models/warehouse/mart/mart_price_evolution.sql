@@ -8,6 +8,15 @@
 -- 0,10 EUR ao longo de 8 dias (o vao real entre 08-16 e 08-24) nao e comparavel a uma de
 -- 0,10 EUR em 1 dia. Sem essa coluna, qualquer media de variacao diaria misturaria as
 -- duas e ninguem notaria.
+--
+-- DUAS FAMILIAS DE PRECO/VARIACAO, DE PROPOSITO. unit_price/price_delta/price_delta_pct
+-- sao CRUS, herdados de fact_price_snapshot/fact_price_change por fidelidade. Em ~10
+-- combinacoes produto x armazem (selling_method a granel sem unit_size), unit_price e o
+-- TETO do seletor de peso (reference_price * 99) — 3.663,00 EUR para 150 g de langostino,
+-- nao um preco que um domicilio paga (ver silver_product_price.sql e DECISIONS.md, "Demand
+-- calibration against MAPA 2025"). purchasable_unit_price/purchasable_price_delta/_pct sao
+-- o preco comparavel, e e contra ELES que change_type ja classifica "mudou". QUEM MEDE
+-- OSCILACAO OU OFERTA DEVE USAR AS COLUNAS purchasable_*, nunca as cruas.
 {{ config(materialized = 'table') }}
 
 select
@@ -25,12 +34,16 @@ select
     c.parent_category_name,
 
     f.unit_price,
+    f.purchasable_unit_price,
     f.unit_price_ex_tax,
     f.tax_percentage,
 
     ch.previous_unit_price,
     ch.price_delta,
     ch.price_delta_pct,
+    ch.previous_purchasable_unit_price,
+    ch.purchasable_price_delta,
+    ch.purchasable_price_delta_pct,
     ch.change_type,
     ch.days_between_snapshots                               as days_since_previous_snapshot,
 

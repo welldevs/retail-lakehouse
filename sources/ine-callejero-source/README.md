@@ -54,14 +54,10 @@ não há API.
 
 ## Localização
 
-Esta Source vive em `sources/ine-callejero-source/` de um monorepo, ao lado da camada
-de plataforma que a consome. Ela **permanece independente**: `pyproject.toml` próprio,
-`dependencies = []`, suíte própria.
-
-```bash
-make -C ../.. callejero-extract IN=../../temp     # da raiz: escreve em <raiz>/data/callejero
-make test                                          # daqui: suíte da Source, sem rede
-```
+Esta Source vive em `sources/ine-callejero-source/` do monorepo e permanece independente
+(`pyproject.toml` próprio, `dependencies = []`, suíte própria). No dia a dia use o
+**Makefile da raiz** (`make -C ../.. callejero-extract IN=../../temp`), que escreve em
+`<raiz>/data/callejero`.
 
 ## Uso
 

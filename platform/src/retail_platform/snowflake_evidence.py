@@ -135,8 +135,8 @@ AMOSTRAS = {
     # CR-005: o unico fato de GOLD nesta lista, de proposito — os outros oito sao MART.
     # duration_seconds/started_at_utc/finished_at_utc ja existiam duas camadas abaixo, no
     # Silver, e eram descartados so por uma lista fixa de colunas na projecao do STAGE. A
-    # taxa (declared_rows/duration_seconds) e o sinal de THROUGHPUT que
-    # AI_ENGINEERING_CONSTRAINTS.md §17 pedia provado antes de qualquer coletor novo.
+    # taxa (declared_rows/duration_seconds) e o sinal de THROUGHPUT exigido (BACKLOG.md,
+    # Observability) antes de qualquer coletor novo.
     "FACT_INGESTION_RUN": (
         "select source_name, ingestion_date, wh, started_at_utc, duration_seconds, "
         "declared_rows, round(declared_rows / nullif(duration_seconds, 0), 1) as rows_per_second, "

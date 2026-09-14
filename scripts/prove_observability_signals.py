@@ -3,8 +3,8 @@
 
 POR QUE ISTO EXISTE ANTES DE INSTRUMENTAR QUALQUER COISA.
 
-`AI_ENGINEERING_CONSTRAINTS.md` (secao 17, Observability) e `BACKLOG.md` sao explicitos:
-antes de montar `application -> OpenTelemetry -> Collector -> backend`, e preciso PROVAR que
+`BACKLOG.md`'s Observability row e explicito: antes de montar
+`application -> OpenTelemetry -> Collector -> backend`, e preciso PROVAR que
 os seis sinais exigidos ja nao existem por outro caminho — latencia, erro, throughput,
 falhas, processamento, estado do pipeline. Assumir a ausencia por padrao e a mesma doenca de
 qualquer outra afirmacao nao medida deste projeto.
@@ -299,7 +299,7 @@ def main() -> int:
     parser.add_argument("--database", default=os.environ.get("SNOWFLAKE_DATABASE", "RETAIL"))
     args = parser.parse_args()
 
-    print("prova dos seis sinais de AI_ENGINEERING_CONSTRAINTS.md secao 17 (Observability)")
+    print("prova dos seis sinais de observabilidade exigidos (BACKLOG.md, Observability)")
     print("=" * 88)
 
     q1_processing()

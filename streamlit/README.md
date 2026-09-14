@@ -1,49 +1,88 @@
-# Painel estratégico sobre o MART
+# Two dashboards over the MART
 
-Bancada de conferência dos indicadores **antes** de reconstruí-los no Power BI.
+Two SEPARATE screens, same session (`connection.py`, role `retail_reader`), each with its
+own indicator catalog — because the questions each one answers are different.
+
+## Operations — a verification bench for the indicators **before** rebuilding them in Power BI
 
 ```bash
-make dashboard            # sobe o painel em http://localhost:8501
-make dashboard-contract   # regenera CONTRACT.md a partir de indicators.py
+make dashboard            # http://localhost:8501
+make dashboard-contract   # regenerates CONTRACT.md from indicators.py
 ```
 
-Se for a primeira vez: `make dashboard-venv` instala `streamlit`, `pandas`, `pyarrow` e
-`altair` no venv da plataforma. Eles ficam em `[project.optional-dependencies]` de
-`platform/pyproject.toml`, **fora** de `dependencies` — o `infra/Dockerfile.airflow` instala
-exatamente aquela lista, e ~150 MB de UI não têm o que fazer numa imagem que não renderiza
-dashboard nenhum.
+First time: `make dashboard-venv` installs `streamlit`, `pandas`, `pyarrow` and `altair`
+into the platform's venv. They live in `[project.optional-dependencies]` of
+`platform/pyproject.toml`, **outside** `dependencies` — `infra/Dockerfile.airflow` installs
+exactly that list, and ~150 MB of UI has no business in an image that renders no dashboard
+at all.
 
-## O que tem aqui
+## What's here
 
-| Arquivo | Papel |
+| File | Role |
 |---|---|
-| `indicators.py` | **A fonte única.** SQL e explicação de cada indicador, no mesmo lugar |
-| `CONTRACT.md` | **Gerado** de `indicators.py`. É o documento de conferência |
-| `contract.py` | O gerador. Não conecta em nada — o CONTRACT é revisável sem credencial |
-| `connection.py` | Sessão `RETAIL_READER`, com `use secondary roles none` |
-| `app.py` | A interface |
+| `indicators.py` | **The single source.** SQL and explanation for each indicator, in the same place |
+| `CONTRACT.md` | **Generated** from `indicators.py`. The verification document |
+| `contract.py` | The generator. Connects to nothing — the CONTRACT is reviewable with no credential |
+| `connection.py` | `retail_reader` session on the local Postgres, via `set role` — **shared by both dashboards** |
+| `app.py` | The operations dashboard's interface |
 
-## Três decisões que o painel toma
+## Three decisions this dashboard makes
 
-**Veste `RETAIL_READER`, e prova isso na tela.** O papel de BI lê MART e mais nada. O painel
-roda uma sonda ao vivo que confirma a recusa em `GOLD` e `STAGE` — um painel que afirma
-respeitar um limite sem demonstrar está pedindo confiança. É a primeira vez que este papel é
-vestido por um consumidor de verdade; a carga e o dbt já vestiam os outros dois.
+**Wears `retail_reader`, and proves it on screen.** The BI role reads MART and nothing
+else. The dashboard runs a live probe confirming the refusal on `GOLD` and `STAGE` — a
+dashboard that claims to respect a boundary without demonstrating it is asking for trust.
+It's the first time this role is worn by a real consumer; the load and dbt already wore the
+other two.
 
-**Lê ao vivo, com o relógio à mostra.** O cache tem TTL de 60 s e há um botão que o limpa. A
-barra lateral mostra a hora da leitura e a contagem de linhas e a janela de **cada** mart,
-para que uma carga nova apareça como *mudança de base* e não como número diferente sem
-explicação. Rode `make warehouse-refresh` com o painel aberto e clique em **Reler o destino
-agora**.
+**Reads live, with the clock visible.** The cache has a 60 s TTL and a button that clears
+it. The sidebar shows the read time and the row count and window of **each** mart, so a
+fresh load appears as a *base change*, not as a different number with no explanation. Run
+`make warehouse-refresh` with the dashboard open and click **Reread the destination now**.
 
-**As armadilhas não ficam em rodapé.** Cada indicador carrega as suas, vindas do mesmo módulo
-que carrega o SQL — então o aviso não pode envelhecer em relação à consulta.
+**The pitfalls don't live in a footnote.** Each indicator carries its own, sourced from the
+same module that carries the SQL — so the warning can't age relative to the query.
 
-## O que o painel não exibe
+## What the dashboard does not show
 
-Está na aba *Fora de alcance* e no `CONTRACT.md`, com o gatilho de cada item: margem,
-estoque, recompra/LTV/coorte, rota, penetração de mercado, tendência.
+It's in the *Out of reach* tab and in `CONTRACT.md`, with each item's trigger: margin,
+stock, repeat purchase/LTV/cohort, route, market penetration, trend.
 
-A lacuna mais acionável: **nenhum mart junta cliente com pedido.** O elo existe em
-`FACT_ORDER.customer_sk`, no GOLD, que `RETAIL_READER` não alcança por desenho. Fechar isso
-não exige fonte nova — exige um mart novo com grão de cliente e medidas de pedido.
+The most actionable gap: **no mart joins customer with order.** The link exists in
+`FACT_ORDER.customer_sk`, in GOLD, out of `retail_reader`'s reach by design. Closing it
+requires no new source — it requires a new customer-grain mart with order measures.
+
+## Price-watch — an EXCLUSIVE panel for Mercadona catalog price oscillation
+
+```bash
+make price-dashboard            # http://localhost:8502
+make price-dashboard-contract   # regenerates PRICE_CONTRACT.md from price_indicators.py
+make price-dashboard-check      # runs the real dashboard (AppTest), needs a live account
+```
+
+| File | Role |
+|---|---|
+| `price_indicators.py` | Its own catalog of 9 indicators — imports `Indicador`, `MART`, `FILTRO_DATA_SNAP` and `FILTRO_WH` from `indicators.py` instead of duplicating them |
+| `PRICE_CONTRACT.md` | Generated from `price_indicators.py` |
+| `price_contract.py` | The generator — separate from `contract.py` because the two catalogs already diverge in shape |
+| `price_app.py` | The interface |
+| `price_smoke.py` | Smoke test (`AppTest`) — sibling of `smoke.py`, against `price_app.py` |
+
+**There is no "offer"/"promotion" flag anywhere in the warehouse.**
+`fact_price_change.sql` measured that the source's own flag (`price_decreased`) is false on
+100% of rows even when 152 prices changed between two partitions — proven useless, not
+merely unused. Every "offer" this panel shows is a `change_type = 'preco_alterado'` row with
+`purchasable_price_delta < 0`: a REAL, OBSERVED price drop, never a confirmed promotional
+campaign. The "Drops" tab says so on screen.
+
+**No new mart.** `mart_price_evolution` already carries the pair (this snapshot, the
+previous one) with the delta and the day gap between them; `mart_assortment_daily` already
+carries the daily aggregate by category. The two already answer every question this panel
+asks — a third mart for a screen that only reads what two marts already compute would be
+the premature abstraction this project refuses elsewhere.
+
+**Its own test, not a trimmed-down `test_dashboard_indicators.py`.**
+`platform/tests/test_price_dashboard_indicators.py` checks the same properties (grain/type/
+pitfall declared, every parameter bound, the dashboard reads only MART), but swaps the
+bidirectional "every mart on disk is used" check for
+`test_o_painel_usa_exatamente_os_dois_marts_declarados` — this panel is exclusive by
+design, and proving "only these two got in" is the right property, not its opposite.

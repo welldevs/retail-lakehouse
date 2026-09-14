@@ -153,7 +153,7 @@ class AmostrasTest(unittest.TestCase):
         self.assertTrue(no_disco, f"nenhum mart encontrado em {MART_DIR}")
         # FACT_INGESTION_RUN e a UNICA excecao deliberada: e um fato de GOLD, nao um
         # MART, que entrou via CR-005 para tornar latencia/throughput consultaveis sem
-        # coletor novo (AI_ENGINEERING_CONSTRAINTS.md secao 17). Nomeada aqui para que a
+        # coletor novo (BACKLOG.md, Observability). Nomeada aqui para que a
         # excecao seja assercao, nao lacuna silenciosa que um AMOSTRAS futuro esconderia.
         fora_do_mart = {"FACT_INGESTION_RUN"}
         self.assertTrue(fora_do_mart <= set(AMOSTRAS), "excecao esperada desapareceu")

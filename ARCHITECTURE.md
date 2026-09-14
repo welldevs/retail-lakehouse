@@ -325,150 +325,33 @@ would be a workaround for an RBAC boundary the project keeps on purpose.
 ## Technical debt
 
 Reviewed on **2026-09-01**, after Phase 7, and **restructured on 2026-09-02** so every item
-declares status and next step instead of just a reason. **Seven open items**, all
-deliberate — CI closed on 2026-09-08 (`DECISIONS.md § "CR-005"`). The rest of the table is
-history: it stays because what got closed and *how* it got closed is the part worth
-learning from.
-
-**The count went from five to eight, and that's a result, not a regression.** Three of the
-new items were *discovered* by Phase 7 — two of them by measuring what it built itself. A
-debt list that only shrinks is a sign nobody's looking.
+declares status and next step instead of just a reason, then kept current as items closed
+(CI on 2026-09-08, the Snowflake trial on 2026-09-14) — a debt list that only shrinks by
+deletion is a sign nobody's looking, so a closed row stays, with its status updated, rather
+than disappearing.
 
 Each item carries **problem, impact, status, and next step**, and nothing else. Status is
 one of four: **mitigated** (the damage is contained, the cause isn't), **accepted** (won't
-be fixed, and the reason is written down), **open** (identified work remains), or **out of
-scope**.
+be fixed, and the reason is written down), **open** (identified work remains), or **closed**.
 
 | # | Problem | Impact | Status | Next step |
 |---|---|---|---|---|
 | 1 | `models/warehouse/` has no offline test | Two real defects only showed up on the first run against the live account; a DuckDB mirror would have caught them | **Mitigated** by `make warehouse-evidence` — dated evidence, not a second engine | None. The answer is **not** a mirror: see the section below |
-| 2 | The Snowflake account is a trial | It expires, and with it the entire right half of the pipeline | **Accepted** — it's open by nature | None. The destination is swappable via `.env.snowflake`, and that's verified |
+| 2 | The Snowflake account is a trial | It expired on 2026-09-14; `load_stage` started failing auth with `390913` | **Closed (CR-007)** — the default flipped to the Postgres target CR-006 had already proven live | None. `make warehouse*` targets Postgres now; `warehouse-snowflake-*` stays ready for a future account |
 | 3 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Accepted** — cosmetic and external: `dbt-duckdb` config, with no supported form published | Track `dbt-duckdb` |
 | 4 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
 | 5 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206.523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
 | 6 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
 | 7 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
 
-| Item | Status |
-|---|---|
-| Test coverage | **Closed.** 19 → 416 tests on the platform, with an in-memory S3 double |
-| Extraction path in container | **Closed.** `bcn1` extracted, validated, landed and transformed inside the container |
-| Redundant environments | **Removed.** 265 MB (broken `venv/` and `orchestration/.venv`) |
-| Development credentials | **Hardened.** Loopback ports, random keys, compose refuses to start without them |
-| `data/` divergence | **Contained.** The `data/` pattern in `.gitignore` matches at any level |
-| Homonym fanout in `silver_ine_population_by_municipality` | **Closed** on 2026-08-27, the same day it was found |
-| Silver model and simulated OLTP DAG | **Closed** in Phase 2 (`silver_customer`, `silver_oltp_manifest`, `simulated_oltp_customers.py`) |
-| `currency` var declared for Gold and never used | **Closed.** `FACT_PRICE_SNAPSHOT` carries the column: the assumption travels with the number |
-| Snowflake roles created and verified, but never worn | **Closed.** The load runs as `RETAIL_LOADER` and dbt as `RETAIL_TRANSFORMER`; four defects surfaced when they were put on |
-| Account identity hardcoded in `profiles.yml` | **Closed.** `SNOWFLAKE_ACCOUNT`/`SNOWFLAKE_USER` with no default; the account is swappable via `.env.snowflake` |
-| Warehouse with `auto_suspend` of 300 s | **Closed.** `bootstrap` sets X-Small and 60 s, as the Phase 2 plan called for and never applied |
-| `warehouse_load` had never run in a container | **Closed.** Image missing Phase 2's dependencies and no credential; the dependency list stopped being duplicated |
-| **`models/warehouse/` tree with no offline test** | **Open**, and it's the consequence of a choice. Mitigated by `make warehouse-evidence` |
-| **Snowflake account is a trial** | **Open by nature**, and the destination is swappable — verified, not claimed |
-| dbt `CustomKeyInConfigDeprecation` warning | **Open, cosmetic.** `dbt-duckdb` config, with no supported form yet |
-| **CI** | **Closed on 2026-09-08 (CR-005).** Two jobs, `source-test` and `platform`, covering the offline half (`make test` + `make silver`), never the Snowflake half. The first real push run went red — not on new code, but on a pre-existing bug `test_todo_caminho_da_arvore_existe` never had a way to catch before: it checked the README's `data/` entries against the local filesystem, which only a machine that already ran the pipeline has, instead of against what a clean checkout gets. Fixed to check `git check-ignore` for that subtree instead. Second run: both jobs green |
-| Silver model and simulated orders DAG | **Closed** in Phase 3 (4 models, 8 singular tests, `simulated_orders_events.py`) |
-| **Streaming half with no offline test** | **Partially closed** in Milestones 4, 5 and 6: `fake_pg.py` covers the transaction boundary, `fake_kafka.py` the order between write and offset commit, and `fake_iceberg.py` the monotonic merge and the retry loop — offline, in `make test`. What no double covers remains open: that `rollback` actually undoes, that the broker preserves order per key, and that Iceberg refuses to commit a stale snapshot. That's `make orders-prove-atomicity`, `make orders-prove-stream` and `make orders-prove-projection` |
-| **Orders Silver claimed a separation the log doesn't declare** | **Closed** in Milestone 4, the day it was found: 5.508 rows from 298 orders. Found by two independent folds disagreeing, not by a test |
-| Gold and orders marts | **Closed** in Milestone 7: 4 STAGE, 4 FACT, 3 MART and 5 tests, each proven capable of failing via `make warehouse-prove-tests` |
-| **`TIMESTAMP` crossed the boundary 56 million years into the future** | **Closed** in Milestone 7, the day it was found. `use_logical_type = true` on `COPY INTO`; DuckDB annotates the unit only on the modern `LogicalType` and Snowflake was falling back to the legacy `ConvertedType`. **166 dbt nodes built green on top of the defect** — a human reading a mart is who caught it. Now guarded by `assert_order_milestones_are_plausible_against_the_order_date` |
-| Event count turning into `FLOAT` in parquet | **Closed** in Milestone 7. `sum()` returns `HUGEINT`, parquet has no `INT128`, the write downgrades to `DOUBLE`. Found because the DDL is derived from the cut itself |
-| **Generator assumption living in two places** | **Avoided** in Milestone 7 instead of closed: `STG_ORDER_PREMISE`/`FACT_ORDER_PREMISE` carry the entire seed to the warehouse, so `MART_FULFILLMENT_SLA` measures against the same number that generated the durations. A dbt var would have created the copy |
-| **The Silver `dbt build` gate lived in six files** | **Closed on 2026-08-31**, the day the DAG failed. See below |
-| `RETAIL_READER` role created, verified and with no consumer | **Closed on 2026-08-31.** The Streamlit panel is the first to wear it, and proves the refusal on GOLD/STAGE right on the screen |
-| **No mart joins customer with order** | **Open, and it's the model's most actionable gap.** Without it there's no repurchase, LTV, cohort or revenue per customer. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role. It requires no new source — it requires a customer-grain mart |
-| **Streaming half with no record of real execution** | **Closed** in Milestone 8. `make stream-evidence` writes `docs/stream-evidence/README.md` from the three live planes — no number by hand, and a missing section shows up as a declared absence, never as a zero |
-| Every customer bought the same expected basket | **Closed** in Phase 5: the mix became conditional on the cohort (age × community), calibrated by IPF so the aggregate wouldn't move |
-| **Newborn with a primary-holder registration** | **Closed** in Phase 6, and it fixed the domain Phase 5 got wrong. Phase 5 blocked the minor at the *order* (`min_buyer_age`) and left the registration untouched; `min_customer_age` now lives in `customer_premises_seed.csv`, and 3.602 minors became 0 |
-| **Customer base with no density** | **Closed** in Phase 6. It was 5.000 per warehouse for AUFs that differ by 4,6× in population — nothing failed, because density doesn't show up in any total. Today it's `municipal population × the province's adult share × 2,2%`, and the total is a consequence, not a quota |
-| Snowflake screenshot list, 1 of 6 captured | **Closed on 2026-09-01.** Five of the six items were already covered by the generated evidence; the sixth became the **Roles in execution** section of `make warehouse-evidence`, read from `query_history`. `PRINTS.md` was removed: it was a to-do list living in the repository |
-| Environment variables read by the code and declared nowhere | **Closed on 2026-09-01.** Nineteen of them — from `AWS_ACCESS_KEY_ID` to `RETAIL_DASHBOARD_TTL`. All have a default in the code, so nothing broke: they simply didn't exist for anyone who cloned the repository. They're in `.env.example` as commented-out overrides, and `TodaVariavelDeAmbienteEDeclarada` scans the code for `os.environ`/`getenv` and fails if a new one appears undeclared |
-| `streamlit/CONTRACT.md` eternally "modified" in git | **Closed on 2026-09-01.** The header carried the generation date, so the derived file changed on every run and the sync test had to **exempt that line** — a blind spot inside the very test that exists so there'd be no blind spot. It now carries the sha256 of `indicators.py`: the comparison became byte for byte |
-| Four versioned seeds with no executable provenance | **Closed on 2026-09-01.** The `scripts/derive_*.py` existed, with a good docstring, and **no Makefile target** — the origin of four CSVs was only discoverable by opening a file the README never said how to run. They became `make seed-province-map`, `seed-service-area`, `seed-municipality-codes` and `seed-ambiguous-series`; all four reproduced the versioned CSV byte for byte |
-| Documentation checked only by reading | **Closed on 2026-09-01.** `test_documentacao.py` scans what can be verified by machine: every path in the README's tree exists, every relative link resolves, no log/artifact is versioned, every Makefile target appears in `make help`, every script has a target, every Makefile variable is used. Six injections seen red |
-| **Interop between engines: claimed for four phases, never demonstrated** | **Closed in Phase 7.** Iceberg was justified by interop since Phase 3 and both writers were Python, using the same library. `make spike-spark-iceberg` measured 18 questions against the real stack, with **both outcomes declared beforehand**: if it failed, Spark wouldn't get in **and** the clause would come out of this table. Today the catalog has three writers, and `written_by` makes that queryable |
-| **Order assumptions contradicting one another** | **Closed in Phase 7**, after three phases "logged instead of fixed". 84% of deliveries arrived before the window even opened; the SLA threshold was set to 90 against a possible ceiling of 80. What was missing was the distinction between *tweaking until the output looks nice* and *making two assumptions coherent* — the first is refused, the second is a model correction. Guarded by `assert_order_premises_are_internally_coherent`, which checks the **derivation** and never the result |
-| **Stock, stockout, turnover and coverage out of reach** | **Closed in Phase 7, with a caveat that travels in the data.** The declared trigger was "a source of balance or movement" and it was **not** met: the ledger is *calculated* from observed consumption plus a declared policy. `stock_label = 'synthetic'` is on every row of the mart |
-| **"Don't touch RAW after closing" was discipline, not verification** | **Closed in Phase 7.** Three documentation revisions happened because a regeneration changed numbers already written and nothing flagged it. `make freeze` seals the capture and `make freeze-check` fails if it changes. The seal covers the **data**, not the execution: `run_id` and timestamps are left out, otherwise a byte-identical re-land would break the seal |
-| **References by section name and anchor were never checked** | **Closed on 2026-09-01.** `LinksRelativosTest` checks that the FILE exists, and a broken anchor points to a file that exists — so it passed, and the reader landed at the top of the document. Found while moving 17 sections to `DECISIONS.md`: one reference was left orphaned. Two new tests cover the `§ "…"` label and the anchor, at every heading level and in CONTRACT's explicit HTML anchors |
-| **README and ARCHITECTURE explaining the same thing twice** | **Closed on 2026-09-01.** 1.435 + 2.475 lines, with the same subject in two places aging at different rates. The narrative went to `DECISIONS.md`, the future scope to `BACKLOG.md`, and a tested line-count ceiling keeps both from growing back without it being a decision |
-| **Silver's parquet survives the gate excluding the model** | **Open, mitigated.** When `silver_gate` drops `silver_stock_ledger` (or `silver_live_order_state`) from the build, the parquet from the last successful build **stays** in object storage — and the export to Snowflake reads it without knowing it's stale. It actually happened: `MART_STOCK_HEALTH` described a 5-day window while every other mart described 9, with not a single test failing. Mitigated by `assert_stock_ledger_covers_the_order_window`, which compares the two domains' windows in the warehouse — which is where they finally meet. Not closed because the mitigation is per domain, and the class is general: any excluded model leaves stale parquet behind |
-| **`FACT_INGESTION_RUN` had no duration or timestamps** | **Closed on 2026-09-08 (CR-004).** `started_at_utc`/`finished_at_utc`/`duration_seconds` already existed two layers upstream, in the three Silver manifest models — `snowflake_export.py`'s `STG_INGESTION_RUN` projection just never carried them forward. The fix was two widened `select` lists, not new data. Verified live: `docs/warehouse-evidence/README.md` § `FACT_INGESTION_RUN` shows 90 real rows with non-null values on all three columns |
-
-### Wearing the roles: what only shows up once you stop running as admin
-
-The three roles had existed since Phase 2, with the right grants and the isolation matrix
-verified by `check_isolation`. And **no execution ever went through them** — the load and
-dbt ran as `ACCOUNTADMIN`. It's the difference between verified governance and adopted
-governance, and it cost four defects, all invisible while the admin ran everything:
-
-| Symptom | Cause | Why it didn't show up before |
-|---|---|---|
-| `No active warehouse selected` on load | The roles had no `usage` on the **warehouse** | An admin sees every warehouse. Data doesn't move without compute, and the error points at the session, not the grant |
-| `schema missing: GOLD, MART` | `require_schemas` checked all three schemas | It was **isolation working**: `information_schema` returns only what the role sees, and the loader can't see GOLD. A check broader than the need turns a control into a failure |
-| 8 models with `must have OWNERSHIP granted on TABLE` | `grant all` grants the **applicable** privileges, and ownership isn't one of them | `create or replace table` requires ownership. On a fresh account it's harmless — whoever creates is born the owner; it only shows up on an account where the admin created it first |
-| `information_schema` empty for the admin | The custom roles weren't hung off `SYSADMIN` | It only surfaced **after** ownership left the admin and secondary roles were switched off. It throws no error: it just erases the objects from the administrator's view |
-
-The fourth is the most instructive of the four, because it's the only one that **doesn't
-fail** — role inheritance flows up (`SYSADMIN` starts seeing `MART`) and never down
-(`RETAIL_READER` still has no `GOLD`), so the fix doesn't loosen anything, and its absence
-would have passed as "everything's fine" until someone needed to administer the account.
-
-All four became tests in `test_snowflake_load.py` (16 → 29), by the same criterion as the
-rest of the file: none fails obviously if it regresses.
-
-**What still isn't real isolation:** there's a single user, holding all three roles. Real
-isolation would be one service user per role, with no `ACCOUNTADMIN` — but that's a
-decision for whoever administers the account, not for the repository. What the repository
-guarantees is that `default_secondary_roles = ()` is applied: without it, modern Snowflake
-accounts activate **all** of a user's roles besides the primary, and wearing the role would
-be decorative. Measured on this account before the fix: `current_secondary_roles()`
-returned `ORGADMIN, RETAIL_READER, RETAIL_TRANSFORMER, RETAIL_LOADER`.
-
-### `warehouse_load` compiled and didn't run
-
-The DAG was written in Phase 2 and verified like the other four: it imports, builds the
-graph, `airflow dags list` sees it. **Compiling is not running** — and only the path
-through the host (`make warehouse-refresh`) had actually been exercised. On its first real
-run it stopped at `load_stage` with `exit 2`:
-
-```
-ERRO: snowflake-connector-python nao esta instalado neste venv.
-```
-
-Two independent causes, and the second would only show up once the first was fixed:
-
-1. **`infra/Dockerfile.airflow` duplicated the dependency list** from
-   `platform/pyproject.toml`. Phase 2 added `dbt-snowflake` and
-   `snowflake-connector-python` to the pyproject; the image stayed with Phase 1's list. The
-   duplication did what duplication does, and the cost was paid at runtime, days later,
-   with the data stuck halfway through.
-2. **There was no credential in the container.** `~/.snowflake` wasn't mounted, so neither
-   the connector nor dbt would have any way to authenticate.
-
-The fix for the first isn't "add two packages": it's **reading the `pyproject.toml`** at
-build time, which eliminates the entire class of problem, and importing both adapters plus
-the connector as the last step of `RUN` — if a dependency goes missing, the **build**
-breaks, not the DAG.
-
-The fix for the second mounts `~/.snowflake` **at the same path** inside and outside
-(`${HOME}/.snowflake:${HOME}/.snowflake:ro`), with `SNOWFLAKE_HOME` pointing there. That's
-what makes `config.toml`'s `private_key_file` and `.env.snowflake`'s
-`SNOWFLAKE_PRIVATE_KEY_PATH` resolve identically on both sides — no path needs rewriting
-anywhere. Read-only: the orchestrator reads the key and never rewrites it, and since the
-container runs with `AIRFLOW_UID` (the host's uid), no permission on the mode-600 file
-needs loosening.
-
-The account identity comes in via `env_file` with `required: false`, and **not** via
-`environment:` — in the map block, a missing variable becomes present-and-empty in the
-container, and `env_var('SNOWFLAKE_ACCOUNT')` with no default would return empty instead of
-aborting. It's the same trap already documented in the Makefile, one level up. With
-`required: false`, anyone without a Snowflake account still brings up `make up` and the
-four source DAGs normally.
-
-Measured after the fix: the DAG completes all four tasks, and `query_history` shows the
-role separation in the query **type** — `RETAIL_LOADER` with `PUT_FILES`/`COPY`,
-`RETAIL_TRANSFORMER` with `CREATE_TABLE_AS_SELECT`, `RETAIL_READER` with only `SELECT`.
+**Where the rest of this history lives.** An earlier revision of this document kept a
+second, much longer table here — a closed-item changelog duplicating what
+[DECISIONS.md](DECISIONS.md) already narrates in full for each phase (the 4 RBAC defects
+that surfaced when the pipeline stopped running as `ACCOUNTADMIN`, `warehouse_load`'s first
+real run, the timestamp that crossed the boundary 56 million years into the future, the
+population Silver's homonym fanout, and the rest). It was removed as a duplicate, not as a
+loss: every item it listed is either open in the table above, or closed with its full story
+told once, in `DECISIONS.md`'s phase-by-phase narrative.
 
 ### The destination is swappable — verified, not claimed
 
@@ -491,6 +374,11 @@ L2→L3 boundary paying for itself.
 Verified in both directions: `dbt parse --target dev` passes with every Snowflake variable
 missing, and `--target snowflake` fails naming the one that's missing.
 
+That covers swapping *accounts*. Swapping *engines* was still an untested claim until
+CR-006 stood up a Postgres target next to it and CR-007 made it the default the day the
+trial actually expired — same models, same tests, only the loader and the `--target`
+changed. See `DECISIONS.md § "CR-006"` and `§ "CR-007"`.
+
 ### `models/warehouse/` with no offline test — and why the answer isn't a DuckDB mirror
 
 A DuckDB mirror of the 24 models would have **passed** on the two errors that broke the
@@ -509,52 +397,6 @@ What's still true: the cut (`snowflake_export.py`) and the transport (`snowflake
 are covered offline, and that's where the silent errors live — an aggregate summed together
 with the detail, a forgotten scope, a column matched by position. The warehouse SQL fails
 loud when it fails.
-
-### Homonym fanout in the population Silver
-
-`silver_ine_population_by_municipality.sql` joined the RAW table with the code seed using
-`inner join ... on e.municipality_name = c.municipality_name` — **by name alone**. The
-model's own comment justified this as safe because "the seed already comes scoped to
-08/28/41/46, where no collision was measured". The measurement confirms the seed really has
-no internal collision (0 across the 4 provinces), but **the conclusion didn't follow**: the
-RAW side is **national** (~8,200 municipalities) and brings in homonyms from other
-provinces with an identical `Nombre`. The docstring of
-`scripts/derive_municipality_codes.py` had already anticipated exactly this ("a Spain-wide
-join by name alone would be ambiguous for 3 of these 18 names"); what went unnoticed is
-that the model does exactly that Spain-wide join, because the extraction filters nothing.
-Three municipalities got two rows:
-
-| Municipality in the AUF | Correct series | Intruding series |
-|---|---|---|
-| Arroyomolinos (28/015) | `DPOP12967` = 38.075 | `DPOP4729` = 816 (Cáceres, 10023) |
-| Molar, El (28/086) | `DPOP13174` = 9.999 | `DPOP19423` = 295 (Tarragona, 43085) |
-| Torrent (46/244) | `DPOP21778` = 90.928 | `DPOP7960` = 182 (Girona, 17197) |
-
-Effect: `mad1` returned 130 rows for 128 municipalities and `vlc1`, 64 for 63.
-
-**Why the grain test didn't catch it.** The tested grain is
-`(ingestion_date, series_code, year, fk_periodo)`, and the two series have different
-`series_code` — the grain stayed unique. The test that was missing now exists:
-`assert_ine_population_by_municipality_has_one_series_per_municipality` asserts one row per
-`(municipality, sex, year)`, which is the real invariant.
-
-**Fix: by the source's own official code, not by heuristic.** The `DATOS_TABLA/29005`
-payload only has `COD`, `Nombre`, `FK_Escala`, `FK_Unidad` and `Data` — no province, no
-`MetaData` (verified). But `GET /ES/VALORES_SERIE/{COD}` returns, for each series, the
-**official INE municipality code** (province+municipality), the same schema as the
-Callejero and the `warehouse_*` seeds.
-[scripts/derive_ambiguous_series.py](scripts/derive_ambiguous_series.py) identifies offline
-which names are ambiguous in RAW *and* exist in the 4-province seed (today 3 names, 18
-series), queries those series, and writes `ine_ambiguous_series_seed.csv`. The model now
-filters: a series with an ambiguous name only gets in if its official code matches the
-seed's; a non-ambiguous name is still resolved by name.
-
-Measured after the fix: 128/133/46/63 municipalities per warehouse, one series each. The
-`customers.json` files for the four partitions came out **byte for byte identical** to the
-earlier ones — the export's provisional defense ("keep the larger value") had been getting
-it right, but by coincidence of size, not by knowing which series was which.
-`export-oltp-reference` stopped deduplicating: it now just **rechecks** the invariant and
-**refuses** if it breaks, instead of picking a value on its own.
 
 ### Test coverage
 
@@ -596,15 +438,18 @@ Confirmed non-empty by mutation: turning off the sha256 comparison in `verify.py
 - **The Silver `dbt` path** — the data tests require object storage to be up.
 - **The DAGs** — no test imports the Airflow module. All six compile via `DagBag` in the
   container, which catches import errors but not behavior.
-- **The `models/warehouse/` tree** — the 24 models and their tests only run **against
-  Snowflake**. There's no offline equivalent, and it's not an oversight: a DuckDB mirror
-  would be a second materialization of the same truth, and it was precisely the difference
-  between the two engines (`FILTER`, `WINDOW`) that broke them on the first real run — a
-  DuckDB mirror would have passed and hidden exactly those errors. **The consequence is
-  real and stays on record: with no Snowflake account, `make warehouse` doesn't run and
-  that half of the project isn't verifiable.** What softens it is that the cut feeding it
-  (`snowflake_export.py`) and the transport (`snowflake_load.py`) are covered offline, and
-  that's where the silent errors live — the Gold SQL fails loud when it fails.
+- **The `models/warehouse/` tree** — the 24 models and their tests only run **against a
+  live engine** (Postgres by default since CR-007; Snowflake before its trial expired).
+  There's no offline equivalent, and it's not an oversight: a DuckDB mirror would be a
+  second materialization of the same truth, and it was precisely the difference between
+  two real engines (`FILTER`, `WINDOW`) that broke Snowflake on the first real run — a
+  DuckDB mirror would have passed and hidden exactly those errors. **The consequence used
+  to be a single point of failure — one trial account with no fallback.** CR-006 gave the
+  tree a second, non-expiring engine, and CR-007 proved the flip live, which is what
+  closed it — not a DuckDB mirror. What softens the remaining gap is that the cut feeding
+  it (`snowflake_export.py`) and both transports (`snowflake_load.py`/`postgres_load.py`)
+  are covered offline, and that's where the silent errors live — the Gold SQL fails loud
+  when it fails.
 
 All three were verified manually, in a real run.
 
@@ -628,14 +473,14 @@ stay that way) and `platform` (`make venv` → `make platform-test` → `make up
 silver`), never the Snowflake half. See `DECISIONS.md § "CR-005"` for why it wasn't written
 before there was a remote to run it against, and what the first real run found.
 
-### The Snowflake account is a trial — **open, by nature**
+### The Snowflake account is a trial — **closed 2026-09-14 (CR-007)**
 
-A 14-day trial starting 2026-08-27. When it expires, `make warehouse` stops running and
-with it the 24 models and the Gold/Mart tests. **The lakehouse isn't affected**:
-`make silver` and the Python suites keep running offline, with no credential and no cost —
-that's exactly why the L2→L3 boundary is physical. An earlier trial already expired during
-this phase and the symptom was `390913`, with the login authenticating and no warehouse
-available.
+The 14-day trial (started 2026-08-27) expired for real: `load_stage` failed auth with
+`390913`, the same code an earlier mid-phase expiration had already shown once. `make
+warehouse` now targets the Postgres container CR-006 proved live — same guard, same
+models, same tests, only the loader and the `--target` changed. `make warehouse-snowflake*`
+stays in place, ready for whichever account replaces the trial. See
+`DECISIONS.md § "CR-007"`.
 
 ### dbt deprecation warning — **open, cosmetic**
 

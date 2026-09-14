@@ -67,6 +67,12 @@ x-airflow-common: &airflow-common
     # psycopg 3).
     ICEBERG_CATALOG_URI: postgresql+psycopg://oltp:oltp@oltp-postgres:5432/iceberg_catalog
     KAFKA_BOOTSTRAP: kafka:19092
+    # MESMO MOTIVO do OLTP acima: dentro da rede o host do warehouse Postgres e
+    # `warehouse-postgres`, na porta INTERNA 5432 — o :5434 do .env e o mapeamento do
+    # host, e so vale para quem roda fora do compose. `warehouse_load` (a DAG) e o unico
+    # consumidor deste endereco de dentro do container; ver DECISIONS.md CR-007.
+    WAREHOUSE_PG_HOST: warehouse-postgres
+    WAREHOUSE_PG_PORT: "5432"
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     RAW_BUCKET: ${RAW_BUCKET:-retail-raw}

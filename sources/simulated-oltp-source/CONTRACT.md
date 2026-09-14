@@ -72,13 +72,10 @@ soltas, e nenhum CEP, município ou via fictício é gerado.
 
 ### Quantos clientes cada armazém tem
 
-**Não é mais um argumento.** Até a Fase 5 o número vinha da linha de comando, e o Makefile
-passava 5.000 para os quatro armazéns — o mesmo número para AUFs que diferem por **4,6× em
-população**. Nada reprovava: os endereços eram reais, os totais fechavam, o manifesto batia.
-A única coisa errada era que a densidade não existia, e densidade não aparece em nenhum total.
-
-Omitindo `--count`, o alvo vem de `customer_allocation`, no cabeçalho de
-`municipality_population_weights.json`:
+**Não é mais um argumento.** Omitindo `--count`, o alvo vem de `customer_allocation`, no
+cabeçalho de `municipality_population_weights.json` — nunca de um número fixo passado por
+fora, que trataria AUFs cuja população difere em **4,6×** como se fossem do mesmo tamanho,
+sem que nada nos totais denunciasse o erro:
 
 ```
 população municipal observada (INE 29005)
@@ -145,14 +142,11 @@ uma única vez, na escolha do município.
 
 #### O cadastro não é a população residente
 
-Até a Fase 5 era, e por isso **18,01 % dos clientes tinham menos de 18 anos** — 3.602 de
-20.000, com `age_at_ingestion` de **0 a 100**. Havia titular de conta recém-nascido.
-
-Isso não era defeito desta Source: o contrato declarava que a idade vinha da distribuição
-**populacional** provincial do INE, e era exatamente isso que ela entregava. O que nunca fora
-declarado é que **um cadastro não é um censo**. Enquanto a idade não fazia nada, um titular de
-três anos era inofensivo; a partir do momento em que ela governa a demanda (Fase 5), 18 % da
-base entra na faixa mais jovem do benchmark sendo criança e **nada quebra**.
+A distribuição de idade do INE é **populacional**, e população inclui menores — **um
+cadastro não é um censo**. Enquanto a idade não governa nada a jusante, um titular de conta
+de três anos é inofensivo; a partir do momento em que ela passa a orientar demanda, a mesma
+base sem piso etário produziria uma fração relevante de titulares abaixo da maioridade, sem
+nada quebrar nos totais.
 
 A idade mínima é premissa da **plataforma** (`customer_premises.min_customer_age`), não desta
 Source, e chega já aplicada: `province_age_distribution.json` traz só as idades `>= 18`,

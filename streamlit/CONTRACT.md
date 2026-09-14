@@ -6,7 +6,7 @@ live together. Editing here creates a second place where the indicator lives, an
 two diverge at the first SQL tweak — with the cruel detail that the review would keep
 passing, because nobody reads a SQL query and a text side by side looking for disagreement.
 
-Derived from `indicators.py` sha256 `39d025b86f8667d14e60bc9cbe4ac8dd264f9e41acec0e09875fb1b38796504e`. The header carries the source's hash
+Derived from `indicators.py` sha256 `7d7495fb0137b02ea7776d8e5d9a44a5e6d590885e59a4d507a37806c0d688bc`. The header carries the source's hash
 and **not** the generation date: this way regenerating an up-to-date contract doesn't
 change a byte, and `git diff --exit-code streamlit/CONTRACT.md` after
 `make dashboard-contract` is the check that the two never diverged.
@@ -23,10 +23,10 @@ error no test catches.
 
 | | |
 |---|---|
-| Target | `RETAIL.MART` — and **only** MART |
-| Role | `RETAIL_READER`, the BI role. Reads MART; denied on GOLD and STAGE |
-| Session | opens with `use secondary roles none` — without it the restriction would pass by mistake |
-| Authentication | RSA key pair, from `~/.snowflake/config.toml`. No secret in the repo |
+| Target | schema `"MART"` in database `retail` — and **only** MART |
+| Role | `retail_reader`, the BI role. Reads MART; denied on GOLD and STAGE |
+| Session | opens with `set role retail_reader` — Postgres has no secondary-role concept to disarm (unlike the Snowflake account this project used before its trial expired) |
+| Authentication | local dev user/password, defaulted in `postgres_load.py` and overridable via `.env`. No secret in the repo |
 | Writes | none. The panel doesn't create, alter or delete anything |
 
 The panel runs a live probe that confirms the denial on GOLD and STAGE, because a
@@ -41,7 +41,7 @@ so there's no way to inject anything through the interface's selector:
 |---|---|---|
 | `%(inicio)s` | ISO date | lower bound, inclusive |
 | `%(fim)s` | ISO date | upper bound, inclusive |
-| `%(armazens)s` | comma-separated list | `array_contains(wh::variant, split(%(armazens)s, ','))` |
+| `%(armazens)s` | comma-separated list | `wh = any(string_to_array(%(armazens)s, ','))` |
 
 Indicators marked **no date axis** ignore `inicio`/`fim`: they bring the current
 version.
@@ -107,13 +107,13 @@ select
                 sum(gross_amount_placed)                            as valor_colocado,
                 sum(net_amount_picked)                              as receita_apurada,
                 -- Denominador = separados. Ver as armadilhas.
-                round(sum(net_amount_picked)
-                      / nullif(sum(orders_picked), 0), 2)           as ticket_medio,
-                round(sum(orders_delivered)
-                      / nullif(sum(orders_placed), 0), 4)           as taxa_entrega,
+                round((sum(net_amount_picked)
+                      / nullif(sum(orders_picked), 0))::numeric, 2)           as ticket_medio,
+                round((sum(orders_delivered)
+                      / nullif(sum(orders_placed), 0))::numeric, 4)           as taxa_entrega,
                 max(currency)                                       as moeda
-            from RETAIL.MART.MART_ORDER_FUNNEL
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_order_funnel
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
 ```
 
 <a id="funil"></a>
@@ -142,15 +142,15 @@ with total as (
                     sum(orders_picked)          as separado,
                     sum(orders_dispatched)      as despachado,
                     sum(orders_delivered)       as entregue
-                from RETAIL.MART.MART_ORDER_FUNNEL
-                where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                from "MART".mart_order_funnel
+                where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             )
             select 1 as ordem, 'Placed'            as etapa, colocado            as pedidos, 1.0 as taxa from total
-            union all select 2, 'Payment approved', confirmado,         round(confirmado/nullif(colocado,0),4)         from total
-            union all select 3, 'Picking started',  separacao_iniciada, round(separacao_iniciada/nullif(colocado,0),4) from total
-            union all select 4, 'Picked',            separado,           round(separado/nullif(colocado,0),4)           from total
-            union all select 5, 'Dispatched',        despachado,         round(despachado/nullif(colocado,0),4)         from total
-            union all select 6, 'Delivered',         entregue,           round(entregue/nullif(colocado,0),4)           from total
+            union all select 2, 'Payment approved', confirmado,         round((confirmado/nullif(colocado,0))::numeric,4)         from total
+            union all select 3, 'Picking started',  separacao_iniciada, round((separacao_iniciada/nullif(colocado,0))::numeric,4) from total
+            union all select 4, 'Picked',            separado,           round((separado/nullif(colocado,0))::numeric,4)           from total
+            union all select 5, 'Dispatched',        despachado,         round((despachado/nullif(colocado,0))::numeric,4)         from total
+            union all select 6, 'Delivered',         entregue,           round((entregue/nullif(colocado,0))::numeric,4)           from total
             order by ordem
 ```
 
@@ -172,20 +172,20 @@ with total as (
 
 ```sql
 select 'Payment declined' as motivo, sum(orders_payment_failed)  as pedidos,
-                   round(sum(orders_payment_failed)/nullif(sum(orders_placed),0),4) as sobre_colocados
-              from RETAIL.MART.MART_ORDER_FUNNEL where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                   round((sum(orders_payment_failed)/nullif(sum(orders_placed),0))::numeric,4) as sobre_colocados
+              from "MART".mart_order_funnel where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 'Cancelled', sum(orders_cancelled),
-                   round(sum(orders_cancelled)/nullif(sum(orders_placed),0),4)
-              from RETAIL.MART.MART_ORDER_FUNNEL where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                   round((sum(orders_cancelled)/nullif(sum(orders_placed),0))::numeric,4)
+              from "MART".mart_order_funnel where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 'Delivery failed', sum(orders_delivery_failed),
-                   round(sum(orders_delivery_failed)/nullif(sum(orders_placed),0),4)
-              from RETAIL.MART.MART_ORDER_FUNNEL where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                   round((sum(orders_delivery_failed)/nullif(sum(orders_placed),0))::numeric,4)
+              from "MART".mart_order_funnel where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 'Returned (after delivery)', sum(orders_returned),
-                   round(sum(orders_returned)/nullif(sum(orders_placed),0),4)
-              from RETAIL.MART.MART_ORDER_FUNNEL where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                   round((sum(orders_returned)/nullif(sum(orders_placed),0))::numeric,4)
+              from "MART".mart_order_funnel where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             order by pedidos desc
 ```
 
@@ -214,17 +214,17 @@ with t as (
                        sum(amount_delta)        as delta_separacao,
                        sum(orders_placed)       as pedidos,
                        sum(orders_picked)       as separados
-                from RETAIL.MART.MART_ORDER_FUNNEL
-                where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                from "MART".mart_order_funnel
+                where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             )
             select 1 as ordem, 'Loss at picking (basket shrank)' as causa,
                    delta_separacao as valor, separados as pedidos_afetados,
-                   round(delta_separacao/nullif(separados,0),2) as por_pedido from t
+                   round((delta_separacao/nullif(separados,0))::numeric,2) as por_pedido from t
             union all
             select 2, 'Loss from dead order (never picked)',
                    colocado - apurado - delta_separacao, pedidos - separados,
-                   round((colocado - apurado - delta_separacao)
-                         /nullif(pedidos - separados,0),2) from t
+                   round(((colocado - apurado - delta_separacao)
+                         /nullif(pedidos - separados,0))::numeric,2) from t
             union all
             select 3, 'TOTAL unfulfilled', colocado - apurado, pedidos - separados, null from t
             order by ordem
@@ -249,10 +249,10 @@ with t as (
 ```sql
 select order_date, wh,
                    orders_placed, orders_delivered, net_amount_picked, amount_delta,
-                   round(net_amount_picked/nullif(orders_picked,0),2) as ticket_medio,
+                   round((net_amount_picked/nullif(orders_picked,0))::numeric,2) as ticket_medio,
                    delivery_rate
-            from RETAIL.MART.MART_ORDER_FUNNEL
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_order_funnel
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             order by order_date, wh
 ```
 
@@ -281,8 +281,8 @@ select
                 max(max_picking_minutes)    as maximo_observado_min,
                 sum(orders_breaching_sla)   as violacoes,
                 sum(orders_with_pick)       as pedidos_com_separacao
-            from RETAIL.MART.MART_FULFILLMENT_SLA
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_fulfillment_sla
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
 ```
 
 <a id="percentis_etapa"></a>
@@ -304,27 +304,27 @@ select
 
 ```sql
 select 1 as ordem, 'Placed -> payment' as etapa,
-                   round(avg(p50_minutes_to_confirm),1) as media_p50,
-                   round(avg(p90_minutes_to_confirm),1) as media_p90,
+                   round((avg(p50_minutes_to_confirm))::numeric,1) as media_p50,
+                   round((avg(p90_minutes_to_confirm))::numeric,1) as media_p90,
                    sum(orders_with_confirm)             as pedidos
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
-            select 2, 'Picking (start -> end)', round(avg(p50_minutes_to_pick),1),
-                   round(avg(p90_minutes_to_pick),1), sum(orders_with_pick)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            select 2, 'Picking (start -> end)', round((avg(p50_minutes_to_pick))::numeric,1),
+                   round((avg(p90_minutes_to_pick))::numeric,1), sum(orders_with_pick)
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
-            select 3, 'Picked -> dispatched', round(avg(p50_minutes_to_dispatch),1),
-                   round(avg(p90_minutes_to_dispatch),1), sum(orders_with_pick)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            select 3, 'Picked -> dispatched', round((avg(p50_minutes_to_dispatch))::numeric,1),
+                   round((avg(p90_minutes_to_dispatch))::numeric,1), sum(orders_with_pick)
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
-            select 4, 'Dispatched -> delivered', round(avg(p50_minutes_to_deliver),1),
-                   round(avg(p90_minutes_to_deliver),1), sum(orders_with_deliver)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            select 4, 'Dispatched -> delivered', round((avg(p50_minutes_to_deliver))::numeric,1),
+                   round((avg(p90_minutes_to_deliver))::numeric,1), sum(orders_with_deliver)
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 5, 'Total cycle (placed -> delivered)',
-                   round(avg(p50_minutes_placed_to_delivered),1),
-                   round(avg(p90_minutes_placed_to_delivered),1), sum(orders_with_deliver)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                   round((avg(p50_minutes_placed_to_delivered))::numeric,1),
+                   round((avg(p90_minutes_placed_to_delivered))::numeric,1), sum(orders_with_deliver)
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             order by ordem
 ```
 
@@ -349,13 +349,13 @@ select 1 as ordem, 'Placed -> payment' as etapa,
 ```sql
 select 1 as ordem, 'Before the window opens' as resultado,
                    sum(orders_delivered_before_slot) as entregas
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 2, 'Within the window', sum(orders_delivered_within_slot)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             union all
             select 3, 'After the window closes', sum(orders_delivered_after_slot)
-              from RETAIL.MART.MART_FULFILLMENT_SLA where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+              from "MART".mart_fulfillment_sla where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             order by ordem
 ```
 
@@ -390,8 +390,8 @@ select
                 sum(units_fulfilled)                as unidades_entregues,
                 count(distinct order_date)          as dias,
                 max(currency)                       as moeda
-            from RETAIL.MART.MART_BASKET_DAILY
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_basket_daily
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1, 2
             order by receita_apurada desc nulls last
 ```
@@ -421,10 +421,10 @@ select
                 sum(lines_substituted)                              as linhas_substituidas,
                 sum(lines_removed)                                  as linhas_removidas,
                 sum(lines_never_picked)                             as linhas_nunca_separadas,
-                round(sum(lines_substituted)/nullif(sum(lines_placed),0), 4) as taxa_substituicao,
-                round(sum(lines_removed)    /nullif(sum(lines_placed),0), 4) as taxa_remocao
-            from RETAIL.MART.MART_BASKET_DAILY
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                round((sum(lines_substituted)/nullif(sum(lines_placed),0))::numeric, 4) as taxa_substituicao,
+                round((sum(lines_removed)    /nullif(sum(lines_placed),0))::numeric, 4) as taxa_remocao
+            from "MART".mart_basket_daily
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1
             having sum(lines_placed) >= 100
             order by taxa_substituicao desc
@@ -455,8 +455,8 @@ with por_faixa as (
                     buyer_age_band,
                     demand_group,
                     sum(lines_placed)                               as linhas
-                from RETAIL.MART.MART_DEMAND_COHORT
-                where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                from "MART".mart_demand_cohort
+                where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
                 group by 1, 2
             ),
             total as (
@@ -466,24 +466,29 @@ with por_faixa as (
             select
                 p.demand_group                                      as grupo,
                 max(case when p.buyer_age_band = 'LT35'
-                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_lt35,
+                         then round((100 * p.linhas / t.linhas_faixa)::numeric, 2) end)  as pct_lt35,
                 max(case when p.buyer_age_band = '35_49'
-                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_35_49,
+                         then round((100 * p.linhas / t.linhas_faixa)::numeric, 2) end)  as pct_35_49,
                 max(case when p.buyer_age_band = '50_64'
-                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_50_64,
+                         then round((100 * p.linhas / t.linhas_faixa)::numeric, 2) end)  as pct_50_64,
                 max(case when p.buyer_age_band = 'GE65'
-                         then round(100 * p.linhas / t.linhas_faixa, 2) end)  as pct_ge65,
+                         then round((100 * p.linhas / t.linhas_faixa)::numeric, 2) end)  as pct_ge65,
                 sum(p.linhas)                                       as linhas_total
             from por_faixa p
             join total t on t.buyer_age_band = p.buyer_age_band
             group by 1
             having sum(p.linhas) >= 100
-            order by div0(
-                max(case when p.buyer_age_band = 'GE65'
-                         then p.linhas / t.linhas_faixa end),
-                max(case when p.buyer_age_band = 'LT35'
-                         then p.linhas / t.linhas_faixa end)
-            ) desc
+            order by (case
+                when max(case when p.buyer_age_band = 'LT35'
+                              then p.linhas / t.linhas_faixa end) = 0
+                     or max(case when p.buyer_age_band = 'LT35'
+                              then p.linhas / t.linhas_faixa end) is null
+                then 0
+                else max(case when p.buyer_age_band = 'GE65'
+                              then p.linhas / t.linhas_faixa end)
+                     / max(case when p.buyer_age_band = 'LT35'
+                              then p.linhas / t.linhas_faixa end)
+            end) desc
 ```
 
 <a id="pedidos_por_regiao"></a>
@@ -510,10 +515,10 @@ select
                 count(distinct order_date)                          as dias,
                 sum(lines_placed)                                   as linhas,
                 sum(units_placed)                                   as unidades,
-                round(sum(revenue_fulfilled), 2)                    as receita,
+                round((sum(revenue_fulfilled))::numeric, 2)                    as receita,
                 max(currency)                                       as moeda
-            from RETAIL.MART.MART_DEMAND_COHORT
-            where order_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_demand_cohort
+            where order_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1
             order by linhas desc
 ```
@@ -542,10 +547,10 @@ select
 select
                 wh                                                  as armazem,
                 count(distinct snapshot_date)                       as dias_observados,
-                round(avg(produtos_no_dia), 0)                      as produtos_media_dia,
+                round((avg(produtos_no_dia))::numeric, 0)                      as produtos_media_dia,
                 max(produtos_no_dia)                                as produtos_maximo_dia,
-                round(avg(exclusivos_no_dia), 0)                    as exclusivos_media_dia,
-                round(avg(preco_medio_dia), 4)                      as preco_medio,
+                round((avg(exclusivos_no_dia))::numeric, 0)                    as exclusivos_media_dia,
+                round((avg(preco_medio_dia))::numeric, 4)                      as preco_medio,
                 sum(novidades)                                      as novidades_periodo
             from (
                 select snapshot_date, wh,
@@ -553,8 +558,8 @@ select
                        sum(products_exclusive_here) as exclusivos_no_dia,
                        avg(avg_unit_price)          as preco_medio_dia,
                        sum(new_arrivals)            as novidades
-                from RETAIL.MART.MART_ASSORTMENT_DAILY
-                where snapshot_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+                from "MART".mart_assortment_daily
+                where snapshot_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
                 group by 1, 2
             )
             group by 1
@@ -578,19 +583,22 @@ select
 1. `days_since_previous_snapshot` IS MANDATORY READING. There are measured gaps of up to 8 days in the catalog; comparing an 8-day change with a 1-day one without this column treats the two as the same fact. It travels with the query on purpose.
 2. `identity_ambiguous` flags a new id whose name already existed in the previous partition. The source doesn't say whether it's the same item re-keyed or one item withdrawn and another launched — the dimension carries the flag so the choice is visible instead of inherited.
 3. This mart has 112 thousand rows and is the only one in the panel that needs filtering in SQL rather than in memory.
+4. PRICES HERE ARE `purchasable_unit_price`, NOT the source's raw `unit_price`. In ~10 product x warehouse combinations sold by weight without a declared size, the API's raw price is a `reference_price * 99` selector ceiling — measured up to 3,663.00 EUR for 150 g of prawns, not a price anyone paid. Ranking by the raw column used to put exactly those rows at the top of this table.
 
 ```sql
 select
                 snapshot_date, wh, display_name as produto, category_name as categoria,
-                previous_unit_price as preco_anterior, unit_price as preco,
-                price_delta as variacao, price_delta_pct as variacao_pct,
+                previous_purchasable_unit_price as preco_anterior,
+                purchasable_unit_price as preco,
+                purchasable_price_delta as variacao,
+                purchasable_price_delta_pct as variacao_pct,
                 days_since_previous_snapshot as dias_desde_o_anterior,
                 change_type as tipo_de_mudanca,
                 identity_ambiguous as identidade_ambigua
-            from RETAIL.MART.MART_PRICE_EVOLUTION
-            where snapshot_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
-              and price_delta is not null and price_delta <> 0
-            order by abs(price_delta) desc
+            from "MART".mart_price_evolution
+            where snapshot_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
+              and purchasable_price_delta is not null and purchasable_price_delta <> 0
+            order by abs(purchasable_price_delta) desc
             limit 200
 ```
 
@@ -614,8 +622,8 @@ select
 select change_type as tipo_de_mudanca, count(*) as produtos,
                    count(distinct source_product_id) as produtos_distintos,
                    count(distinct snapshot_date) as dias
-            from RETAIL.MART.MART_PRICE_EVOLUTION
-            where snapshot_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_price_evolution
+            where snapshot_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1 order by produtos desc
 ```
 
@@ -644,17 +652,17 @@ select
                 o.category_name                                     as categoria,
                 sum(o.products)                                     as produtos_ofertados,
                 sum(coalesce(d.distinct_products_ordered, 0))        as produtos_pedidos,
-                round(sum(coalesce(d.distinct_products_ordered, 0))
-                      / nullif(sum(o.products), 0), 4)              as cobertura_demanda,
+                round((sum(coalesce(d.distinct_products_ordered, 0))
+                      / nullif(sum(o.products), 0))::numeric, 4)              as cobertura_demanda,
                 sum(coalesce(d.lines_placed, 0))                    as linhas_pedidas,
                 sum(coalesce(d.revenue_fulfilled, 0))               as receita_apurada
-            from RETAIL.MART.MART_ASSORTMENT_DAILY o
-            left join RETAIL.MART.MART_BASKET_DAILY d
+            from "MART".mart_assortment_daily o
+            left join "MART".mart_basket_daily d
                    on  d.order_date  = o.snapshot_date
                   and  d.wh          = o.wh
                   and  d.category_id = o.category_id
             where o.snapshot_date between %(inicio)s and %(fim)s
-              and array_contains(o.wh::variant, split(%(armazens)s, ','))
+              and o.wh = any(string_to_array(%(armazens)s, ','))
             group by 1
             order by produtos_ofertados desc
 ```
@@ -682,10 +690,10 @@ select
 ```sql
 select wh as armazem, age_band as faixa_etaria, sex_label as sexo,
                    count(*) as clientes,
-                   round(avg(age_at_ingestion), 1) as idade_media,
+                   round((avg(age_at_ingestion))::numeric, 1) as idade_media,
                    count(distinct municipality_code) as municipios,
                    count(distinct postal_code) as ceps
-            from RETAIL.MART.MART_CUSTOMER_BASE
+            from "MART".mart_customer_base
             group by 1, 2, 3
             order by 1, 2, 3
 ```
@@ -710,12 +718,12 @@ select wh as armazem, age_band as faixa_etaria, sex_label as sexo,
 ```sql
 select wh as armazem, province_name as provincia,
                    count(*) as municipios_na_auf,
-                   count_if(has_no_customers) as municipios_sem_cliente,
+                   count(*) filter (where has_no_customers) as municipios_sem_cliente,
                    sum(customers) as clientes,
                    sum(municipality_population) as populacao_auf,
-                   round(sum(customers) / nullif(sum(municipality_population), 0) * 10000, 2)
+                   round((sum(customers) / nullif(sum(municipality_population), 0) * 10000)::numeric, 2)
                        as clientes_por_10k
-            from RETAIL.MART.MART_MARKET_COVERAGE
+            from "MART".mart_market_coverage
             group by 1, 2
             order by 1
 ```
@@ -745,17 +753,17 @@ select wh as armazem, province_name as provincia,
 select stock_date as dia, wh as armazem, category_id,
                    category_name as categoria,
                    sum(closing_units) as unidades_em_estoque,
-                   -- Leio a coluna PRONTA do mart, nao recalculo. Recalcular aqui com
-                   -- units_demanded (demanda do DIA) em vez de mean_daily_demand (o
-                   -- denominador que o mart usa) já divergiu do mart em ate 7x num dia
-                   -- de pico. group by ja inclui category_id, entao o grupo e uma
-                   -- linha so do mart e any_value() so repete o valor dela.
+                   -- Read the mart's READY column, never recomputed. Recomputing here with
+                   -- units_demanded (the DAY's demand) instead of mean_daily_demand (the
+                   -- denominator the mart actually uses) already diverged from the mart by
+                   -- up to 7x on a peak day. group by already includes category_id, so the
+                   -- group is a single mart row and any_value() just repeats its value.
                    any_value(days_of_cover) as dias_de_cobertura,
-                   round(avg(days_of_cover_typical_product), 2)
+                   round((avg(days_of_cover_typical_product))::numeric, 2)
                        as cobertura_do_produto_tipico,
                    sum(product_days) as pares_produto_dia
-            from RETAIL.MART.MART_STOCK_HEALTH
-            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_stock_health
+            where stock_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1, 2, 3, 4
             order by dias_de_cobertura asc nulls last
 ```
@@ -786,10 +794,10 @@ select stock_date as dia, wh as armazem, category_id,
                    sum(units_short) as unidades_em_falta,
                    sum(series_with_shortfall) as produtos_com_falta,
                    sum(product_days) as produtos_no_dia,
-                   round(sum(units_fulfilled) / nullif(sum(units_demanded), 0), 4)
+                   round((sum(units_fulfilled) / nullif(sum(units_demanded), 0))::numeric, 4)
                        as taxa_de_atendimento
-            from RETAIL.MART.MART_STOCK_HEALTH
-            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_stock_health
+            where stock_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1, 2, 3, 4
             having sum(units_demanded) > 0
             order by unidades_em_falta desc
@@ -819,10 +827,10 @@ select stock_date as dia, wh as armazem, category_id,
                    sum(replenishment_orders) as ordens_emitidas,
                    sum(reorder_units) as unidades_pedidas_ao_fornecedor,
                    sum(product_days) as produtos_no_dia,
-                   round(sum(replenishment_orders) / nullif(sum(product_days), 0), 4)
+                   round((sum(replenishment_orders) / nullif(sum(product_days), 0))::numeric, 4)
                        as fracao_de_produtos_repondo
-            from RETAIL.MART.MART_STOCK_HEALTH
-            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_stock_health
+            where stock_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1, 2, 3, 4
             having sum(replenishment_orders) > 0
             order by ordens_emitidas desc
@@ -849,13 +857,13 @@ select stock_date as dia, wh as armazem, category_id,
 ```sql
 select stock_date as dia, wh as armazem, category_id,
                    category_name as categoria,
-                   round(avg(turnover_daily), 4) as giro_diario,
+                   round((avg(turnover_daily))::numeric, 4) as giro_diario,
                    sum(units_fulfilled) as unidades_vendidas,
                    sum(opening_units) as saldo_abertura,
                    sum(closing_units) as saldo_fechamento,
                    sum(units_short) as unidades_em_falta
-            from RETAIL.MART.MART_STOCK_HEALTH
-            where stock_date between %(inicio)s and %(fim)s and array_contains(wh::variant, split(%(armazens)s, ','))
+            from "MART".mart_stock_health
+            where stock_date between %(inicio)s and %(fim)s and wh = any(string_to_array(%(armazens)s, ','))
             group by 1, 2, 3, 4
             order by giro_diario desc nulls last
 ```
@@ -920,37 +928,37 @@ without it, the numbers change and nobody knows the base changed.
 ```sql
 select 'MART_ORDER_FUNNEL' as mart, count(*) as linhas,
            min(order_date)::varchar as inicio, max(order_date)::varchar as fim
-      from RETAIL.MART.MART_ORDER_FUNNEL
+      from "MART".mart_order_funnel
     union all select 'MART_FULFILLMENT_SLA', count(*), min(order_date)::varchar, max(order_date)::varchar
-      from RETAIL.MART.MART_FULFILLMENT_SLA
+      from "MART".mart_fulfillment_sla
     union all select 'MART_BASKET_DAILY', count(*), min(order_date)::varchar, max(order_date)::varchar
-      from RETAIL.MART.MART_BASKET_DAILY
+      from "MART".mart_basket_daily
     union all select 'MART_ASSORTMENT_DAILY', count(*), min(snapshot_date)::varchar, max(snapshot_date)::varchar
-      from RETAIL.MART.MART_ASSORTMENT_DAILY
+      from "MART".mart_assortment_daily
     union all select 'MART_PRICE_EVOLUTION', count(*), min(snapshot_date)::varchar, max(snapshot_date)::varchar
-      from RETAIL.MART.MART_PRICE_EVOLUTION
+      from "MART".mart_price_evolution
     union all select 'MART_CUSTOMER_BASE', count(*), null, null
-      from RETAIL.MART.MART_CUSTOMER_BASE
+      from "MART".mart_customer_base
     union all select 'MART_MARKET_COVERAGE', count(*), null, null
-      from RETAIL.MART.MART_MARKET_COVERAGE
+      from "MART".mart_market_coverage
     union all select 'MART_DEMAND_COHORT', count(*), min(order_date)::varchar, max(order_date)::varchar
-      from RETAIL.MART.MART_DEMAND_COHORT
+      from "MART".mart_demand_cohort
     union all select 'MART_STOCK_HEALTH', count(*), min(stock_date)::varchar, max(stock_date)::varchar
-      from RETAIL.MART.MART_STOCK_HEALTH
+      from "MART".mart_stock_health
     order by mart
 ```
 
 ```sql
 select min(inicio)::varchar as inicio, max(fim)::varchar as fim from (
-        select min(order_date) as inicio, max(order_date) as fim from RETAIL.MART.MART_ORDER_FUNNEL
+        select min(order_date) as inicio, max(order_date) as fim from "MART".mart_order_funnel
         union all
-        select min(snapshot_date), max(snapshot_date) from RETAIL.MART.MART_ASSORTMENT_DAILY
+        select min(snapshot_date), max(snapshot_date) from "MART".mart_assortment_daily
         union all
-        select min(stock_date), max(stock_date) from RETAIL.MART.MART_STOCK_HEALTH
+        select min(stock_date), max(stock_date) from "MART".mart_stock_health
     )
 ```
 
 ```sql
-select distinct wh from RETAIL.MART.MART_ORDER_FUNNEL order by wh
+select distinct wh from "MART".mart_order_funnel order by wh
 ```
 

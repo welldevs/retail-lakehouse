@@ -85,8 +85,9 @@ da doc:
 
 Validado contra endereços reais: "Alcalá" no município 079 (Madrid), "Gran Vía" em 3
 municípios diferentes, "Abrera"/"Can Vilalba"/"Sant Miquel" (Barcelona), municípios
-079/019/091/250 = Madrid/Barcelona/Sevilla/València — os mesmos códigos já usados em
-`warehouse_province_map` (seed da plataforma, fonte independente). `CPOS` validado contra
+079/019/091/250 = Madrid/Barcelona/Sevilla/València — os mesmos códigos já usados no seed
+`warehouse_province_map_seed.csv` da plataforma (fonte independente), exposto ao Silver
+como pass-through pelo model `warehouse_province_map`. `CPOS` validado contra
 geografia real: València cidade tem 30 CEPs distintos (46001-46026 + exceções), e
 núcleos/pedanias específicos batem com o CEP real conhecido da área (ex. Pinedo/El Saler
 → 46012, zona sul da cidade — geograficamente correto).
@@ -147,8 +148,10 @@ detecção de "arquivo fora da forma canônica" (não há forma além da origina
 4. **Não assuma cadência de atualização.** O Callejero é publicado semestralmente pelo
    INE, sem garantia de conteúdo diferente entre publicações.
 5. **`warehouse → província/município` não vem desta Source.** Essa relação é decisão
-   da plataforma, não do INE — vive em `warehouse_province_map` (seed dbt), consumida
-   via JOIN no Silver/Gold. Esta Source não sabe que warehouses existem.
+   da plataforma, não do INE — vive no seed `warehouse_province_map_seed.csv`, exposto
+   ao Silver pelo model `warehouse_province_map` (um pass-through do seed para o object
+   storage), consumida via JOIN no Silver/Gold. Esta Source não sabe que warehouses
+   existem.
 
 ## 5. O que a Source não faz
 

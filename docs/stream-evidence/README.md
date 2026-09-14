@@ -16,12 +16,10 @@ commit over a stale snapshot. This is the record that it was exercised against t
 
 ## Transactional plane — OLTP and outbox
 
-The event is born **inside the same transaction** that changes `orders` and
-`order_line`. It is not the log being republished: it is the state change and the
-event written atomically, which is the only way the two cannot diverge.
-`outbox.event_id` is unique, and the outbox insert comes **first** —
-`rowcount = 0` means the event was already applied, and the whole transaction is
-rolled back.
+The transactional-outbox mechanism itself (same-transaction write, unique
+`event_id`, rollback on replay) is explained in
+[DECISIONS.md § "Phase 3, second half"](../../DECISIONS.md). What follows is what a
+query against the **live** OLTP measured, not the mechanism again.
 
 |  |  |
 |---|---|
@@ -69,14 +67,12 @@ rolled back.
 
 ## Transport — Kafka
 
-`key = order_id`, and the key is **loadable**: Kafka guarantees order within the
-partition, and that is what lets the consumer's dedup stay bounded — comparing
-`sequence_no` against the already-recorded `last_sequence_no`, with no growing set
-of `event_id` and no expiration window. Delivery is **at-least-once** from the
-outbox to the broker (publish → ack → mark, never mark → publish); consumption is
-**effectively-once** because the offset is only committed after the write.
+Delivery semantics (**at-least-once** outbox-to-broker, dedup by `sequence_no`
+instead of a growing `event_id` set) are covered in
+[DECISIONS.md § "Phase 3, third half"](../../DECISIONS.md). Below is the live topic
+those semantics ran against.
 
-Topic `retail.orders.events.v1` on `localhost:9092`.
+Topic `retail.orders.events.v1` on `localhost:9092`, `key = order_id`.
 
 ### Watermarks by partition
 
@@ -87,12 +83,9 @@ Topic `retail.orders.events.v1` on `localhost:9092`.
 | 2 | 0 | 528840 | 528,840 |
 | 3 | 0 | 529188 | 529,188 |
 
-Total in the topic: **2,115,527 messages**.
-
-The sum can exceed the log's event count, and that is **correct**: delivery
-from the outbox to the broker is at-least-once by design, so a crash between
-the ack and marking `published_at` republishes the batch. What makes that
-harmless is the dedup by `sequence_no` on the other side.
+Total in the topic: **2,115,527 messages** — more than the 1,433,723 outbox events
+above, and that is **expected** given the at-least-once delivery already noted:
+duplicates on the wire are harmless because the consumer dedups by `sequence_no`.
 
 ### Lag by consumer group
 
@@ -103,7 +96,7 @@ not hold back the Postgres sink (~14s), and neither loses a message because of
 the other.
 
 **High lag is not a stale projection when the table was rebuilt in batch.**
-`orders-rebuild-projection` is the SECOND writer: it writes the final state
+`orders-rebuild-projection` is the **second** writer: it writes the final state
 straight from RAW, without going through the topic, and the consumer group's
 offset does not move with it. After a rebuild, draining the topic through the
 Iceberg sink would reprocess hundreds of thousands of events only to discard

@@ -13,7 +13,7 @@ It's the same mechanism as `docs/warehouse-evidence/` and the STAGE's DDL: the d
 derived from the thing, so there's no second place where the truth lives.
 
 What this script does NOT do: it doesn't connect to anything. The CONTRACT is reviewable
-without credentials, without Snowflake and without network — like `make warehouse-ddl`.
+without credentials, without the warehouse and without network — like `make warehouse-ddl`.
 """
 
 from __future__ import annotations
@@ -75,10 +75,13 @@ def render() -> str:
         "",
         "| | |",
         "|---|---|",
-        f"| Target | `{I.DB}.MART` — and **only** MART |",
-        "| Role | `RETAIL_READER`, the BI role. Reads MART; denied on GOLD and STAGE |",
-        "| Session | opens with `use secondary roles none` — without it the restriction would pass by mistake |",
-        "| Authentication | RSA key pair, from `~/.snowflake/config.toml`. No secret in the repo |",
+        f"| Target | schema `{I.MART}` in database `{I.DB}` — and **only** MART |",
+        "| Role | `retail_reader`, the BI role. Reads MART; denied on GOLD and STAGE |",
+        "| Session | opens with `set role retail_reader` — Postgres has no secondary-role "
+        "concept to disarm (unlike the Snowflake account this project used before its trial "
+        "expired) |",
+        "| Authentication | local dev user/password, defaulted in `postgres_load.py` and "
+        "overridable via `.env`. No secret in the repo |",
         "| Writes | none. The panel doesn't create, alter or delete anything |",
         "",
         "The panel runs a live probe that confirms the denial on GOLD and STAGE, because a",
@@ -93,7 +96,7 @@ def render() -> str:
         "|---|---|---|",
         "| `%(inicio)s` | ISO date | lower bound, inclusive |",
         "| `%(fim)s` | ISO date | upper bound, inclusive |",
-        "| `%(armazens)s` | comma-separated list | `array_contains(wh::variant, split(%(armazens)s, ','))` |",
+        "| `%(armazens)s` | comma-separated list | `wh = any(string_to_array(%(armazens)s, ','))` |",
         "",
         "Indicators marked **no date axis** ignore `inicio`/`fim`: they bring the current",
         "version.",

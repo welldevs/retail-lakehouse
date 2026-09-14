@@ -17,6 +17,12 @@
 -- entre 08-16 e 08-24, e days_between_snapshots torna isso visivel: uma variacao de preco
 -- ao longo de 8 dias nao e comparavel a uma de 1 dia, e um mart que ignorasse a diferenca
 -- estaria comparando coisas distintas.
+--
+-- price_delta/price_delta_pct SAO CRUS (sobre unit_price), preservados por fidelidade —
+-- mesmo criterio de silver_product_price. purchasable_price_delta/_pct, ao lado, sao o
+-- preco que um consumidor realmente paga (ver silver_price_change), e change_type ja
+-- classifica "mudou" contra ELE, nao contra o cru. Quem le variacao de preco para decidir
+-- algo (oferta, tendencia) quer as colunas purchasable_*, nao as cruas.
 {{ config(materialized = 'table') }}
 
 select
@@ -36,6 +42,15 @@ select
         when c.previous_unit_price is null or c.previous_unit_price = 0 then null
         else round(100 * c.price_delta / c.previous_unit_price, 4)
     end                                                     as price_delta_pct,
+
+    c.previous_purchasable_unit_price,
+    c.purchasable_unit_price,
+    c.purchasable_price_delta,
+    case
+        when c.previous_purchasable_unit_price is null or c.previous_purchasable_unit_price = 0
+            then null
+        else round(100 * c.purchasable_price_delta / c.previous_purchasable_unit_price, 4)
+    end                                                     as purchasable_price_delta_pct,
 
     c.change_type,
     c.catalog_appearances,

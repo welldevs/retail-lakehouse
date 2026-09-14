@@ -12,6 +12,15 @@
 -- products_in_all_warehouses e o denominador honesto de qualquer comparacao entre
 -- armazens: comparar preco medio de catalogos diferentes mede a diferenca de catalogo,
 -- nao de preco.
+--
+-- OS QUATRO min/max/avg/median_unit_price SAO SOBRE purchasable_unit_price, NAO sobre
+-- unit_price cru. Medido: em ~10 combinacoes produto x armazem vendidas a granel sem
+-- unit_size, a API devolve unit_price = reference_price * 99 (o teto do seletor de peso,
+-- nunca um preco de consumo) — um congelado de 37 EUR/kg chegava a inflar o MAXIMO da
+-- categoria "Marisco y pescado" para 3.663,00 EUR. purchasable_unit_price e o mesmo valor
+-- em todas as outras linhas e so diverge nessas ~10 (ver silver_product_price.sql e
+-- DECISIONS.md, "Demand calibration against MAPA 2025") — usa-lo aqui e a mesma correcao
+-- que fact_price_snapshot.unit_price_ex_tax ja aplica, nao uma segunda decisao.
 {{ config(materialized = 'table') }}
 
 with universal as (
@@ -41,10 +50,10 @@ select
     {{ count_if('u.source_product_id is not null') }}         as products_in_all_warehouses,
     {{ count_if('u.source_product_id is null') }}             as products_exclusive_here,
 
-    min(f.unit_price)                                       as min_unit_price,
-    max(f.unit_price)                                       as max_unit_price,
-    round(avg(f.unit_price), 4)                             as avg_unit_price,
-    {{ median('f.unit_price') }}                              as median_unit_price,
+    min(f.purchasable_unit_price)                           as min_unit_price,
+    max(f.purchasable_unit_price)                           as max_unit_price,
+    round(avg(f.purchasable_unit_price), 4)                 as avg_unit_price,
+    {{ median('f.purchasable_unit_price') }}                  as median_unit_price,
 
     {{ count_if('f.is_new_arrival') }}                        as new_arrivals,
     {{ count_if('f.is_pack') }}                               as packs

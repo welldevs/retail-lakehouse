@@ -48,7 +48,8 @@ subprocess.check_call(['/opt/platform-venv/bin/pip', 'install', '--no-cache-dir'
 import boto3, confluent_kafka, duckdb, psycopg, pyiceberg, snowflake.connector; \
 from dbt.adapters.duckdb import DuckDBAdapter; \
 from dbt.adapters.snowflake import SnowflakeAdapter; \
-print('platform venv OK: boto3, duckdb, psycopg, confluent-kafka, pyiceberg, dbt-duckdb, dbt-snowflake, snowflake-connector')"
+from dbt.adapters.postgres import PostgresAdapter; \
+print('platform venv OK: boto3, duckdb, psycopg, confluent-kafka, pyiceberg, dbt-duckdb, dbt-snowflake, dbt-postgres, snowflake-connector')"
 
 USER airflow
 

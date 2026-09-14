@@ -1,25 +1,24 @@
-"""Conexao do painel com o Snowflake — vestindo RETAIL_READER, e so ele.
+"""Conexao do painel com o Postgres local — vestindo retail_reader, e so ele.
 
 POR QUE O PAPEL IMPORTA AQUI, e nao e detalhe de configuracao. O repositorio criou tres
-papeis, um por VERBO do pipeline: `RETAIL_LOADER` escreve o STAGE, `RETAIL_TRANSFORMER` le o
-STAGE e escreve GOLD/MART, `RETAIL_READER` le MART e mais nada. Enquanto o Snowflake era
-consultado por `ACCOUNTADMIN`, esses papeis existiam, estavam verificados e nao eram usados —
-divida que o ARCHITECTURE.md registrou e a Fase 2 fechou para a carga e para o dbt.
+papeis, um por VERBO do pipeline: `retail_loader` escreve o STAGE, `retail_transformer` le o
+STAGE e escreve GOLD/MART, `retail_reader` le MART e mais nada. Este painel e o TERCEIRO
+verbo, e continua sendo o unico consumidor a vestir o papel de leitura de verdade.
 
-Este painel e o TERCEIRO verbo, e o primeiro consumidor a vestir `RETAIL_READER` de verdade.
-Verificado, nao afirmado: com este papel, `select` em `RETAIL.GOLD.FACT_ORDER` e em
-`RETAIL.STAGE.STG_ORDER` e RECUSADO pelo motor. E a mesma postura que o Power BI tera — e se
-um indicador daqui precisar de algo que o papel nao alcanca, isso e informacao de projeto, nao
-um obstaculo a contornar com um papel maior.
+MOTOR: Postgres local, nao Snowflake. A conta trial usada por este projeto venceu (ver
+DECISIONS.md, CR-007) — este arquivo troca so o TRANSPORTE. MART/GOLD/STAGE, os tres
+papeis e a garantia de isolamento continuam os mesmos, porque a arvore models/warehouse/ e
+neutra quanto ao motor (ver ARCHITECTURE.md).
 
-`use secondary roles none` na abertura da sessao. Sem isso a restricao passaria por engano:
-contas Snowflake modernas nascem com `DEFAULT_SECONDARY_ROLES = ('ALL')` e ativam todos os
-papeis do usuario alem do primario — foi exatamente assim que uma verificacao de RBAC passou
-por engano neste projeto, e esta escrito no ARCHITECTURE.md.
+SEM `use secondary roles none`. Aquela chamada existia para desarmar
+`DEFAULT_SECONDARY_ROLES = ('ALL')` do Snowflake, que reativa todos os papeis do usuario por
+baixo do primario. Postgres nao tem esse conceito: `set role` troca o papel ATIVO da sessao
+sem nenhum papel "escondido" continuar valendo por tras — ver o cabecalho de
+`retail_platform/postgres_load.py`.
 
-CREDENCIAL: nenhuma linha deste arquivo le, guarda ou transporta segredo. Tudo vem de
-`~/.snowflake/config.toml` pelo nome da conexao, que o proprio conector resolve — inclusive
-`private_key_file`. Autenticacao por par de chaves RSA.
+CREDENCIAL: dev local, sem segredo real — mesmo criterio do MinIO e do OLTP simulado. Nao ha
+arquivo de config fora do repo: os quatro `WAREHOUSE_PG_*` tem default embutido no proprio
+`postgres_load.py`, e o `.env` da raiz so entra para quem sobrescreve o default.
 """
 
 from __future__ import annotations
@@ -34,10 +33,11 @@ _PLATAFORMA = os.path.join(_RAIZ, "platform", "src")
 if _PLATAFORMA not in sys.path:
     sys.path.insert(0, _PLATAFORMA)
 
-DATABASE = os.environ.get("SNOWFLAKE_DATABASE", "RETAIL")
-SCHEMA = "MART"
-ROLE = os.environ.get("RETAIL_DASHBOARD_ROLE", "RETAIL_READER")
-CONNECTION = os.environ.get("RETAIL_SNOWFLAKE_CONNECTION", "spark_retail")
+HOST = os.environ.get("WAREHOUSE_PG_HOST", "localhost")
+PORT = int(os.environ.get("WAREHOUSE_PG_PORT", "5434"))
+DATABASE = os.environ.get("WAREHOUSE_PG_DB", "retail")
+SCHEMA = '"MART"'
+ROLE = os.environ.get("RETAIL_DASHBOARD_ROLE", "retail_reader")
 
 
 class DashboardError(Exception):
@@ -45,8 +45,8 @@ class DashboardError(Exception):
 
 
 def _dotenv() -> None:
-    """Carrega .env.snowflake se ele existir. NAO sobrepoe o que ja esta no ambiente."""
-    caminho = os.path.join(_RAIZ, ".env.snowflake")
+    """Carrega o `.env` da raiz se ele existir. NAO sobrepoe o que ja esta no ambiente."""
+    caminho = os.path.join(_RAIZ, ".env")
     if not os.path.exists(caminho):
         return
     with open(caminho, encoding="utf-8") as arquivo:
@@ -59,24 +59,29 @@ def _dotenv() -> None:
 
 
 def open_session():
-    """Sessao nova, com o papel de leitura e sem papeis secundarios."""
+    """Sessao nova, com o papel de leitura.
+
+    Duas linhas depois de `connect()`, e as duas existem pelo MESMO motivo: `set role`
+    (dentro de `connect`) e transacional no Postgres — um `rollback()` posterior o desfaria
+    silenciosamente, devolvendo a sessao ao usuario administrativo por baixo do papel de
+    leitura. `commit()` sela a troca antes que qualquer coisa possa desfaze-la; `autocommit
+    = True` garante que NENHUMA consulta seguinte (inclusive uma recusada por
+    `probe_isolation`) abra uma transacao para desfazer. O painel so LE — nao ha atomicidade
+    de escrita para proteger aqui.
+    """
     _dotenv()
-    from retail_platform.snowflake_load import SnowflakeLoadError, connect
+    from retail_platform.postgres_load import PostgresLoadError, connect
 
     try:
-        conexao = connect(CONNECTION, role=ROLE)
-    except SnowflakeLoadError as exc:
+        conexao = connect(host=HOST, port=PORT, dbname=DATABASE, role=ROLE)
+    except PostgresLoadError as exc:
         raise DashboardError(
             f"nao foi possivel conectar como {ROLE}: {exc}\n\n"
-            f"Confira o bloco [connections.{CONNECTION}] em ~/.snowflake/config.toml e "
-            f"se o papel {ROLE} foi criado por `make warehouse-bootstrap`."
+            f"Confira se o container esta de pe (`make warehouse-postgres-up`) e se "
+            f"`make warehouse-bootstrap` ja rodou uma vez."
         ) from exc
-    cursor = conexao.cursor()
-    try:
-        # Ver o cabecalho: sem isto a restricao do papel passaria por engano.
-        cursor.execute("use secondary roles none")
-    finally:
-        cursor.close()
+    conexao.commit()
+    conexao.autocommit = True
     return conexao
 
 
@@ -85,38 +90,39 @@ def identity(conexao) -> dict:
     cursor = conexao.cursor()
     try:
         cursor.execute(
-            "select current_account(), current_user(), current_role(), "
-            "current_warehouse(), current_region(), "
+            "select current_database(), session_user, current_user, "
+            "inet_server_addr(), inet_server_port(), "
             "to_char(current_timestamp, 'YYYY-MM-DD HH24:MI:SS')"
         )
-        conta, usuario, papel, warehouse, regiao, agora = cursor.fetchone()
+        banco, login, papel, host, porta, agora = cursor.fetchone()
     finally:
         cursor.close()
     return {
-        "conta": conta, "usuario": usuario, "papel": papel,
-        "warehouse": warehouse, "regiao": regiao, "lido_em": agora,
-        "database": DATABASE, "schema": SCHEMA,
+        # inet_server_addr() devolve NULL numa conexao por socket Unix; aqui e sempre
+        # TCP (host/porta explicitos em connect()), mas o fallback evita um "None:None".
+        "conta": f"{host or HOST}:{porta or PORT}", "usuario": login, "papel": papel,
+        "warehouse": None, "regiao": None, "lido_em": agora,
+        "database": banco, "schema": SCHEMA,
     }
 
 
 def run(conexao, sql: str, params: dict | None = None):
-    """Executa e devolve um DataFrame do pandas.
+    """Executa e devolve um DataFrame do pandas, com nome de coluna em MAIUSCULO.
 
-    `fetch_pandas_all` e nao `fetchall`: `MART_PRICE_EVOLUTION` tem 112 mil linhas, e
-    construir 112 mil tuplas Python para depois converter e o caminho longo.
+    O UPPER() e o que faz `indicators.py`/`app.py` nao precisarem mudar uma linha sequer.
+    Snowflake maiuscula todo identificador nao citado por padrao — e por isso app.py le
+    `r["PEDIDOS_COLOCADOS"]` de um SQL que escreve `as pedidos_colocados`. Postgres faz o
+    OPOSTO (dobra para minusculo), entao sem este upper() toda consulta devolveria as
+    mesmas colunas com outro nome, e o painel inteiro quebraria por acesso de dicionario —
+    nao por SQL errado. Um lugar so corrige os ~150 alias do painel de uma vez.
     """
+    import pandas as pd
+
     cursor = conexao.cursor()
     try:
         cursor.execute(sql, params or {})
-        try:
-            return cursor.fetch_pandas_all()
-        except Exception:
-            # Alguns resultados (agregados de uma linha, tipos raros) nao tem caminho
-            # Arrow. Cair para o caminho lento e correto e melhor que falhar.
-            import pandas as pd
-
-            colunas = [d[0] for d in cursor.description]
-            return pd.DataFrame(cursor.fetchall(), columns=colunas)
+        colunas = [d[0].upper() for d in cursor.description]
+        return pd.DataFrame(cursor.fetchall(), columns=colunas)
     finally:
         cursor.close()
 
@@ -127,11 +133,15 @@ def probe_isolation(conexao) -> list[tuple[str, bool, str]]:
     Existe para que a afirmacao "o painel le so o MART" seja verificavel na propria tela, em
     vez de ser uma frase no README. Um painel que diz respeitar um limite e nao o demonstra
     esta pedindo confianca — que e exatamente o que este repositorio recusa.
+
+    STAGE e citado em maiusculo (`"STG_ORDER"`) porque quem cria essas tabelas e
+    `postgres_load.py`, que preserva o nome do recorte tal como o Snowflake o conhece; GOLD e
+    MART sao criados pelo dbt a partir do nome do ARQUIVO do modelo, que ja e minusculo.
     """
     alvos = [
-        (f"{DATABASE}.{SCHEMA}.MART_ORDER_FUNNEL", True),
-        (f"{DATABASE}.GOLD.FACT_ORDER", False),
-        (f"{DATABASE}.STAGE.STG_ORDER", False),
+        ('"MART".mart_order_funnel', True),
+        ('"GOLD".fact_order', False),
+        ('"STAGE"."STG_ORDER"', False),
     ]
     resultado = []
     for alvo, deveria_ler in alvos:

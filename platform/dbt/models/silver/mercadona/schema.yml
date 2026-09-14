@@ -139,7 +139,16 @@ models:
         tests: [not_null]
       - name: source_product_id
         tests: [not_null]
+      - name: purchasable_unit_price
+        description: >
+          O preco comparavel entre particoes — igual a unit_price em tudo, exceto nas
+          linhas `bunch` (ver purchasable_unit_price em silver_product_price). change_type
+          e os deltas purchasable_* comparam esta coluna, nunca a unit_price crua. NULO
+          em linhas `saiu` (nao ha preco atual), mesma regra de `unit_price`.
       - name: change_type
+        description: >
+          Classificado contra purchasable_unit_price, nao unit_price crua — "o preco
+          mudou" tem de significar isso, nao "o teto do seletor de peso mudou".
         tests:
           - not_null
           - accepted_values:

@@ -14,6 +14,13 @@ models:
         tests: [not_null]
       - name: unit_price
         tests: [not_null]
+      - name: purchasable_unit_price
+        description: >
+          O preco a usar para oscilacao ou oferta, nao `unit_price`. Em ~10 combinacoes
+          produto x armazem (venda a granel sem unit_size), unit_price e o teto do seletor
+          de peso da fonte, nao um preco de consumo — ver DECISIONS.md, "Demand
+          calibration against MAPA 2025".
+        tests: [not_null]
       - name: days_since_previous_snapshot
         description: >
           Nulo na primeira observacao de cada produto. Onde nao e nulo, e a distancia real
@@ -26,7 +33,9 @@ models:
   - name: mart_assortment_daily
     description: >
       GRAO (snapshot_date, wh, category_id) — quanto de catalogo cada armazem tem por
-      categoria, a que preco, e quanto disso e exclusivo dele.
+      categoria, a que preco, e quanto disso e exclusivo dele. min/max/avg/median_unit_price
+      sao sobre purchasable_unit_price, nunca sobre unit_price cru — ver
+      assert_mart_assortment_daily_price_stats_use_purchasable_price.sql.
     columns:
       - name: snapshot_date
         tests: [not_null]

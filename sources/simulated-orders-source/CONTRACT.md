@@ -253,12 +253,12 @@ de evidência* — saíam com 0,60× da fatia em 65+ contra menos de 35. O model
 afirmar que quem tem mais de 65 anos compra 40% menos drogaria por linha de cesta: ninguém
 mediu isso, era resíduo da normalização, e era **maior que a maioria dos efeitos medidos**.
 
-**Idade mínima do comprador.** `min_buyer_age = 18`, em `order_premises_seed.csv`. Medido
-antes desta fase: 18,01% dos clientes tinham menos de 18 anos — 3.602 de 20.000, com idades a
-partir de zero. Isso **não é defeito da Source de OLTP**, cujo contrato declara que a idade
-vem da distribuição *populacional* do INE e entrega exatamente isso; o que nunca fora
-declarado era a diferença entre **residente** e **quem coloca um pedido**, e ela só passou a
-importar quando a idade começou a governar a demanda. A base de clientes não foi tocada.
+**Idade mínima do comprador.** `min_buyer_age = 18`, em `order_premises_seed.csv`. A
+distribuição de idade do INE, consumida pela Source de OLTP, é **populacional** — e
+população inclui menores. A diferença entre **residente** e **quem coloca um pedido** só
+importa a partir do momento em que a idade governa a demanda, como acontece aqui. Esta Source
+aplica o piso vindo da premissa, nunca de uma constante própria; a base de clientes em si não
+é alterada.
 
 **A faixa é resolvida no dia do pedido**, não no export, e viaja carimbada em
 `order_placed.buyer_age_band` — mesmo precedente de `demand_group`: é ela que escolheu o vetor
@@ -291,30 +291,25 @@ faixas diferentes, e está certo.
 
    **As quatro condições NÃO-aditivas**, que trocam os pedidos por trás dos mesmos ids:
    outra `seed`; outra referência (clientes ou catálogo reingeridos); outro
-   `order_premises_seed.csv`; e — desde a Fase 4 — outro **`demand_model_version`**. As
-   quatro são registradas em `config`, e regenerar sob qualquer uma delas exige
-   `--overwrite`.
+   `order_premises_seed.csv`; e outro **`demand_model_version`**. As quatro são registradas
+   em `config`, e regenerar sob qualquer uma delas exige `--overwrite`.
 
-   `min_buyer_age`, introduzida na Fase 5, entra pela terceira: ela é uma premissa, e mudá-la
-   muda **quem** está no conjunto elegível — logo, quem é sorteado. Não é uma quinta
-   condição, é um caso da que já existia, e vale a pena dizer porque a intuição sugere o
-   contrário: uma regra de *elegibilidade* parece filtro, e é sorteio.
+   `min_buyer_age` entra pela terceira: ela é uma premissa, e mudá-la muda **quem** está no
+   conjunto elegível — logo, quem é sorteado. Não é uma quinta condição, é um caso da que já
+   existia, e vale a pena dizer porque a intuição sugere o contrário: uma regra de
+   *elegibilidade* parece filtro, e é sorteio. Redimensionar a base de clientes (outra
+   referência) entra pela segunda condição, ainda que esta Source não mude uma linha: como
+   `buyer_age_band` é carimbado no evento, o teste
+   `assert_buyer_age_band_matches_the_customer_birth_year` reprova quando a pessoa por trás de
+   um `customer_id` muda, e a janela inteira precisa ser regerada. **Cliente e pedido são
+   domínios separados no código e acoplados no dado.**
 
-   Uma consequência medida da quarta: a projeção Iceberg funde estado de forma **monotônica**,
-   descartando linha com `last_sequence_no` menor. Essa fusão assume que um `order_id` sempre
-   se refere ao mesmo pedido. Depois de trocar o modelo de demanda ele não se refere — e um
-   rebuild sem reset descartou 4.028 linhas como "mais velhas" na Fase 4, deixando a projeção
-   com dois universos misturados. Use `make orders-rebuild-projection PROJECTION_RESET=1`.
-   Na Fase 5 o mesmo passo foi necessário de novo, e o reset devolveu 5.248 pedidos — 18%
-   abaixo dos 6.400 anteriores, porque os menores de idade deixaram de comprar.
-
-   Na Fase 6 foi a **segunda** condição, e não a quarta: o modelo de demanda não mudou, mas
-   a base de clientes foi redimensionada pela população servida (20.000 → 286.826), o que é
-   "outra referência". Esta Source não mudou uma linha, e mesmo assim a janela inteira teve
-   de ser regerada — 91.788 pedidos — porque `buyer_age_band` é carimbado no evento e o
-   teste `assert_buyer_age_band_matches_the_customer_birth_year` reprova quando a pessoa por
-   trás de um `customer_id` muda. **Cliente e pedido são domínios separados no código e
-   acoplados no dado**, e é este parágrafo que evita a surpresa.
+   **Consequência para quem consome a projeção Iceberg:** ela funde estado de forma
+   **monotônica**, descartando linha com `last_sequence_no` menor — o que assume que um
+   `order_id` sempre se refere ao mesmo pedido. Trocar `demand_model_version` quebra essa
+   suposição (o `order_id` continua igual, o pedido por trás dele não), e um rebuild sem
+   reset mistura os dois universos na mesma tabela. Depois de qualquer uma das quatro
+   condições não-aditivas, use `make orders-rebuild-projection PROJECTION_RESET=1`.
 7. **Sem relógio.** Todo `occurred_at` deriva de `ingestion_date` mais offsets declarados,
    nunca de `datetime.now()`.
 8. **`event_id` determinístico.** Deriva de `(order_id, sequence_no)`, nunca de `uuid4()` —

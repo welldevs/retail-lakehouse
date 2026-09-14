@@ -479,6 +479,52 @@ on municipality_name` matches by name alone. It was logged as technical debt at 
 delivery and **closed the same day**, using the INE's official code instead of a heuristic —
 see "Homonym fanout in the population Silver," below.
 
+### Homonym fanout in the population Silver
+
+`silver_ine_population_by_municipality.sql` joined the RAW table with the code seed using
+`inner join ... on e.municipality_name = c.municipality_name` — **by name alone**. The
+model's own comment justified this as safe because "the seed already comes scoped to
+08/28/41/46, where no collision was measured". The measurement confirms the seed really has
+no internal collision (0 across the 4 provinces), but **the conclusion didn't follow**: the
+RAW side is **national** (~8,200 municipalities) and brings in homonyms from other
+provinces with an identical `Nombre`. The docstring of
+`scripts/derive_municipality_codes.py` had already anticipated exactly this ("a Spain-wide
+join by name alone would be ambiguous for 3 of these 18 names"); what went unnoticed is
+that the model does exactly that Spain-wide join, because the extraction filters nothing.
+Three municipalities got two rows:
+
+| Municipality in the AUF | Correct series | Intruding series |
+|---|---|---|
+| Arroyomolinos (28/015) | `DPOP12967` = 38.075 | `DPOP4729` = 816 (Cáceres, 10023) |
+| Molar, El (28/086) | `DPOP13174` = 9.999 | `DPOP19423` = 295 (Tarragona, 43085) |
+| Torrent (46/244) | `DPOP21778` = 90.928 | `DPOP7960` = 182 (Girona, 17197) |
+
+Effect: `mad1` returned 130 rows for 128 municipalities and `vlc1`, 64 for 63.
+
+**Why the grain test didn't catch it.** The tested grain is
+`(ingestion_date, series_code, year, fk_periodo)`, and the two series have different
+`series_code` — the grain stayed unique. The test that was missing now exists:
+`assert_ine_population_by_municipality_has_one_series_per_municipality` asserts one row per
+`(municipality, sex, year)`, which is the real invariant.
+
+**Fix: by the source's own official code, not by heuristic.** The `DATOS_TABLA/29005`
+payload only has `COD`, `Nombre`, `FK_Escala`, `FK_Unidad` and `Data` — no province, no
+`MetaData` (verified). But `GET /ES/VALORES_SERIE/{COD}` returns, for each series, the
+**official INE municipality code** (province+municipality), the same schema as the
+Callejero and the `warehouse_*` seeds.
+[scripts/derive_ambiguous_series.py](scripts/derive_ambiguous_series.py) identifies offline
+which names are ambiguous in RAW *and* exist in the 4-province seed (today 3 names, 18
+series), queries those series, and writes `ine_ambiguous_series_seed.csv`. The model now
+filters: a series with an ambiguous name only gets in if its official code matches the
+seed's; a non-ambiguous name is still resolved by name.
+
+Measured after the fix: 128/133/46/63 municipalities per warehouse, one series each. The
+`customers.json` files for the four partitions came out **byte for byte identical** to the
+earlier ones — the export's provisional defense ("keep the larger value") had been getting
+it right, but by coincidence of size, not by knowing which series was which.
+`export-oltp-reference` stopped deduplicating: it now just **rechecks** the invariant and
+**refuses** if it breaks, instead of picking a value on its own.
+
 **Vocabulary choices: preserve, don't rename.** The first design created an
 `address_precision` field with values `house`/`street` to say whether the address had a
 number. The repo already had the answer: `numbering_type`, with `accepted_values
@@ -590,11 +636,7 @@ of address resolution that serve the generator, not the analyst. Without Orders 
 rule changed since Phase 2: geographic scope, latest ingestion, grain dedup. What changed was
 the proportion between a national source that barely enters and two synthetic ones that enter
 whole — and that is exactly why the number comes out of `make warehouse-evidence` and not out
-of this paragraph.
-
-The number at any given moment comes out of `make warehouse-evidence`, not this paragraph.
-What does **not** change over time is the structure of the decision: the cut is geographic
-scope + latest ingestion + grain dedup, and no business rule.
+of this paragraph. What does **not** change over time is the structure of the decision itself.
 
 **The cut is deliberately dumb:** geographic scope, latest ingestion, grain dedup. No business
 rule — if a domain `case when` shows up in `snowflake_export.py`, it's in the wrong place.
@@ -681,6 +723,82 @@ base = **20,000**.
 as ambiguous identity). And the 08-17 to 08-23 gap shows up as seven days with zero in
 `DIM_DATE` — which is exactly what the full calendar and `FACT_INGESTION_RUN` exist to make
 visible.
+
+### Wearing the roles: what only showed up once the account stopped running as admin
+
+The three roles had existed since earlier in this phase, with the right grants and the
+isolation matrix verified by `check_isolation`. And **no execution had gone through them
+yet** — the load and dbt still ran as `ACCOUNTADMIN`. It's the difference between verified
+governance and adopted governance, and putting the roles on for real cost four defects, all
+invisible while the admin ran everything:
+
+| Symptom | Cause | Why it didn't show up before |
+|---|---|---|
+| `No active warehouse selected` on load | The roles had no `usage` on the **warehouse** | An admin sees every warehouse. Data doesn't move without compute, and the error points at the session, not the grant |
+| `schema missing: GOLD, MART` | `require_schemas` checked all three schemas | It was **isolation working**: `information_schema` returns only what the role sees, and the loader can't see GOLD. A check broader than the need turns a control into a failure |
+| 8 models with `must have OWNERSHIP granted on TABLE` | `grant all` grants the **applicable** privileges, and ownership isn't one of them | `create or replace table` requires ownership. On a fresh account it's harmless — whoever creates is born the owner; it only shows up on an account where the admin created it first |
+| `information_schema` empty for the admin | The custom roles weren't hung off `SYSADMIN` | It only surfaced **after** ownership left the admin and secondary roles were switched off. It throws no error: it just erases the objects from the administrator's view |
+
+The fourth is the most instructive of the four, because it's the only one that **doesn't
+fail** — role inheritance flows up (`SYSADMIN` starts seeing `MART`) and never down
+(`RETAIL_READER` still has no `GOLD`), so the fix doesn't loosen anything, and its absence
+would have passed as "everything's fine" until someone needed to administer the account.
+
+All four became tests in `test_snowflake_load.py` (16 → 29), by the same criterion as the
+rest of this project: none fails obviously if it regresses.
+
+**What still isn't real isolation:** there's a single user, holding all three roles. Real
+isolation would be one service user per role, with no `ACCOUNTADMIN` — but that's a
+decision for whoever administers the account, not for the repository. What the repository
+guarantees is that `default_secondary_roles = ()` is applied: without it, modern Snowflake
+accounts activate **all** of a user's roles besides the primary, and wearing the role would
+be decorative. Measured on this account before the fix: `current_secondary_roles()`
+returned `ORGADMIN, RETAIL_READER, RETAIL_TRANSFORMER, RETAIL_LOADER`.
+
+### `warehouse_load` compiled and didn't run
+
+The DAG was written earlier in this phase and verified like the other four: it imports,
+builds the graph, `airflow dags list` sees it. **Compiling is not running** — and only the
+path through the host (`make warehouse-refresh`) had actually been exercised. On its first
+real run it stopped at `load_stage` with `exit 2`:
+
+```
+ERROR: snowflake-connector-python is not installed in this venv.
+```
+
+Two independent causes, and the second would only show up once the first was fixed:
+
+1. **`infra/Dockerfile.airflow` duplicated the dependency list** from
+   `platform/pyproject.toml`. This phase added `dbt-snowflake` and
+   `snowflake-connector-python` to the pyproject; the image stayed with the previous
+   phase's list. The duplication did what duplication does, and the cost was paid at
+   runtime, days later, with the data stuck halfway through.
+2. **There was no credential in the container.** `~/.snowflake` wasn't mounted, so neither
+   the connector nor dbt would have any way to authenticate.
+
+The fix for the first isn't "add two packages": it's **reading the `pyproject.toml`** at
+build time, which eliminates the entire class of problem, and importing both adapters plus
+the connector as the last step of `RUN` — if a dependency goes missing, the **build**
+breaks, not the DAG.
+
+The fix for the second mounts `~/.snowflake` **at the same path** inside and outside
+(`${HOME}/.snowflake:${HOME}/.snowflake:ro`), with `SNOWFLAKE_HOME` pointing there. That's
+what makes `config.toml`'s `private_key_file` and `.env.snowflake`'s
+`SNOWFLAKE_PRIVATE_KEY_PATH` resolve identically on both sides — no path needs rewriting
+anywhere. Read-only: the orchestrator reads the key and never rewrites it, and since the
+container runs with `AIRFLOW_UID` (the host's uid), no permission on the mode-600 file
+needs loosening.
+
+The account identity comes in via `env_file` with `required: false`, and **not** via
+`environment:` — in the map block, a missing variable becomes present-and-empty in the
+container, and `env_var('SNOWFLAKE_ACCOUNT')` with no default would return empty instead of
+aborting. It's the same trap already documented in the Makefile, one level up. With
+`required: false`, anyone without a Snowflake account still brings up `make up` and the
+four source DAGs normally.
+
+Measured after the fix: the DAG completes all four tasks, and `query_history` shows the
+role separation in the query **type** — `RETAIL_LOADER` with `PUT_FILES`/`COPY`,
+`RETAIL_TRANSFORMER` with `CREATE_TABLE_AS_SELECT`, `RETAIL_READER` with only `SELECT`.
 
 ### Out of this phase, with the trigger written
 
@@ -1452,11 +1570,8 @@ A milestone is monotonic; status isn't. A funnel is by definition a count of sta
 
 ### Two findings logged instead of fixed
 
-> **Superseded in Phase 7.** The two findings below stopped being merely logged: the
-> assumptions were reconciled. The text stays as it was because the reason they survived
-> three phases is what matters — the missing piece was the distinction between *adjusting an
-> assumption until the output pleases*, which is refused, and *making two assumptions
-> mutually coherent*, which is a model correction. See Phase 7 and
+> **Superseded in Phase 7** — same note as "Two findings worth more written down than
+> fixed," above: both were reconciled, not just logged. See Phase 7 and
 > `assert_order_premises_are_internally_coherent`.
 
 **`sla_minutes_picking = 90` is unreachable by construction.** Picking takes
@@ -1799,6 +1914,59 @@ into existence because of this, is destructive on purpose, and never happens on 
   catch a calibration that has gone silently inert. Proven — BEFORE fails at 11.007
   points; the current state passes at 0.660.
 
+### The same defect, still open three weeks later, in a place nobody was looking (2026-09-14)
+
+The fix above added `purchasable_unit_price` to `silver_product_price` and closed the gap
+for demand and for `FACT_ORDER_ITEM` (`assert_order_item_price_matches_price_snapshot.sql`
+already compares against it). It did **not** touch `silver_price_change` — the one model
+that diffs a product's price between two partitions — which kept comparing the source's
+raw `unit_price` the whole time. Nothing in the 178 warehouse data tests caught it, because
+nothing in this repo's simulated data ever asks "did a `bunch`-priced product's price
+change": measured against every partition landed so far, the 10 affected combinations never
+moved, so `change_type` and the deltas happened to come out identical either way.
+
+**What surfaced it was a screen, not a test.** Building the price-watch panel (a Streamlit
+view exclusive to price oscillation, requested the same day) put
+`mart_assortment_daily`'s `min/max/avg/median_unit_price` — aggregated straight off the raw
+column — in front of a human for the first time. "Marisco" showed a maximum of 3,663.00 EUR.
+The number was internally consistent (it's a real value the API returns), which is exactly
+why 178 green tests never flagged it — the same shape of blind spot as the Milestone 7
+timestamp bug and the original Phase 4 finding: a wrong unit of measure doesn't break a
+total.
+
+**The fix, propagated to every place that had been missed:**
+- `silver_price_change.sql` now carries `purchasable_unit_price` alongside the raw one
+  (fidelity preserved, nothing overwritten — same discipline as `silver_product_price`),
+  and `change_type`/the delta columns are recomputed against it. Raw `unit_price`/
+  `price_delta`/`price_delta_pct` stay, unchanged, for anyone who needs the source's literal
+  number.
+- `fact_price_change.sql` and `mart_price_evolution.sql` expose the new
+  `purchasable_unit_price`/`purchasable_price_delta`/`purchasable_price_delta_pct` columns
+  alongside the raw ones they already had.
+- `mart_assortment_daily.sql`'s four price-level columns now aggregate
+  `purchasable_unit_price` — no new columns here, because a category price *range* has no
+  legitimate use for the raw ceiling the way a `FACT_PRICE_CHANGE` fidelity column does.
+- Both Streamlit panels (`indicators.py`'s `variacao_preco`, and every price-oscillation
+  query in the new `price_indicators.py`) were switched to the `purchasable_*` columns.
+- A new regression test, `assert_mart_assortment_daily_price_stats_use_purchasable_price.sql`,
+  reconstructs `mart_assortment_daily`'s min/max independently from
+  `fact_price_snapshot.purchasable_unit_price` and fails on any divergence — the check this
+  bug needed and none of the existing 178 provided.
+
+**Verified live**, not just re-tested: "Marisco"'s maximum in `mart_assortment_daily` went
+from 3,663.00 to 36.00 EUR after `make warehouse-refresh` against the Postgres target
+(24 models, 180 data tests, PASS=205 WARN=0 ERROR=0 SKIP=0); `make test` stayed
+455/455 (platform tests, +2 for the new columns' and reconciliation test's assertions); both
+dashboards' `AppTest` smoke checks stayed green with unchanged top-line figures — proof that
+the fix corrects a category-level aggregate defect without silently changing any
+transaction-level number that was already right.
+
+**What this does not claim to close.** The 10 `bunch`-priced combinations have shown zero
+price movement in every partition landed to date, so `change_type`'s classification was
+never actually WRONG in the data gathered so far — only capable of becoming wrong the
+moment one of those 10 combinations' `reference_price` changes. This fix closes that
+latent failure mode before it fires, not after.
+
 ## Customer consumption profile (Phase 5)
 
 Phase 4 calibrated **aggregate** demand. What was left out was that every customer was
@@ -2139,12 +2307,11 @@ exists to warn before that happens.
 
 ## Phase 7: the closing — the gate over Iceberg, stock, the seal, and the three defects it found
 
-**Date: 2026-09-01.** This phase was conducted against
-[`AI_ENGINEERING_CONSTRAINTS.md`](AI_ENGINEERING_CONSTRAINTS.md), written by whoever
-operates the project before the phase began. It forbids adopting technology to boost the
-technology count, requires each one to have explicit responsibility and evidence of need,
-and puts the agent's preference as the **last** decision criterion. What follows is the
-record of how each decision survived — or didn't — that text.
+**Date: 2026-09-01.** This phase was conducted against a standing engineering rule set
+before it began: don't adopt technology to grow the technology count, require each one to
+have explicit responsibility and evidence of need, and treat any tooling preference as the
+**last** decision criterion, never the first. What follows is the record of how each
+decision survived — or didn't — against that rule.
 
 ### The gate was about Iceberg, not about Spark
 
@@ -2558,20 +2725,19 @@ MART answering a real `RETAIL_READER` query against `MART_PRICE_EVOLUTION`, 1,69
 ### CR-002 · Translate the project to English (reading layer only)
 
 ```
-Need             The project was entirely in Portuguese. A prior pass this same session had
-                 already translated the dashboard to Spanish; the request changed to English
-                 for the whole project before any screenshot collection was done.
+Need             The project was entirely in Portuguese, and an English-reading audience
+                 needs every root document, generated evidence page, and the dashboard
+                 itself to read consistently in English.
 Evidence         docs/screens/dashboard-commercial-en.png and
                  docs/screens/dashboard-inventory-en.png — the live dashboard, driven with a
                  headless browser (Playwright/Chromium) against the real Snowflake account,
                  zero console errors, every UI label in English.
-Insufficiency    A dashboard-only translation leaves README/ARCHITECTURE/DECISIONS/BACKLOG/
-                 AI_ENGINEERING_CONSTRAINTS.md and the 5 generated evidence pages in
-                 Portuguese — inconsistent for an English-speaking reader.
-Component        Documentation (5 root docs), the 5 evidence-page generator scripts under
+Insufficiency    A dashboard-only translation leaves README/ARCHITECTURE/DECISIONS/BACKLOG
+                 and the 5 generated evidence pages in Portuguese — inconsistent for an
+                 English-speaking reader.
+Component        Documentation (root docs), the 5 evidence-page generator scripts under
                  platform/src/retail_platform/, and streamlit/{app.py,indicators.py,
-                 contract.py}. FAQ.md deliberately excluded — personal, Portuguese,
-                 gitignored, out of scope by explicit request.
+                 contract.py}.
 Contracts        None. No dbt model, SQL structure, or Snowflake schema changed. The one
                  gray area: display-only string literals embedded in indicators.py's SQL
                  (funnel stage names, leakage reasons, loss causes, delivery-window
@@ -2595,10 +2761,8 @@ Cost             A large one-time editing effort across roughly 30 files (5 root
                  files whose assertions hardcoded Portuguese report strings). No new
                  abstraction, no new dependency, no ongoing cost.
 Proof            The two screenshots above, plus every test run listed under Regression.
-Loss             The Spanish-language dashboard screenshots taken earlier this same session
-                 (docs/screens/, timestamps 10:22-10:28) are now stale against the English
-                 UI. Left in place rather than deleted — that's the user's call, not the
-                 agent's.
+Loss             Nothing — the translation is additive to the documentation surface, not a
+                 removal.
 ```
 
 ### CR-003 · Screenshot proof for four demonstrations that were only ever prose
@@ -2666,29 +2830,28 @@ Cost             Four terminal captures via the same Playwright pipeline built f
 Proof            The four screenshots above.
 Loss             The first attempt at proof 4 FAILED (7 checks red) — not because the
                  underlying mechanism is broken, but because the Kafka topic and OLTP
-                 replica had been up and exercised manually for hours this session before
-                 this agent touched them; the topic held more messages than a single fresh
-                 publish of the full 36-partition log would produce, so the
-                 transport-fidelity check (topic reread = manifest sha256) failed, and that
-                 cascaded into the fold-agreement checks. A separate, unprompted
-                 `orders-prove-atomicity` run moments earlier compounded this by emptying
-                 the OLTP replica down to a single partition. Asked the user before taking
-                 the destructive fix (delete+recreate the Kafka topic, reset the OLTP
-                 tables, truncate the Postgres projection, reload all 36 partitions,
-                 republish once) — user said yes. After the reset, the same command passed
-                 every check except the one documented above as permanent by design. The
-                 stream plane is left in this fully-reloaded, freshly-published state;
-                 nothing was torn back down.
+                 replica had been up and exercised manually for hours before capture; the
+                 topic held more messages than a single fresh publish of the full
+                 36-partition log would produce, so the transport-fidelity check (topic
+                 reread = manifest sha256) failed, and that cascaded into the
+                 fold-agreement checks. A separate, unprompted `orders-prove-atomicity` run
+                 moments earlier compounded this by emptying the OLTP replica down to a
+                 single partition. Fixed with a deliberately destructive reset
+                 (delete+recreate the Kafka topic, reset the OLTP tables, truncate the
+                 Postgres projection, reload all 36 partitions, republish once). After the
+                 reset, the same command passed every check except the one documented above
+                 as permanent by design. The stream plane is left in this fully-reloaded,
+                 freshly-published state; nothing was torn back down.
 ```
 
 ### CR-004 · Close the six required observability signals with what already exists
 
 ```
-Need             AI_ENGINEERING_CONSTRAINTS.md § 17 and BACKLOG.md's Observability row both
-                 require proving useful signals exist — latency, error, throughput,
-                 failures, processing, pipeline state — before instrumenting anything.
-                 Nobody had run that proof; absence was assumed, which is itself an
-                 unverified claim, the same disease this project rejects everywhere else.
+Need             BACKLOG.md's Observability row requires proving useful signals exist —
+                 latency, error, throughput, failures, processing, pipeline state — before
+                 instrumenting anything. Nobody had run that proof; absence was assumed,
+                 which is itself an unverified claim, the same disease this project rejects
+                 everywhere else.
 Evidence         `make observability-prove-signals` (new script, this CR) measured the six
                  signals against the real system, not intention:
                    - processing: 5/5 Sources covered, proportionally. Three have a
@@ -2865,13 +3028,10 @@ Loss             Nothing that was true stops being true. The offline boundary wa
                  otherwise.
 ```
 
-Decision logged on 2026-09-08. Per this project's standing split of responsibility over
-this repository's git history, every commit and push behind both runs above — the first
-red one and the fix that turned it green — was the user's own action, never mine; the
-diagnosis (reading the run via the GitHub API, since raw log download needs repo-admin
-auth this session doesn't have) and the fix itself, in the working tree, were mine. CR-004
-and CR-005 share a release: both were written, reviewed, and closed in the same session,
-against the same freshly public repository.
+Decision logged on 2026-09-08. Both runs above — the first red one and the fix that
+turned it green — were diagnosed against the real GitHub Actions run (via the GitHub API)
+and fixed in the working tree. CR-004 and CR-005 share a release: both were written,
+reviewed, and closed together, against the same freshly public repository.
 
 ### CR-006 · Postgres as a second warehouse target, fallback to the Snowflake trial
 
@@ -2904,8 +3064,10 @@ Contracts        None on the Silver side. On the warehouse side: `models/warehou
                  datediff, median, max over boolean, listagg) now branches by
                  `target.type`, centralized in macros/warehouse_compat.sql instead of
                  repeated inline at each of the ~35 call sites that needed it.
-Regression       make test: 439/439 platform tests green (437 before this CR — 2 new
-                 assertions in QualificacaoTest), make source-test unchanged. Both
+Regression       make platform-test: 439/439 green (437 before this CR — 2 new
+                 assertions in QualificacaoTest); make source-test unchanged — this CR
+                 touches no Source, so `make test`'s combined total moves by the same +2.
+                 Both
                  invariants ARCHITECTURE.md already claimed for the Snowflake side were
                  re-verified after every edit: `dbt parse --target dev` still passes with
                  zero Snowflake vars defined, and `dbt parse --target snowflake` still
@@ -2962,3 +3124,128 @@ Postgres — editing `Makefile`'s `warehouse` rule, `warehouse_load.py`'s DAG, a
 `streamlit/connection.py` — is deliberately **not** part of this CR: it stays a manual,
 reviewed step for the day the Snowflake trial actually ends, not code shipped speculatively
 ahead of that day.
+
+### CR-007 · Flip the default warehouse target to Postgres — the Snowflake trial expired
+
+```
+Need             CR-006's runbook, executed: on 2026-09-14 the `warehouse_load` DAG's
+                 `load_stage` task failed authentication for real —
+                 `390913 (08001): ... Your free trial has ended and all of your virtual
+                 warehouses have been suspended.` The Postgres target existed and had
+                 been proven in isolation since CR-006, but nothing that actually RUNS the
+                 pipeline — the Makefile's plain `warehouse*` targets, the Airflow DAG, the
+                 Streamlit dashboard — pointed at it. The fallback was real but unplugged.
+Evidence         `platform/.venv/bin/python -m retail_platform snowflake-bootstrap ...`
+                 and the DAG's own task log both reproduced the same `390913` error
+                 against the live account. `docker ps` showed `warehouse-postgres`
+                 already up (from CR-006's own verification session) and untouched since.
+Insufficiency    Flipping the default surfaced four gaps CR-006's isolated proof never
+                 exercised, because "prove the target compiles and loads" and "prove the
+                 production path runs on it" are different claims:
+                   1. The Airflow image's `/opt/platform-venv` predated CR-006's
+                      `dbt-postgres` dependency — `Error importing adapter: No module
+                      named 'dbt.adapters.postgres'`. `infra/Dockerfile.airflow`'s own
+                      comment already named this exact failure class for `dbt-snowflake`
+                      in Phase 2 and still missed it for `dbt-postgres`, because the
+                      install step reads `pyproject.toml` dynamically but the build-time
+                      import CHECK was a hardcoded list that wasn't extended.
+                   2. `WAREHOUSE_PG_HOST=localhost` (the host-side default) doesn't
+                      resolve inside the compose network — the same class of bug
+                      `OLTP_DSN`'s override already exists to prevent, just not yet
+                      applied to this second Postgres.
+                   3. dbt-postgres connected as the raw admin user, not `retail_transformer`
+                      — unlike the Snowflake target, which already set `role:
+                      RETAIL_TRANSFORMER`. Every GOLD/MART table came out owned by the
+                      superuser, `bootstrap()`'s `alter default privileges for role
+                      retail_transformer` never fired, and `retail_reader` (the
+                      dashboard's role) had zero grants: `permission denied for table
+                      mart_order_funnel`, discovered by actually running the dashboard
+                      against the target, not by dbt build going green.
+                   4. `streamlit/indicators.py` and `connection.py` were Snowflake SQL
+                      end to end: three-part `RETAIL.MART.MART_X` references (Postgres
+                      has no cross-database query), `array_contains(x::variant, split(...))`
+                      (no Postgres equivalent syntax), `count_if`/`div0` (same two
+                      functions the dbt macros already had to translate, just outside
+                      dbt's reach), 41 `round(<expr>, N)` calls that fail on Postgres
+                      whenever `<expr>` isn't already `numeric`, and a case-folding
+                      mismatch — Snowflake uppercases every unquoted identifier,
+                      Postgres lowercases it — that would have made every column lookup
+                      in `app.py` (`r["PEDIDOS_COLOCADOS"]`) raise `KeyError` against a
+                      SQL result that came back lowercase.
+Component        infra/Dockerfile.airflow (+1 import check), infra/docker-compose.yml
+                 (+1 env override for the Airflow network), platform/dbt/profiles.yml
+                 (+1 `role` field), Makefile (renamed: the plain `warehouse*` targets now
+                 run Postgres; the old bodies moved to `warehouse-snowflake-*`, kept
+                 working, not deleted), orchestration/airflow/dags/warehouse_load.py
+                 (Postgres env/args, `engine:postgres` tag), streamlit/connection.py
+                 (rewritten for psycopg/Postgres), streamlit/indicators.py (schema
+                 references, `array_contains` → `= any(string_to_array(...))`,
+                 `count_if` → `filter (where ...)`, `div0` inlined, 41 `round()` calls
+                 cast to `::numeric`), streamlit/contract.py + CONTRACT.md (regenerated),
+                 streamlit/README.md, platform/tests/test_dashboard_indicators.py
+                 (schema-boundary assertion updated for the new naming),
+                 ARCHITECTURE.md (three stale claims closed: the trial-risk row in both
+                 debt tables, the "no Snowflake account -> unverifiable" bullet, the
+                 trial section itself — each was a claim this CR made false).
+Contracts        None. Same 24 models, same 178 data tests, same three roles, same
+                 grain and business rules on both engines — this CR changes which
+                 target is DEFAULT, not what either target computes.
+Regression       make platform-test: 439/439 green; make source-test: all five Sources
+                 green, exit 0 — together, `make test`. Dashboard:
+                 `platform/tests/test_dashboard_indicators.py` 20/20 (2 assertions
+                 updated for Postgres's naming, not weakened — same boundary checked).
+                 `make dashboard-check` (`streamlit/smoke.py`, `AppTest` against the live
+                 target): 13 metrics / 7 tabs / 20 dataframes / 0 warnings — the EXACT
+                 baseline the script's own docstring recorded for the Snowflake era,
+                 reproduced on the new engine. `platform/tests/test_documentacao.py`
+                 10/10 (Makefile help/target/variable coverage, doc line-count ceilings,
+                 section-anchor references — all re-verified after the renames).
+Semantics        No field changes meaning. Two things that WERE true only on paper became
+                 true in practice: `retail_transformer` (not an admin account) now owns
+                 every GOLD/MART table, so the RBAC the project already claimed is what
+                 actually creates them; and `round()`'s Postgres-only `::numeric` cast in
+                 indicators.py is the same fix already applied inside the dbt macros for
+                 the identical reason (Postgres has no `round(double precision, int)`).
+Provenance       Unchanged. Same STAGE mirror, same `export-snowflake` recorte, reused
+                 for the Postgres load exactly as CR-006 left it.
+Reproducibility  Higher than before: the default path no longer depends on an external
+                 account at all. `make warehouse-refresh` (or the Airflow DAG) runs
+                 end to end against a container anyone can bring up locally.
+Cost             The two-loader/two-macro-file tax CR-006 already accepted continues.
+                 New, smaller ones: the Airflow image must be rebuilt whenever
+                 `platform/pyproject.toml` gains a warehouse dependency (a real,
+                 recurring discipline, not a one-time fix — CR-006 added the dependency
+                 and this CR is the rebuild that should have shipped with it);
+                 `warehouse-snowflake-prove-tests` (the defect-injection script) stays
+                 Snowflake-only — its injections use `dateadd`/`number` — and porting it
+                 to Postgres is backlog, not blocking, since the 178 dbt data tests
+                 already run green against both engines. REJECTED: deleting the
+                 Snowflake targets instead of pausing them (the trial could be replaced
+                 by a paid account, and the whole point of CR-006 was proving the swap
+                 without burning the option); patching `indicators.py` to branch by
+                 engine like the dbt macros do (the file is 100% Postgres now — a
+                 second engine on the dashboard side isn't a requirement anyone has,
+                 and templating ~150 aliases for a hypothetical would be exactly the
+                 premature abstraction this project already refuses elsewhere).
+Proof            Triggered for real via `airflow dags trigger warehouse_load` against
+                 the rebuilt image, run `manual__cr007__20260914T122450`, all four tasks
+                 green: `export_recorte` → `load_stage` (destino
+                 `warehouse-postgres:5432/retail.STAGE`, papel `retail_loader`, 6,750,943
+                 linhas reconferidas) → `build_gold_and_mart` (`dbt build --target
+                 postgres`, `PASS=203 WARN=0 ERROR=0 SKIP=0`). Confirmed the network
+                 override resolves inside the container (`warehouse-postgres` ->
+                 172.21.0.7:5432, not the host's `:5434`) — the DAG could not have
+                 reached the target without it. `make dashboard-check` green against the
+                 same data, numbers above.
+Loss             Nothing that was true for the dbt layer stops being true. What ends:
+                 the fiction that the destination was swappable while nothing that
+                 actually ran pointed anywhere but Snowflake. `make warehouse-snowflake*`
+                 keeps every Snowflake path working, one `--target`/one env var away,
+                 for the day a real account replaces the trial.
+```
+
+Decision logged on 2026-09-14. Unlike CR-004 through CR-006, this CR was written and
+closed in direct response to a live failure the user reported (`warehouse_load` down),
+not ahead of one — the runbook CR-006 deferred is the runbook this CR executed, and the
+four gaps under "Insufficiency" are exactly what a runbook written in advance, without
+running the DAG for real, cannot see.

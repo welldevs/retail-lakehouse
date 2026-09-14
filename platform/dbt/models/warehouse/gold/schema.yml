@@ -186,6 +186,14 @@ models:
           Sem esta coluna, uma variacao ao longo de 8 dias seria comparada com uma de 1 dia
           sem ninguem notar. O vao de 08-16 a 08-24 e real e irrecuperavel.
         tests: [not_null]
+      - name: purchasable_unit_price
+        description: >
+          O preco de que "a variacao mudou" fala. Igual a unit_price/previous_unit_price
+          em tudo, exceto nas ~10 combinacoes produto x armazem `bunch`, onde unit_price e
+          o teto do seletor de peso (ver fact_price_snapshot.purchasable_unit_price e
+          DECISIONS.md, "Demand calibration against MAPA 2025"). Quem mede oscilacao ou
+          oferta usa purchasable_price_delta/_pct, nunca price_delta/_pct crus. NULO em
+          linhas `saiu` (nao ha preco atual), mesma regra de `unit_price`.
       - name: change_type
         tests:
           - not_null

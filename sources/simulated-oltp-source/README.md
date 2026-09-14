@@ -104,7 +104,7 @@ sources/simulated-oltp-source/
 │   ├── partition.py          caminho, tokens, imutabilidade (eixo wh=)
 │   ├── schema.py             campos e impressão digital
 │   └── canonical.py          forma canônica + escrita atômica
-└── tests/                    124 testes, sem rede
+└── tests/                    140 testes, sem rede
 ```
 
 ## Forma dos arquivos
@@ -200,7 +200,7 @@ Um container que rode esta Source precisa apenas de Python 3.12 e do diretório 
 ## Testes
 
 ```bash
-make test                 # 124 testes, sem rede
+make test                 # 140 testes, sem rede
 ```
 
 Cobrem, entre outros: mesma seed ⇒ saída byte-idêntica (inclusive sob `PYTHONHASHSEED`
