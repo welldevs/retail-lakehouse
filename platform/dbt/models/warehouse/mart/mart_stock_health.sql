@@ -81,10 +81,10 @@ select
     sum(units_fulfilled)                            as units_fulfilled,
     sum(units_short)                                as units_short,
     sum(reorder_units)                              as reorder_units,
-    count_if(reorder_units > 0)                     as replenishment_orders,
+    {{ count_if('reorder_units > 0') }}               as replenishment_orders,
 
     -- ---- ruptura, nas duas unidades que nao se substituem --------------------------
-    count_if(units_short > 0)                       as series_with_shortfall,
+    {{ count_if('units_short > 0') }}                 as series_with_shortfall,
     -- FILL RATE sobre unidades: quanto da demanda a prateleira atendeu. Denominador zero
     -- (categoria sem demanda no dia) devolve nulo, e nao 1 — "nada foi pedido" nao e
     -- "tudo foi atendido", e a diferenca some se o zero virar 100%.

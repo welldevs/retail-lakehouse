@@ -22,7 +22,7 @@ with area as (
     select
         wh,
         count(*)                                            as municipalities_served,
-        count_if(is_home_municipality)                      as home_municipalities
+        {{ count_if('is_home_municipality') }}                as home_municipalities
     from {{ source('stage', 'STG_SERVICE_AREA') }}
     group by 1
 

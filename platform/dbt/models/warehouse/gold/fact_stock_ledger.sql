@@ -45,7 +45,7 @@ ledger as (
 
 select
     -- ---- eixos ------------------------------------------------------------------
-    cast(to_char(l.stock_date, 'YYYYMMDD') as number(38, 0)) as date_key,
+    {{ date_key('l.stock_date') }} as date_key,
     l.stock_date,
     -- `wh` E A CHAVE DE DIM_WAREHOUSE, sem surrogate: o armazem nao versiona e a chave
     -- natural e parametro real da API da Mercadona. Inventar um warehouse_sk aqui criaria

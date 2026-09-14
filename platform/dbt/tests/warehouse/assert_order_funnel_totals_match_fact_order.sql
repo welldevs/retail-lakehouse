@@ -23,11 +23,11 @@ with esperado as (
         order_date,
         wh,
         count(*)                                            as orders_placed,
-        count_if(confirmed_at is not null)                  as orders_confirmed,
-        count_if(picked_at is not null)                     as orders_picked,
-        count_if(dispatched_at is not null)                 as orders_dispatched,
-        count_if(delivered_at is not null)                  as orders_delivered,
-        count_if(returned_at is not null)                   as orders_returned
+        {{ count_if('confirmed_at is not null') }}            as orders_confirmed,
+        {{ count_if('picked_at is not null') }}               as orders_picked,
+        {{ count_if('dispatched_at is not null') }}           as orders_dispatched,
+        {{ count_if('delivered_at is not null') }}            as orders_delivered,
+        {{ count_if('returned_at is not null') }}             as orders_returned
     from {{ ref('fact_order') }}
     group by 1, 2
 

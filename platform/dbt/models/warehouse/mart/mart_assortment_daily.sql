@@ -38,16 +38,16 @@ select
     c.parent_category_name,
 
     count(*)                                                as products,
-    count_if(u.source_product_id is not null)               as products_in_all_warehouses,
-    count_if(u.source_product_id is null)                   as products_exclusive_here,
+    {{ count_if('u.source_product_id is not null') }}         as products_in_all_warehouses,
+    {{ count_if('u.source_product_id is null') }}             as products_exclusive_here,
 
     min(f.unit_price)                                       as min_unit_price,
     max(f.unit_price)                                       as max_unit_price,
     round(avg(f.unit_price), 4)                             as avg_unit_price,
-    median(f.unit_price)                                    as median_unit_price,
+    {{ median('f.unit_price') }}                              as median_unit_price,
 
-    count_if(f.is_new_arrival)                              as new_arrivals,
-    count_if(f.is_pack)                                     as packs
+    {{ count_if('f.is_new_arrival') }}                        as new_arrivals,
+    {{ count_if('f.is_pack') }}                               as packs
 from {{ ref('fact_price_snapshot') }} f
 join {{ ref('dim_date') }} d          on d.date_key = f.date_key
 left join {{ ref('dim_category') }} c on c.category_id = f.primary_category_id

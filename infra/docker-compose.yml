@@ -222,6 +222,38 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # SEGUNDO ALVO DE WAREHOUSE, ao lado do Snowflake (externo, fora deste compose). Existe
+  # porque a conta Snowflake em uso e um TRIAL, com prazo — este container prova, com um
+  # motor que nao expira, que a arvore models/warehouse/ tambem troca de MOTOR e nao so de
+  # conta. Ver DECISIONS.md e platform/src/retail_platform/postgres_load.py.
+  #
+  # SERVICO DEDICADO, e nao um banco a mais dentro de `oltp-postgres`: aquele e o OLTP
+  # SIMULADO (mais o catalogo Iceberg), um componente MODELADO da simulacao. Misturar o
+  # papel de warehouse analitico ali confundiria dois ciclos de vida diferentes e um dia
+  # exigiria reiniciar um para mexer no outro.
+  #
+  # PROFILE PROPRIO (`warehouse-postgres`), nao `stream`: `make up` continua subindo so o
+  # plano de dados, e este container so existe quando alguem pedir o fallback
+  # explicitamente — mesmo precedente de `spark`.
+  warehouse-postgres:
+    image: postgres:16-alpine
+    container_name: retail-warehouse-postgres
+    profiles: ["warehouse-postgres"]
+    environment:
+      POSTGRES_USER: ${WAREHOUSE_PG_USER:-retail}
+      POSTGRES_PASSWORD: ${WAREHOUSE_PG_PASSWORD:-retail}
+      POSTGRES_DB: ${WAREHOUSE_PG_DB:-retail}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${WAREHOUSE_PG_PORT:-5434}:5432"
+    volumes:
+      - warehouse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "retail", "-d", "retail"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   # O BROKER. KRaft, sem ZooKeeper: um processo, nao dois.
   #
   # DUAS LISTENERS DE PROPOSITO. A plataforma roda NO HOST (o venv da plataforma), e o
@@ -425,5 +457,6 @@ volumes:
   minio-data:
   postgres-data:
   oltp-data:
+  warehouse-postgres-data:
   kafka-data:
   airflow-logs:

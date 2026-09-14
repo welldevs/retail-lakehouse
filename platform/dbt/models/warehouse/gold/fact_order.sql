@@ -49,7 +49,7 @@ cliente as (
 )
 
 select
-    cast(to_char(o.ingestion_date, 'YYYYMMDD') as number(38, 0)) as date_key,
+    {{ date_key('o.ingestion_date') }} as date_key,
     o.ingestion_date                                        as order_date,
     o.order_id,
     o.wh,
@@ -98,12 +98,12 @@ select
     -- Cada uma mede o intervalo entre DOIS marcos declarados, e e nula quando qualquer um
     -- dos dois nao ocorreu. Nunca coalesce para zero: zero minuto e uma medicao, ausencia
     -- de medicao nao e.
-    datediff('minute', o.placed_at,          o.confirmed_at)   as minutes_to_confirm,
-    datediff('minute', o.confirmed_at,       o.picking_started_at) as minutes_to_picking,
-    datediff('minute', o.picking_started_at, o.picked_at)      as minutes_to_pick,
-    datediff('minute', o.picked_at,          o.dispatched_at)  as minutes_to_dispatch,
-    datediff('minute', o.dispatched_at,      o.delivered_at)   as minutes_to_deliver,
-    datediff('minute', o.placed_at,          o.delivered_at)   as minutes_placed_to_delivered,
+    {{ datediff("'minute'", "o.placed_at",          "o.confirmed_at") }}       as minutes_to_confirm,
+    {{ datediff("'minute'", "o.confirmed_at",       "o.picking_started_at") }} as minutes_to_picking,
+    {{ datediff("'minute'", "o.picking_started_at", "o.picked_at") }}          as minutes_to_pick,
+    {{ datediff("'minute'", "o.picked_at",          "o.dispatched_at") }}      as minutes_to_dispatch,
+    {{ datediff("'minute'", "o.dispatched_at",      "o.delivered_at") }}       as minutes_to_deliver,
+    {{ datediff("'minute'", "o.placed_at",          "o.delivered_at") }}       as minutes_placed_to_delivered,
     o.lifecycle_minutes,
 
     -- ---- a promessa comercial ----------------------------------------------------

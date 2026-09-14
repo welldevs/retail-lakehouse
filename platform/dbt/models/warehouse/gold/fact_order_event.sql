@@ -38,8 +38,8 @@ with eventos as (
 )
 
 select
-    cast(to_char(e.ingestion_date, 'YYYYMMDD') as number(38, 0)) as date_key,
-    cast(to_char(e.event_date, 'YYYYMMDD') as number(38, 0))     as event_date_key,
+    {{ date_key('e.ingestion_date') }} as date_key,
+    {{ date_key('e.event_date') }}     as event_date_key,
     e.ingestion_date                                        as order_date,
     e.event_date,
     e.crosses_order_date,
@@ -55,9 +55,9 @@ select
 
     -- Repetida em vez de nomeada por `window w as (...)`: o Snowflake nao suporta a
     -- clausula WINDOW. O DuckDB suporta, e o repo ja pagou uma vez por essa diferenca.
-    datediff('minute',
-        lag(e.occurred_at) over (partition by e.order_id order by e.sequence_no),
-        e.occurred_at)                                      as minutes_since_previous_event,
+    {{ datediff("'minute'",
+        "lag(e.occurred_at) over (partition by e.order_id order by e.sequence_no)",
+        "e.occurred_at") }}                                  as minutes_since_previous_event,
     (e.sequence_no = 1)                                     as is_first_event,
     (e.sequence_no = max(e.sequence_no) over (partition by e.order_id))
                                                             as is_last_event,

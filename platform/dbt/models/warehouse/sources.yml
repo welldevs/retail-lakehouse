@@ -13,7 +13,14 @@ version: 2
 
 sources:
   - name: stage
-    database: RETAIL
+    # SNOWFLAKE TEM TRES NIVEIS (database.schema.table) E POSTGRES SO DOIS: uma conexao
+    # Postgres nao enxerga OUTRO banco ("cross-database references are not implemented",
+    # medido) — so o schema dentro do banco corrente. `target.database` resolve para o
+    # `dbname` do profile ativo (STAGE ja mora la, ver postgres_load.py), enquanto o
+    # Snowflake continua explicito em RETAIL. Sem este `{{ }}`, `--target postgres` falhava
+    # nos DEZ modelos de warehouse que leem STAGE — o unico que sobrava era dim_date, que
+    # nao le source nenhuma.
+    database: "{{ 'RETAIL' if target.type == 'snowflake' else target.database }}"
     schema: STAGE
     description: >
       Espelho 1:1 do recorte do Silver — 406.855 linhas, 9,95% das 4.087.507 do Silver.

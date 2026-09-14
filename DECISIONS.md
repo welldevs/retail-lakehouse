@@ -2872,3 +2872,93 @@ diagnosis (reading the run via the GitHub API, since raw log download needs repo
 auth this session doesn't have) and the fix itself, in the working tree, were mine. CR-004
 and CR-005 share a release: both were written, reviewed, and closed in the same session,
 against the same freshly public repository.
+
+### CR-006 · Postgres as a second warehouse target, fallback to the Snowflake trial
+
+```
+Need             The Snowflake account behind `make warehouse-refresh` is a TRIAL, with an
+                 expiration date. The physical L2->L3 boundary (COPY INTO/`source()`,
+                 never `ref()`) was designed to make the destination swappable, but that
+                 property had only ever been EXERCISED by switching accounts
+                 (.env.snowflake + make warehouse-bootstrap) — never by switching engines.
+                 "Swappable" was an architectural claim resting on one data point.
+Evidence         ARCHITECTURE.md's own "the destination is swappable — verified, not
+                 claimed" section documents only the account-switch axis. No dbt target
+                 other than `snowflake` existed; no code path had ever loaded STAGE into
+                 anything but a Snowflake account.
+Insufficiency    A trial with no fallback means the day it expires, `make warehouse` has
+                 nowhere to point — not a code defect, but a single point of failure the
+                 architecture had quietly accepted without ever naming it as a decision.
+Component        platform/dbt (profiles.yml, dbt_project.yml, macros/warehouse_compat.sql,
+                 models/warehouse/sources.yml, 13 gold/mart models, 4 singular tests),
+                 platform/src/retail_platform/postgres_load.py (new), cli.py (+2 verbs:
+                 postgres-bootstrap, load-postgres), infra/docker-compose.yml (+1 opt-in
+                 service, profile `warehouse-postgres`), Makefile (+5 targets),
+                 platform/tests/test_postgres_load.py (new, 22 tests, offline).
+Contracts        None on the Silver side. On the warehouse side: `models/warehouse`'s
+                 `+enabled` guard widened from `target.type == 'snowflake'` to
+                 `target.type in ('snowflake', 'postgres')` — same two-line change in
+                 dbt_project.yml repeated for `data_tests`. No column, grain, or business
+                 rule changed on either engine; only the SQL SURFACE SYNTAX used to
+                 compute seven recurring expressions (date_key cast, count_if, div0,
+                 datediff, median, max over boolean, listagg) now branches by
+                 `target.type`, centralized in macros/warehouse_compat.sql instead of
+                 repeated inline at each of the ~35 call sites that needed it.
+Regression       make test: 439/439 platform tests green (437 before this CR — 2 new
+                 assertions in QualificacaoTest), make source-test unchanged. Both
+                 invariants ARCHITECTURE.md already claimed for the Snowflake side were
+                 re-verified after every edit: `dbt parse --target dev` still passes with
+                 zero Snowflake vars defined, and `dbt parse --target snowflake` still
+                 fails naming exactly `SNOWFLAKE_ACCOUNT` — proof the new
+                 `{% if target.type == 'postgres' %}` branches compile to
+                 byte-identical Snowflake SQL on the `else` side, not a rewrite.
+Semantics        No field changes meaning. `count_if(x)` becomes
+                 `(count(*) filter (where x))::numeric` on Postgres — cast to numeric and
+                 not left `bigint`, specifically because `bigint / bigint` truncates in
+                 Postgres where Snowflake's NUMBER divides as decimal; caught by hand
+                 while porting mart_order_funnel's rate columns, which divide count_if's
+                 result directly without going through div0.
+Provenance       Unchanged. STAGE stays a 1:1, no-business-logic mirror of the same Silver
+                 cut (SPECS in snowflake_export.py) on both engines — `export-snowflake`
+                 is reused as-is for the Postgres path, not duplicated, because the cut
+                 itself has zero Snowflake-specific logic.
+Reproducibility  Yes, and more so than the path it backs up: this Postgres container is
+                 local and free, so `make warehouse-postgres-refresh` can be rerun at will
+                 — unlike the Snowflake trial, which `snowflake_evidence.py`'s own
+                 docstring already flags as "not reproducible offline."
+Cost             Two loaders (`snowflake_load.py` / `postgres_load.py`) with parallel, not
+                 shared, RBAC/DDL/transport logic, and seven compat macros that must be
+                 kept in sync by hand whenever a future Gold/Mart model needs an eighth
+                 Snowflake-only function — a real, ongoing tax, not a one-time price.
+                 REJECTED alternatives, recorded rather than silently skipped: reusing
+                 `oltp-postgres` for this role (would mix the warehouse's RBAC/schema
+                 story with the simulated OLTP's own lifecycle); a formal `Warehouse`
+                 interface/ABC over the two loaders (two known engines don't pay for an
+                 abstraction yet — the same criterion already used for the five Sources);
+                 wiring this into CI in the same round (CI stays exactly as CR-005 left
+                 it — untouched — because the agreed scope for this CR was the local
+                 fallback only, and running it for real in CI is real future work, not a
+                 speculative one).
+Proof            Run live against the local container on 2026-09-11:
+                 `docker compose --profile warehouse-postgres up -d warehouse-postgres`,
+                 `make warehouse-postgres-bootstrap` (16 commands: 3 schemas + 3 roles +
+                 default-privilege grants for STAGE->transformer and MART->reader),
+                 `make warehouse-export` (reused, unchanged) +
+                 `make warehouse-postgres-load` (6,716,525 rows across the 15 STAGE
+                 tables, reconciled row-count-exact against the parquet cut, zero
+                 divergence), `make warehouse-postgres` (`dbt build --target postgres`):
+                 24 table models + 178 data tests + 1 project hook (the
+                 `try_parse_json` compat function), PASS=203 WARN=0 ERROR=0 SKIP=0 in
+                 ~68-75 s wall clock across repeated runs.
+Loss             Nothing that was true for the Snowflake path stops being true:
+                 `make warehouse-refresh` is untouched and stays the default. What starts
+                 today is the ongoing cost above — two loaders and one compat-macro file
+                 to maintain in lockstep — accepted because the alternative (a single
+                 warehouse with no fallback before its trial expires) was the bigger risk.
+```
+
+Decision logged on 2026-09-11. The runbook for actually flipping the *default* target to
+Postgres — editing `Makefile`'s `warehouse` rule, `warehouse_load.py`'s DAG, and
+`streamlit/connection.py` — is deliberately **not** part of this CR: it stays a manual,
+reviewed step for the day the Snowflake trial actually ends, not code shipped speculatively
+ahead of that day.

@@ -992,6 +992,105 @@ def _cmd_load_snowflake(args) -> int:
     return EXIT_OK
 
 
+def _cmd_postgres_bootstrap(args) -> int:
+    """Schemas, papeis e grants (incl. `default privileges`) no Postgres local.
+
+    Segundo alvo de warehouse, ao lado de `snowflake-bootstrap` — mesma separacao entre
+    criar infraestrutura (aqui) e carregar dado (`load-postgres`). Ver postgres_load.py.
+    """
+    from .postgres_load import ROLES, PostgresLoadError, bootstrap, connect
+
+    try:
+        connection = connect(host=args.host, port=args.port, dbname=args.dbname)
+    except PostgresLoadError as exc:
+        print(f"ERRO: {exc}")
+        return EXIT_FATAL
+
+    cursor = connection.cursor()
+    try:
+        feito = bootstrap(cursor, args.grant_to_user)
+        connection.commit()
+    except Exception as exc:
+        connection.rollback()
+        print(f"ERRO: o destino recusou: {exc}")
+        logging.exception("postgres-bootstrap falhou")
+        return EXIT_FAILED
+    finally:
+        cursor.close()
+        connection.close()
+
+    print(f"destino .......... {args.host}:{args.port}/{args.dbname}")
+    print(f"comandos ......... {len(feito)} aplicados")
+    for nome, descricao in ROLES.items():
+        print(f"  {nome:<20} {descricao}")
+    print("OK: schemas, papeis e grants aplicados.")
+    return EXIT_OK
+
+
+def _cmd_load_postgres(args) -> int:
+    """Recria as tabelas STAGE (drop+create) e carrega via COPY FROM STDIN.
+
+    Reaproveita o mesmo recorte de `export-snowflake` — o parquet nao tem nada de
+    Snowflake-especifico, so o nome do diretorio e um resquicio historico (ver DECISIONS.md).
+    """
+    from .postgres_load import PostgresLoadError, connect, load, verify
+    from .query import connect_lakehouse
+    from .snowflake_export import SPECS
+
+    for spec in SPECS:
+        caminho = os.path.join(args.stage_dir, f"{spec['name']}.parquet")
+        if not os.path.exists(caminho):
+            print(f"ERRO: parquet ausente: {caminho}. Rode `make warehouse-export` antes.")
+            return EXIT_FATAL
+
+    duck = connect_lakehouse(from_env())
+    try:
+        esperado = {}
+        for spec in SPECS:
+            caminho = os.path.join(args.stage_dir, f"{spec['name']}.parquet")
+            esperado[spec["name"]] = {
+                "rows": duck.execute(
+                    f"select count(*) from read_parquet('{caminho}')"
+                ).fetchone()[0]
+            }
+
+        try:
+            connection = connect(
+                host=args.host, port=args.port, dbname=args.dbname, role=args.role
+            )
+        except PostgresLoadError as exc:
+            print(f"ERRO: {exc}")
+            return EXIT_FATAL
+
+        try:
+            resumo = load(connection, duck, args.stage_dir)
+            problemas = verify(connection, args.stage_dir, esperado)
+        except PostgresLoadError as exc:
+            print(f"ERRO: {exc}")
+            return EXIT_FATAL
+        except Exception as exc:
+            print(f"ERRO: o destino recusou: {exc}")
+            logging.exception("load-postgres falhou")
+            return EXIT_FAILED
+        finally:
+            connection.close()
+    finally:
+        duck.close()
+
+    print(f"destino .......... {args.host}:{args.port}/{args.dbname}.STAGE")
+    print(f"papel ............ {args.role}")
+    for nome in sorted(resumo):
+        print(f"  {nome:<30} {resumo[nome]['rows']:>9,} linhas")
+    if problemas:
+        print("\nDIVERGENCIA entre o parquet gerado e o que chegou ao destino:")
+        for p in problemas:
+            print(f"  - {p}")
+        return EXIT_FAILED
+    print(f"  {'TOTAL':<30} {sum(d['rows'] for d in resumo.values()):>9,} linhas")
+    print("OK: carregado e reconferido contagem a contagem.")
+    return EXIT_OK
+
+
 def _cmd_demand_reality_check(args) -> int:
     """Mede o mix atual e o compara com o ANTES congelado e com o MAPA.
 
@@ -1495,6 +1594,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="destino do markdown; '-' escreve na saida padrao",
     )
     sf_ev.set_defaults(handler=_cmd_snowflake_evidence)
+
+    # ---- Postgres (segundo alvo de warehouse, fallback ao trial do Snowflake) --------
+    # Mesmos dois verbos que precisam de conexao no par Snowflake (bootstrap e load); o
+    # recorte (`export-snowflake`) e reaproveitado tal qual — ver postgres_load.py.
+    from .postgres_load import (
+        DEFAULT_DBNAME as PG_DEFAULT_DBNAME,
+        DEFAULT_HOST as PG_DEFAULT_HOST,
+        DEFAULT_LOAD_ROLE as PG_DEFAULT_LOAD_ROLE,
+        DEFAULT_PORT as PG_DEFAULT_PORT,
+    )
+
+    pg_boot = subparsers.add_parser(
+        "postgres-bootstrap",
+        help="cria schemas, papeis e grants no Postgres local (idempotente)",
+    )
+    pg_boot.add_argument("--host", default=PG_DEFAULT_HOST)
+    pg_boot.add_argument("--port", type=int, default=PG_DEFAULT_PORT)
+    pg_boot.add_argument("--dbname", default=PG_DEFAULT_DBNAME)
+    pg_boot.add_argument(
+        "--grant-to-user", default=None,
+        help="concede os tres papeis a este usuario/role de login",
+    )
+    pg_boot.set_defaults(handler=_cmd_postgres_bootstrap)
+
+    pg_load = subparsers.add_parser(
+        "load-postgres",
+        help="recria as tabelas stage (drop+create) e carrega via COPY FROM STDIN",
+    )
+    pg_load.add_argument("--stage-dir", default=SF_DEFAULT_OUT)
+    pg_load.add_argument("--host", default=PG_DEFAULT_HOST)
+    pg_load.add_argument("--port", type=int, default=PG_DEFAULT_PORT)
+    pg_load.add_argument("--dbname", default=PG_DEFAULT_DBNAME)
+    pg_load.add_argument(
+        "--role", default=PG_DEFAULT_LOAD_ROLE,
+        help=f"papel ativado por `set role` apos conectar (default {PG_DEFAULT_LOAD_ROLE})",
+    )
+    pg_load.set_defaults(handler=_cmd_load_postgres)
 
     stream_ev = subparsers.add_parser(
         "stream-evidence",

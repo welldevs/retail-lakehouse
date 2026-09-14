@@ -20,10 +20,10 @@
 {{ config(materialized = 'table') }}
 
 select
-    cast(to_char(c.ingestion_date, 'YYYYMMDD') as number(38, 0)) as date_key,
+    {{ date_key('c.ingestion_date') }} as date_key,
     c.ingestion_date                                        as snapshot_date,
     c.previous_ingestion_date                               as previous_snapshot_date,
-    datediff(day, c.previous_ingestion_date, c.ingestion_date) as days_between_snapshots,
+    {{ datediff("'day'", "c.previous_ingestion_date", "c.ingestion_date") }} as days_between_snapshots,
 
     c.warehouse                                             as wh,
     c.source_product_id,

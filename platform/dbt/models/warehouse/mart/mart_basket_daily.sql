@@ -43,10 +43,10 @@ select
 
     -- Aditivos: cada linha pertence a exatamente uma categoria.
     count(*)                                                as lines_placed,
-    count_if(i.line_status in ('fulfilled', 'substituted'))  as lines_fulfilled,
-    count_if(i.line_status = 'substituted')                 as lines_substituted,
-    count_if(i.line_status = 'removed')                     as lines_removed,
-    count_if(i.line_status = 'not_picked')                  as lines_never_picked,
+    {{ count_if("i.line_status in ('fulfilled', 'substituted')") }} as lines_fulfilled,
+    {{ count_if("i.line_status = 'substituted'") }}           as lines_substituted,
+    {{ count_if("i.line_status = 'removed'") }}                as lines_removed,
+    {{ count_if("i.line_status = 'not_picked'") }}             as lines_never_picked,
 
     sum(i.quantity)                                         as units_placed,
     sum(case when i.line_status in ('fulfilled', 'substituted')
@@ -57,12 +57,12 @@ select
     sum(i.line_amount_delta)                                as revenue_lost,
     '{{ var("currency") }}'                                 as currency,
 
-    round(div0(sum(i.line_amount_placed), count(distinct i.order_id)), 4)
+    round({{ div0('sum(i.line_amount_placed)', 'count(distinct i.order_id)') }}, 4)
                                                             as avg_placed_per_order,
-    round(div0(sum(i.line_amount), count(*)), 4)            as avg_fulfilled_per_line,
+    round({{ div0('sum(i.line_amount)', 'count(*)') }}, 4)   as avg_fulfilled_per_line,
 
-    round(div0(count_if(i.line_status = 'substituted'), count(*)), 4) as substitution_rate,
-    round(div0(count_if(i.line_status = 'removed'),     count(*)), 4) as removal_rate,
+    round({{ div0(count_if("i.line_status = 'substituted'"), 'count(*)') }}, 4) as substitution_rate,
+    round({{ div0(count_if("i.line_status = 'removed'"),     'count(*)') }}, 4) as removal_rate,
 
     count(distinct i.source_product_id)                     as distinct_products_ordered
 from {{ ref('fact_order_item') }} i

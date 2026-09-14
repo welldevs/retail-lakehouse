@@ -64,7 +64,7 @@ select
     count(distinct l.order_id)                              as orders_in_cohort,
 
     count(*)                                                as lines_placed,
-    count_if(l.line_status in ('fulfilled', 'substituted'))  as lines_fulfilled,
+    {{ count_if("l.line_status in ('fulfilled', 'substituted')") }} as lines_fulfilled,
     sum(l.quantity)                                         as units_placed,
 
     sum(l.line_amount_placed)                               as revenue_placed,
@@ -74,7 +74,7 @@ select
     -- A COLUNA QUE A FASE EXISTE PARA PRODUZIR. Denominador e a propria coorte naquele
     -- (dia, armazem), e nao o total: e assim que a comparacao entre faixas isola a
     -- propensao do tamanho da coorte.
-    round(div0(count(*), max(b.lines_in_band)), 6)          as share_within_band
+    round({{ div0('count(*)', 'max(b.lines_in_band)') }}, 6) as share_within_band
 from linhas l
 join {{ ref('dim_date') }} d on d.date_key = l.date_key
 join por_coorte b

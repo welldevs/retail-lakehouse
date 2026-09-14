@@ -102,23 +102,23 @@ select
     -- ---- o limiar declarado, e a distancia ate ele ---------------------------------
     max(s.sla_minutes_picking)                              as sla_minutes,
     max(f.minutes_to_pick)                                  as max_picking_minutes,
-    count_if(f.minutes_to_pick > s.sla_minutes_picking)     as orders_breaching_sla,
+    {{ count_if('f.minutes_to_pick > s.sla_minutes_picking') }} as orders_breaching_sla,
 
     -- ---- a promessa comercial, que e o SLA que a operacao de fato tem ---------------
     -- Diferente do limiar de separacao: a janela de entrega e escolhida por pedido, esta
     -- no log, e o evento order_delivered declara se foi cumprida. Aqui ha variacao real.
     count(f.delivered_within_slot)                          as orders_with_slot_outcome,
-    count_if(f.delivered_within_slot)                       as orders_delivered_within_slot,
+    {{ count_if('f.delivered_within_slot') }}                 as orders_delivered_within_slot,
     -- Cedo e tarde separados de proposito: sao problemas operacionais opostos, e
     -- "fora da janela" nao diz qual deles esta acontecendo. O desequilibrio entre os dois
     -- e o que denunciou a incoerencia das premissas em 2026-09-01: 73.124 cedo contra 84
     -- por cento do total. Estas duas colunas sao o instrumento que tornou isso visivel.
-    count_if(f.delivered_at is not null
-             and f.delivered_at < f.delivery_slot_start)    as orders_delivered_before_slot,
-    count_if(f.delivered_at is not null
-             and f.delivered_at > f.delivery_slot_end)      as orders_delivered_after_slot,
+    {{ count_if("f.delivered_at is not null and f.delivered_at < f.delivery_slot_start") }}
+                                                            as orders_delivered_before_slot,
+    {{ count_if("f.delivered_at is not null and f.delivered_at > f.delivery_slot_end") }}
+                                                            as orders_delivered_after_slot,
     round(
-        div0(count_if(f.delivered_within_slot), count(f.delivered_within_slot)), 4
+        {{ div0(count_if('f.delivered_within_slot'), 'count(f.delivered_within_slot)') }}, 4
     )                                                       as slot_adherence_rate
 from {{ ref('fact_order') }} f
 join {{ ref('dim_date') }} d on d.date_key = f.date_key

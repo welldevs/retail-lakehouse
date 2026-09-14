@@ -20,10 +20,10 @@
 select
     '{{ modelo }}'                                          as modelo,
     cast({{ chave }} as varchar)                            as chave_natural,
-    count_if(is_current)                                    as versoes_correntes,
+    {{ count_if('is_current') }}                                    as versoes_correntes,
     count(*)                                                as versoes_totais
 from {{ ref(modelo) }}
 group by {{ chave }}
-having count_if(is_current) <> 1
+having {{ count_if('is_current') }} <> 1
 {% if not loop.last %}union all{% endif %}
 {% endfor %}

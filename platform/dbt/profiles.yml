@@ -59,3 +59,23 @@ retail_lakehouse:
       schema: GOLD
       threads: 4
       client_session_keep_alive: false
+
+    # TERCEIRO TARGET, mesmo guard de `target.type` do warehouse (dbt_project.yml agora
+    # aceita 'snowflake' OU 'postgres'). Existe porque a conta Snowflake acima e um TRIAL,
+    # com prazo: este target prova, com um motor que nao expira, que a arvore
+    # models/warehouse/ tambem troca de MOTOR — nao so de conta. Ver DECISIONS.md.
+    #
+    # COM DEFAULT, ao contrario do Snowflake: nao ha "conta de outra pessoa" a proteger
+    # aqui. `localhost:5434/retail` e convencao do proprio projeto, do mesmo jeito que
+    # MINIO_ROOT_USER acima tem default — o Postgres deste target roda no container
+    # `warehouse-postgres` do compose, sob profile opt-in, e nao existe fora do
+    # desenvolvimento local.
+    postgres:
+      type: postgres
+      host: "{{ env_var('WAREHOUSE_PG_HOST', 'localhost') }}"
+      port: "{{ env_var('WAREHOUSE_PG_PORT', '5434') | int }}"
+      user: "{{ env_var('WAREHOUSE_PG_USER', 'retail') }}"
+      password: "{{ env_var('WAREHOUSE_PG_PASSWORD', 'retail') }}"
+      dbname: "{{ env_var('WAREHOUSE_PG_DB', 'retail') }}"
+      schema: gold
+      threads: 4

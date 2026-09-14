@@ -40,7 +40,7 @@ produto as (
 )
 
 select
-    cast(to_char(l.ingestion_date, 'YYYYMMDD') as number(38, 0)) as date_key,
+    {{ date_key('l.ingestion_date') }} as date_key,
     l.ingestion_date                                        as order_date,
     l.order_id,
     l.line_no,

@@ -29,27 +29,27 @@ select
 
     -- ---- as etapas, por marco alcancado ------------------------------------------
     count(*)                                                as orders_placed,
-    count_if(f.confirmed_at is not null)                    as orders_confirmed,
-    count_if(f.picking_started_at is not null)              as orders_picking_started,
-    count_if(f.picked_at is not null)                       as orders_picked,
-    count_if(f.dispatched_at is not null)                   as orders_dispatched,
-    count_if(f.delivered_at is not null)                    as orders_delivered,
+    {{ count_if('f.confirmed_at is not null') }}              as orders_confirmed,
+    {{ count_if('f.picking_started_at is not null') }}        as orders_picking_started,
+    {{ count_if('f.picked_at is not null') }}                 as orders_picked,
+    {{ count_if('f.dispatched_at is not null') }}             as orders_dispatched,
+    {{ count_if('f.delivered_at is not null') }}              as orders_delivered,
 
     -- ---- as saidas, que NAO somam com as etapas acima -----------------------------
-    count_if(f.payment_failed_at is not null)               as orders_payment_failed,
-    count_if(f.cancelled_at is not null)                    as orders_cancelled,
-    count_if(f.delivery_failed_at is not null)              as orders_delivery_failed,
-    count_if(f.returned_at is not null)                     as orders_returned,
+    {{ count_if('f.payment_failed_at is not null') }}         as orders_payment_failed,
+    {{ count_if('f.cancelled_at is not null') }}               as orders_cancelled,
+    {{ count_if('f.delivery_failed_at is not null') }}         as orders_delivery_failed,
+    {{ count_if('f.returned_at is not null') }}                as orders_returned,
 
     -- ---- as taxas, todas com o mesmo denominador ----------------------------------
     -- Denominador unico (orders_placed) de proposito: taxas encadeadas etapa-a-etapa se
     -- multiplicam e ninguem consegue somar o funil de cabeca. Aqui cada taxa responde
     -- "de tudo que entrou, quanto chegou ate aqui", que e a pergunta que se faz de um funil.
-    round(count_if(f.confirmed_at is not null)   / count(*), 4) as confirm_rate,
-    round(count_if(f.picked_at is not null)      / count(*), 4) as pick_rate,
-    round(count_if(f.delivered_at is not null)   / count(*), 4) as delivery_rate,
-    round(count_if(f.cancelled_at is not null)   / count(*), 4) as cancellation_rate,
-    round(count_if(f.returned_at is not null)    / count(*), 4) as return_rate,
+    round({{ count_if('f.confirmed_at is not null') }}   / count(*), 4) as confirm_rate,
+    round({{ count_if('f.picked_at is not null') }}      / count(*), 4) as pick_rate,
+    round({{ count_if('f.delivered_at is not null') }}   / count(*), 4) as delivery_rate,
+    round({{ count_if('f.cancelled_at is not null') }}   / count(*), 4) as cancellation_rate,
+    round({{ count_if('f.returned_at is not null') }}    / count(*), 4) as return_rate,
 
     -- ---- o dinheiro ---------------------------------------------------------------
     -- gross e o que foi COLOCADO; net e o que foi SEPARADO. Os dois nunca sao iguais, e e

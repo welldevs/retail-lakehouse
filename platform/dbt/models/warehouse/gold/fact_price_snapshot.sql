@@ -23,7 +23,7 @@
 {{ config(materialized = 'table') }}
 
 select
-    cast(to_char(p.ingestion_date, 'YYYYMMDD') as number(38, 0)) as date_key,
+    {{ date_key('p.ingestion_date') }} as date_key,
     p.ingestion_date                                        as snapshot_date,
     p.warehouse                                             as wh,
     p.source_product_id,

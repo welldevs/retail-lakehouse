@@ -149,6 +149,8 @@ ORDERS_OVERWRITE       ?=
         stream-evidence \
         warehouse-bootstrap warehouse-export warehouse-ddl warehouse-load warehouse \
         warehouse-refresh warehouse-evidence warehouse-trigger warehouse-prove-tests \
+        warehouse-postgres-up warehouse-postgres-bootstrap warehouse-postgres-load \
+        warehouse-postgres warehouse-postgres-refresh \
         observability-prove-signals \
         dashboard dashboard-venv dashboard-contract dashboard-check \
         demand-reality-check demand-check-mapping \
@@ -274,6 +276,14 @@ help:
 	@echo "  warehouse-refresh         os tres acima, em ordem"
 	@echo "  warehouse-prove-tests     injeta o defeito que cada teste diz pegar e exige o vermelho"
 	@echo "  warehouse-evidence        registra posse, volume e isolamento do destino, datado"
+	@echo ""
+	@echo "warehouse analitico (Postgres local, fallback ao trial do Snowflake) —"
+	@echo "segundo alvo dbt, atras do profile opt-in 'warehouse-postgres' do compose:"
+	@echo "  warehouse-postgres-up       sobe o container (perfil warehouse-postgres)"
+	@echo "  warehouse-postgres-bootstrap  schemas, papeis e grants (idempotente)"
+	@echo "  warehouse-postgres-load     drop+create das tabelas STAGE + COPY FROM STDIN"
+	@echo "  warehouse-postgres          dbt build --target postgres (STAGE -> GOLD -> MART)"
+	@echo "  warehouse-postgres-refresh  export (reaproveitado) + os tres acima, em ordem"
 	@echo ""
 	@echo "painel estrategico (Streamlit sobre o MART, papel RETAIL_READER) —"
 	@echo "  dashboard-venv            instala streamlit/pandas/altair (extra, fora da imagem)"
@@ -928,6 +938,44 @@ warehouse-prove-tests:
 warehouse-refresh: warehouse-export warehouse-load warehouse
 	@echo ""
 	@echo "warehouse-refresh OK: STAGE carregado e GOLD/MART reconstruidos"
+
+# ---- warehouse analitico (Postgres local) --------------------------------------
+# SEGUNDO alvo de warehouse, ao lado do Snowflake acima — nao um substituto. A conta
+# Snowflake em uso e um TRIAL com prazo; este container prova, com um motor que nao expira,
+# que a arvore models/warehouse/ tambem troca de MOTOR e nao so de conta. Ver DECISIONS.md
+# e platform/src/retail_platform/postgres_load.py.
+#
+# `make warehouse-export` E REAPROVEITADO tal qual: o recorte do Silver nao tem nada de
+# Snowflake-especifico, entao produzi-lo de novo so para o Postgres duplicaria a mesma
+# consulta sem motivo. So o CARREGADOR muda por motor.
+#
+#   docker compose -f infra/docker-compose.yml --profile warehouse-postgres up -d warehouse-postgres
+#   make warehouse-postgres-bootstrap
+#   make warehouse-postgres-refresh
+WAREHOUSE_PG_HOST ?= localhost
+WAREHOUSE_PG_PORT ?= 5434
+WAREHOUSE_PG_DB   ?= retail
+
+warehouse-postgres-up:
+	$(COMPOSE) --profile warehouse-postgres up -d warehouse-postgres
+
+warehouse-postgres-bootstrap:
+	$(PLATFORM_PY) -m retail_platform postgres-bootstrap \
+	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
+
+warehouse-postgres-load:
+	$(PLATFORM_PY) -m retail_platform load-postgres \
+	  --stage-dir $(SNOWFLAKE_STAGE_DIR) \
+	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
+
+# `--target postgres` faz o mesmo guard `+enabled` do dbt_project.yml que `--target
+# snowflake` ja usava — nenhum modelo, teste ou regra de negocio muda entre os dois.
+warehouse-postgres:
+	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target postgres
+
+warehouse-postgres-refresh: warehouse-export warehouse-postgres-bootstrap warehouse-postgres-load warehouse-postgres
+	@echo ""
+	@echo "warehouse-postgres-refresh OK: STAGE carregado e GOLD/MART reconstruidos no Postgres local"
 
 # ---- painel estrategico (Streamlit sobre o MART) -----------------------------
 # Bancada de CONFERENCIA dos indicadores antes de reconstrui-los no Power BI. Le so o MART, e

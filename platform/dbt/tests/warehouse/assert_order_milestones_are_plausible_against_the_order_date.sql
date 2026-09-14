@@ -49,12 +49,12 @@ select
         when cast(placed_at as date) <> order_date then 'colocacao fora do dia do pedido'
         {% for marco in marcos %}
         when {{ marco }} < placed_at then '{{ marco }} antes da colocacao'
-        when datediff('day', order_date, {{ marco }}) > 7 then '{{ marco }} mais de 7 dias depois'
+        when {{ datediff("'day'", "order_date", marco) }} > 7 then '{{ marco }} mais de 7 dias depois'
         {% endfor %}
     end                                                     as motivo
 from {{ ref('fact_order') }}
 where cast(placed_at as date) <> order_date
    {% for marco in marcos %}
    or {{ marco }} < placed_at
-   or datediff('day', order_date, {{ marco }}) > 7
+   or {{ datediff("'day'", "order_date", marco) }} > 7
    {% endfor %}

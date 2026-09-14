@@ -24,8 +24,8 @@ with clientes as (
         municipality_code,
         count(*)                                            as customers,
         count(distinct postal_code)                         as postal_codes_used,
-        count_if(sex_label = 'Mujeres')                     as customers_female,
-        count_if(address_is_street_level)                   as customers_without_house_number,
+        {{ count_if("sex_label = 'Mujeres'") }}               as customers_female,
+        {{ count_if('address_is_street_level') }}             as customers_without_house_number,
         round(avg(age_at_ingestion), 2)                     as avg_age
     from {{ ref('dim_customer') }}
     where is_current
@@ -45,7 +45,7 @@ geografia as (
         max(municipality_population)                        as municipality_population,
         count(distinct postal_code)                         as postal_codes_available,
         sum(tramo_count)                                    as tramos,
-        max(is_home_municipality)                           as is_home_municipality
+        {{ max_bool('is_home_municipality') }}                as is_home_municipality
     from {{ ref('dim_geography') }}
     group by 1, 2, 3
 
@@ -73,7 +73,14 @@ select
     -- ler como penetracao de mercado.
     case
         when g.municipality_population is null or g.municipality_population = 0 then null
-        else round(10000.0 * coalesce(c.customers, 0) / g.municipality_population, 3)
+        -- Postgres so tem `round(numeric, int)`, nao `round(double precision, int)"
+        -- ("function round(double precision, integer) does not exist", medido):
+        -- municipality_population atravessa como double precision. O Snowflake aceita
+        -- FLOAT direto, e cravar ::numeric la truncaria o NUMBER default para escala 0
+        -- antes do round — por isso o cast so entra do lado Postgres.
+        else round(
+            (10000.0 * coalesce(c.customers, 0) / g.municipality_population)
+                {%- if target.type == 'postgres' %}::numeric{% endif -%}, 3)
     end                                                     as customers_per_10k_inhabitants,
 
     (c.customers is null)                                   as has_no_customers

@@ -24,8 +24,13 @@ dependencies = [
     # Transporte do recorte (PUT em stage interno + COPY INTO). A credencial vem sempre
     # de ~/.snowflake/config.toml pelo nome da conexao; nada de segredo no repo.
     "snowflake-connector-python>=3.12",
+    # TERCEIRO target do dbt: Postgres local, segundo alvo de warehouse ao lado do
+    # Snowflake — fallback para quando o trial vencer (ver DECISIONS.md). Mesmo guard por
+    # `target.type` do dbt_project.yml decide qual arvore roda em qual motor.
+    "dbt-postgres>=1.8",
     # O OLTP de pedidos e seu outbox. Fica NA PLATAFORMA, nunca na Source: uma Source com
     # dependencia de banco deixaria de ser FROZEN, e `make source-test` reprova isso por AST.
+    # Reaproveitado tambem por `postgres_load.py`: nenhum driver novo para o warehouse local.
     "psycopg[binary]>=3.2",
     # Transporte dos eventos. Tambem so na plataforma: a Source produz o log e nao sabe que
     # existe broker — `make source-test` reprova por AST se um dia souber.

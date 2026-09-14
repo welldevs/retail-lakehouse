@@ -7,6 +7,13 @@ model-paths: ["models"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+# SO PARA O TARGET POSTGRES. `try_parse_json` e nativo do Snowflake; aqui a mesma chamada,
+# de proposito IDENTICA em fact_order_event.sql nos dois motores, precisa de uma funcao
+# equivalente que o proprio dbt cria antes de qualquer modelo rodar — nao um passo manual a
+# lembrar depois de `make warehouse-postgres-bootstrap`. Ver macros/warehouse_compat.sql.
+on-run-start:
+  - "{% if target.type == 'postgres' %}{{ create_try_parse_json_function() }}{% endif %}"
+
 vars:
   # Prefixo do RAW aterrissado. Sobrescrevivel para apontar para outro bucket.
   raw_prefix: "s3://retail-raw/mercadona_catalog_api"
@@ -45,10 +52,13 @@ models:
       +enabled: "{{ target.type == 'duckdb' }}"
 
     warehouse:
-      # O modelo dimensional. Vive so no Snowflake — nao ha espelho em DuckDB, porque
-      # espelhar significaria duas materializacoes da mesma verdade. A portabilidade que
-      # importa e a do SQL do dbt, nao uma segunda copia (ARCHITECTURE.md:44).
-      +enabled: "{{ target.type == 'snowflake' }}"
+      # O modelo dimensional. Vive no Snowflake OU no Postgres local — nao ha espelho em
+      # DuckDB, porque espelhar significaria duas materializacoes da mesma verdade. A
+      # portabilidade que importa e a do SQL do dbt, nao uma segunda copia
+      # (ARCHITECTURE.md:44). Postgres entrou como SEGUNDO motor aceito aqui — nao um
+      # terceiro guard novo — porque e o mesmo papel que o Snowflake ja tinha: destino
+      # relacional que le STAGE por `source()` e escreve GOLD/MART. Ver DECISIONS.md.
+      +enabled: "{{ target.type in ('snowflake', 'postgres') }}"
       +materialized: table
       gold:
         +schema: GOLD
@@ -64,7 +74,7 @@ data_tests:
   retail_lakehouse:
     +enabled: "{{ target.type == 'duckdb' }}"
     warehouse:
-      +enabled: "{{ target.type == 'snowflake' }}"
+      +enabled: "{{ target.type in ('snowflake', 'postgres') }}"
 
 seeds:
   retail_lakehouse:

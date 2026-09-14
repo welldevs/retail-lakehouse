@@ -18,7 +18,7 @@ select
     municipality_name,
     year,
     count(distinct sex_label)                   as rotulos,
-    listagg(distinct sex_label, ', ')           as quais
+    {{ listagg('distinct sex_label', "', '") }} as quais
 from {{ ref('fact_population_municipality') }}
 group by 1, 2, 3, 4
 having count(distinct sex_label) <> 2
