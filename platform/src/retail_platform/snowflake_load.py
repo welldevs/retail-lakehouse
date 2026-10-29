@@ -1,71 +1,72 @@
-"""Transporte do recorte para o Snowflake: DDL, PUT em stage interno, COPY INTO.
+"""Transport of the cut to Snowflake: DDL, PUT into an internal stage, COPY INTO.
 
-Separado de `snowflake_export.py` pelo mesmo criterio que separa `land.py` de
-`oltp_reference.py`: um modulo PRODUZ o artefato, o outro o MOVE. Testar o recorte nao
-deveria exigir credencial, e mover bytes nao deveria exigir DuckDB.
+Separate from `warehouse_cut.py` by the same criterion that separates `land.py` from
+`customers_reference.py`: one module PRODUCES the artifact, the other MOVES it. Testing the
+cut should not require a credential, and moving bytes should not require DuckDB.
 
-STAGE INTERNO, NAO EXTERNAL. Um Snowflake gerenciado nao enxerga um MinIO em localhost:
-`COPY INTO` a partir de um external stage exigiria S3 real mais uma storage integration
-com IAM. O stage interno de tabela (`@%TABELA`) inverte o sentido — quem empurra os bytes
-e este processo, que enxerga os dois lados — e nao pede infraestrutura nenhuma. Para ~1 MB
-de parquet e a escolha obviamente proporcional. Gatilho para trocar por external stage:
-o RAW passar a viver num S3 de verdade, ou o volume crescer a ponto de o upload pela
-maquina local virar o gargalo.
+INTERNAL STAGE, NOT EXTERNAL. A managed Snowflake cannot see a MinIO on localhost:
+`COPY INTO` from an external stage would require real S3 plus a storage integration with
+IAM. The internal table stage (`@%TABLE`) reverses the direction — the one pushing the
+bytes is this process, which sees both sides — and needs no infrastructure at all. For
+~1 MB of parquet it is the obviously proportional choice. Trigger to switch to an external
+stage: RAW starting to live in a real S3, or the volume growing to the point where the
+upload from the local machine becomes the bottleneck.
 
-CREDENCIAL: nenhuma linha deste modulo le, guarda ou transporta segredo. Tudo vem de
-`~/.snowflake/config.toml` pelo nome da conexao, que o proprio conector resolve —
-inclusive `private_key_file`. Autenticacao por PAR DE CHAVES, nao por senha: e o metodo
-que o Snowflake recomenda para acesso programatico, e o unico que serve para uma DAG, que
-nao tem como abrir navegador nem digitar senha.
+CREDENTIAL: no line of this module reads, stores or carries a secret. Everything comes from
+`~/.snowflake/config.toml` by connection name, which the connector itself resolves —
+including `private_key_file`. KEY-PAIR authentication, not password: it is the method
+Snowflake recommends for programmatic access, and the only one that works for a DAG, which
+has no way to open a browser or type a password.
 """
 
 from __future__ import annotations
 
 import os
 
-from .snowflake_export import SPECS, STAGE_SCHEMA, _describe, ddl_for
+from .warehouse_cut import SPECS, STAGE_SCHEMA, describe, ddl_for
 
 DEFAULT_CONNECTION = os.environ.get("RETAIL_SNOWFLAKE_CONNECTION", "spark_retail")
 DEFAULT_DATABASE = os.environ.get("RETAIL_SNOWFLAKE_DATABASE", "RETAIL")
 
-# O PAPEL DO CARREGADOR, e nao o da conexao. A conexao de ~/.snowflake/config.toml aponta
-# para o papel administrativo porque e ela que roda o bootstrap; a carga diaria sobrescreve
-# para RETAIL_LOADER. Sem isto, criar tres papeis e continuar carregando como ACCOUNTADMIN
-# — que foi o estado ate aqui: o controle existia, estava verificado, e nao era usado.
+# THE LOADER'S ROLE, not the connection's. The ~/.snowflake/config.toml connection points
+# to the administrative role because it is the one that runs the bootstrap; the daily load
+# overrides it to RETAIL_LOADER. Without this, we would create three roles and keep loading
+# as ACCOUNTADMIN — which was the state until now: the control existed, was verified, and
+# was not used.
 DEFAULT_LOAD_ROLE = os.environ.get("RETAIL_SNOWFLAKE_LOAD_ROLE", "RETAIL_LOADER")
 
-# O warehouse (compute) e objeto SEPARADO do database, com grant proprio. Enquanto tudo
-# rodava como ACCOUNTADMIN isso passou despercebido, porque administrador enxerga todo
-# warehouse; o primeiro `load` vestindo RETAIL_LOADER falhou com "No active warehouse
-# selected" — a conexao pedia COMPUTE_WH, o papel nao tinha USAGE, e o Snowflake apenas
-# deixa a sessao sem compute em vez de recusar a conexao.
+# The warehouse (compute) is an object SEPARATE from the database, with its own grant.
+# While everything ran as ACCOUNTADMIN this went unnoticed, because an administrator sees
+# every warehouse; the first `load` wearing RETAIL_LOADER failed with "No active warehouse
+# selected" — the connection asked for COMPUTE_WH, the role had no USAGE, and Snowflake just
+# leaves the session without compute instead of refusing the connection.
 DEFAULT_WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
 
-# Schemas que o dbt vai escrever. Criados aqui porque `dbt run` nao cria schema com
-# comentario nem garante ordem; e DDL de infraestrutura, nao de modelo.
+# Schemas that dbt will write. Created here because `dbt run` neither creates a schema with
+# a comment nor guarantees order; it is infrastructure DDL, not model DDL.
 SCHEMAS = {
-    STAGE_SCHEMA: "Espelho 1:1 do recorte do Silver. Sem regra de negocio. Full refresh.",
-    "GOLD": "Modelo dimensional conformado: DIM_* e FACT_*. Escrito por dbt-snowflake.",
-    "MART": "Tabelas por pergunta, com o grao declarado no cabecalho de cada modelo.",
+    STAGE_SCHEMA: "1:1 mirror of the Silver cut. No business rule. Full refresh.",
+    "GOLD": "Conformed dimensional model: DIM_* and FACT_*. Written by dbt-snowflake.",
+    "MART": "One table per question, with the grain declared in each model header.",
 }
 
 
 class SnowflakeLoadError(Exception):
-    """O destino recusou o DDL, o upload ou a copia."""
+    """The destination refused the DDL, the upload or the copy."""
 
 
 def connect(connection_name: str = DEFAULT_CONNECTION, role: str | None = None):
-    """Conexao pelo nome definido em ~/.snowflake/config.toml. Importa sob demanda.
+    """Connection by the name defined in ~/.snowflake/config.toml. Imported on demand.
 
-    `role` sobrescreve o papel da conexao — usado por check_isolation para abrir uma sessao
-    por papel sem precisar de um arquivo de configuracao por papel.
+    `role` overrides the connection's role — used by check_isolation to open one session
+    per role without needing one configuration file per role.
     """
     try:
         import snowflake.connector
-    except ImportError as exc:  # pragma: no cover - depende do ambiente
+    except ImportError as exc:  # pragma: no cover - depends on the environment
         raise SnowflakeLoadError(
-            "snowflake-connector-python nao esta instalado neste venv. "
-            "Rode `make venv` para reinstalar as dependencias da plataforma."
+            "snowflake-connector-python is not installed in this venv. "
+            "Run `make venv` to reinstall the platform dependencies."
         ) from exc
 
     extra = {"role": role} if role else {}
@@ -73,67 +74,68 @@ def connect(connection_name: str = DEFAULT_CONNECTION, role: str | None = None):
         return snowflake.connector.connect(connection_name=connection_name, **extra)
     except Exception as exc:
         raise SnowflakeLoadError(
-            f"nao foi possivel conectar pela conexao '{connection_name}' de "
+            f"could not connect using connection '{connection_name}' from "
             f"~/.snowflake/config.toml: {exc}"
         ) from exc
 
 
 def require_warehouse(cursor) -> None:
-    """Confere que a sessao tem compute. Roda ANTES de qualquer consulta a dado.
+    """Checks that the session has compute. Runs BEFORE any data query.
 
-    `current_warehouse()` e funcao de sessao e nao precisa de warehouse para responder — e
-    por isso serve de sonda. Quando o papel nao tem USAGE no warehouse pedido pela conexao,
-    o Snowflake nao recusa a conexao: entrega uma sessao sem compute, e o erro so aparece
-    na primeira consulta a dado, apontando para a sessao em vez de para o grant.
+    `current_warehouse()` is a session function and needs no warehouse to answer — which is
+    why it works as a probe. When the role has no USAGE on the warehouse the connection asks
+    for, Snowflake does not refuse the connection: it hands over a session without compute,
+    and the error only shows up on the first data query, pointing at the session instead of
+    the grant.
     """
-    atual = cursor.execute("select current_warehouse()").fetchone()[0]
-    if not atual:
+    current = cursor.execute("select current_warehouse()").fetchone()[0]
+    if not current:
         raise SnowflakeLoadError(
-            "a sessao esta sem warehouse ativo. O papel desta conexao provavelmente nao "
-            "tem `usage` no warehouse — rode `make warehouse-bootstrap`, que concede "
-            f"usage on warehouse {DEFAULT_WAREHOUSE} aos tres papeis."
+            "the session has no active warehouse. This connection's role probably lacks "
+            "`usage` on the warehouse — run `make warehouse-bootstrap`, which grants "
+            f"usage on warehouse {DEFAULT_WAREHOUSE} to the three roles."
         )
 
 
 def require_schemas(cursor, database: str, schemas=(STAGE_SCHEMA,)) -> None:
-    """Confere que o bootstrap ja rodou. NAO cria nada — e essa a diferenca.
+    """Checks that the bootstrap has already run. Creates NOTHING — that is the difference.
 
-    Confere APENAS os schemas de que o chamador precisa, e o default e so o STAGE. Conferir
-    os tres reprovaria a carga por um motivo certo: `information_schema.schemata` devolve
-    apenas o que o papel enxerga, e RETAIL_LOADER nao enxerga GOLD nem MART — que e
-    precisamente o isolamento pedido. Uma verificacao mais ampla que a necessidade
-    transforma o controle funcionando em falha de execucao.
+    Checks ONLY the schemas the caller needs, and the default is just STAGE. Checking all
+    three would fail the load for a correct reason: `information_schema.schemata` returns
+    only what the role can see, and RETAIL_LOADER sees neither GOLD nor MART — which is
+    precisely the isolation asked for. A check broader than the need turns a working
+    control into an execution failure.
 
-    Antes de os papeis serem vestidos, `load` fazia `create database if not exists` e
-    `create schema if not exists`. Funcionava porque tudo rodava como ACCOUNTADMIN, e era
-    justamente o sintoma: o carregador podia criar database. RETAIL_LOADER nao pode, e nao
-    deve — criar infraestrutura e trabalho de uma vez so, com privilegio administrativo, e
-    ja e o que `bootstrap` faz.
+    Before the roles were worn, `load` ran `create database if not exists` and
+    `create schema if not exists`. It worked because everything ran as ACCOUNTADMIN, and
+    that was precisely the symptom: the loader could create a database. RETAIL_LOADER cannot,
+    and should not — creating infrastructure is a one-off job, with administrative
+    privilege, and is already what `bootstrap` does.
 
-    Conferir em vez de criar tambem melhora o erro: "rode make warehouse-bootstrap" diz o
-    que fazer, e "Insufficient privileges to operate on database" nao.
+    Checking instead of creating also improves the error: "run make warehouse-bootstrap"
+    says what to do, and "Insufficient privileges to operate on database" does not.
     """
     try:
-        linhas = cursor.execute(
+        rows = cursor.execute(
             f"select schema_name from {database}.information_schema.schemata"
         ).fetchall()
     except Exception as exc:
         raise SnowflakeLoadError(
-            f"o database {database} nao existe ou este papel nao o enxerga ({exc}). "
-            f"Rode `make warehouse-bootstrap` uma vez por conta antes de carregar."
+            f"database {database} does not exist or this role cannot see it ({exc}). "
+            f"Run `make warehouse-bootstrap` once per account before loading."
         ) from exc
 
-    existentes = {linha[0].upper() for linha in linhas}
-    faltando = [nome for nome in schemas if nome.upper() not in existentes]
-    if faltando:
+    existing = {row[0].upper() for row in rows}
+    missing = [name for name in schemas if name.upper() not in existing]
+    if missing:
         raise SnowflakeLoadError(
-            f"schema ausente em {database}: {', '.join(faltando)}. "
-            f"Rode `make warehouse-bootstrap` uma vez por conta antes de carregar."
+            f"schema missing in {database}: {', '.join(missing)}. "
+            f"Run `make warehouse-bootstrap` once per account before loading."
         )
 
 
-# O que cada papel PODE e NAO PODE ler. Escrito como matriz para ser executavel: um grant
-# nao verificado e uma intencao, nao um controle.
+# What each role CAN and CANNOT read. Written as a matrix so it is executable: an
+# unverified grant is an intention, not a control.
 ISOLATION_MATRIX = {
     "RETAIL_READER": {
         "allow": ["{db}.MART.MART_CUSTOMER_BASE"],
@@ -151,48 +153,48 @@ ISOLATION_MATRIX = {
 
 
 def check_isolation(connect_as_role, database: str = DEFAULT_DATABASE) -> list[str]:
-    """Prova a matriz acima abrindo uma sessao por papel. Devolve as violacoes.
+    """Proves the matrix above by opening one session per role. Returns the violations.
 
-    `USE SECONDARY ROLES NONE` NAO E DETALHE — e o que torna este teste valido.
-    Contas Snowflake modernas vem com DEFAULT_SECONDARY_ROLES = ('ALL'), e nesse modo a
-    sessao ativa TODOS os papeis do usuario alem do primario. Medido nesta conta: com
-    secondary roles ativos, RETAIL_READER lia GOLD e STAGE sem problema, porque o mesmo
-    usuario tambem tem ACCOUNTADMIN — e `show grants to role RETAIL_READER` continuava
-    mostrando apenas MART, ou seja, a configuracao parecia certa e o comportamento nao era.
-    Uma verificacao de RBAC feita da sessao de um admin sem desligar isso passa por
-    engano, sempre.
+    `USE SECONDARY ROLES NONE` IS NOT A DETAIL — it is what makes this test valid.
+    Modern Snowflake accounts come with DEFAULT_SECONDARY_ROLES = ('ALL'), and in that mode
+    the session activates ALL of the user's roles besides the primary one. Measured on this
+    account: with secondary roles active, RETAIL_READER read GOLD and STAGE without trouble,
+    because the same user also has ACCOUNTADMIN — and `show grants to role RETAIL_READER`
+    kept showing only MART, that is, the configuration looked right and the behavior was
+    not. An RBAC check made from an admin session without turning this off passes by
+    mistake, always.
 
-    Em producao o isolamento de verdade vem de um USUARIO DE SERVICO por papel, sem
-    ACCOUNTADMIN. Aqui ha um usuario so, entao desligar os papeis secundarios e a forma de
-    provar que os grants estao corretos.
+    In production, real isolation comes from one SERVICE USER per role, without
+    ACCOUNTADMIN. Here there is a single user, so turning off secondary roles is the way to
+    prove the grants are correct.
     """
-    problemas = []
-    for papel, esperado in ISOLATION_MATRIX.items():
+    problems = []
+    for role, expected in ISOLATION_MATRIX.items():
         try:
-            connection = connect_as_role(papel)
+            connection = connect_as_role(role)
         except Exception as exc:
-            problemas.append(f"{papel}: nao foi possivel abrir sessao ({exc})")
+            problems.append(f"{role}: could not open a session ({exc})")
             continue
         cursor = connection.cursor()
         try:
             cursor.execute("use secondary roles none")
-            for alvo in esperado["allow"]:
-                tabela = alvo.format(db=database)
+            for target in expected["allow"]:
+                table = target.format(db=database)
                 try:
-                    cursor.execute(f"select count(*) from {tabela}").fetchone()
+                    cursor.execute(f"select count(*) from {table}").fetchone()
                 except Exception:
-                    problemas.append(f"{papel}: DEVERIA ler {tabela} e foi negado")
-            for alvo in esperado["deny"]:
-                tabela = alvo.format(db=database)
+                    problems.append(f"{role}: SHOULD read {table} and was denied")
+            for target in expected["deny"]:
+                table = target.format(db=database)
                 try:
-                    cursor.execute(f"select count(*) from {tabela}").fetchone()
-                    problemas.append(f"{papel}: NAO deveria ler {tabela} e leu")
+                    cursor.execute(f"select count(*) from {table}").fetchone()
+                    problems.append(f"{role}: should NOT read {table} and did")
                 except Exception:
                     pass
         finally:
             cursor.close()
             connection.close()
-    return problemas
+    return problems
 
 
 def qualified(table: str, database: str = DEFAULT_DATABASE) -> str:
@@ -200,69 +202,78 @@ def qualified(table: str, database: str = DEFAULT_DATABASE) -> str:
 
 
 def transfer_statements(table: str, parquet_path: str, database: str = DEFAULT_DATABASE) -> list[str]:
-    """Os dois comandos que movem um parquet para uma tabela STAGE.
+    """The two commands that move a parquet into a STAGE table.
 
-    Funcao propria, e nao duas f-strings dentro do laco de `load`, para que a suite possa
-    conferi-los SEM Snowflake. As duas decisoes abaixo custaram uma execucao real cada uma,
-    e nenhuma falharia de forma obvia se voltasse atras.
+    A function of its own, and not two f-strings inside the `load` loop, so the suite can
+    check them WITHOUT Snowflake. Each of the two decisions below cost one real run, and
+    neither would fail in an obvious way if reverted.
     """
-    alvo = qualified(table, database)
+    target = qualified(table, database)
 
-    # STAGE DE TABELA SEMPRE QUALIFICADO. `@%TABELA` resolve contra o schema CORRENTE da
-    # sessao, e `create schema` do Snowflake TROCA o schema corrente — medido: ensure_schemas
-    # termina em MART, e o PUT passava a procurar RETAIL.MART.%STG_PRODUCT_PRICE, que nao
-    # existe. Qualificar torna o comando independente do estado da sessao, que e o que se
-    # quer num carregador.
+    # TABLE STAGE ALWAYS QUALIFIED. `@%TABLE` resolves against the session's CURRENT schema,
+    # and Snowflake's `create schema` CHANGES the current schema — measured: ensure_schemas
+    # ends on MART, and the PUT started looking for RETAIL.MART.%STG_PRODUCT_PRICE, which
+    # does not exist. Qualifying makes the command independent of session state, which is
+    # what you want in a loader.
     stage = f"@{database}.{STAGE_SCHEMA}.%{table}"
 
     return [
-        # OVERWRITE = TRUE: o stage de tabela guarda o arquivo entre execucoes, e sem isso
-        # um COPY seguinte leria o arquivo antigo junto do novo e dobraria as linhas.
-        # AUTO_COMPRESS = FALSE: o parquet ja sai comprimido em zstd do DuckDB; deixar o
-        # PUT envolver tudo num gzip so faria o Snowflake desembrulhar duas vezes.
+        # OVERWRITE = TRUE: the table stage keeps the file between runs, and without this a
+        # following COPY would read the old file along with the new one and double the rows.
+        # AUTO_COMPRESS = FALSE: the parquet already comes out of DuckDB zstd-compressed;
+        # letting PUT wrap it all in gzip would only make Snowflake unwrap twice.
         f"put file://{os.path.abspath(parquet_path)} {stage} "
         f"overwrite = true auto_compress = false",
 
-        # MATCH_BY_COLUMN_NAME dispensa a ordem das colunas bater entre o parquet e a
-        # tabela. Sem isso, acrescentar uma coluna no meio do recorte carregaria dado na
-        # coluna errada em silencio — o unico erro desta camada que nenhum teste a jusante
-        # pegaria, porque o resultado continua sendo um numero plausivel.
-        f"copy into {alvo} from {stage} "
-        # USE_LOGICAL_TYPE = TRUE. Sem isto, TODO timestamp atravessa a fronteira 56
-        # MILHOES DE ANOS no futuro, e nada reprova.
+        # MATCH_BY_COLUMN_NAME removes the need for the column order to match between the
+        # parquet and the table. Without it, adding a column in the middle of the cut would
+        # silently load data into the wrong column — the one error in this layer no
+        # downstream test would catch, because the result is still a plausible number.
+        f"copy into {target} from {stage} "
+        # USE_LOGICAL_TYPE = TRUE. Without this, EVERY timestamp crosses the boundary 56
+        # MILLION YEARS in the future, and nothing fails.
         #
-        # O DuckDB anota a unidade do timestamp so no LogicalType moderno do parquet
-        # (Timestamp(timeUnit=microseconds)) e deixa o ConvertedType legado em NONE. O
-        # leitor do Snowflake ignora o LogicalType por padrao, cai no legado, nao acha
-        # unidade nenhuma e assume MILISSEGUNDOS: 1,787e15 microssegundos viram 1,787e15
-        # milissegundos, ou seja o ano 56.648.666.
+        # DuckDB records the timestamp unit only in parquet's modern LogicalType
+        # (Timestamp(timeUnit=microseconds)) and leaves the legacy ConvertedType as NONE.
+        # Snowflake's reader ignores LogicalType by default, falls back to the legacy one,
+        # finds no unit and assumes MILLISECONDS: 1.787e15 microseconds become 1.787e15
+        # milliseconds, that is, the year 56,648,666.
         #
-        # POR QUE ISTO SO APARECEU AGORA: era a primeira vez que um TIMESTAMP cruzava a
-        # fronteira. Ate o Marco 6 o recorte inteiro so tinha DATE (ingestion_date,
-        # snapshot_date, valid_from), e DATE viaja como date32 sem ambiguidade de unidade.
+        # WHY THIS ONLY SHOWED UP NOW: it was the first time a TIMESTAMP crossed the
+        # boundary. Up to Milestone 6 the whole cut only had DATE (ingestion_date,
+        # snapshot_date, valid_from), and DATE travels as date32 with no unit ambiguity.
         #
-        # E POR QUE NADA PEGOU: a reconferencia do carregador compara CONTAGEM de linhas, e
-        # a contagem estava certa. O dbt construiu os 166 nos em verde — as duracoes viraram
-        # numeros grandes, nao nulos nem erros, e um funil feito de `count_if(x is not
-        # null)` continua exato quando `x` esta 56 milhoes de anos deslocado. Quem apontou
-        # foi ler o mart de SLA e ver 80.000.060 minutos de separacao. Por isso existe
-        # agora assert_order_milestones_are_plausible_against_the_order_date, que reprova
-        # se um marco cair fora da janela do proprio pedido.
+        # AND WHY NOTHING CAUGHT IT: the loader's recheck compares row COUNTS, and the count
+        # was right. dbt built the 166 nodes green — the durations became large numbers, not
+        # nulls or errors, and a funnel made of `count_if(x is not null)` stays exact when
+        # `x` is shifted 56 million years. What flagged it was reading the SLA mart and
+        # seeing 80,000,060 picking minutes. That is why
+        # assert_order_milestones_are_plausible_against_the_order_date now exists, failing
+        # if a milestone falls outside the order's own window.
         f"file_format = (type = parquet use_logical_type = true) "
         f"match_by_column_name = case_insensitive "
         f"on_error = abort_statement",
     ]
 
 
-# Tres papeis, um por VERBO do pipeline — nao um por pessoa. Quem carrega nao modela, quem
-# modela nao le o RAW, e quem consome nao escreve em lugar nenhum. E o que torna "camada
-# governada" uma afirmacao verificavel em vez de um slogan: sem os grants, o Snowflake aqui
-# seria um DuckDB caro.
+# Three roles, one per pipeline VERB — not one per person. Whoever loads does not model,
+# whoever models does not read RAW, and whoever consumes writes nowhere. That is what makes
+# "governed layer" a verifiable claim instead of a slogan: without the grants, Snowflake
+# here would be an expensive DuckDB.
 ROLES = {
     "RETAIL_LOADER": "Loads the Silver cut into STAGE. Does not read GOLD or MART.",
     "RETAIL_TRANSFORMER": "Reads STAGE and writes GOLD and MART. This is dbt's role.",
     "RETAIL_READER": "Read-only on MART. This is the BI and third-party role.",
 }
+
+
+def _literal(text: str) -> str:
+    """SQL string with the single quote doubled. The RETAIL_TRANSFORMER comment says
+    "dbt's role": interpolated raw, the apostrophe closed the literal and the bootstrap died
+    on syntax right after creating RETAIL_LOADER — leaving a role with no grant at all and a
+    load that failed with "must have CREATE TABLE", an error that points at the grant and
+    not at the cause."""
+    return "'" + text.replace("'", "''") + "'"
 
 
 def bootstrap(
@@ -271,181 +282,181 @@ def bootstrap(
     grant_to_user: str | None = None,
     warehouse: str = DEFAULT_WAREHOUSE,
 ) -> list[str]:
-    """Database, schemas, papeis e grants. Idempotente, e separado de `load` de proposito.
+    """Database, schemas, roles and grants. Idempotent, and separate from `load` on purpose.
 
-    Criar papel exige ACCOUNTADMIN e e infraestrutura de uma vez so; misturar isso na carga
-    diaria significaria pedir ACCOUNTADMIN todo dia para mover parquet. O carregador roda
-    com RETAIL_LOADER depois disto.
+    Creating a role requires ACCOUNTADMIN and is one-off infrastructure; mixing it into the
+    daily load would mean asking for ACCOUNTADMIN every day to move parquet. The loader runs
+    as RETAIL_LOADER after this.
     """
-    feito = []
+    done = []
 
-    def executa(sql, descricao):
+    def run(sql, description):
         cursor.execute(sql)
-        feito.append(descricao)
+        done.append(description)
 
-    # O recorte inteiro tem ~146 mil linhas e o `dbt build` fecha em ~12 s. X-Small com
-    # suspensao rapida e a escolha proporcional; o default de 300 s cobraria cinco minutos
-    # de compute ocioso a cada execucao, o que numa conta trial e a diferenca entre
-    # demonstrar o fluxo varias vezes e nao poder.
-    executa(
+    # The whole cut has ~146 thousand rows and `dbt build` finishes in ~12 s. X-Small with
+    # fast suspension is the proportional choice; the 300 s default would bill five minutes
+    # of idle compute on every run, which on a trial account is the difference between
+    # demonstrating the flow several times and not being able to.
+    run(
         f"alter warehouse {warehouse} set warehouse_size = 'XSMALL' "
         f"auto_suspend = 60 auto_resume = true",
         f"warehouse {warehouse}: xsmall, auto_suspend 60s",
     )
 
-    executa(f"create database if not exists {database}", f"database {database}")
-    for nome, comentario in SCHEMAS.items():
-        executa(
-            f"create schema if not exists {database}.{nome} comment = '{comentario}'",
-            f"schema {nome}",
+    run(f"create database if not exists {database}", f"database {database}")
+    for name, comment in SCHEMAS.items():
+        run(
+            f"create schema if not exists {database}.{name} comment = {_literal(comment)}",
+            f"schema {name}",
         )
-    for nome, comentario in ROLES.items():
-        executa(f"create role if not exists {nome} comment = '{comentario}'", f"role {nome}")
-        # Papel customizado pendurado em SYSADMIN — convencao do proprio Snowflake, e aqui
-        # ela deixou de ser cosmetica. Assim que a POSSE das tabelas passou para os papeis
-        # do projeto e os papeis secundarios foram desligados, ACCOUNTADMIN parou de ver os
-        # objetos em information_schema: ele nao herdava esses papeis. Sem esta linha,
-        # vestir o papel custaria a visibilidade administrativa da conta — e o isolamento
-        # nao muda, porque heranca sobe (SYSADMIN passa a ver MART), nunca desce
-        # (RETAIL_READER continua sem GOLD).
-        executa(f"grant role {nome} to role SYSADMIN", f"{nome} -> SYSADMIN")
+    for name, comment in ROLES.items():
+        run(f"create role if not exists {name} comment = {_literal(comment)}", f"role {name}")
+        # Custom role hung under SYSADMIN — Snowflake's own convention, and here it stopped
+        # being cosmetic. As soon as table OWNERSHIP moved to the project roles and secondary
+        # roles were turned off, ACCOUNTADMIN stopped seeing the objects in
+        # information_schema: it did not inherit those roles. Without this line, wearing the
+        # role would cost the account's administrative visibility — and isolation does not
+        # change, because inheritance goes up (SYSADMIN now sees MART), never down
+        # (RETAIL_READER still has no GOLD).
+        run(f"grant role {name} to role SYSADMIN", f"{name} -> SYSADMIN")
 
-    # USAGE no database e pre-requisito de qualquer coisa; sem ele o papel nem enxerga os
-    # schemas que tem permissao de ler. USAGE no WAREHOUSE e o outro pre-requisito, e e
-    # facil de esquecer porque ACCOUNTADMIN nunca precisa dele: os tres papeis leem e
-    # escrevem DADO, e dado sem compute nao se move. Sem esta linha, `load` morre com "No
-    # active warehouse selected" — erro que aponta para a sessao, nao para o grant que
-    # falta.
-    for nome in ROLES:
-        executa(f"grant usage on database {database} to role {nome}", f"usage db -> {nome}")
-        executa(f"grant usage on warehouse {warehouse} to role {nome}", f"usage wh -> {nome}")
+    # USAGE on the database is a prerequisite for anything; without it the role cannot even
+    # see the schemas it is allowed to read. USAGE on the WAREHOUSE is the other
+    # prerequisite, and it is easy to forget because ACCOUNTADMIN never needs it: the three
+    # roles read and write DATA, and data does not move without compute. Without this line,
+    # `load` dies with "No active warehouse selected" — an error that points at the session,
+    # not at the missing grant.
+    for name in ROLES:
+        run(f"grant usage on database {database} to role {name}", f"usage db -> {name}")
+        run(f"grant usage on warehouse {warehouse} to role {name}", f"usage wh -> {name}")
 
-    # LOADER: escreve STAGE, e so.
-    executa(f"grant usage on schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: usage stage")
-    executa(f"grant create table on schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: create table")
-    executa(f"grant all on all tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: tabelas")
-    executa(f"grant all on future tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: tabelas futuras")
+    # LOADER: writes STAGE, and nothing else.
+    run(f"grant usage on schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: usage stage")
+    run(f"grant create table on schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: create table")
+    run(f"grant all on all tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: tables")
+    run(f"grant all on future tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_LOADER", "loader: future tables")
 
-    # POSSE, nao so privilegio. `ddl_for` emite `create or replace table`, e substituir uma
-    # tabela exige OWNERSHIP sobre a que ja existe — `grant all` concede todos os
-    # privilegios APLICAVEIS e posse nao e um deles. Numa conta nova isto e inocuo (o
-    # LOADER cria as tabelas e ja nasce dono); numa conta onde a carga rodou como
-    # ACCOUNTADMIN antes, e o que permite parar de rodar. `copy current grants` preserva o
-    # select do TRANSFORMER, que sem isso seria revogado junto com a posse.
-    executa(
+    # OWNERSHIP, not just privilege. `ddl_for` emits `create or replace table`, and replacing
+    # a table requires OWNERSHIP of the existing one — `grant all` grants every APPLICABLE
+    # privilege and ownership is not one of them. On a new account this is harmless (the
+    # LOADER creates the tables and is born the owner); on an account where the load ran as
+    # ACCOUNTADMIN before, it is what lets it stop doing so. `copy current grants` keeps the
+    # TRANSFORMER's select, which would otherwise be revoked along with ownership.
+    run(
         f"grant ownership on all tables in schema {database}.{STAGE_SCHEMA} "
         f"to role RETAIL_LOADER copy current grants",
-        "loader: posse das tabelas stage",
+        "loader: ownership of stage tables",
     )
 
-    # TRANSFORMER: LE o stage (nunca escreve nele) e escreve GOLD e MART.
-    executa(f"grant usage on schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: usage stage")
-    executa(f"grant select on all tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: select stage")
-    executa(f"grant select on future tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: select stage futuro")
-    # `grant all on SCHEMA` da privilegio no schema (usage, create table), NAO nas tabelas
-    # que ja existem dentro dele — elas pertencem a quem as criou. Sem os dois grants de
-    # tabela abaixo, o TRANSFORMER pode criar tabelas novas em GOLD e nao consegue LER as
-    # que ja estao la. Isso passou despercebido ate check_isolation reprovar.
-    for camada in ("GOLD", "MART"):
-        executa(f"grant all on schema {database}.{camada} to role RETAIL_TRANSFORMER",
-                f"transformer: schema {camada}")
-        executa(f"grant all on all tables in schema {database}.{camada} to role RETAIL_TRANSFORMER",
-                f"transformer: tabelas {camada}")
-        executa(f"grant all on future tables in schema {database}.{camada} to role RETAIL_TRANSFORMER",
-                f"transformer: tabelas futuras {camada}")
-        # POSSE. Mesma razao do STAGE, um nivel acima: o dbt materializa com
-        # `create or replace table`, e substituir exige OWNERSHIP sobre a tabela existente.
-        # Medido: com `grant all` e sem posse, o `dbt build` reprovou 8 modelos com
-        # "must have OWNERSHIP granted on TABLE". Inocuo numa conta nova, onde o proprio
-        # TRANSFORMER cria e ja nasce dono. `copy current grants` preserva o select do
-        # READER em MART — sem ele, vestir o papel silenciaria o consumidor.
-        for objeto in ("tables", "views"):
-            executa(
-                f"grant ownership on all {objeto} in schema {database}.{camada} "
+    # TRANSFORMER: READS stage (never writes to it) and writes GOLD and MART.
+    run(f"grant usage on schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: usage stage")
+    run(f"grant select on all tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: select stage")
+    run(f"grant select on future tables in schema {database}.{STAGE_SCHEMA} to role RETAIL_TRANSFORMER", "transformer: select future stage")
+    # `grant all on SCHEMA` gives privilege on the schema (usage, create table), NOT on the
+    # tables that already exist inside it — those belong to whoever created them. Without
+    # the two table grants below, the TRANSFORMER can create new tables in GOLD and cannot
+    # READ the ones already there. This went unnoticed until check_isolation failed.
+    for layer in ("GOLD", "MART"):
+        run(f"grant all on schema {database}.{layer} to role RETAIL_TRANSFORMER",
+            f"transformer: schema {layer}")
+        run(f"grant all on all tables in schema {database}.{layer} to role RETAIL_TRANSFORMER",
+            f"transformer: tables {layer}")
+        run(f"grant all on future tables in schema {database}.{layer} to role RETAIL_TRANSFORMER",
+            f"transformer: future tables {layer}")
+        # OWNERSHIP. Same reason as STAGE, one level up: dbt materializes with
+        # `create or replace table`, and replacing requires OWNERSHIP of the existing table.
+        # Measured: with `grant all` and no ownership, `dbt build` failed 8 models with
+        # "must have OWNERSHIP granted on TABLE". Harmless on a new account, where the
+        # TRANSFORMER itself creates and is born the owner. `copy current grants` keeps the
+        # READER's select on MART — without it, wearing the role would silence the consumer.
+        for object_kind in ("tables", "views"):
+            run(
+                f"grant ownership on all {object_kind} in schema {database}.{layer} "
                 f"to role RETAIL_TRANSFORMER copy current grants",
-                f"transformer: posse de {objeto} em {camada}",
+                f"transformer: ownership of {object_kind} in {layer}",
             )
 
-    # READER: so MART, so leitura. Nao enxerga STAGE nem GOLD — quem consome nao precisa
-    # saber como o numero foi feito, e nao deveria poder ler o intermediario.
-    executa(f"grant usage on schema {database}.MART to role RETAIL_READER", "reader: usage mart")
-    executa(f"grant select on all tables in schema {database}.MART to role RETAIL_READER", "reader: select mart")
-    executa(f"grant select on future tables in schema {database}.MART to role RETAIL_READER", "reader: select mart futuro")
+    # READER: only MART, read-only. Sees neither STAGE nor GOLD — whoever consumes does not
+    # need to know how the number was made, and should not be able to read the intermediate.
+    run(f"grant usage on schema {database}.MART to role RETAIL_READER", "reader: usage mart")
+    run(f"grant select on all tables in schema {database}.MART to role RETAIL_READER", "reader: select mart")
+    run(f"grant select on future tables in schema {database}.MART to role RETAIL_READER", "reader: select future mart")
 
     if grant_to_user:
-        for nome in ROLES:
-            executa(f"grant role {nome} to user {grant_to_user}", f"{nome} -> {grant_to_user}")
+        for name in ROLES:
+            run(f"grant role {name} to user {grant_to_user}", f"{name} -> {grant_to_user}")
 
-        # SEM ISTO, VESTIR O PAPEL NAO SIGNIFICA NADA. Contas Snowflake modernas vem com
-        # DEFAULT_SECONDARY_ROLES = ('ALL'): a sessao ativa TODOS os papeis do usuario alem
-        # do primario. Medido nesta conta antes da mudanca:
+        # WITHOUT THIS, WEARING THE ROLE MEANS NOTHING. Modern Snowflake accounts come with
+        # DEFAULT_SECONDARY_ROLES = ('ALL'): the session activates ALL of the user's roles
+        # besides the primary one. Measured on this account before the change:
         #   current_role() = ACCOUNTADMIN
         #   current_secondary_roles() = ORGADMIN, RETAIL_READER, RETAIL_TRANSFORMER, RETAIL_LOADER
-        # Ou seja: conectar como RETAIL_LOADER continuaria carregando ACCOUNTADMIN por
-        # baixo, e todo teste de permissao passaria por engano. Desligar no USUARIO faz o
-        # papel primario valer para toda conexao — a do dbt inclusive, que nao tem onde
-        # rodar um `use secondary roles none`.
-        executa(
+        # That is: connecting as RETAIL_LOADER would keep carrying ACCOUNTADMIN underneath,
+        # and every permission test would pass by mistake. Turning it off on the USER makes
+        # the primary role hold for every connection — dbt's included, which has nowhere to
+        # run a `use secondary roles none`.
+        run(
             f"alter user {grant_to_user} set default_secondary_roles = ()",
-            f"papeis secundarios desligados para {grant_to_user}",
+            f"secondary roles turned off for {grant_to_user}",
         )
 
-    return feito
+    return done
 
 
 def load(connection, duck_connection, stage_dir: str, database: str = DEFAULT_DATABASE) -> dict:
-    """Cria as tabelas STAGE e carrega os parquet de stage_dir. Devolve o resumo.
+    """Creates the STAGE tables and loads the parquet files from stage_dir. Returns the summary.
 
-    `duck_connection` entra so para DESCREVER o recorte — o schema das tabelas vem da
-    propria query, nunca de um DDL escrito a mao ao lado (ver snowflake_export). Nenhuma
-    linha de dado passa pelo DuckDB aqui: os bytes ja estao no parquet.
+    `duck_connection` is used only to DESCRIBE the cut — the table schema comes from the
+    query itself, never from a hand-written DDL next to it (see warehouse_cut). No data row
+    goes through DuckDB here: the bytes are already in the parquet.
     """
     cursor = connection.cursor()
     require_warehouse(cursor)
     require_schemas(cursor, database)
 
-    resumo = {}
+    summary = {}
     for spec in SPECS:
-        nome = spec["name"]
-        caminho = os.path.join(stage_dir, f"{nome}.parquet")
-        if not os.path.exists(caminho):
+        name = spec["name"]
+        path = os.path.join(stage_dir, f"{name}.parquet")
+        if not os.path.exists(path):
             raise SnowflakeLoadError(
-                f"parquet ausente: {caminho}. Rode `make warehouse-export` antes de carregar."
+                f"missing parquet: {path}. Run `make warehouse-export` before loading."
             )
 
-        colunas = _describe(duck_connection, spec["sql"].strip())
-        cursor.execute(ddl_for(spec, colunas, database))
-        for comando in transfer_statements(nome, caminho, database):
-            cursor.execute(comando)
+        columns = describe(duck_connection, spec["sql"].strip())
+        cursor.execute(ddl_for(spec, columns, database))
+        for statement in transfer_statements(name, path, database):
+            cursor.execute(statement)
 
-        alvo = qualified(nome, database)
-        carregadas = cursor.execute(f"select count(*) from {alvo}").fetchone()[0]
-        resumo[nome] = {"rows": carregadas, "bytes": os.path.getsize(caminho)}
+        target = qualified(name, database)
+        loaded = cursor.execute(f"select count(*) from {target}").fetchone()[0]
+        summary[name] = {"rows": loaded, "bytes": os.path.getsize(path)}
 
     cursor.close()
-    return resumo
+    return summary
 
 
 def verify(connection, stage_dir: str, expected: dict, database: str = DEFAULT_DATABASE) -> list[str]:
-    """Reconfere a contagem de cada tabela contra o que o export declarou.
+    """Rechecks each table's count against what the export declared.
 
-    Mesma disciplina de `verify-landing`: carregar sem reconferir e confiar no transporte.
-    Devolve a lista de divergencias — vazia quando tudo bate.
+    Same discipline as `verify-landing`: loading without rechecking is trusting the
+    transport. Returns the list of divergences — empty when everything matches.
     """
     cursor = connection.cursor()
-    problemas = []
+    problems = []
     for spec in SPECS:
-        nome = spec["name"]
-        alvo = qualified(nome, database)
+        name = spec["name"]
+        target = qualified(name, database)
         try:
-            destino = cursor.execute(f"select count(*) from {alvo}").fetchone()[0]
+            destination = cursor.execute(f"select count(*) from {target}").fetchone()[0]
         except Exception as exc:
-            problemas.append(f"{nome}: nao foi possivel contar no destino ({exc})")
+            problems.append(f"{name}: could not count at the destination ({exc})")
             continue
-        origem = expected.get(nome, {}).get("rows")
-        if origem is None:
-            problemas.append(f"{nome}: o export nao declarou contagem")
-        elif origem != destino:
-            problemas.append(f"{nome}: origem {origem} != destino {destino}")
+        source = expected.get(name, {}).get("rows")
+        if source is None:
+            problems.append(f"{name}: the export declared no count")
+        elif source != destination:
+            problems.append(f"{name}: source {source} != destination {destination}")
     cursor.close()
-    return problemas
+    return problems

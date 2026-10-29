@@ -1,38 +1,38 @@
--- PROJECAO FIEL dos clientes sinteticos. Nenhuma interpretacao alem de tipar e de marcar
--- qual ingestion_date e a corrente.
+-- FAITHFUL PROJECTION of the synthetic customers. No interpretation beyond typing and
+-- marking which ingestion_date is the current one.
 --
--- GRAO: (ingestion_date, customer_id). Nao e customer_id sozinho: cada reexecucao da
--- Source cria uma ingestion_date nova, e os mesmos ids convivem em datas diferentes. O
--- `wh` esta embutido no proprio id (cust_mad1_000042), entao nao ha colisao entre
--- armazens dentro de uma data — CONTRACT.md secao 3, garantia 3.
+-- GRAIN: (ingestion_date, customer_id). Not customer_id alone: each Source re-run creates
+-- a new ingestion_date, and the same ids coexist across different dates. The `wh` is
+-- embedded in the id itself (cust_mad1_000042), so there is no collision between
+-- warehouses within a date — CONTRACT.md section 3, guarantee 3.
 --
--- O CLIENTE E SINTETICO, O ENDERECO NAO. Municipio, via, CEP e faixa de numeracao vem
--- sempre de uma linha real do Callejero. Este modelo nao acrescenta nem corrige nada
--- disso: o que a Source gravou e o que sai daqui.
+-- THE CUSTOMER IS SYNTHETIC, THE ADDRESS IS NOT. Municipality, street, postcode and
+-- numbering range always come from a real Callejero row. This model neither adds nor
+-- corrects any of that: what the Source wrote is what comes out of here.
 --
--- `wh` PRESERVADO, nao renomeado para `warehouse`. As duas tabelas com que este modelo se
--- junta (warehouse_service_area, warehouse_province_map) usam `wh`, e o vocabulario da
--- fonte e o que manda — o mesmo criterio que manteve `numbering_type` em vez de inventar
--- `address_precision` (ARCHITECTURE.md, "Escolhas de vocabulario: preservar, nao
--- renomear"). silver_product_price usa `warehouse` porque a Mercadona chama assim la.
+-- `wh` PRESERVED, not renamed to `warehouse`. The two tables this model joins with
+-- (warehouse_service_area, warehouse_province_map) use `wh`, and the source's vocabulary
+-- rules — the same criterion that kept `numbering_type` instead of inventing
+-- `address_precision` (ARCHITECTURE.md, "Vocabulary choices: preserve, do not rename").
+-- silver_product_price uses `warehouse` because that is what Mercadona calls it there.
 --
--- partition_wh EXISTE PARA SER RECONCILIADO. Medido: o campo `wh` do registro e o
--- segmento hive `wh=` tem o MESMO nome, e o DuckDB deduplica os dois numa coluna so — o
--- valor do registro vence e o do caminho desaparece. Sem uma segunda coluna, uma particao
--- pousada sob o diretorio errado passaria despercebida porque nao haveria com o que
--- comparar. Extrair do filename com regexp devolve o eixo da particao com nome proprio;
--- o teste de igualdade esta em schema.yml. Mesmo motivo de raw_manifest.sql expor
--- `warehouse` (hive) e `source_warehouse` (do manifesto) lado a lado.
+-- partition_wh EXISTS TO BE RECONCILED. Measured: the record's `wh` field and the hive
+-- segment `wh=` have the SAME name, and DuckDB deduplicates both into a single column —
+-- the record's value wins and the path's disappears. Without a second column, a partition
+-- landed under the wrong directory would go unnoticed because there would be nothing to
+-- compare against. Extracting from the filename with a regexp returns the partition axis
+-- under its own name; the equality test is in schema.yml. Same reason raw_manifest.sql
+-- exposes `warehouse` (hive) and `source_warehouse` (from the manifest) side by side.
 --
--- candidate_index e AUDITORIA, nao chave estrangeira. Aponta a linha exata de
--- address_candidates.json, que e insumo efemero do gerador e nao e pousado no RAW. So tem
--- significado contra a referencia identificada no manifesto (ver silver_oltp_manifest).
--- Resolve-lo de volta ao tramo exigiria rematerializar a referencia; o gatilho para fazer
--- isso e um mart precisar de section_code.
+-- candidate_index is AUDIT, not a foreign key. It points to the exact row of
+-- address_candidates.json, which is an ephemeral generator input and is not landed in RAW.
+-- It only has meaning against the reference identified in the manifest (see
+-- silver_oltp_manifest). Resolving it back to the segment would require re-materializing
+-- the reference; the trigger to do that is a mart needing section_code.
 --
--- Este modelo assume ao menos um arquivo aterrissado (read_json falha sobre glob vazio).
--- Quando a source ainda nao aterrissou nada, `make silver` o exclui do build via
--- `retail-platform has-data simulated_oltp` — mesmo tratamento das outras tres.
+-- This model assumes at least one landed file (read_json fails on an empty glob).
+-- When the source has not landed anything yet, `make silver` excludes it from the build via
+-- `retail-platform has-data simulated_oltp` — the same treatment as the other three.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_customer.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -70,11 +70,11 @@ with raw as (
 select
     ingestion_date,
 
-    -- Uma regeracao da base cria outra ingestion_date, e este modelo empilha todas (o
-    -- historico e deliberado: e o que permite ver a base crescer). Sem uma marca
-    -- explicita, quem consultar sem filtrar soma clientes de geracoes diferentes.
-    -- `where is_latest_ingestion` e a forma certa de ler a base atual — mesma convencao
-    -- dos 7 modelos de referencia do INE.
+    -- A regeneration of the base creates another ingestion_date, and this model stacks them
+    -- all (the history is deliberate: it is what lets you watch the base grow). Without an
+    -- explicit marker, whoever queries without filtering sums customers from different
+    -- generations. `where is_latest_ingestion` is the right way to read the current base —
+    -- same convention as the 7 INE reference models.
     ingestion_date = max(ingestion_date) over ()         as is_latest_ingestion,
 
     wh,
@@ -97,11 +97,11 @@ select
     sex_label,
     birth_year,
 
-    -- A IDADE E O ATRIBUTO ESTAVEL, birth_year e o derivado. O gerador sorteia idade e
-    -- grava `birth_year = year(ingestion_date) - idade` (customers_generator.py:189),
-    -- entao esta subtracao devolve EXATAMENTE a idade amostrada, sem aproximacao. Importa
-    -- porque e o que sobrevive a uma regeracao em outra data: a pessoa mantem a idade e
-    -- muda o ano de nascimento (CONTRACT.md secao 3).
+    -- AGE IS THE STABLE ATTRIBUTE, birth_year is the derived one. The generator draws an age
+    -- and writes `birth_year = year(ingestion_date) - age` (customers_generator.py:189),
+    -- so this subtraction returns EXACTLY the sampled age, with no approximation. It matters
+    -- because it is what survives a regeneration on another date: the person keeps the age
+    -- and changes the birth year (CONTRACT.md section 3).
     year(ingestion_date) - birth_year                    as age_at_ingestion
 
 from raw

@@ -3,26 +3,26 @@ version: 2
 models:
   - name: silver_order_event
     description: >
-      GRAO (event_id). Projecao fiel do log de eventos de pedido: envelope tipado, payload
-      preservado como JSON. Cada linha e um evento imutavel; o estado do pedido nao mora aqui,
-      e o fold, e ele mora em silver_order.
+      GRAIN (event_id). Faithful projection of the order event log: typed envelope, payload
+      preserved as JSON. Each row is an immutable event; the order's state does not live here,
+      it is the fold, and it lives in silver_order.
 
-      `ingestion_date` e a DATA DO PEDIDO, nao a do evento — todo evento de um pedido fica na
-      particao do dia em que ele foi colocado, mesmo atravessando a meia-noite. Medido na
-      janela de 2026-08-24 a 08-27: 4.567 de 44.456 eventos (10,3%) ocorrem depois da
-      meia-noite do dia do pedido. Por isso `event_date` existe ao lado, e `crosses_order_date`
-      marca o caso.
+      `ingestion_date` is the ORDER DATE, not the event's — every event of an order stays in the
+      partition of the day it was placed, even when crossing midnight. Measured on the
+      2026-08-24 to 08-27 window: 4,567 of 44,456 events (10.3%) occur after
+      midnight of the order day. That is why `event_date` exists alongside, and `crosses_order_date`
+      flags the case.
 
-      O payload atravessa como JSON e nao como STRUCT de proposito: deixar o DuckDB inferir
-      produz a uniao dos campos dos 12 tipos, e essa uniao depende do que a amostragem viu.
-      Um dia sem devolucao nao teria `returned_amount` e um modelo a jusante deixaria de
-      compilar por sorteio.
+      The payload crosses as JSON and not as a STRUCT on purpose: letting DuckDB infer
+      produces the union of the fields of the 12 types, and that union depends on what sampling saw.
+      A day without returns would have no `returned_amount` and a downstream model would stop
+      compiling by chance.
     columns:
       - name: event_id
-        description: sha256(order_id|sequence_no), truncado em 32. Deterministico por contrato.
+        description: sha256(order_id|sequence_no), truncated to 32. Deterministic by contract.
         tests: [not_null, unique]
       - name: event_type
-        description: Um dos 12 tipos do vocabulario fechado do contrato.
+        description: One of the 12 types of the contract's closed vocabulary.
         tests:
           - not_null
           - accepted_values:
@@ -41,90 +41,90 @@ models:
                   - order_delivery_failed
                   - order_returned
       - name: event_version
-        description: Versao do schema do payload. Uma versao nova exige leitura nova.
+        description: Payload schema version. A new version requires a new reader.
         tests:
           - not_null
           - accepted_values: {arguments: {values: [1], quote: false}}
       - name: order_id
-        description: Agregado do evento, e chave de particao do broker um nivel adiante.
+        description: The event's aggregate, and the broker's partition key one level further on.
         tests: [not_null]
       - name: sequence_no
-        description: Posicao no agregado, 1..N sem buracos. Unica ordem total dentro do pedido.
+        description: Position within the aggregate, 1..N with no gaps. The only total order within the order.
         tests: [not_null]
       - name: occurred_at
-        description: Instante do evento em UTC. Deriva da data da particao, nunca do relogio.
+        description: Instant of the event in UTC. Derived from the partition date, never from the clock.
         tests: [not_null]
       - name: event_date
-        description: Dia em que o evento ocorreu. Pode ser posterior a ingestion_date.
+        description: Day the event occurred. May be later than ingestion_date.
         tests: [not_null]
       - name: crosses_order_date
-        description: Verdadeiro quando o evento ocorreu depois da meia-noite do dia do pedido.
+        description: True when the event occurred after midnight of the order day.
         tests: [not_null]
       - name: ingestion_date
-        description: DIA DO PEDIDO. Nao e a data do evento — ver a descricao do modelo.
+        description: ORDER DAY. It is not the event date — see the model description.
         tests: [not_null]
       - name: wh
         tests:
           - not_null
           - accepted_values: {arguments: {values: [mad1, bcn1, svq1, vlc1]}}
       - name: partition_wh
-        description: Eixo hive da particao, extraido do filename para poder ser reconciliado.
+        description: The partition's hive axis, extracted from the filename so it can be reconciled.
         tests: [not_null]
       - name: producer
         tests:
           - not_null
           - accepted_values: {arguments: {values: [simulated_orders]}}
       - name: payload
-        description: Payload do evento, verbatim. A forma depende de event_type.
+        description: The event payload, verbatim. Its shape depends on event_type.
         tests: [not_null]
 
   - name: silver_order
     description: >
-      GRAO (order_id). O FOLD: estado e medidas de cada pedido, derivados do log. Nao existe
-      estado gravado no RAW — duas representacoes da mesma verdade divergem, entao o estado
-      mora aqui e e sempre reconstruivel.
+      GRAIN (order_id). THE FOLD: state and measures of each order, derived from the log. There is no
+      state written in RAW — two representations of the same truth diverge, so the state
+      lives here and is always rebuildable.
 
-      O fold e NAO-TRIVIAL, e e isso que justifica o modelo de eventos: `net_amount` nao e
-      derivavel de `gross_amount_placed`, porque substituicao e remocao de linha alteram a
-      cesta depois da colocacao. Medido na janela: 108.194 linhas cumpridas sem alteracao,
-      4.670 substituidas (+10.318,99) e 2.321 removidas (-15.153,72).
+      The fold is NON-TRIVIAL, and that is what justifies the event model: `net_amount` is not
+      derivable from `gross_amount_placed`, because line substitution and removal change the
+      basket after placement. Measured on the window: 108,194 lines fulfilled unchanged,
+      4,670 substituted (+10,318.99) and 2,321 removed (-15,153.72).
 
-      `net_amount` e nulo para pedido que nunca chegou a separacao (recusa de pagamento,
-      cancelamento). Nulo aqui significa "nao houve separacao", nao "desconhecido".
+      `net_amount` is null for an order that never reached picking (payment refusal,
+      cancellation). Null here means "there was no picking", not "unknown".
     columns:
       - name: order_id
         tests: [not_null, unique]
       - name: ingestion_date
-        description: DIA DO PEDIDO.
+        description: ORDER DAY.
         tests: [not_null]
       - name: wh
         tests:
           - not_null
           - accepted_values: {arguments: {values: [mad1, bcn1, svq1, vlc1]}}
       - name: customer_id
-        description: Cliente do pedido. Sempre um cliente do proprio armazem.
+        description: The order's customer. Always a customer of the same warehouse.
         tests: [not_null]
       - name: customer_ingestion_date
-        description: Geracao de cliente vigente na data do pedido. Alimenta o SCD2 do Gold.
+        description: Customer generation in effect on the order date. Feeds the Gold SCD2.
         tests: [not_null]
       - name: buyer_age_band
         description: >
-          Faixa etaria do comprador NO MOMENTO DO PEDIDO, carimbada no evento pela Source.
-          Foi ela que escolheu o vetor de pesos por coorte que sorteou esta cesta. Vem do
-          payload e nao de um join com silver_customer: derivar hoje daria a faixa de hoje,
-          e reimplementar os limites em SQL criaria uma segunda definicao que divergiria da
-          primeira no primeiro ajuste.
+          The buyer's age band AT THE TIME OF THE ORDER, stamped on the event by the Source.
+          It is what chose the per-cohort weight vector that drew this basket. It comes from the
+          payload and not from a join with silver_customer: deriving it today would give today's band,
+          and reimplementing the boundaries in SQL would create a second definition that would diverge from the
+          first at the first adjustment.
         tests:
           - not_null
           - accepted_values: {arguments: {values: ['LT35', '35_49', '50_64', 'GE65']}}
       - name: price_as_of
-        description: Snapshot de catalogo que sustenta o preco deste pedido.
+        description: Catalog snapshot that backs this order's price.
         tests: [not_null]
       - name: price_source
         description: >
-          `observed` quando price_as_of e o proprio dia; `carried_forward` quando o dia nao
-          teve snapshot daquele armazem e o ultimo preco conhecido foi carregado adiante.
-          Comparar receita entre dias sem olhar esta coluna compara vintages diferentes.
+          `observed` when price_as_of is the day itself; `carried_forward` when the day had no
+          snapshot for that warehouse and the last known price was carried forward.
+          Comparing revenue across days without looking at this column compares different vintages.
         tests:
           - not_null
           - accepted_values: {arguments: {values: [observed, carried_forward]}}
@@ -138,15 +138,15 @@ models:
                    PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED]
       - name: is_terminal
         description: >
-          DELIVERED nao e terminal: uma devolucao ainda pode vir depois dele, e e por isso
-          que ele nao encerra o agregado.
+          DELIVERED is not terminal: a return may still come after it, which is why
+          it does not close the aggregate.
         tests: [not_null]
       - name: placed_at
         tests: [not_null]
       - name: line_count_placed
         tests: [not_null]
       - name: gross_amount_placed
-        description: Soma das linhas COLOCADAS, antes de qualquer alteracao na separacao.
+        description: Sum of the PLACED lines, before any change at picking.
         tests: [not_null]
       - name: substituted_lines
         tests: [not_null]
@@ -155,34 +155,34 @@ models:
       - name: event_count
         tests: [not_null]
       - name: lifecycle_minutes
-        description: Minutos entre a colocacao e o ultimo evento do pedido.
+        description: Minutes between placement and the order's last event.
         tests: [not_null]
 
   - name: silver_order_line
     description: >
-      GRAO (order_id, line_no). Estado final de cada linha, depois de substituicoes e
-      remocoes. `line_no` e a posicao na cesta colocada e nunca e reaproveitado.
+      GRAIN (order_id, line_no). Final state of each line, after substitutions and
+      removals. `line_no` is the position in the placed basket and is never reused.
 
-      A linha COLOCADA e a linha FINAL convivem: `source_product_id` e o que o cliente pediu,
-      `fulfilled_source_product_id` e o que ele recebeu. Guardar so o segundo apagaria a
-      substituicao, que e o fato que o modelo de eventos existe para registrar.
+      The PLACED line and the FINAL line coexist: `source_product_id` is what the customer ordered,
+      `fulfilled_source_product_id` is what they received. Keeping only the second would erase the
+      substitution, which is the fact the event model exists to record.
 
-      `line_amount` e zero para linha removida, de modo que a soma por pedido feche com
-      `silver_order.net_amount` sem nenhum filtro do consumidor.
+      `line_amount` is zero for a removed line, so that the per-order sum closes with
+      `silver_order.net_amount` without any consumer-side filter.
 
-      ATENCAO AO MEDIR VALOR MEDIO. O `unit_price` da fonte cobre quatro ordens de grandeza:
-      marisco congelado e presunto iberico vendidos por peso chegam a 3.663,00 contra uma
-      mediana de 2,25. Medido: 9 das 4.670 substituicoes cairam acima de 100,00 e respondem
-      por 42% do valor substituido. Media aritmetica de valor de cesta e dominada por punhado
-      de linha — use mediana ou percentil, ou declare a cauda.
+      MIND THIS WHEN MEASURING AVERAGE VALUE. The source's `unit_price` spans four orders of magnitude:
+      frozen seafood and Iberian ham sold by weight reach 3,663.00 against a
+      median of 2.25. Measured: 9 of the 4,670 substitutions landed above 100.00 and account
+      for 42% of the substituted value. An arithmetic mean of basket value is dominated by a handful
+      of lines — use the median or a percentile, or declare the tail.
     columns:
       - name: demand_group
         description: >
-          Grupo de demanda contra o qual a cesta foi calibrada (MAPA 2025). Carimbado no
-          evento pela Source e resolvido pela plataforma contra
-          demand_category_mapping_seed.csv — vem do EVENTO e nao de um join com o catalogo,
-          porque o que importa e o grupo que valia no momento do pedido. A estabilidade do
-          carimbo dentro da janela tem teste proprio em
+          Demand group the basket was calibrated against (MAPA 2025). Stamped on the
+          event by the Source and resolved by the platform against
+          demand_category_mapping_seed.csv — it comes from the EVENT and not from a join with the catalog,
+          because what matters is the group that held at the time of the order. The stamp's stability
+          within the window has its own test in
           tests/assert_demand_group_is_stable_across_the_window.sql.
         tests: [not_null]
       - name: order_id
@@ -191,36 +191,36 @@ models:
         tests: [not_null]
       - name: line_status
         description: >
-          Estado FINAL da linha. `fulfilled` exige que o pedido tenha chegado a separacao
-          (`order_picked`); `not_picked` e a linha de um pedido que morreu antes disso —
-          cancelado ou com pagamento recusado. `placed` e o pedido ainda em voo, que nao
-          ocorre nesta janela. Ate o Marco 4 os tres primeiros nao existiam e tudo que nao
-          fosse substituido ou removido virava `fulfilled`, afirmando separacao em 5.508
-          linhas de 298 pedidos que nunca foram separados.
+          FINAL state of the line. `fulfilled` requires the order to have reached picking
+          (`order_picked`); `not_picked` is the line of an order that died before that —
+          cancelled or with payment refused. `placed` is an order still in flight, which does not
+          occur in this window. Until Milestone 4 the first three did not exist and everything that was
+          not substituted or removed became `fulfilled`, asserting picking on 5,508
+          lines of 298 orders that were never picked.
         tests:
           - not_null
           - accepted_values:
               arguments:
                 values: [placed, fulfilled, substituted, removed, not_picked]
       - name: source_product_id
-        description: O que o cliente PEDIU. Sempre um produto do catalogo daquele wh e data.
+        description: What the customer ORDERED. Always a product from that wh's catalog on that date.
         tests: [not_null]
       - name: fulfilled_source_product_id
         description: >
-          O que o cliente RECEBEU. Nulo quando a linha foi removida OU quando o pedido nunca
-          chegou a separacao — nulo aqui significa "nao existe", nao "desconhecido".
+          What the customer RECEIVED. Null when the line was removed OR when the order never
+          reached picking — null here means "does not exist", not "unknown".
       - name: quantity
         tests: [not_null]
       - name: unit_price
-        description: Preco unitario observado do produto pedido, naquele armazem e data.
+        description: Observed unit price of the ordered product, at that warehouse and date.
         tests: [not_null]
       - name: line_amount
         description: >
-          Contribuicao efetiva da linha. Zero para linha removida e para linha de pedido que
-          nunca foi separado. O valor PEDIDO continua em line_amount_placed, ao lado.
+          The line's effective contribution. Zero for a removed line and for a line of an order that
+          was never picked. The ORDERED value stays in line_amount_placed, alongside.
         tests: [not_null]
       - name: line_amount_placed
-        description: Contribuicao da linha como foi colocada, antes da separacao.
+        description: The line's contribution as placed, before picking.
         tests: [not_null]
       - name: price_source
         tests:
@@ -234,20 +234,20 @@ models:
         tests: [not_null]
       - name: removal_reason
         description: >
-          `unavailable`, e nunca `out_of_stock`: nao existe fato de estoque nesta plataforma,
-          e nomear como se existisse prometeria um dado que ninguem mediu.
+          `unavailable`, and never `out_of_stock`: there is no stock fact in this platform,
+          and naming it as if there were would promise data nobody measured.
         tests:
           - accepted_values: {arguments: {values: [unavailable]}}
 
   - name: silver_orders_manifest
     description: >
-      GRAO (ingestion_date, wh). O manifesto como tabela. Irmao de raw_manifest e de
+      GRAIN (ingestion_date, wh). The manifest as a table. Sibling of raw_manifest and
       silver_oltp_manifest.
 
-      Aqui ele declara o FOLD — order_rows, net_amount_picked, substituted_lines — numeros que
-      so existem depois de dobrar o log. A Source os calculou em Python; o Silver os recalcula
-      em SQL. O teste que cruza os dois fecha manifesto -> RAW -> parquet por caminhos
-      independentes.
+      Here it declares the FOLD — order_rows, net_amount_picked, substituted_lines — numbers that
+      only exist after folding the log. The Source computed them in Python; Silver recomputes them
+      in SQL. The test that crosses the two closes manifest -> RAW -> parquet along independent
+      paths.
     columns:
       - name: run_id
         tests: [not_null, unique]
@@ -256,7 +256,7 @@ models:
       - name: wh
         tests: [not_null]
       - name: source_warehouse
-        description: O armazem segundo o MANIFESTO, para ser comparado com o eixo da particao.
+        description: The warehouse according to the MANIFEST, to be compared with the partition axis.
         tests: [not_null]
       - name: source_name
         tests:
@@ -274,8 +274,8 @@ models:
         tests: [not_null]
       - name: premises_sha256
         description: >
-          Digest da tabela de premissas que gerou esta particao. Trocar uma taxa e regerar
-          mudaria os pedidos sob os mesmos order_id; sem este campo isso nao deixaria rastro.
+          Digest of the premises table that generated this partition. Changing a rate and regenerating
+          would change the orders under the same order_ids; without this field that would leave no trace.
         tests: [not_null]
       - name: price_source
         tests:
@@ -298,17 +298,17 @@ models:
 
   - name: silver_live_order_state
     description: >
-      A PROJECAO VIVA, lida da tabela Iceberg que dois processos escrevem: o consumidor em
-      streaming (`orders-project --sink iceberg`) e a reconstrucao em lote
-      (`orders-rebuild-projection`). Grao: order_id, o mesmo de silver_order.
+      THE LIVE PROJECTION, read from the Iceberg table that two processes write: the streaming
+      consumer (`orders-project --sink iceberg`) and the batch rebuild
+      (`orders-rebuild-projection`). Grain: order_id, the same as silver_order.
 
-      Existe SOMENTE para que a reconciliacao entre os dois caminhos seja uma consulta e nao
-      um script solto. Nao acrescenta fato nenhum ao Lakehouse.
+      It exists ONLY so that the reconciliation between the two paths is a query and not
+      a loose script. It adds no fact to the Lakehouse.
 
-      Fica fora do `dbt build` enquanto a tabela Iceberg nao existir, pela mesma guarda
-      `has-data` das outras sources. O caminho do metadado vem da var
-      `live_order_state_metadata`, resolvida no catalogo por `make silver`: o DuckDB recusa
-      adivinhar qual metadado e o corrente, e a recusa dele esta certa.
+      It stays out of `dbt build` while the Iceberg table does not exist, through the same
+      `has-data` guard as the other sources. The metadata path comes from the var
+      `live_order_state_metadata`, resolved in the catalog by `make silver`: DuckDB refuses to
+      guess which metadata is current, and its refusal is right.
     columns:
       - name: order_id
         tests: [not_null, unique]
@@ -321,51 +321,51 @@ models:
                          PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED]
       - name: last_sequence_no
         description: >
-          Ultimo evento aplicado. E a guarda que torna a fusao entre os dois escritores
-          MONOTONICA: uma escrita que nao avanca esta coluna e descartada, senao um retry
-          poderia gravar um estado antigo por cima e a tabela regrediria sem nada reprovar.
+          Last applied event. It is the guard that makes the merge between the two writers
+          MONOTONIC: a write that does not advance this column is discarded, otherwise a retry
+          could write an old state over a newer one and the table would regress without anything failing.
         tests: [not_null]
       - name: written_by
         description: >
-          PROVENIENCIA: qual dos dois escritores tocou a linha por ultimo. Sem ela, "os dois
-          escritores escreveram" seria afirmacao sobre log, e nao fato consultavel.
+          PROVENANCE: which of the two writers touched the row last. Without it, "both
+          writers wrote" would be a claim about a log, not a queryable fact.
         tests:
           - not_null
           - accepted_values: {arguments: {values: [stream, rebuild]}}
       - name: net_amount
         description: >
-          Nulo para pedido que nunca chegou a separacao — a mesma disciplina de silver_order
-          e do OLTP. Preencher com o valor colocado faria a coluna responder outra pergunta
-          com o mesmo nome.
+          Null for an order that never reached picking — the same discipline as silver_order
+          and the OLTP. Filling it with the placed value would make the column answer another question
+          under the same name.
 
   - name: silver_stock_ledger
     description: >
-      O SALDO DE ESTOQUE, lido da tabela Iceberg que o SPARK escreve — o terceiro escritor
-      do catalogo e o primeiro fora do Python. GRAO: (wh, source_product_id, stock_date),
-      uma linha por serie por dia da janela, inclusive nos dias sem venda: sem elas o saldo
-      pularia justamente os dias em que uma reposicao chega.
+      THE STOCK BALANCE, read from the Iceberg table SPARK writes — the catalog's third writer
+      and the first outside Python. GRAIN: (wh, source_product_id, stock_date),
+      one row per series per day of the window, including days without sales: without them the balance
+      would skip precisely the days on which a replenishment arrives.
 
-      UNICO MODELO DO SILVER QUE NAO DERIVA DE UMA SOURCE. Estoque nao e observado em lugar
-      nenhum deste projeto; o ledger e CALCULADO a partir do consumo observado nos pedidos
-      mais a politica declarada em stock_premises. O consumo conta o produto ENTREGUE (uma
-      linha substituida tira do estoque do substituto), no instante da SEPARACAO, e ignora
-      linhas removidas e pedidos que nunca foram separados.
+      THE ONLY SILVER MODEL THAT DOES NOT DERIVE FROM A SOURCE. Stock is not observed anywhere
+      in this project; the ledger is COMPUTED from the consumption observed in orders
+      plus the policy declared in stock_premises. Consumption counts the DELIVERED product (a
+      substituted line takes from the substitute's stock), at the time of PICKING, and ignores
+      removed lines and orders that were never picked.
 
-      POR QUE SPARK. A forma: e uma soma corrida cujas ENTRADAS sao geradas por decisoes
-      tomadas a partir do proprio estado — saldo baixo emite ordem, a ordem chega dias
-      depois e muda o saldo seguinte. Window function le a partition mas nao escreve de
-      volta nela. Medido em spike_spark_iceberg S7b: a soma corrida em SQL diverge em 14 de
-      30 dias do caso e chega a -70 de saldo. NAO foi por volume: o gatilho de volume nao
-      disparou neste projeto e isso esta medido.
+      WHY SPARK. The shape: it is a running sum whose INPUTS are generated by decisions
+      taken from its own state — a low balance issues an order, the order arrives days
+      later and changes the next balance. A window function reads the partition but does not write back
+      into it. Measured in check_spark_iceberg S7b: the SQL running sum diverges on 14 of
+      the case's 30 days and reaches a balance of -70. It was NOT about volume: the volume trigger did not
+      fire in this project, and that is measured.
 
-      FICA FORA DO BUILD ENQUANTO A TABELA NAO EXISTIR, pelo portao de silver_gate. Nao e
-      tolerancia a falha: e o que mantem o Spark OPCIONAL — um clone novo constroi o Silver
-      inteiro sem JVM.
+      IT STAYS OUT OF THE BUILD WHILE THE TABLE DOES NOT EXIST, through silver_gate's gate. It is not
+      fault tolerance: it is what keeps Spark OPTIONAL — a fresh clone builds the whole
+      Silver without a JVM.
 
-      LIMITE DECLARADO: a ruptura deste ledger e independente do `removal_rate` do gerador,
-      que produz linhas "unavailable" a taxa fixa sem olhar saldo. Uma nao causa a outra.
-      Faze-las coerentes exigiria o gerador LER o ledger, invertendo a dependencia do
-      projeto. Gatilho: um gerador de segunda passada.
+      DECLARED LIMIT: this ledger's stockout is independent of the generator's `removal_rate`,
+      which produces "unavailable" lines at a fixed rate without looking at the balance. Neither causes the other.
+      Making them coherent would require the generator to READ the ledger, inverting the project's
+      dependency. Trigger: a second-pass generator.
     columns:
       - name: wh
         tests: [not_null]
@@ -377,39 +377,39 @@ models:
         tests: [not_null]
       - name: closing_balance
         description: >
-          Saldo no fim do dia. Nunca negativo: o que a demanda pediu e a prateleira nao
-          tinha vira units_short. Saldo negativo fecharia a soma e mentiria sobre o estoque.
+          Balance at the end of the day. Never negative: what demand asked for and the shelf did not
+          have becomes units_short. A negative balance would close the sum and lie about the stock.
         tests: [not_null]
       - name: units_short
         description: >
-          RUPTURA. So pode ser maior que zero com closing_balance = 0 — e
-          assert_stock_ledger_conserves_the_balance verifica isso, porque um job que
-          ignorasse a demanda que nao cabe conservaria o saldo e reportaria ruptura zero
-          para sempre.
+          STOCKOUT. It can only be greater than zero with closing_balance = 0 — and
+          assert_stock_ledger_conserves_the_balance checks that, because a job that
+          ignored the demand that does not fit would conserve the balance and report zero stockout
+          forever.
         tests: [not_null]
       - name: reorder_units
         description: >
-          A reposicao e LANCAMENTO desta tabela, nao tabela separada: o grao ja e o dia, e
-          uma tabela de ordens ao lado exigiria juntar as duas para qualquer pergunta de
-          saldo.
+          Replenishment is an ENTRY in this table, not a separate table: the grain is already the day, and
+          an orders table alongside would require joining the two for any balance
+          question.
         tests: [not_null]
       - name: reorder_eta
         description: >
-          stock_date + supplier_lead_days, e
-          assert_stock_replenishment_respects_the_lead_time confere. Nula quando nao houve
-          ordem.
+          stock_date + supplier_lead_days, and
+          assert_stock_replenishment_respects_the_lead_time checks it. Null when there was no
+          order.
       - name: mean_daily_demand
         description: >
-          OBSERVADA: total consumido pela serie dividido pelos dias da JANELA — nao pelos
-          dias com venda. Dividir pelos dias com venda mediria "quanto sai quando sai", e um
-          produto vendido uma vez em nove dias receberia o mesmo estoque de um vendido todo
-          dia.
+          OBSERVED: total consumed by the series divided by the days of the WINDOW — not by the
+          days with sales. Dividing by the days with sales would measure "how much goes out when it goes out", and a
+          product sold once in nine days would get the same stock as one sold every
+          day.
         tests: [not_null]
       - name: written_by
         description: >
-          PROVENIENCIA. Sempre 'spark' nesta tabela, e vale a pena mesmo assim: e como uma
-          consulta descobre que existe um escritor fora do Python no catalogo — a
-          propriedade que justificou o Iceberg e que estava apenas afirmada.
+          PROVENANCE. Always 'spark' in this table, and it is worth it anyway: it is how a
+          query finds out that there is a writer outside Python in the catalog — the
+          property that justified Iceberg and that was only claimed.
         tests:
           - not_null
           - accepted_values: {arguments: {values: [spark]}}

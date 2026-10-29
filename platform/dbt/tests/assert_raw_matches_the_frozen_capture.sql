@@ -1,34 +1,34 @@
--- O RAW SELADO NAO PODE TER MUDADO — a parte que o dbt consegue ver.
+-- THE SEALED RAW MUST NOT HAVE CHANGED — the part dbt can see.
 --
--- DIVISAO DE TRABALHO, declarada porque a metade que falta importa. `make freeze-check`
--- rele o object storage e compara sha256 por sha256: essa e a verificacao COMPLETA, e ela
--- exige MinIO de pe. Este teste faz a parte que roda em `make silver`, sem rede extra e
--- sem ninguem precisar lembrar: confere se as particoes que o Silver ENXERGA sao as mesmas
--- que foram seladas, com as mesmas contagens declaradas.
+-- DIVISION OF LABOR, declared because the missing half matters. `make freeze-check`
+-- re-reads the object storage and compares sha256 by sha256: that is the COMPLETE check, and it
+-- requires MinIO to be running. This test does the part that runs in `make silver`, with no extra network and
+-- without anyone needing to remember: it checks whether the partitions Silver SEES are the same
+-- ones that were sealed, with the same declared counts.
 --
--- O QUE ISSO PEGA, e e o risco real desta fase: dado aterrissado DEPOIS do fechamento. Uma
--- particao nova nao quebra soma nenhuma — ela apenas torna errado todo numero ja publicado
--- sobre a janela, em silencio. E a mesma classe do defeito de reparticao da Fase 6.
+-- WHAT THIS CATCHES, and it is this phase's real risk: data landed AFTER closing. A
+-- new partition breaks no sum — it just makes every number already published
+-- about the window wrong, silently. It is the same class as the Phase 6 allocation defect.
 --
--- O QUE ELE NAO PEGA: bytes alterados dentro de uma particao cujo manifesto continua
--- declarando as mesmas contagens. Para isso e preciso reler o objeto — `make freeze-check`.
+-- WHAT IT DOES NOT CATCH: bytes altered inside a partition whose manifest still
+-- declares the same counts. For that the object must be re-read — `make freeze-check`.
 --
--- SELO VAZIO E ESTADO LEGITIMO. Um repositorio antes de `make freeze`, ou um clone novo,
--- tem zero linhas em `frozen_capture` e este teste passa. Nao ha terceiro estado.
+-- AN EMPTY SEAL IS A LEGITIMATE STATE. A repository before `make freeze`, or a fresh clone,
+-- has zero rows in `frozen_capture` and this test passes. There is no third state.
 --
--- SO O DOMINIO DE PEDIDOS, de proposito: e o unico que este projeto REGERA. As outras quatro
--- sources vem de extracao contra fonte externa e nunca sao reescritas no lugar; quem as
--- cobre e o `freeze-check`. Alargar este teste para elas exigiria um modelo de manifesto
--- para cada, que hoje nao existe — e criar quatro modelos para um risco que nao se
--- materializa seria construir contra hipotese.
+-- ONLY THE ORDERS DOMAIN, on purpose: it is the only one this project REGENERATES. The other four
+-- sources come from extraction against an external source and are never rewritten in place; what
+-- covers them is `freeze-check`. Widening this test to them would require a manifest model
+-- for each, which does not exist today — and creating four models for a risk that does not
+-- materialize would be building against a hypothesis.
 with selo as (
 
-    -- CAST EXPLICITO, e nao confianca na inferencia. O selo nasce VAZIO, e um parquet sem
-    -- linha nao carrega tipo confiavel entre a escrita e a leitura: a primeira execucao
-    -- deste teste quebrou com `replace(INTEGER, ...)`, um erro sobre TIPO tres passos longe
-    -- da causa, que era a AUSENCIA de dado. Declarar o tipo no seed resolve a carga; o cast
-    -- aqui resolve a leitura, e os dois juntos fazem o estado nao-selado se comportar como
-    -- o selado, so que sem linhas.
+    -- EXPLICIT CAST, not trust in inference. The seal is born EMPTY, and a parquet with no
+    -- rows does not carry a reliable type between write and read: the first run
+    -- of this test broke with `replace(INTEGER, ...)`, an error about TYPE three steps away
+    -- from the cause, which was the ABSENCE of data. Declaring the type in the seed solves the load; the cast
+    -- here solves the read, and together they make the unsealed state behave like
+    -- the sealed one, only without rows.
     select
         replace(cast(partition_key as varchar), 'ingestion_date=', '')  as chave,
         cast(records as bigint)                                         as records
@@ -39,15 +39,15 @@ with selo as (
 
 vivo as (
 
-    -- `declared_event_rows`, E NAO A SOMA DAS TRES CONTAGENS. A primeira versao deste teste
-    -- somava pedidos + linhas + eventos e reprovou nas 36 particoes — nao por defeito, por
-    -- comparar grandezas diferentes. O selo agrega `records` dos ARQUIVOS declarados no
-    -- manifesto, e a particao de pedidos tem UM arquivo: `order_events.jsonl`. Logo o numero
-    -- do selo e a contagem de EVENTOS, e so ela. Medido: as 36 batem exatamente.
+    -- `declared_event_rows`, AND NOT THE SUM OF THE THREE COUNTS. The first version of this test
+    -- summed orders + lines + events and failed on all 36 partitions — not from a defect, from
+    -- comparing different quantities. The seal aggregates `records` of the files declared in the
+    -- manifest, and the orders partition has ONE file: `order_events.jsonl`. So the seal's number
+    -- is the EVENT count, and only that. Measured: all 36 match exactly.
     --
-    -- Se um dia a Source passar a aterrissar mais de um arquivo por particao, este mapeamento
-    -- deixa de valer — e reprovar e o comportamento certo, porque o selo passou a medir outra
-    -- coisa.
+    -- If the Source ever starts landing more than one file per partition, this mapping
+    -- stops holding — and failing is the right behavior, because the seal would be measuring something
+    -- else.
     select
         strftime(ingestion_date, '%Y-%m-%d') || '/wh=' || partition_wh  as chave,
         declared_event_rows                                             as records
@@ -55,7 +55,7 @@ vivo as (
 
 )
 
--- Selo vazio: nada a guardar ainda.
+-- Empty seal: nothing to guard yet.
 select
     coalesce(s.chave, v.chave)                    as chave,
     s.records                                     as registros_selados,

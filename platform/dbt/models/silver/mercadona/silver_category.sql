@@ -1,10 +1,10 @@
--- Arvore de categorias: nivel 1 (26) > nivel 2 (151), por particao.
+-- Category tree: level 1 (26) > level 2 (151), per partition.
 --
--- Verificado nos snapshots: a arvore tem EXATAMENTE dois niveis — nenhum no de nivel 2
--- carrega filhos. Por isso o achatamento aqui e final, e nao uma simplificacao.
+-- Verified in the snapshots: the tree has EXACTLY two levels — no level-2 node carries
+-- children. That is why the flattening here is final, and not a simplification.
 --
--- CONTRACT.md secao 6: apenas ids de nivel 2 sao acessiveis em /api/categories/{id}/;
--- ids de nivel 1 respondem 404/410. O nivel 1 existe apenas nesta arvore.
+-- CONTRACT.md section 6: only level-2 ids are reachable at /api/categories/{id}/;
+-- level-1 ids respond 404/410. Level 1 exists only in this tree.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_category',
     options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}

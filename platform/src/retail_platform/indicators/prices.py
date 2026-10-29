@@ -1,10 +1,10 @@
 """The price-watch panel's indicators: the query AND the explanation, in the SAME place.
 
-WHY A SEPARATE FILE FROM `indicators.py`. The user asked for an EXCLUSIVE panel — one
+WHY A SEPARATE FILE FROM `operations.py`. The user asked for an EXCLUSIVE panel — one
 screen whose only job is price oscillation, not a fourteenth tab bolted onto the
 operations dashboard. It reuses `connection.py` as-is (the session/role/query plumbing has
-no opinion about which indicators run over it) and imports `Indicador`, `MART` and the two
-bound filters it shares verbatim with `indicators.py` — not a second implementation of the
+no opinion about which indicators run over it) and imports `Indicator`, `MART` and the two
+bound filters it shares verbatim with `operations.py` (all from `model.py`) — not a second implementation of the
 same constant, just the one that already exists.
 
 WHAT THIS PANEL DOES NOT INVENT. There is no "offer"/"promotion" flag anywhere in the
@@ -28,34 +28,34 @@ carries the daily category aggregate. Both marts already answer every question t
 asks — adding a third mart for a screen that only reads what two marts already computed
 would be the premature abstraction this project keeps refusing elsewhere.
 
-PARAMETERS. `%(inicio)s`/`%(fim)s` bind `snapshot_date` (see `FILTRO_DATA_SNAP`, imported
-from `indicators.py` — the exact same string, not a copy that can drift), `%(armazens)s`
-binds the warehouse multiselect (`FILTRO_WH`, same source), and `%(termo)s` binds the
-product search box via `FILTRO_PRODUTO` below — `ilike` with the wildcard living inside the
-bound VALUE (`f"%{termo}%"`, built in `price_app.py`), never inside the SQL text.
+PARAMETERS. `%(start)s`/`%(end)s` bind `snapshot_date` (see `SNAPSHOT_DATE_FILTER`, imported
+from `model.py` — the exact same string, not a copy that can drift), `%(warehouses)s`
+binds the warehouse multiselect (`WAREHOUSE_FILTER`, same source), and `%(term)s` binds the
+product search box via `PRODUCT_FILTER` below — `ilike` with the wildcard living inside the
+bound VALUE (`f"%{termo}%"`, built in `streamlit/prices_app.py`), never inside the SQL text.
 """
 
 from __future__ import annotations
 
-from indicators import MART, FILTRO_DATA_SNAP, FILTRO_WH, Indicador
+from .model import MART, SNAPSHOT_DATE_FILTER, WAREHOUSE_FILTER, Indicator
 
-# Bound, like FILTRO_DATA_SNAP/FILTRO_WH above: the `%` wildcards travel inside the
+# Bound, like SNAPSHOT_DATE_FILTER/WAREHOUSE_FILTER above: the `%` wildcards travel inside the
 # PARAMETER value the caller supplies, never spliced into this string.
-FILTRO_PRODUTO = "display_name ilike %(termo)s"
+PRODUCT_FILTER = "display_name ilike %(term)s"
 
 
-INDICADORES: tuple[Indicador, ...] = (
+INDICATORS: tuple[Indicator, ...] = (
 
     # ================================================================= A. Oscillations
-    Indicador(
-        chave="resumo_precos",
-        titulo="Price-watch summary",
-        grupo="A. Oscillations",
-        pergunta="How many prices moved in the selected window, and by how much on average?",
-        grao="(snapshot_date, wh, source_product_id) aggregated for the period total",
-        tipo="observed (diffed from consecutive existing snapshots, never calendar days)",
+    Indicator(
+        key="resumo_precos",
+        title="Price-watch summary",
+        group="A. Oscillations",
+        question="How many prices moved in the selected window, and by how much on average?",
+        grain="(snapshot_date, wh, source_product_id) aggregated for the period total",
+        kind="observed (diffed from consecutive existing snapshots, never calendar days)",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "`count(*) filter (where change_type = 'preco_alterado')` counts SNAPSHOT PAIRS, "
             "not distinct products: the same product changing price twice in the window "
             "counts twice, correctly — a product that oscillates twice DID move twice.",
@@ -80,19 +80,19 @@ INDICADORES: tuple[Indicador, ...] = (
                 max(purchasable_price_delta_pct)
                     filter (where change_type = 'preco_alterado')          as maior_alta_pct
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
         """,
     ),
 
-    Indicador(
-        chave="maiores_quedas",
-        titulo="Biggest observed drops (the closest thing to an \"offer\" this data has)",
-        grupo="A. Oscillations",
-        pergunta="Which products dropped the most, in percentage terms, in the selected window?",
-        grao="(snapshot_date, wh, source_product_id) — one row per price transition",
-        tipo="observed, ranked",
+    Indicator(
+        key="maiores_quedas",
+        title="Biggest observed drops (the closest thing to an \"offer\" this data has)",
+        group="A. Oscillations",
+        question="Which products dropped the most, in percentage terms, in the selected window?",
+        grain="(snapshot_date, wh, source_product_id) — one row per price transition",
+        kind="observed, ranked",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "THIS IS A DROP, NOT A VERIFIED PROMOTION. `fact_price_change.sql` found the "
             "source's own `price_decreased` flag false on 100% of rows even when 152 prices "
             "moved — there is no promotional flag anywhere upstream. Reading this list as "
@@ -113,22 +113,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 purchasable_price_delta, purchasable_price_delta_pct,
                 days_since_previous_snapshot, identity_review_needed
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
               and change_type = 'preco_alterado' and purchasable_price_delta < 0
             order by purchasable_price_delta_pct asc
             limit 200
         """,
     ),
 
-    Indicador(
-        chave="maiores_altas",
-        titulo="Biggest observed increases",
-        grupo="A. Oscillations",
-        pergunta="Which products got more expensive, in percentage terms, in the selected window?",
-        grao="(snapshot_date, wh, source_product_id) — one row per price transition",
-        tipo="observed, ranked",
+    Indicator(
+        key="maiores_altas",
+        title="Biggest observed increases",
+        group="A. Oscillations",
+        question="Which products got more expensive, in percentage terms, in the selected window?",
+        grain="(snapshot_date, wh, source_product_id) — one row per price transition",
+        kind="observed, ranked",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "Same caveat as the drops list, mirrored: a rise spread over an 8-day gap is not "
             "the same event as one that happened in a single day. Read `days_since_previous_snapshot` "
             "before comparing two rows' percentages.",
@@ -140,22 +140,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 purchasable_price_delta, purchasable_price_delta_pct,
                 days_since_previous_snapshot, identity_review_needed
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
               and change_type = 'preco_alterado' and purchasable_price_delta > 0
             order by purchasable_price_delta_pct desc
             limit 200
         """,
     ),
 
-    Indicador(
-        chave="movimentacao_diaria",
-        titulo="Daily change volume",
-        grupo="A. Oscillations",
-        pergunta="Is price movement steady across the window, or concentrated on a few days?",
-        grao="(snapshot_date, wh) aggregated; one row per day",
-        tipo="observed",
+    Indicator(
+        key="movimentacao_diaria",
+        title="Daily change volume",
+        group="A. Oscillations",
+        question="Is price movement steady across the window, or concentrated on a few days?",
+        grain="(snapshot_date, wh) aggregated; one row per day",
+        kind="observed",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "A day with zero snapshot for a warehouse doesn't produce a zero row here — it "
             "produces NO row, because the mart's grain is the snapshot that exists. A gap day "
             "(08-30 is documented as absent for all four warehouses) reads as \"nothing "
@@ -171,22 +171,22 @@ INDICADORES: tuple[Indicador, ...] = (
                                   and purchasable_price_delta > 0)          as altas,
                 count(*) filter (where change_type = 'entrou')             as entradas
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             order by 1, 2
         """,
     ),
 
     # ================================================================= B. By category
-    Indicador(
-        chave="volatilidade_por_categoria",
-        titulo="Volatility by category",
-        grupo="B. By category",
-        pergunta="Which categories move the most, relative to how many products they carry?",
-        grao="(category) aggregated over the period and selected warehouses",
-        tipo="observed, derived ratio",
+    Indicator(
+        key="volatilidade_por_categoria",
+        title="Volatility by category",
+        group="B. By category",
+        question="Which categories move the most, relative to how many products they carry?",
+        grain="(category) aggregated over the period and selected warehouses",
+        kind="observed, derived ratio",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "`taxa_de_mudanca` divides changed transitions by TOTAL transitions observed in "
             "that category (changed + stable + new), not by product count — a category "
             "sampled on more days naturally accumulates more transitions. It answers \"how "
@@ -208,22 +208,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 round(avg(abs(purchasable_price_delta_pct))
                       filter (where change_type = 'preco_alterado'), 2)       as oscilacao_media_pct
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             having count(*) filter (where change_type = 'preco_alterado') > 0
             order by oscilacao_media_pct desc nulls last
         """,
     ),
 
-    Indicador(
-        chave="preco_por_categoria",
-        titulo="Price levels by category",
-        grupo="B. By category",
-        pergunta="What does a typical product in each category cost, and how wide is the range?",
-        grao="(snapshot_date, wh, category) — the mart's own grain, aggregated over the period",
-        tipo="observed",
+    Indicator(
+        key="preco_por_categoria",
+        title="Price levels by category",
+        group="B. By category",
+        question="What does a typical product in each category cost, and how wide is the range?",
+        grain="(snapshot_date, wh, category) — the mart's own grain, aggregated over the period",
+        kind="observed",
         marts=("MART_ASSORTMENT_DAILY",),
-        armadilhas=(
+        caveats=(
             "`preco_medio` here averages the mart's own per-day `avg_unit_price` across the "
             "whole period — an average of averages. It answers \"roughly where does this "
             "category sit\", not \"what is the exact mean price\"; for that, go back to "
@@ -241,46 +241,46 @@ INDICADORES: tuple[Indicador, ...] = (
                 round(avg(avg_unit_price), 4)                as preco_medio,
                 round(avg(median_unit_price)::numeric, 4)    as mediana_media
             from {MART}.mart_assortment_daily
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             order by preco_medio desc nulls last
         """,
     ),
 
     # ================================================================= C. Product lookup
-    Indicador(
-        chave="produtos_buscaveis",
-        titulo="Product search",
-        grupo="C. Product lookup",
-        pergunta="Which products match the typed name?",
-        grao="distinct product name",
-        tipo="observed",
+    Indicator(
+        key="produtos_buscaveis",
+        title="Product search",
+        group="C. Product lookup",
+        question="Which products match the typed name?",
+        grain="distinct product name",
+        kind="observed",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "Matches by NAME, not by `source_product_id`: the same name can legitimately "
             "cover more than one id (`identity_review_needed`/`identity_ambiguous` flag "
             "exactly this). Picking a name in the search box may pull more than one distinct "
             "product's history into the chart below — that's disclosed, not hidden.",
         ),
-        datado=False,
+        dated=False,
         sql=f"""
             select distinct display_name
             from {MART}.mart_price_evolution
-            where {FILTRO_PRODUTO}
+            where {PRODUCT_FILTER}
             order by display_name
             limit 50
         """,
     ),
 
-    Indicador(
-        chave="historico_preco_produto",
-        titulo="Product price history",
-        grupo="C. Product lookup",
-        pergunta="How has this product's price moved over time, warehouse by warehouse?",
-        grao="(snapshot_date, wh, source_product_id) — every observed snapshot of the match",
-        tipo="observed",
+    Indicator(
+        key="historico_preco_produto",
+        title="Product price history",
+        group="C. Product lookup",
+        question="How has this product's price moved over time, warehouse by warehouse?",
+        grain="(snapshot_date, wh, source_product_id) — every observed snapshot of the match",
+        kind="observed",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "A gap in the line chart (08-16 to 08-24) is the catalog not being observed that "
             "day, not the price standing still for 8 days — `days_since_previous_snapshot` on "
             "the row right after the gap is what tells the two apart.",
@@ -295,21 +295,21 @@ INDICADORES: tuple[Indicador, ...] = (
                 purchasable_price_delta_pct, change_type,
                 days_since_previous_snapshot
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH} and {FILTRO_PRODUTO}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER} and {PRODUCT_FILTER}
             order by display_name, wh, snapshot_date
         """,
     ),
 
     # ================================================================= D. Catalog movement
-    Indicador(
-        chave="entradas_e_pacotes",
-        titulo="New arrivals and pack changes",
-        grupo="D. Catalog movement",
-        pergunta="How much of the catalog is genuinely new or repackaged, per day and warehouse?",
-        grao="(snapshot_date, wh) aggregated across categories",
-        tipo="observed",
+    Indicator(
+        key="entradas_e_pacotes",
+        title="New arrivals and pack changes",
+        group="D. Catalog movement",
+        question="How much of the catalog is genuinely new or repackaged, per day and warehouse?",
+        grain="(snapshot_date, wh) aggregated across categories",
+        kind="observed",
         marts=("MART_ASSORTMENT_DAILY",),
-        armadilhas=(
+        caveats=(
             "`is_new_arrival` and `is_pack` are source flags carried straight through from "
             "`fact_price_snapshot`, scoped out of this panel's own verification on purpose: "
             "unlike the source's `price_decreased` flag (measured false on 100% of rows and "
@@ -325,7 +325,7 @@ INDICADORES: tuple[Indicador, ...] = (
                 sum(packs)                    as pacotes,
                 sum(products_exclusive_here)  as exclusivos_do_armazem
             from {MART}.mart_assortment_daily
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             order by 1, 2
         """,
@@ -336,7 +336,7 @@ INDICADORES: tuple[Indicador, ...] = (
 # ------------------------------------------------------------------------------------
 # Freshness and filter bounds — not indicators, what makes the panel's own state legible.
 # ------------------------------------------------------------------------------------
-FRESCOR = f"""
+FRESHNESS = f"""
     select 'MART_PRICE_EVOLUTION' as mart, count(*) as linhas,
            min(snapshot_date)::varchar as inicio, max(snapshot_date)::varchar as fim
       from {MART}.mart_price_evolution
@@ -346,9 +346,9 @@ FRESCOR = f"""
     order by mart
 """
 
-JANELA = f"""
+WINDOW = f"""
     select min(snapshot_date)::varchar as inicio, max(snapshot_date)::varchar as fim
     from {MART}.mart_price_evolution
 """
 
-ARMAZENS = f"select distinct wh from {MART}.mart_price_evolution order by wh"
+WAREHOUSES = f"select distinct wh from {MART}.mart_price_evolution order by wh"

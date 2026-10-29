@@ -1,18 +1,19 @@
-"""Plataforma de dados sobre a Mercadona Catalog Source.
+"""Data platform on top of the Mercadona Catalog Source.
 
-Consome os snapshots da Source pelo CONTRATO FISICO (JSON canonico + _manifest.json),
-nunca importando o pacote da Source. Ver CONTRACT.md secao 4, "Obrigacoes do consumidor".
+Consumes the Source's snapshots through the PHYSICAL CONTRACT (canonical JSON +
+_manifest.json), never importing the Source package. See CONTRACT.md section 4,
+"Consumer obligations".
 """
 
 __version__ = "0.1.0"
 
-# Nome da source original desta plataforma. Mantido por compatibilidade (comparacoes em
-# teste, docs); land.py deriva o prefixo de partition.source_name, nao desta constante.
+# Name of this platform's original source. Kept for compatibility (test comparisons,
+# docs); land.py derives the prefix from partition.source_name, not from this constant.
 SOURCE_NAME = "mercadona_catalog_api"
 
-# Versao de manifesto que esta plataforma sabe ler, por source. CONTRACT.md secao 8:
-# recusar versao diferente e melhor do que interpretar por adivinhacao. Cada source tem
-# seu proprio contador de versao — sao contratos independentes.
+# Manifest version this platform knows how to read, per source. CONTRACT.md section 8:
+# refusing a different version is better than interpreting it by guesswork. Each source
+# has its own version counter — they are independent contracts.
 SUPPORTED_MANIFEST_VERSIONS = {
     "mercadona_catalog_api": 2,
     "ine_population_api": 1,

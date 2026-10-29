@@ -16,13 +16,13 @@ or explicitly dated. RAW is not reproducible; on a new machine the numbers chang
 
 **Wall-clock time is the extreme case of this rule**, and it has already produced divergence
 between two documents in this repository: the same command measured twice gives two numbers.
-That's why the prose here carries the **magnitude** — "seconds", "~1,5 s" — and the decimal
+That's why the prose here carries the **magnitude** — "seconds", "~1.5 s" — and the decimal
 lives only in the generated page that measured it. See
 [DECISIONS.md § "What the measurement publishes against Spark"](DECISIONS.md).
 
-Last revised: **2026-09-02** — documentation closeout for Phase 7. The technical state is
-that of 2026-09-01; what changed afterward was only documentation, evidence, and the
-structure of the debt.
+Last revised: **2026-10-29** — price window widened and capture re-sealed (CR-010), then
+renames, the indicator catalog move and English across the code (CR-012 to CR-014). The
+technical state of orders and customers is that of 2026-09-01.
 
 ## Real scale
 
@@ -32,34 +32,35 @@ enough to change the answer:
 
 | Metric | Value |
 |---|---|
-| Volume per partition | ~8,3 MB, 152 files |
-| Rows per partition | ~4.600 (4.329 unique products) |
+| Volume per partition | ~8.3 MB, 152 files |
+| Rows per partition | ~4,600 (4,329 unique products) |
 | Growth | ~3 GB/year if run every day |
-| Duration of one extraction | 227 s (152 requests at 1,5 s) |
+| Duration of one extraction | 227 s (152 requests at 1.5 s) |
 | Full Silver (3 partitions, 4 models, 36 tests) | ~6 s |
 
-**Where it stands today, measured on 2026-09-01**, in the capture sealed by
-[`docs/FREEZE.md`](docs/FREEZE.md) (`capture_id cec10cb5…`):
+**Where it stands today, measured on 2026-10-29**, in the capture sealed by
+[`docs/FREEZE.md`](docs/FREEZE.md) (`capture_id 6dc09846…`; CR-010 widened the price window,
+orders and customers kept theirs):
 
 | Metric | Value |
 |---|---|
-| Customers (`silver_customer`) | 286.826, across 4 AUFs |
-| Orders, 9-day window | 206.523 · 3.892.062 rows · 1.433.723 events |
-| Stock ledger | 173.970 rows · 17.397 series · 10 days |
-| Sealed RAW | 81 partitions · 2.221.069 records |
-| `make silver` | 25 models, 16 seeds, 391 nodes — **53 s** |
-| `make warehouse` | 24 models, 199 nodes — **131 s** |
-| Python suites, offline | 1.095 |
+| Customers (`silver_customer`) | 286,826, across 4 AUFs |
+| Orders, 9-day window | 206,523 · 3,892,062 rows · 1,433,723 events |
+| Stock ledger | 173,970 rows · 17,397 series · 10 days |
+| Sealed RAW | 163 partitions · 2,597,650 records |
+| `make silver` | 25 models, 16 seeds, 392 nodes — **88 s** |
+| `make warehouse` | 24 models, 205 nodes — **90 s** |
+| Python suites, offline | 1,139 |
 
 **No distributed technology is justified by this volume, and that's a result, not an
-assumption.** Orders grew 32× since Phase 3 measured them (6.400 → 206.523), and the full
-Silver `dbt build` still runs in under a minute. The basket self-join — the natural
-candidate for "too big for one node" — doubled to 37,9 M pairs and still runs in **~1,5 s**
+assumption.** Orders grew 32× since Phase 3 measured them (6,400 → 206,523), and the full
+Silver `dbt build` still runs in about a minute and a half on one laptop. The basket self-join — the natural
+candidate for "too big for one node" — doubled to 37.9 M pairs and still runs in **~1.5 s**
 (the current decimal is in [`docs/spark-evidence/`](docs/spark-evidence/README.md)).
 
 **Where volume HURT, and it's a single place.** Rebuilding the Iceberg projection cost **414
-commits and ~55 min** for the 206.523 orders: each batch does an `upsert` against the entire
-table, so the cost grows with what's already been written. In Phase 3, with 6.400 orders,
+commits and ~55 min** for the 206,523 orders: each batch does an `upsert` against the entire
+table, so the cost grows with what's already been written. In Phase 3, with 6,400 orders,
 this took seconds and was invisible. The irony is worth writing down: Spark's justification
 says the volume trigger didn't fire, and it fired here — in the Python path, not in the
 analysis. Correction declared in [BACKLOG.md](BACKLOG.md).
@@ -87,12 +88,12 @@ L1  RAW           byte-identical partition in object storage, sha256 checked pos
     │         monotonic merge: whatever doesn't advance `last_sequence_no` drops out │
     └────────────────────────────────────────────────────────────────────────────────┘
 L2  Silver        typed parquet + 1 temporal model             · DuckDB
-                  s3://retail-lakehouse/silver/…                7.098.881 rows · 205 MB
+                  s3://retail-lakehouse/silver/…               11,204,828 rows · 412 MB
 ─────────────────── physical boundary: COPY INTO, never ref() ───────────────────
-L3  Stage         1:1 mirror of a CUT of the Silver             · Snowflake
-                  RETAIL.STAGE.STG_*                              3.327.809 rows (46,9%)
-L4  Gold          conformed DIM_* / FACT_*, SCD2                · dbt-snowflake
-L5  Mart          MART_*, grain declared per table                 · dbt-snowflake
+L3  Stage         1:1 mirror of a CUT of the Silver             · Postgres (Snowflake opt-in)
+                  STAGE.STG_*                                     7,285,229 rows (65.0%)
+L4  Gold          conformed DIM_* / FACT_*, SCD2                · dbt-postgres / dbt-snowflake
+L5  Mart          MART_*, grain declared per table                 · dbt-postgres / dbt-snowflake
 ```
 
 RAW is the point of no return: everything downstream is reconstructible from it without
@@ -100,29 +101,32 @@ touching the API again. This matters more here than in the general case, because
 source doesn't allow rereading the past** — see "Backfill" below.
 
 The L2→L3 boundary is **physical, not logical**, and it's the same mechanism as the
-Source↔platform boundary one level up: no Snowflake model can `ref()` a Silver model,
-because different adapters don't cross within a single dbt run. The link is `COPY INTO`
-plus `source()`. Snowflake is, in practice, **the fourth consumer that doesn't reach the
-Lakehouse** — the other three are the FROZEN Sources.
+Source↔platform boundary one level up: no warehouse model can `ref()` a Silver model,
+because different adapters don't cross within a single dbt run. The link is a load into
+`STAGE` plus `source()`. What that buys is told once, in
+[§ "Warehouse destination"](#warehouse-destination-postgres-by-default-snowflake-one-target-away).
 
 ## Engine: DuckDB + dbt-duckdb
 
-Adopted. In-process, reads MinIO directly via `httpfs`, writes parquet, runs the 4 models in
-~6 s. The hive layout the Source already produces (`ingestion_date=…/wh=…`) is consumed
+Adopted. In-process, reads MinIO directly via `httpfs`, writes parquet; it started with 4
+models in ~6 s and carries the whole Silver today (timings in the table above). The hive layout the Source already produces (`ingestion_date=…/wh=…`) is consumed
 with `hive_partitioning=1`, so `ingestion_date` and `wh` become columns **with no manual
 parsing** — contract obligation 4.3 comes for free.
 
-The dbt SQL is the portable asset: the same models run on `dbt-spark` and `dbt-snowflake`
-without rewriting. That's what makes the swaps below configuration, not a new project.
+The dbt SQL is the portable asset. The Silver tree is DuckDB-specific where it reads the
+RAW (`read_json` over `s3://`); the warehouse tree runs unchanged on `dbt-postgres` and
+`dbt-snowflake`, with the dialect differences translated in one macro file
+(`macros/warehouse_compat.sql`) and one `on-run-start` hook. That's what makes the swaps below configuration, not a new
+project.
 
 ## What didn't get in, and when it gets in
 
 | Technology | What it buys | Why not now | Trigger | Where the swap happens |
 |---|---|---|---|---|
-| **Iceberg** | Snapshot isolation between concurrent writers, time travel, interop between engines | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 6). The trigger that fired was the literal one — *"a second engine needing to write the same table"*: `live_order_state` is written by the streaming consumer and by the batch rebuild, with DuckDB reading while both write. **It fired due to CONCURRENCY, not volume** — at this volume an atomic `os.replace` parquet would do. Preceded by `make spike-iceberg`, a closed experiment that measured catalog, upsert, conflict, isolation and reading by DuckDB before the projection existed. The old trigger (`dim_product` SCD2 via `MERGE`) still hasn't fired: the SCD2 is derived from the full history, not accumulated. |
+| **Iceberg** | Snapshot isolation between concurrent writers, time travel, interop between engines | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 6). The trigger that fired was the literal one — *"a second engine needing to write the same table"*: `live_order_state` is written by the streaming consumer and by the batch rebuild, with DuckDB reading while both write. **It fired due to CONCURRENCY, not volume** — at this volume an atomic `os.replace` parquet would do. Preceded by a closed experiment (removed in CR-012, kept in git history) that measured catalog, upsert, conflict, isolation and reading by DuckDB before the projection existed; `make orders-prove-projection` proves the same properties on the live module today. The old trigger (`dim_product` SCD2 via `MERGE`) still hasn't fired: the SCD2 is derived from the full history, not accumulated. |
 | **Kafka** | Event transport, replay, decoupling point | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 5). The trigger that fired was the literal one — *"CDC of an OLTP"*: the event is born in the same transaction that changes the order (Milestone 4) and a stateful consumer keeps a read model below the batch. What got proven was **transport semantics**: at-least-once demonstrated by reproducing the duplication window, idempotent consumption with no ever-growing set, a gap refused, replay with no effect, 16 sha256 reproduced. **Not** proven, and it's written down: that anyone needs the latency, and that the broker is the origin — the canonical log is still born on disk. |
-| **Spark** | An engine outside Python writing the catalog, and a form of computation SQL doesn't express | — | — | **Adopted on 2026-09-01** (Phase 7). **The declared trigger did NOT fire, and that's measured**: the basket self-join — 37,9 M pairs, the natural candidate for "a partition DuckDB can't hold" — runs in **~1,5 s and ~2,4 GB** on one node. The final window doubled that number relative to the intermediate one (18,3 M) and the time stayed in seconds, which makes the claim stronger, not weaker. It got in for two other reasons. **First, interop:** Iceberg was justified by *interop between engines* since Phase 3, and that half was claimed and never demonstrated — both writers were Python. **Second, the shape:** the stock ledger is a running sum whose *inputs are generated by decisions made from the state itself* (low balance → order → arrival in N days → changes the next balance); a window function reads the partition but doesn't write back into it, and that was measured — the SQL running sum diverges on 14 of 30 days from the test case and reaches a balance of −70. Preceded by `make spike-spark-iceberg`, with **both outcomes declared beforehand**: if Spark couldn't read the pyiceberg catalog, it wouldn't get in **and** the interop clause would come out of this table. `make spark-evidence` publishes the same job on both engines, **including when plain Python wins**. **Not** proven, and it's written down: scale. It runs `local[*]`, with no shuffle across nodes. |
-| **Snowflake** | Governed SQL, RBAC, BI connectivity | — | — | **Adopted on 2026-08-27** (Phase 2). Receives a cut by scope, not the entire Silver — the measured ratio went from 3,85% to 46,9% between Phase 2 and Phase 6 with no rule changing, because it's a function of which sources fit the scope. The old friction — "can't reach a local MinIO" — was resolved without real S3 or a storage integration: an **internal stage** (`PUT file://`) reverses the direction, and it's the local process pushing the bytes, which sees both sides. |
+| **Spark** | An engine outside Python writing the catalog, and a form of computation SQL doesn't express | — | — | **Adopted on 2026-09-01** (Phase 7). **The declared trigger did NOT fire, and that's measured**: the basket self-join — 37.9 M pairs, the natural candidate for "a partition DuckDB can't hold" — runs in **~1.5 s and ~2.4 GB** on one node. The final window doubled that number relative to the intermediate one (18.3 M) and the time stayed in seconds, which makes the claim stronger, not weaker. It got in for two other reasons. **First, interop:** Iceberg was justified by *interop between engines* since Phase 3, and that half was claimed and never demonstrated — both writers were Python. **Second, the shape:** the stock ledger is a running sum whose *inputs are generated by decisions made from the state itself* (low balance → order → arrival in N days → changes the next balance); a window function reads the partition but doesn't write back into it, and that was measured — the SQL running sum diverges on 14 of 30 days from the test case and reaches a balance of −70. Preceded by `make check-spark-iceberg`, with **both outcomes declared beforehand**: if Spark couldn't read the pyiceberg catalog, it wouldn't get in **and** the interop clause would come out of this table. `make spark-evidence` publishes the same job on both engines, **including when plain Python wins**. **Not** proven, and it's written down: scale. It runs `local[*]`, with no shuffle across nodes. |
+| **Snowflake** | Governed SQL, RBAC, BI connectivity | — | — | **Adopted on 2026-08-27** (Phase 2); **opt-in since 2026-09-14**, when Postgres became the default (see § "Warehouse destination" below). Receives a cut by scope, not the entire Silver — the measured ratio went from 3.85% in Phase 2 to 65.0% on 2026-10-29 with no rule changing, because it's a function of which sources fit the scope. The old friction — "can't reach a local MinIO" — was resolved without real S3 or a storage integration: an **internal stage** (`PUT file://`) reverses the direction, and it's the local process pushing the bytes, which sees both sides. |
 | **Airflow** | Retry, exit codes, pools, SLA, execution history | — | **Adopted.** Heavy for a 4-minute daily job, and taken on with that awareness: the value is in the operational contract (the 1-slot pool and exit-code handling have no cron equivalent). | — |
 
 ## Four measured constraints that shaped the design
@@ -151,7 +155,7 @@ request — within the **process**. Two concurrent `extract` runs double the rea
 against the host.
 
 Measured: 152 requests in 9 s produced ~20% `403`s and intermittent blocking for minutes;
-sequential at 1,5 s gave 0 failures across repeated runs.
+sequential at 1.5 s gave 0 failures across repeated runs.
 
 With more than one warehouse, the Airflow pool with **1 slot** is the only thing preserving
 the safe rate. It's not a configuration decoration.
@@ -171,10 +175,10 @@ The choice of the four is by **assortment divergence**, not market size, because
 and price behave at different levels:
 
 - **Assortment is a property of the city.** The three Madrid warehouses have **identical**
-  product sets among themselves (0 exclusives); `bcn1` differs from `mad1` by 12,0% (551
+  product sets among themselves (0 exclusives); `bcn1` differs from `mad1` by 12.0% (551
   products).
 - **Price varies within the same city.** Measured on perishable categories, `mad3` diverges
-  from `mad1` by 18,4% of prices, against 26,4% for Madrid↔Barcelona **in the same
+  from `mad1` by 18.4% of prices, against 26.4% for Madrid↔Barcelona **in the same
   categories** — that is, 70% of the magnitude between cities happens within a single one.
   These two numbers are comparable to each other since they're from the same cut; they
   aren't comparable to the ones in the matrix below, which is for the whole catalog.
@@ -187,22 +191,22 @@ Pairwise matrix, **calculated over the whole catalog from Silver** on `2026-08-2
 
 | pair | assortment | price |
 |---|---|---|
-| bcn1 / svq1 | 13,8% | 3,3% |
-| svq1 / vlc1 | 13,6% | 2,8% |
-| mad1 / svq1 | 13,0% | 2,3% |
-| mad1 / vlc1 | 12,4% | 2,3% |
-| bcn1 / mad1 | 12,0% | 3,1% |
-| bcn1 / vlc1 | 10,0% | 3,1% |
+| bcn1 / svq1 | 13.8% | 3.3% |
+| svq1 / vlc1 | 13.6% | 2.8% |
+| mad1 / svq1 | 13.0% | 2.3% |
+| mad1 / vlc1 | 12.4% | 2.3% |
+| bcn1 / mad1 | 12.0% | 3.1% |
+| bcn1 / vlc1 | 10.0% | 3.1% |
 
 `svq1` appears in the **three most divergent pairs**, and its smallest divergence from the
-rest of the set is 13,0% — the largest minimum available. That's what justifies choosing it.
+rest of the set is 13.0% — the largest minimum available. That's what justifies choosing it.
 
 **`alc1` was discarded** for duplicating `vlc1` — same autonomous community, 170 km. Honest
 caveat about this number: `alc1` **was not extracted**, so it isn't in this matrix. The
-comparison comes from a probe over 2 categories, where `vlc1/alc1` gave 34,4% against
-52,3% for `vlc1/svq1`. That probe had **selection bias** — the categories were chosen for
+comparison comes from a probe over 2 categories, where `vlc1/alc1` gave 34.4% against
+52.3% for `vlc1/svq1`. That probe had **selection bias** — the categories were chosen for
 concentrating exclusives between `mad1` and `bcn1`, which inflated that specific pair (it
-gave 78,6% there against 12,0% here). The bias doesn't reach the `alc1` vs `svq1` pair,
+gave 78.6% there against 12.0% here). The bias doesn't reach the `alc1` vs `svq1` pair,
 measured on the same categories without being a selection criterion, so the **ordering**
 between the two holds; the magnitudes from that probe don't. `alc1` remains the obvious
 candidate if a fifth one gets in, and measuring it properly would require extracting it.
@@ -266,7 +270,7 @@ accepting recorded values. Repeated at every boundary:
 | disk → RAW | local file sha256 checked **before** the PUT; `ChecksumSHA256` validated on the server |
 | RAW | `verify-landing` downloads every object and recalculates sha256, size and inventory |
 | RAW → Silver | a dbt test reconciles the derived count against the manifest's `totals` |
-| Silver | 36 tests (7 singular + 29 schema), including uniqueness of the composite grain and redundant lineage |
+| Silver | schema and singular dbt tests, including uniqueness of the composite grain and redundant lineage |
 
 Every check has been proven capable of **failing**: tampering with one byte at the
 destination fails `verify-landing` (exit 1); removing a catalog object fails the
@@ -288,39 +292,110 @@ The boundary isn't the folder. It's enforced by:
 3. **Zero dependencies pays off in practice:** the Source runs in the Airflow worker's own
    interpreter via `PYTHONPATH`, without conflicting with its pinned dependencies.
 
-## Verification panel (Streamlit over the MART)
+## Warehouse destination: Postgres by default, Snowflake one target away
 
-A **verification** bench for the indicators before rebuilding them in Power BI, not a BI
-deliverable. It's 22 indicators in 7 groups. Reads **only** `RETAIL.MART`, with
-`RETAIL_READER` and `use secondary roles none` — the session is refused on GOLD and STAGE,
-and the panel runs a live probe that demonstrates the refusal instead of asserting it.
+**This is the one place the swap story is told**; README and DECISIONS link here.
 
-The single source is [`streamlit/indicators.py`](streamlit/indicators.py): the SQL and the
-explanation live together, and [`CONTRACT.md`](streamlit/CONTRACT.md) is **generated** from
-it. If the explanation lived in a hand-written markdown, the two would diverge at the first
-SQL tweak — and verification would keep passing, because nobody reads a SQL and a text side
-by side looking for disagreement.
+The physical L2→L3 boundary exists so the destination is swappable by configuration alone,
+and that claim was exercised for real. CR-006 stood up a Postgres target next to the
+Snowflake trial; when the trial expired on 2026-09-14 (`load_stage` failing auth with
+`390913`), CR-007 made Postgres the default — same 24 models, same data tests, only the
+loader (`postgres_load.py` instead of `snowflake_load.py`) and the `--target` changed. On
+2026-10-29 a new Snowflake account took the opt-in path over, and its first bootstrap
+surfaced an escaping defect. See [DECISIONS.md § "CR-007"](DECISIONS.md) and
+[§ "CR-008"](DECISIONS.md).
 
-Each indicator carries **traps**: the cases where the obvious measure produces a plausible,
-wrong number. It's the only class of error no test catches, and it's what makes the panel
-useful for whoever rebuilds the model in another tool.
+| | Postgres (default) | Snowflake (opt-in) |
+|---|---|---|
+| Runs | `warehouse-postgres` compose container, profile opt-in | a real account, `.env.snowflake` + RSA key outside the repo |
+| Targets | `make warehouse-postgres-up`, `make warehouse-refresh` | `make warehouse-snowflake-bootstrap`, `make warehouse-snowflake-refresh` |
+| Transport | `COPY` from the cut's parquet into `STAGE` | `PUT file://` to an internal stage, then `COPY INTO` |
+| Evidence | `make warehouse` (the dbt tests) | [`docs/warehouse-evidence/`](docs/warehouse-evidence/README.md), dated, via `make warehouse-snowflake-evidence` |
 
-The *Out of reach* list is part of the deliverable: every absence carries the **trigger**
+The cut itself (`warehouse_cut.py`, written to `data/warehouse-cut`) is engine-neutral: it
+reads the Silver and writes local parquet without talking to either warehouse.
+
+**Swapping accounts** is editing `.env.snowflake` (copied from
+[.env.snowflake.example](.env.snowflake.example)) and the matching block of
+`~/.snowflake/config.toml`, then running the bootstrap. `profiles.yml` carries **no
+default** for `SNOWFLAKE_ACCOUNT`/`SNOWFLAKE_USER` on purpose: an earlier version hardcoded
+them, and anyone cloning got a connection attempt against someone else's account instead of
+`Env var required but not provided`. Verified in both directions: `dbt parse --target dev`
+passes with every Snowflake variable missing, and `--target snowflake` fails naming the one
+that's missing. The Postgres target does carry defaults (`localhost:5434/retail`), because
+it only exists as this project's own container.
+
+**Roles, worn by the pipeline.** Both bootstraps create the same three roles; the load runs
+as `retail_loader`, dbt as `retail_transformer` (`role:` in `profiles.yml`), the panels as
+`retail_reader` — never as the database superuser.
+
+| Role | Can | Cannot |
+|---|---|---|
+| `retail_loader` | write `STAGE` | read `GOLD` or `MART` |
+| `retail_transformer` | read `STAGE`, write `GOLD` and `MART` | — |
+| `retail_reader` | read `MART` | read `STAGE` or `GOLD` |
+
+On Snowflake, the bootstrap **proves this matrix** role by role (with secondary roles off)
+before returning success, and the evidence page records it. On Postgres the bootstrap
+applies the grants and default privileges, covered offline by `test_postgres_load.py`;
+live, `make dashboard-check` proves the reader's row of the matrix (reads MART, refused on
+GOLD and STAGE) — the loader and transformer rows have no live check on that path. Stopping running as an administrator account
+exposed real defects — missing grants, ownership confused with privilege, an account that
+silently stops seeing objects it no longer owns — told in
+[DECISIONS.md § "Phase 2"](DECISIONS.md).
+
+### Why the warehouse models have no offline test — and the answer isn't a DuckDB mirror
+
+The 24 warehouse models and their tests only run **against a live engine**. A DuckDB mirror
+would have **passed** on the two errors that broke the first real Snowflake run —
+`FILTER (WHERE ...)` and `WINDOW ... AS`, which DuckDB accepts and Snowflake didn't. A test
+that doesn't reproduce the failure mode isn't a test; it's a second implementation that
+gives false confidence exactly where there is none.
+
+What covers the gap instead: the cut (`warehouse_cut.py`) and both transports
+(`postgres_load.py`, `snowflake_load.py`) are tested offline, and that's where the silent
+errors live — an aggregate summed with the detail, a forgotten scope, a column matched by
+position. The warehouse SQL fails loud when it fails. And a non-expiring second engine
+(Postgres) means the tree is no longer one trial account away from not running at all.
+
+## Indicator catalog and the two panels
+
+The panels in `streamlit/` (`operations_app.py`, `prices_app.py`) are **consumers**. The
+asset is the catalog in `platform/src/retail_platform/indicators/`: `operations.py` holds 22
+indicators in 7 groups plus `OUT_OF_SCOPE`, `prices.py` holds 9, both built on the
+`Indicator` dataclass and bound filters in `model.py`. Both panels read **only** `"MART"`,
+as `retail_reader`.
+
+The SQL and the explanation live together, and the reviewable pages
+[`docs/indicators/operations.md`](docs/indicators/operations.md) and
+[`docs/indicators/prices.md`](docs/indicators/prices.md) are **generated** from them by
+`contract.py` (`make indicators-contract`, no connection). If the explanation lived in a
+hand-written markdown, the two would diverge at the first SQL tweak — and verification would
+keep passing, because nobody reads a SQL and a text side by side looking for disagreement.
+An offline test fails if the pages drift from the generator.
+
+Each indicator carries **caveats**: the cases where the obvious measure produces a
+plausible, wrong number. It's the only class of error no test catches, and it's what makes
+the catalog useful for whoever rebuilds the model in another tool — or for the LLM/RAG layer
+meant to consume it next, which is why the catalog lives in the platform package and not in
+`streamlit/`. Parameters are always bound, never concatenated, so nothing can be injected
+through a selector or a prompt.
+
+The *Out of scope* list is part of the deliverable: every absence carries the **trigger**
 that would unlock it. An absence with no trigger is an excuse; with a trigger it's a
 decision.
 
-`make dashboard-check` runs the real app via `AppTest` and requires zero exceptions against
-the live account: it's the only way for the 25 queries to be exercised the way Streamlit
-runs them, with parameters bound, instead of checked as text.
+`make dashboard-check` renders both panels via `AppTest` and requires zero exceptions
+against the live warehouse: it's the only way for the 25 queries of the operations panel to
+be exercised the way Streamlit runs them, with parameters bound, instead of checked as text.
 
-**This panel is not where pipeline observability lives, and can't be.** The session runs as
-`RETAIL_READER` with `use secondary roles none` — refused on GOLD and STAGE by the same live
-probe mentioned above. `FACT_INGESTION_RUN` (duration, throughput, failure count per run —
-`DECISIONS.md § "CR-004"`) sits in GOLD, out of this role's reach on purpose. That evidence
-is read instead from `docs/warehouse-evidence/README.md` (`make warehouse-evidence`, dated
-snapshot against the live account) or `make observability-prove-signals` (SIM/PARCIAL/NAO
-per signal, offline). Building a second panel just to relocate a query this role can't run
-would be a workaround for an RBAC boundary the project keeps on purpose.
+**The panels are not where pipeline observability lives, and can't be.** `FACT_INGESTION_RUN`
+(duration, throughput, failure count per run — `DECISIONS.md § "CR-004"`) sits in GOLD, out
+of `retail_reader`'s reach on purpose. That evidence is read instead from
+`docs/warehouse-evidence/README.md` (`make warehouse-snowflake-evidence`, dated snapshot
+against the live account) or `make observability-prove-signals` (a per-signal verdict,
+offline). Building a second panel just to relocate a query this role can't run would be a
+workaround for an RBAC boundary the project keeps on purpose.
 
 ## Technical debt
 
@@ -336,67 +411,17 @@ be fixed, and the reason is written down), **open** (identified work remains), o
 
 | # | Problem | Impact | Status | Next step |
 |---|---|---|---|---|
-| 1 | `models/warehouse/` has no offline test | Two real defects only showed up on the first run against the live account; a DuckDB mirror would have caught them | **Mitigated** by `make warehouse-evidence` — dated evidence, not a second engine | None. The answer is **not** a mirror: see the section below |
-| 2 | The Snowflake account is a trial | It expired on 2026-09-14; `load_stage` started failing auth with `390913` | **Closed (CR-007)** — the default flipped to the Postgres target CR-006 had already proven live | None. `make warehouse*` targets Postgres now; `warehouse-snowflake-*` stays ready for a future account |
+| 1 | `models/warehouse/` has no offline test | Two real defects only showed up on the first run against the live account; a DuckDB mirror would **not** have caught them | **Mitigated** — offline tests on the cut and both transports, dated evidence, and a second live engine | None. The answer is **not** a mirror: see § "Warehouse destination" |
+| 2 | The Snowflake account was a trial | It expired on 2026-09-14 | **Closed (CR-007)** | None — told in § "Warehouse destination" |
 | 3 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Accepted** — cosmetic and external: `dbt-duckdb` config, with no supported form published | Track `dbt-duckdb` |
 | 4 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
-| 5 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206.523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
+| 5 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206,523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
 | 6 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
 | 7 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
 
-**Where the rest of this history lives.** An earlier revision of this document kept a
-second, much longer table here — a closed-item changelog duplicating what
-[DECISIONS.md](DECISIONS.md) already narrates in full for each phase (the 4 RBAC defects
-that surfaced when the pipeline stopped running as `ACCOUNTADMIN`, `warehouse_load`'s first
-real run, the timestamp that crossed the boundary 56 million years into the future, the
-population Silver's homonym fanout, and the rest). It was removed as a duplicate, not as a
-loss: every item it listed is either open in the table above, or closed with its full story
-told once, in `DECISIONS.md`'s phase-by-phase narrative.
-
-### The destination is swappable — verified, not claimed
-
-The account is a trial, and the response to that isn't avoiding depending on it: it's
-making sure swapping it is cheap. Two things contradicted that and were fixed.
-
-`profiles.yml` carried `SNOWFLAKE_ACCOUNT` and `SNOWFLAKE_USER` **hardcoded as defaults**.
-Anyone cloning the repository without configuring anything wouldn't get "configure the
-account" — they'd get a connection attempt against someone else's account, failing with
-`Object does not exist` far from the actual cause. For MinIO the default makes sense
-(`minioadmin` is a local convention that `.env.example` repeats); for a Snowflake account
-there's no default that serves anyone else. With no default, dbt aborts saying `Env var
-required but not provided: 'SNOWFLAKE_ACCOUNT'`.
-
-Swapping accounts today is: edit [.env.snowflake.example](.env.snowflake.example) copied to
-`.env.snowflake`, the corresponding block of `~/.snowflake/config.toml`, and run
-`make warehouse-bootstrap`. **No model, no SQL and no test changes** — it's the physical
-L2→L3 boundary paying for itself.
-
-Verified in both directions: `dbt parse --target dev` passes with every Snowflake variable
-missing, and `--target snowflake` fails naming the one that's missing.
-
-That covers swapping *accounts*. Swapping *engines* was still an untested claim until
-CR-006 stood up a Postgres target next to it and CR-007 made it the default the day the
-trial actually expired — same models, same tests, only the loader and the `--target`
-changed. See `DECISIONS.md § "CR-006"` and `§ "CR-007"`.
-
-### `models/warehouse/` with no offline test — and why the answer isn't a DuckDB mirror
-
-A DuckDB mirror of the 24 models would have **passed** on the two errors that broke the
-first real run: `FILTER (WHERE ...)` and `WINDOW ... AS`, which DuckDB accepts and
-Snowflake doesn't. A test that doesn't reproduce the failure mode isn't a test — it's a
-second implementation to maintain, and it would give false confidence exactly where there
-is none.
-
-The mitigation is different: [`make warehouse-evidence`](docs/warehouse-evidence/README.md)
-records the result of the **real** run — ownership object by object, volume, isolation
-matrix and a sample of each mart — with date and account identity. It converts "code with
-no test" into "code that ran, with the proof attached and dated". It's regenerable:
-pointing at another account and running again produces that account's evidence.
-
-What's still true: the cut (`snowflake_export.py`) and the transport (`snowflake_load.py`)
-are covered offline, and that's where the silent errors live — an aggregate summed together
-with the detail, a forgotten scope, a column matched by position. The warehouse SQL fails
-loud when it fails.
+**Where the rest of this history lives.** Closed items with their full story (the RBAC
+defects, `warehouse_load`'s first real run, the timestamp 56 million years in the future,
+the population homonym fanout) are told once, in [DECISIONS.md](DECISIONS.md).
 
 ### Test coverage
 
@@ -415,14 +440,15 @@ total comes from `make test`, measured, not written.
 | `test_land.py` · `test_landing_roundtrip.py` | Upload, idempotency, self-correction, aborting before `_SUCCESS`, and the reread that rechecks (`verify.py`) |
 | `test_config.py` | Credential precedence, `.env` not overriding the environment, endpoint conversion (`query.py`), and every read variable being declared |
 | `test_prune_local.py` | Only deletes the local copy after two independent checks |
-| `test_oltp_reference.py` | The export's queries against real DuckDB fixtures, the population-based allocation and the adult share measured before the cut |
+| `test_customers_reference.py` | The export's queries against real DuckDB fixtures, the population-based allocation and the adult share measured before the cut |
 | `test_orders_reference.py` · `test_demand_profile.py` · `test_demand_check.py` | The price calendar, the IPF, the MAPA extraction's two checksums, and the reality check |
 | `test_orders_oltp.py` · `test_orders_stream.py` · `test_orders_projection.py` | The transaction boundary, the order between write and offset commit, the monotonic merge |
-| `test_snowflake_export.py` | The cut: `'Total'` aggregate, AUF scope, dedup, DDL derived from the cut itself |
+| `test_warehouse_cut.py` | The engine-neutral cut: `'Total'` aggregate, AUF scope, dedup, DDL derived from the cut itself |
 | `test_snowflake_load.py` | Qualified stage, `OVERWRITE`, matching by name, rechecking, and the 4 role defects |
+| `test_postgres_load.py` | Quoted uppercase schemas, type mapping that fails instead of guessing, count recheck, and the bootstrap's grants and default privileges |
 | `test_snowflake_evidence.py` · `test_stream_evidence.py` | Totals summed and not written, broken isolation highlighted, and a failure not turning into an empty value |
 | `test_silver_gate.py` | The `dbt build` gate deciding in a single place |
-| `test_dashboard_indicators.py` | `CONTRACT.md` byte for byte equal to what the generator produces, and every parameter bound |
+| `test_indicators_operations.py` · `test_indicators_prices.py` | `docs/indicators/` byte for byte equal to what the generator produces, every parameter bound, every caveat and out-of-scope trigger declared |
 | `test_cli.py` | The command-line defaults, including `--count` **not** having one |
 
 Closed with an in-memory S3 client double (`platform/tests/fake_s3.py`), in the spirit of
@@ -438,18 +464,8 @@ Confirmed non-empty by mutation: turning off the sha256 comparison in `verify.py
 - **The Silver `dbt` path** — the data tests require object storage to be up.
 - **The DAGs** — no test imports the Airflow module. All six compile via `DagBag` in the
   container, which catches import errors but not behavior.
-- **The `models/warehouse/` tree** — the 24 models and their tests only run **against a
-  live engine** (Postgres by default since CR-007; Snowflake before its trial expired).
-  There's no offline equivalent, and it's not an oversight: a DuckDB mirror would be a
-  second materialization of the same truth, and it was precisely the difference between
-  two real engines (`FILTER`, `WINDOW`) that broke Snowflake on the first real run — a
-  DuckDB mirror would have passed and hidden exactly those errors. **The consequence used
-  to be a single point of failure — one trial account with no fallback.** CR-006 gave the
-  tree a second, non-expiring engine, and CR-007 proved the flip live, which is what
-  closed it — not a DuckDB mirror. What softens the remaining gap is that the cut feeding
-  it (`snowflake_export.py`) and both transports (`snowflake_load.py`/`postgres_load.py`)
-  are covered offline, and that's where the silent errors live — the Gold SQL fails loud
-  when it fails.
+- **The `models/warehouse/` tree** — only runs against a live engine, by choice; see
+  § "Warehouse destination".
 
 All three were verified manually, in a real run.
 
@@ -470,17 +486,8 @@ All three were verified manually, in a real run.
 
 `.github/workflows/ci.yml`: `source-test` (no dependency installed, proves the five Sources
 stay that way) and `platform` (`make venv` → `make platform-test` → `make up` → `make
-silver`), never the Snowflake half. See `DECISIONS.md § "CR-005"` for why it wasn't written
+silver`), never a warehouse engine. See `DECISIONS.md § "CR-005"` for why it wasn't written
 before there was a remote to run it against, and what the first real run found.
-
-### The Snowflake account is a trial — **closed 2026-09-14 (CR-007)**
-
-The 14-day trial (started 2026-08-27) expired for real: `load_stage` failed auth with
-`390913`, the same code an earlier mid-phase expiration had already shown once. `make
-warehouse` now targets the Postgres container CR-006 proved live — same guard, same
-models, same tests, only the loader and the `--target` changed. `make warehouse-snowflake*`
-stays in place, ready for whichever account replaces the trial. See
-`DECISIONS.md § "CR-007"`.
 
 ### dbt deprecation warning — **open, cosmetic**
 

@@ -1,13 +1,13 @@
-"""Verificacao independente de uma particao aterrissada.
+"""Independent verification of a landed partition.
 
-Mesmo principio do validate.py da Source: RELE e RECALCULA em vez de confiar no que foi
-gravado. Baixa cada objeto declarado, recalcula o SHA-256 e o tamanho, e varre o prefixo
-inteiro em busca de objeto que o manifesto nao declara.
+Same principle as the Source's validate.py: REREADS and RECOMPUTES instead of trusting
+what was written. Downloads each declared object, recomputes SHA-256 and size, and scans
+the whole prefix for objects the manifest does not declare.
 
-O manifesto local e o inventario autoritativo (obrigacao 4.1). Alem de conferir os
-objetos contra ele, a verificacao exige que o _manifest.json aterrissado seja
-byte-identico ao local: sem isso, um inventario adulterado no destino passaria a ditar o
-que e "correto" no destino.
+The local manifest is the authoritative inventory (obligation 4.1). Besides checking the
+objects against it, verification requires the landed _manifest.json to be byte-identical
+to the local one: without that, a tampered inventory at the destination would get to
+dictate what is "correct" at the destination.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _get(client, bucket: str, key: str) -> bytes:
 
 
 def verify(config, partition_path: str) -> tuple[list[str], dict]:
-    """Confere a particao aterrissada. Retorna (erros, resumo)."""
+    """Checks the landed partition. Returns (errors, summary)."""
     partition: Partition = read(partition_path)
     client = config.client()
     bucket = config.raw_bucket
@@ -44,28 +44,28 @@ def verify(config, partition_path: str) -> tuple[list[str], dict]:
     checked = 0
     total_bytes = 0
 
-    # ---- Objetos declarados: baixa, recalcula, compara -----------------------
+    # ---- Declared objects: download, recompute, compare ----------------------
     for entry in partition.files:
         key = object_key(partition, entry.path)
         declared.add(key)
         try:
             blob = _get(client, bucket, key)
-        except Exception as exc:  # objeto ausente ou ilegivel
-            errors.append(f"objeto ausente ou ilegivel: {key}: {type(exc).__name__}")
+        except Exception as exc:  # object missing or unreadable
+            errors.append(f"object missing or unreadable: {key}: {type(exc).__name__}")
             continue
         checked += 1
         total_bytes += len(blob)
         observed = hashlib.sha256(blob).hexdigest()
         if observed != entry.sha256:
             errors.append(
-                f"sha256 divergente: {key} manifesto={entry.sha256} objeto={observed}"
+                f"sha256 mismatch: {key} manifest={entry.sha256} object={observed}"
             )
         if len(blob) != entry.bytes:
             errors.append(
-                f"tamanho divergente: {key} manifesto={entry.bytes} objeto={len(blob)}"
+                f"size mismatch: {key} manifest={entry.bytes} object={len(blob)}"
             )
 
-    # ---- Arquivos previstos e nao declarados --------------------------------
+    # ---- Files expected but not declared -------------------------------------
     for name in UNDECLARED_FILES:
         local_path = os.path.join(partition.path, name)
         key = object_key(partition, f"{partition.prefix_suffix}/{name}")
@@ -75,25 +75,25 @@ def verify(config, partition_path: str) -> tuple[list[str], dict]:
         try:
             blob = _get(client, bucket, key)
         except Exception as exc:
-            errors.append(f"objeto ausente ou ilegivel: {key}: {type(exc).__name__}")
+            errors.append(f"object missing or unreadable: {key}: {type(exc).__name__}")
             continue
         checked += 1
         total_bytes += len(blob)
         with open(local_path, "rb") as handle:
             local_blob = handle.read()
         if blob != local_blob:
-            errors.append(f"objeto difere do arquivo local: {key}")
+            errors.append(f"object differs from the local file: {key}")
 
-    # ---- Orfaos: objeto no prefixo que o manifesto nao declara ---------------
+    # ---- Orphans: objects in the prefix the manifest does not declare -------
     orphans = [key for key, _ in _iter_keys(client, bucket, prefix) if key not in declared]
     if orphans:
-        errors.append(f"objeto(s) no destino fora do manifesto: {sorted(orphans)}")
+        errors.append(f"object(s) at the destination outside the manifest: {sorted(orphans)}")
 
-    # ---- Marcador de conclusao ---------------------------------------------
+    # ---- Completion marker -------------------------------------------------
     success_key = object_key(partition, f"{partition.prefix_suffix}/{SUCCESS_NAME}")
     remote_keys = {key for key, _ in _iter_keys(client, bucket, prefix)}
     if partition.complete and success_key not in remote_keys:
-        errors.append(f"{SUCCESS_NAME} ausente no destino, mas complete=true")
+        errors.append(f"{SUCCESS_NAME} missing at the destination, but complete=true")
 
     summary = {
         "partition": partition.path,

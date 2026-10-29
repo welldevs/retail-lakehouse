@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""Prova da projeção concorrente: dois escritores, um leitor, fusão monotônica.
+"""Proof of the concurrent projection: two writers, one reader, monotonic merge.
 
-O QUE ESTE MARCO PRECISA PROVAR, e por que cada peça é necessária.
+WHAT THIS MILESTONE NEEDS TO PROVE, and why each piece is necessary.
 
-O gatilho do Iceberg era *"um segundo engine precisar escrever a mesma tabela"*. Ter dois
-processos que escrevem não prova nada sozinho — o que precisa ficar demonstrado é o
-comportamento sob conflito, que é onde um armazenamento sem controle de concorrência falha em
-silêncio:
+The Iceberg trigger was *"a second engine needing to write the same table"*. Having two
+processes that write proves nothing on its own — what must be demonstrated is the
+behavior under conflict, which is where storage without concurrency control fails
+silently:
 
-  1. CONFLITO É RECUSADO, não absorvido. O escritor que parte de um snapshot velho leva
-     `CommitFailedException`. Se passasse calado, seria lost update — e aí o Iceberg não
-     estaria comprando nada.
+  1. A CONFLICT IS REFUSED, not absorbed. The writer that starts from a stale snapshot gets
+     `CommitFailedException`. If it went through silently, it would be a lost update — and then
+     Iceberg would be buying nothing.
 
-  2. RETRY NÃO BASTA: A FUSÃO PRECISA SER MONOTÔNICA. Recarregar e tentar de novo resolve o
-     conflito de COMMIT e ainda assim perde dado — se o outro escritor já gravou o pedido no
-     `sequence_no` 7 e a nossa tentativa carrega o 5, o retry cego escreve o 5 por cima. O
-     commit passa, a tabela regride, e nada reprova. Esta é a prova que mais importa.
+  2. RETRY IS NOT ENOUGH: THE MERGE MUST BE MONOTONIC. Reloading and trying again resolves the
+     COMMIT conflict and still loses data — if the other writer already wrote the order at
+     `sequence_no` 7 and our attempt carries 5, a blind retry writes 5 over it. The
+     commit goes through, the table regresses, and nothing fails. This is the proof that matters most.
 
-  3. O LEITOR VÊ SNAPSHOT ESTÁVEL. Uma leitura em curso não enxerga escrita pela metade.
+  3. THE READER SEES A STABLE SNAPSHOT. A read in progress does not see a half-done write.
 
-  4. OS DOIS ESCRITORES DE VERDADE, na tabela de verdade, com dado de verdade — e a
-     reconciliação contra `silver_order` no fim.
+  4. BOTH REAL WRITERS, on the real table, with real data — and the
+     reconciliation against `silver_order` at the end.
 
-  5. TIME TRAVEL na projeção.
+  5. TIME TRAVEL on the projection.
 
-  6. `orders-reconcile` REPROVA quando há divergência. Verificação que nunca falhou não é
-     verificação.
+  6. `orders-reconcile` FAILS when there is a divergence. A check that never failed is not
+     a check.
 
     make orders-prove-projection
 """
@@ -56,21 +56,21 @@ from retail_platform.orders_projection import (  # noqa: E402
 )
 
 PROBE = f"{NAMESPACE}.concurrency_probe"
-falhas = []
+failures = []
 
 
-def check(label, ok, detalhe=""):
-    print(f"  [{'OK   ' if ok else 'FALHA'}] {label}{(' — ' + detalhe) if detalhe else ''}")
+def check(label, ok, detail=""):
+    print(f"  [{'OK  ' if ok else 'FAIL'}] {label}{(' — ' + detail) if detail else ''}")
     if not ok:
-        falhas.append(label)
+        failures.append(label)
 
 
-def estado(order_id, seq, status="PLACED", writer=WRITER_STREAM):
-    agora = datetime(2026, 8, 27, 7, 0, tzinfo=timezone.utc)
+def state(order_id, seq, status="PLACED", writer=WRITER_STREAM):
+    now = datetime(2026, 8, 27, 7, 0, tzinfo=timezone.utc)
     return {
-        "order_id": order_id, "wh": "mad1", "order_date": agora.date(),
+        "order_id": order_id, "wh": "mad1", "order_date": now.date(),
         "customer_id": "cust_mad1_000001", "status": status, "last_sequence_no": seq,
-        "events_applied": seq, "placed_at": agora, "updated_at": agora,
+        "events_applied": seq, "placed_at": now, "updated_at": now,
         "confirmed_at": None, "picking_started_at": None, "picked_at": None,
         "dispatched_at": None, "terminal_at": None, "line_count": 3,
         "picked_line_count": None, "substituted_lines": 0, "removed_lines": 0,
@@ -84,15 +84,15 @@ def main() -> int:
     config = from_env()
     cat = catalog(config)
 
-    # SENTINELA. As partes 1 a 4 mexem SÓ na tabela de sonda; se a de produção mudar de
-    # tamanho, alguma escrita foi para o lugar errado. Sem esta linha, foi assim que um
-    # `load_table(TABLE_NAME)` cravado num refresh gravou quatro linhas sintéticas na
-    # projeção real — e só a reconciliação, três passos adiante, apontou. Uma prova que usa
-    # uma sonda tem de vigiar o alvo que ela NÃO deveria tocar.
-    real_antes = ensure_table(cat).scan(selected_fields=("order_id",)).to_arrow().num_rows
+    # SENTINEL. Parts 1 to 4 touch ONLY the probe table; if the production one changes
+    # size, some write went to the wrong place. Without this line, that is how a
+    # `load_table(TABLE_NAME)` hard-coded in a refresh wrote four synthetic rows into the
+    # real projection — and only the reconciliation, three steps later, pointed it out. A proof
+    # that uses a probe must watch the target it should NOT touch.
+    real_before = ensure_table(cat).scan(selected_fields=("order_id",)).to_arrow().num_rows
 
-    # ---- 1. mecânica do conflito, numa tabela de sonda -------------------------------
-    print("1. mecânica do conflito, numa tabela isolada")
+    # ---- 1. conflict mechanics, on a probe table -------------------------------------
+    print("1. conflict mechanics, on an isolated table")
     if cat.table_exists(PROBE):
         cat.drop_table(PROBE)
     cat.create_table(PROBE, schema=arrow_schema())
@@ -102,129 +102,129 @@ def main() -> int:
 
     from retail_platform.orders_projection import _normalize
 
-    def escreve_cru(tabela, linhas):
-        tabela.upsert(
-            pa.Table.from_pylist([_normalize(l, l["written_by"]) for l in linhas],
+    def write_raw(table, rows):
+        table.upsert(
+            pa.Table.from_pylist([_normalize(l, l["written_by"]) for l in rows],
                                  schema=arrow_schema()),
             join_cols=["order_id"],
         )
 
     a = cat.load_table(PROBE)
-    b = cat.load_table(PROBE)          # referência carregada ANTES do commit de `a`
-    escreve_cru(a, [estado("ord_a", 1)])
-    recusado = False
+    b = cat.load_table(PROBE)          # reference loaded BEFORE `a` commits
+    write_raw(a, [state("ord_a", 1)])
+    refused = False
     try:
-        escreve_cru(b, [estado("ord_b", 1)])
+        write_raw(b, [state("ord_b", 1)])
     except CommitFailedException as exc:
-        recusado = True
-        motivo = str(exc)[:90]
-    check("o escritor com snapshot velho é RECUSADO, não perdido", recusado,
-          motivo if recusado else "commitou em silêncio — seria lost update")
+        refused = True
+        reason = str(exc)[:90]
+    check("the writer with a stale snapshot is REFUSED, not lost", refused,
+          reason if refused else "committed silently — that would be a lost update")
 
-    # ---- 2. A PROVA QUE MAIS IMPORTA: fusão monotônica --------------------------------
+    # ---- 2. THE PROOF THAT MATTERS MOST: monotonic merge -----------------------------
     print()
-    print("2. fusão monotônica — retry não pode escrever um estado ANTIGO por cima")
-    tabela = cat.load_table(PROBE)
-    novo = IcebergProjection(tabela, writer=WRITER_STREAM, cat=cat)
-    novo.save([estado("ord_corrida", 7, status="DELIVERED")])
-    novo.commit()
+    print("2. monotonic merge — a retry must not write an OLD state over a newer one")
+    table = cat.load_table(PROBE)
+    newer = IcebergProjection(table, writer=WRITER_STREAM, cat=cat)
+    newer.save([state("ord_race", 7, status="DELIVERED")])
+    newer.commit()
 
-    velho = IcebergProjection(cat.load_table(PROBE), writer=WRITER_REBUILD, cat=cat)
-    velho.save([estado("ord_corrida", 5, status="PICKING", writer=WRITER_REBUILD)])
-    stats = velho.commit()
+    older = IcebergProjection(cat.load_table(PROBE), writer=WRITER_REBUILD, cat=cat)
+    older.save([state("ord_race", 5, status="PICKING", writer=WRITER_REBUILD)])
+    stats = older.commit()
 
-    linhas = {r["order_id"]: r for r in
-              cat.load_table(PROBE).scan().to_arrow().to_pylist()}
-    atual = linhas.get("ord_corrida", {})
-    check("o estado antigo foi descartado como obsoleto", stats.rows_dropped_as_stale == 1,
-          f"descartadas={stats.rows_dropped_as_stale} escritas={stats.rows_written}")
-    check("a tabela NÃO regrediu", atual.get("last_sequence_no") == 7
-          and atual.get("status") == "DELIVERED",
-          f"seq={atual.get('last_sequence_no')} status={atual.get('status')}")
+    rows = {r["order_id"]: r for r in
+            cat.load_table(PROBE).scan().to_arrow().to_pylist()}
+    current = rows.get("ord_race", {})
+    check("the old state was discarded as stale", stats.rows_dropped_as_stale == 1,
+          f"dropped={stats.rows_dropped_as_stale} written={stats.rows_written}")
+    check("the table did NOT regress", current.get("last_sequence_no") == 7
+          and current.get("status") == "DELIVERED",
+          f"seq={current.get('last_sequence_no')} status={current.get('status')}")
 
-    # e o caminho normal continua funcionando: o que avança, escreve
-    mais_novo = IcebergProjection(cat.load_table(PROBE), writer=WRITER_REBUILD, cat=cat)
-    mais_novo.save([estado("ord_corrida", 9, status="RETURNED", writer=WRITER_REBUILD)])
-    stats2 = mais_novo.commit()
-    depois = {r["order_id"]: r for r in
-              cat.load_table(PROBE).scan().to_arrow().to_pylist()}["ord_corrida"]
-    check("o que AVANÇA continua escrevendo", stats2.rows_written == 1
-          and depois["last_sequence_no"] == 9 and depois["written_by"] == WRITER_REBUILD)
+    # and the normal path keeps working: what moves forward, writes
+    newest = IcebergProjection(cat.load_table(PROBE), writer=WRITER_REBUILD, cat=cat)
+    newest.save([state("ord_race", 9, status="RETURNED", writer=WRITER_REBUILD)])
+    stats2 = newest.commit()
+    after = {r["order_id"]: r for r in
+             cat.load_table(PROBE).scan().to_arrow().to_pylist()}["ord_race"]
+    check("what MOVES FORWARD keeps writing", stats2.rows_written == 1
+          and after["last_sequence_no"] == 9 and after["written_by"] == WRITER_REBUILD)
 
-    # ---- 3. dois escritores concorrentes, com leitor ativo ----------------------------
+    # ---- 3. two concurrent writers, with an active reader -----------------------------
     print()
-    print("3. dois escritores concorrentes na sonda, com um leitor em laço")
-    conflitos = {"n": 0}
-    leituras = {"n": 0, "invalidas": 0}
-    parar = threading.Event()
+    print("3. two concurrent writers on the probe, with a reader in a loop")
+    conflicts = {"n": 0}
+    reads = {"n": 0, "invalid": 0}
+    stop = threading.Event()
 
-    def leitor():
-        while not parar.is_set():
-            linhas = cat.load_table(PROBE).scan(
+    def reader():
+        while not stop.is_set():
+            rows = cat.load_table(PROBE).scan(
                 selected_fields=("order_id", "last_sequence_no")).to_arrow().to_pylist()
-            leituras["n"] += 1
-            # Um snapshot válido nunca tem chave repetida nem sequência nula: leitura
-            # parcial de um upsert copy-on-write apareceria como um dos dois.
-            ids = [l["order_id"] for l in linhas]
-            if len(ids) != len(set(ids)) or any(l["last_sequence_no"] is None for l in linhas):
-                leituras["invalidas"] += 1
+            reads["n"] += 1
+            # A valid snapshot never has a repeated key or a null sequence: a partial
+            # read of a copy-on-write upsert would show up as one of the two.
+            ids = [l["order_id"] for l in rows]
+            if len(ids) != len(set(ids)) or any(l["last_sequence_no"] is None for l in rows):
+                reads["invalid"] += 1
             time.sleep(0.02)
 
-    def escritor(nome, faixa):
-        for i in faixa:
-            projecao = IcebergProjection(cat.load_table(PROBE), writer=nome, cat=cat)
-            projecao.save([estado(f"ord_{nome}_{i:02d}", 1, writer=nome)])
-            stats = projecao.commit()
-            conflitos["n"] += stats.conflicts
+    def writer(name, span):
+        for i in span:
+            projection = IcebergProjection(cat.load_table(PROBE), writer=name, cat=cat)
+            projection.save([state(f"ord_{name}_{i:02d}", 1, writer=name)])
+            stats = projection.commit()
+            conflicts["n"] += stats.conflicts
 
-    t_leitor = threading.Thread(target=leitor, daemon=True)
-    t_leitor.start()
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    reader_thread.start()
     threads = [
-        threading.Thread(target=escritor, args=(WRITER_STREAM, range(8))),
-        threading.Thread(target=escritor, args=(WRITER_REBUILD, range(8))),
+        threading.Thread(target=writer, args=(WRITER_STREAM, range(8))),
+        threading.Thread(target=writer, args=(WRITER_REBUILD, range(8))),
     ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    parar.set()
-    t_leitor.join(timeout=5)
+    stop.set()
+    reader_thread.join(timeout=5)
 
     final = {r["order_id"] for r in cat.load_table(PROBE).scan().to_arrow().to_pylist()}
-    esperados = {f"ord_{n}_{i:02d}" for n in (WRITER_STREAM, WRITER_REBUILD)
-                 for i in range(8)}
-    check("as 16 escritas concorrentes chegaram todas", esperados <= final,
-          f"{len(esperados & final)}/16, {conflitos['n']} conflito(s) resolvidos")
-    check("o leitor nunca viu um snapshot inconsistente", leituras["invalidas"] == 0,
-          f"{leituras['n']} leituras durante a escrita")
-    check("houve contenção de verdade (senão a prova não provou nada)",
-          conflitos["n"] > 0, f"{conflitos['n']} conflitos")
+    expected = {f"ord_{n}_{i:02d}" for n in (WRITER_STREAM, WRITER_REBUILD)
+                for i in range(8)}
+    check("all 16 concurrent writes arrived", expected <= final,
+          f"{len(expected & final)}/16, {conflicts['n']} conflict(s) resolved")
+    check("the reader never saw an inconsistent snapshot", reads["invalid"] == 0,
+          f"{reads['n']} reads during the writes")
+    check("there was real contention (otherwise the proof proved nothing)",
+          conflicts["n"] > 0, f"{conflicts['n']} conflicts")
 
     # ---- 4. time travel ---------------------------------------------------------------
     print()
-    print("4. time travel na projeção")
-    sonda = cat.load_table(PROBE)
-    snapshots = list(sonda.metadata.snapshots)
-    primeiro = sonda.scan(snapshot_id=snapshots[0].snapshot_id).to_arrow().num_rows
-    agora = sonda.scan().to_arrow().num_rows
-    check("o primeiro snapshot ainda é legível e é menor", primeiro < agora,
-          f"{primeiro} -> {agora} linhas em {len(snapshots)} snapshots")
+    print("4. time travel on the projection")
+    probe = cat.load_table(PROBE)
+    snapshots = list(probe.metadata.snapshots)
+    first = probe.scan(snapshot_id=snapshots[0].snapshot_id).to_arrow().num_rows
+    now = probe.scan().to_arrow().num_rows
+    check("the first snapshot is still readable and is smaller", first < now,
+          f"{first} -> {now} rows over {len(snapshots)} snapshots")
 
     cat.drop_table(PROBE)
-    print("      sonda removida.")
+    print("      probe removed.")
 
-    real_depois = ensure_table(cat).scan(selected_fields=("order_id",)).to_arrow().num_rows
-    check("a tabela de PRODUÇÃO não foi tocada pelas provas da sonda",
-          real_depois == real_antes, f"{real_antes} -> {real_depois} linhas")
+    real_after = ensure_table(cat).scan(selected_fields=("order_id",)).to_arrow().num_rows
+    check("the PRODUCTION table was not touched by the probe proofs",
+          real_after == real_before, f"{real_before} -> {real_after} rows")
 
-    # ---- 5. o DuckDB lê a tabela REAL, pelo caminho do catálogo -----------------------
+    # ---- 5. DuckDB reads the REAL table, through the catalog path ---------------------
     print()
-    print("5. o DuckDB lê a tabela real enquanto ela é escrita")
+    print("5. DuckDB reads the real table while it is being written")
     import duckdb
 
-    tabela_real = ensure_table(cat)
-    esperado = tabela_real.scan(selected_fields=("order_id",)).to_arrow().num_rows
-    metadado = tabela_real.metadata_location
+    real_table = ensure_table(cat)
+    expected_rows = real_table.scan(selected_fields=("order_id",)).to_arrow().num_rows
+    metadata = real_table.metadata_location
 
     con = duckdb.connect()
     con.execute("install iceberg"); con.execute("load iceberg")
@@ -237,96 +237,97 @@ def main() -> int:
             use_ssl {'true' if config.endpoint.startswith('https') else 'false'},
             url_style 'path')
     """)
-    lidas = con.execute(f"select count(*) from iceberg_scan('{metadado}')").fetchone()[0]
-    check("o DuckDB lê pelo metadata_location do catálogo", lidas == esperado,
-          f"{lidas} linhas")
+    read_rows = con.execute(f"select count(*) from iceberg_scan('{metadata}')").fetchone()[0]
+    check("DuckDB reads through the catalog's metadata_location", read_rows == expected_rows,
+          f"{read_rows} rows")
 
-    # E o leitor preso ao metadado antigo continua vendo o estado antigo, mesmo depois de
-    # uma escrita nova — isolamento de snapshot atravessando dois motores.
-    projecao = IcebergProjection(cat.load_table(TABLE_NAME), writer=WRITER_STREAM, cat=cat)
-    alvo = tabela_real.scan(selected_fields=("order_id", "last_sequence_no")
-                            ).to_arrow().to_pylist()[0]
-    projecao.save([estado(alvo["order_id"], alvo["last_sequence_no"] + 100,
-                          status="RETURNED")])
-    projecao.commit()
-    ainda = con.execute(
-        f"select last_sequence_no from iceberg_scan('{metadado}') where order_id = "
-        f"'{alvo['order_id']}'").fetchone()[0]
-    novo_metadado = cat.load_table(TABLE_NAME).metadata_location
-    agora_val = con.execute(
-        f"select last_sequence_no from iceberg_scan('{novo_metadado}') where order_id = "
-        f"'{alvo['order_id']}'").fetchone()[0]
-    check("o metadado antigo ainda mostra o estado antigo", ainda == alvo["last_sequence_no"],
-          f"antigo={ainda} novo={agora_val}")
-    check("o metadado novo mostra a escrita", agora_val == alvo["last_sequence_no"] + 100)
+    # And the reader pinned to the old metadata keeps seeing the old state, even after a
+    # new write — snapshot isolation spanning two engines.
+    projection = IcebergProjection(cat.load_table(TABLE_NAME), writer=WRITER_STREAM, cat=cat)
+    target = real_table.scan(selected_fields=("order_id", "last_sequence_no")
+                             ).to_arrow().to_pylist()[0]
+    projection.save([state(target["order_id"], target["last_sequence_no"] + 100,
+                           status="RETURNED")])
+    projection.commit()
+    still = con.execute(
+        f"select last_sequence_no from iceberg_scan('{metadata}') where order_id = "
+        f"'{target['order_id']}'").fetchone()[0]
+    new_metadata = cat.load_table(TABLE_NAME).metadata_location
+    now_val = con.execute(
+        f"select last_sequence_no from iceberg_scan('{new_metadata}') where order_id = "
+        f"'{target['order_id']}'").fetchone()[0]
+    check("the old metadata still shows the old state", still == target["last_sequence_no"],
+          f"old={still} new={now_val}")
+    check("the new metadata shows the write", now_val == target["last_sequence_no"] + 100)
 
-    # desfaz a escrita de teste, para a reconciliação abaixo comparar o estado de verdade
-    restaura = IcebergProjection(cat.load_table(TABLE_NAME), writer=WRITER_STREAM, cat=cat)
-    linha_original = {c: alvo.get(c) for c in COLUMNS}
-    original_completa = [r for r in tabela_real.scan().to_arrow().to_pylist()
-                         if r["order_id"] == alvo["order_id"]][0]
-    original_completa["last_sequence_no"] = alvo["last_sequence_no"] + 1000
-    restaura.save([original_completa])
-    restaura.commit()
-    # e agora de volta ao valor certo, com o guard desativado por um upsert direto
-    original_completa["last_sequence_no"] = alvo["last_sequence_no"]
-    escreve_cru(cat.load_table(TABLE_NAME), [original_completa])
-    del linha_original
-    print("      escrita de teste desfeita.")
+    # undo the test write, so the reconciliation below compares the real state
+    restore = IcebergProjection(cat.load_table(TABLE_NAME), writer=WRITER_STREAM, cat=cat)
+    original_row = {c: target.get(c) for c in COLUMNS}
+    original_full = [r for r in real_table.scan().to_arrow().to_pylist()
+                     if r["order_id"] == target["order_id"]][0]
+    original_full["last_sequence_no"] = target["last_sequence_no"] + 1000
+    restore.save([original_full])
+    restore.commit()
+    # and now back to the right value, with the guard bypassed by a direct upsert
+    original_full["last_sequence_no"] = target["last_sequence_no"]
+    write_raw(cat.load_table(TABLE_NAME), [original_full])
+    del original_row
+    print("      test write undone.")
 
-    # ---- 6. reconciliação: passa, e REPROVA quando forçada ---------------------------
+    # ---- 6. reconciliation: passes, and FAILS when forced -----------------------------
     print()
-    print("6. reconciliação dos três folds")
-    relatorio = reconcile(config, cat=cat)
-    check("Iceberg, Silver e OLTP concordam", relatorio["ok"],
-          f"{relatorio['compared']} pedidos comparados, "
-          f"{relatorio['divergence_count']} divergência(s)")
+    print("6. reconciliation of the three folds")
+    report = reconcile(config, cat=cat)
+    check("Iceberg, Silver and OLTP agree", report["ok"],
+          f"{report['compared']} orders compared, "
+          f"{report['divergence_count']} divergence(s)")
 
     print()
-    print("   injetando uma divergência de propósito...")
-    if not relatorio["ok"]:
-        # SE A BASE JÁ ESTÁ DIVERGENTE, a injeção não prova nada: `not ok` seria verdade de
-        # qualquer jeito. Foi exatamente esse falso-positivo que a primeira versão desta
-        # prova produziu — ela "passou" porque a base estava suja, não porque detectou.
-        check("a base está limpa antes da injeção (senão a injeção não prova nada)", False,
-              "reconciliação já falhava; injeção pulada")
+    print("   injecting a divergence on purpose...")
+    if not report["ok"]:
+        # IF THE BASE IS ALREADY DIVERGENT, the injection proves nothing: `not ok` would be true
+        # anyway. That is exactly the false positive the first version of this proof
+        # produced — it "passed" because the base was dirty, not because it detected anything.
+        check("the base is clean before the injection (otherwise the injection proves nothing)", False,
+              "reconciliation was already failing; injection skipped")
     else:
-        vitima = [r for r in cat.load_table(TABLE_NAME).scan().to_arrow().to_pylist()][0]
-        guardado = dict(vitima)
-        adulterada = dict(vitima)
-        adulterada["status"] = "CANCELLED" if vitima["status"] != "CANCELLED" else "DELIVERED"
-        escreve_cru(cat.load_table(TABLE_NAME), [adulterada])
-        depois_injecao = reconcile(config, cat=cat)
-        # Não basta "reprovou": tem de ter reprovado POR CAUSA da linha que foi adulterada.
-        apontou = any(d["order_id"] == vitima["order_id"] and d["coluna"] == "status"
-                      for d in depois_injecao["divergences"])
-        check("a reconciliação REPROVA a divergência injetada",
-              not depois_injecao["ok"] and apontou,
-              f"apontou {vitima['order_id']}.status" if apontou
-              else f"reprovou, mas por outro motivo: {depois_injecao['divergences'][:1]}")
-        escreve_cru(cat.load_table(TABLE_NAME), [guardado])
-        restaurado = reconcile(config, cat=cat)
-        check("e volta a passar depois de restaurar", restaurado["ok"],
-              f"{restaurado['divergence_count']} divergência(s)")
+        victim = [r for r in cat.load_table(TABLE_NAME).scan().to_arrow().to_pylist()][0]
+        saved = dict(victim)
+        tampered = dict(victim)
+        tampered["status"] = "CANCELLED" if victim["status"] != "CANCELLED" else "DELIVERED"
+        write_raw(cat.load_table(TABLE_NAME), [tampered])
+        after_injection = reconcile(config, cat=cat)
+        # "It failed" is not enough: it must have failed BECAUSE OF the tampered row.
+        # (`coluna` is the key name reconcile() returns; it belongs to retail_platform.)
+        pointed = any(d["order_id"] == victim["order_id"] and d["coluna"] == "status"
+                      for d in after_injection["divergences"])
+        check("the reconciliation FAILS on the injected divergence",
+              not after_injection["ok"] and pointed,
+              f"pointed at {victim['order_id']}.status" if pointed
+              else f"failed, but for another reason: {after_injection['divergences'][:1]}")
+        write_raw(cat.load_table(TABLE_NAME), [saved])
+        restored = reconcile(config, cat=cat)
+        check("and passes again after restoring", restored["ok"],
+              f"{restored['divergence_count']} divergence(s)")
 
-    # ---- 7. os dois escritores marcaram presença -------------------------------------
+    # ---- 7. both writers left their mark ---------------------------------------------
     print()
-    print("7. proveniência: os dois escritores escreveram mesmo?")
-    projecao = IcebergProjection(cat.load_table(TABLE_NAME), cat=cat)
-    quem = projecao.writers_seen()
-    print(f"      {quem}")
-    check("a tabela registra qual escritor tocou cada linha", bool(quem),
-          ", ".join(f"{k}={v}" for k, v in sorted(quem.items())))
+    print("7. provenance: did both writers really write?")
+    projection = IcebergProjection(cat.load_table(TABLE_NAME), cat=cat)
+    who = projection.writers_seen()
+    print(f"      {who}")
+    check("the table records which writer touched each row", bool(who),
+          ", ".join(f"{k}={v}" for k, v in sorted(who.items())))
 
     print()
     print("=" * 78)
-    if falhas:
-        print(f"REPROVADO: {len(falhas)} conferência(s) falharam:")
-        for nome in falhas:
-            print(f"  - {nome}")
+    if failures:
+        print(f"FAILED: {len(failures)} check(s) failed:")
+        for name in failures:
+            print(f"  - {name}")
         return 1
-    print("APROVADO: conflito é recusado, a fusão é monotônica, o leitor vê snapshot")
-    print("estável, o DuckDB lê pelo catálogo e os três folds concordam.")
+    print("PASSED: conflicts are refused, the merge is monotonic, the reader sees a stable")
+    print("snapshot, DuckDB reads through the catalog and the three folds agree.")
     return 0
 
 

@@ -1,6 +1,6 @@
--- AVISO, nao erro: o schema_fingerprint mudar significa que a forma da resposta da fonte
--- mudou. Nao e defeito do pipeline, mas exige olho humano antes de confiar no Silver.
--- CONTRACT.md 4.7 manda o consumidor conferir; aqui a conferencia e automatica.
+-- A WARNING, not an error: a change in schema_fingerprint means the shape of the source's response
+-- changed. It is not a pipeline defect, but it needs a human eye before trusting Silver.
+-- CONTRACT.md 4.7 tells the consumer to check; here the check is automatic.
 {{ config(severity = 'warn') }}
 
 select

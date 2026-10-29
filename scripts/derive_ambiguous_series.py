@@ -1,38 +1,38 @@
-"""Deriva, para os NOMES de municipio que se repetem na Espanha inteira, qual serie do
-Tempus3 pertence a qual municipio — pelo CODIGO OFICIAL do INE, nao por heuristica.
+"""Derives, for the municipality NAMES that repeat across all of Spain, which Tempus3
+series belongs to which municipality — by the official INE CODE, not by heuristic.
 
-POR QUE ISTO EXISTE
--------------------
-`silver_ine_population_by_municipality` resolve o codigo do municipio juntando o NOME que
-vem em "Nombre" (table_id=29005 nao traz codigo) com `ine_municipality_codes_seed`. O seed
-esta escopado a 08/28/41/46 e nao tem nenhuma colisao interna de nome — medido. Mas o lado
-RAW e NACIONAL (~8.200 municipios), e la existem homonimos em outras provincias com texto
-de "Nombre" IDENTICO. O join por nome casa a linha da nossa provincia E a homonima de fora,
-e o resultado e fanout silencioso:
+WHY THIS EXISTS
+---------------
+`silver_ine_population_by_municipality` resolves the municipality code by joining the NAME
+that comes in "Nombre" (table_id=29005 carries no code) with `ine_municipality_codes_seed`. The
+seed is scoped to 08/28/41/46 and has no internal name collision — measured. But the RAW
+side is NATIONAL (~8,200 municipalities), and there are homonyms in other provinces with
+IDENTICAL "Nombre" text. The join by name matches our province's row AND the homonym from
+outside, and the result is silent fanout:
 
     "Torrent. Total. Total habitantes. Personas. "  ->  DPOP21778 = 90.928 (Valencia, 46244)
     "Torrent. Total. Total habitantes. Personas. "  ->  DPOP7960  =    182 (Girona,  17197)
 
-O docstring de scripts/derive_municipality_codes.py ja previa exatamente isso ("um join
-Espanha-inteira por nome sozinho fosse ambiguo para 3 desses 18 nomes"); o que passou
-despercebido e que o modelo faz esse join Espanha-inteira, porque o RAW nao e filtrado na
-extracao. O teste de grao existente nao pega, porque as duas series tem series_code
-DIFERENTE — o grao (ingestion_date, series_code, year, fk_periodo) continua unico.
+The docstring of scripts/derive_municipality_codes.py already anticipated exactly this ("a
+Spain-wide join by name alone would be ambiguous for 3 of those 18 names"); what went
+unnoticed is that the model does that Spain-wide join, because RAW is not filtered at
+extraction. The existing grain test does not catch it, because the two series have
+DIFFERENT series_code — the grain (ingestion_date, series_code, year, fk_periodo) stays unique.
 
-COMO A AMBIGUIDADE E RESOLVIDA
-------------------------------
-Fonte: `GET /ES/VALORES_SERIE/{COD}` da API Tempus3 (a mesma API que
-ine-population-source ja consome). Para cada serie devolve os VALORES das variaveis que a
-definem, e o valor de municipio traz `Codigo` = provincia(2)+municipio(3) — o codigo
-oficial, o mesmo esquema do Callejero e dos seeds warehouse_*. Confirmado ao vivo nas duas
-series de Torrent: 46244 e 17197.
+HOW THE AMBIGUITY IS RESOLVED
+-----------------------------
+Source: `GET /ES/VALORES_SERIE/{COD}` of the Tempus3 API (the same API that
+ine-population-source already consumes). For each series it returns the VALUES of the
+variables that define it, and the municipality value carries `Codigo` = province(2)+municipality(3)
+— the official code, the same scheme as the Callejero and the warehouse_* seeds. Confirmed live
+on both Torrent series: 46244 and 17197.
 
-So sao consultadas as series cujo nome de municipio e ambiguo NO RAW e existe no seed das
-4 provincias — hoje 3 nomes, ~18 chamadas. Nao ha como derivar isto offline: o payload de
-DATOS_TABLA/29005 tem apenas COD, Nombre, FK_Escala, FK_Unidad e Data. Sem codigo, sem
-provincia, sem MetaData (verificado).
+Only the series whose municipality name is ambiguous IN RAW and exists in the seed of the
+4 provinces are queried — today 3 names, ~18 calls. There is no way to derive this offline: the
+DATOS_TABLA/29005 payload has only COD, Nombre, FK_Escala, FK_Unidad and Data. No code, no
+province, no MetaData (verified).
 
-Uso:
+Usage:
     python3 scripts/derive_ambiguous_series.py
 """
 
@@ -57,11 +57,11 @@ DELAY_SECONDS = 0.5
 
 
 def latest_raw() -> Path:
-    """A particao mais recente ja landada. O RAW e imutavel: reler nao muda nada."""
+    """The most recent landed partition. RAW is immutable: re-reading changes nothing."""
     found = sorted(glob.glob(RAW_GLOB))
     if not found:
         raise SystemExit(
-            f"nenhum payload em {RAW_GLOB}. Rode `make ine-refresh` antes deste script."
+            f"no payload in {RAW_GLOB}. Run `make ine-refresh` before this script."
         )
     return Path(found[-1])
 
@@ -76,15 +76,15 @@ def sex_of(series_name: str) -> str:
 
 
 def fetch_official_code(series_code: str) -> str:
-    """Codigo oficial (provincia+municipio) da serie, pela propria API do INE."""
+    """Official code (province+municipality) of the series, from the INE API itself."""
     request = urllib.request.Request(
         f"{SERIES_ENDPOINT}/{series_code}", headers={"User-Agent": USER_AGENT}
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
-    # O valor de municipio e o unico cujo Codigo tem 5 digitos numericos: os outros sao
-    # sexo ("0"), medida ("0") e unidade (""). Verificado nas series ambiguas reais.
+    # The municipality value is the only one whose Codigo has 5 numeric digits: the others are
+    # sex ("0"), measure ("0") and unit (""). Verified on the real ambiguous series.
     candidates = [
         item.get("Codigo")
         for item in payload
@@ -95,23 +95,23 @@ def fetch_official_code(series_code: str) -> str:
     ]
     if len(candidates) != 1:
         raise SystemExit(
-            f"{series_code}: esperava exatamente um codigo de municipio de 5 digitos, "
-            f"achei {candidates}. A forma da resposta mudou — nao vou adivinhar."
+            f"{series_code}: expected exactly one 5-digit municipality code, "
+            f"found {candidates}. The response shape changed — not guessing."
         )
     return candidates[0]
 
 
 def main() -> None:
     raw_path = latest_raw()
-    print(f"lendo {raw_path} ...")
+    print(f"reading {raw_path} ...")
     with raw_path.open(encoding="utf-8") as handle:
         raw = json.load(handle)
 
     with CODES_SEED.open(encoding="utf-8") as handle:
         seed_names = {row["municipality_name"] for row in csv.DictReader(handle)}
-    print(f"seed das 4 provincias: {len(seed_names)} nomes")
+    print(f"seed of the 4 provinces: {len(seed_names)} names")
 
-    # Agrupa por (nome, sexo): mais de uma serie no mesmo par = homonimo nacional.
+    # Groups by (name, sex): more than one series for the same pair = national homonym.
     grouped: dict[tuple, list[str]] = {}
     for series in raw:
         if not isinstance(series, dict) or "Nombre" not in series:
@@ -124,13 +124,13 @@ def main() -> None:
         for key, codes in grouped.items()
         if len(codes) > 1 and key[0] in seed_names
     }
-    nomes = sorted({key[0] for key in ambiguous})
+    names = sorted({key[0] for key in ambiguous})
     total_series = sum(len(codes) for codes in ambiguous.values())
-    print(f"nomes ambiguos que afetam o escopo: {len(nomes)} -> {nomes}")
-    print(f"series a consultar: {total_series}\n")
+    print(f"ambiguous names affecting the scope: {len(names)} -> {names}")
+    print(f"series to query: {total_series}\n")
 
     if not ambiguous:
-        print("nenhuma ambiguidade: o seed sai vazio (so cabecalho), e o modelo nao filtra nada.")
+        print("no ambiguity: the seed comes out empty (header only), and the model filters nothing.")
 
     rows = []
     for (name, sex), codes in sorted(ambiguous.items()):
@@ -165,10 +165,10 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
 
-    dentro = sum(1 for r in rows if r["province_code"] in {"08", "28", "41", "46"})
-    print(f"\nOK: {len(rows)} linhas escritas em {OUT_PATH}")
-    print(f"     {dentro} dentro do escopo (mantidas pelo modelo), "
-          f"{len(rows) - dentro} de fora (descartadas pelo modelo)")
+    inside = sum(1 for r in rows if r["province_code"] in {"08", "28", "41", "46"})
+    print(f"\nOK: {len(rows)} rows written to {OUT_PATH}")
+    print(f"     {inside} within scope (kept by the model), "
+          f"{len(rows) - inside} outside (discarded by the model)")
 
 
 if __name__ == "__main__":

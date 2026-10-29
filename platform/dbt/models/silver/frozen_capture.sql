@@ -1,12 +1,12 @@
--- PASSAGEM do selo da captura para o object storage — mesmo mecanismo de order_premises.
+-- PASS-THROUGH of the capture seal to object storage — same mechanism as order_premises.
 --
--- ELE PODE ESTAR VAZIO, E VAZIO SIGNIFICA ALGO. Zero linhas quer dizer "a captura ainda nao
--- foi selada", que e o estado legitimo de um repositorio antes de `make freeze` e de um
--- clone novo. `assert_raw_matches_the_frozen_capture` trata esse caso como "nada a guardar"
--- e passa; a partir do primeiro selo, ele passa a cobrar.
+-- IT MAY BE EMPTY, AND EMPTY MEANS SOMETHING. Zero rows means "the capture has not been
+-- sealed yet", which is the legitimate state of a repository before `make freeze` and of a
+-- fresh clone. `assert_raw_matches_the_frozen_capture` treats that case as "nothing to
+-- guard" and passes; from the first seal on, it starts enforcing.
 --
--- E UMA MAQUINA DE DOIS ESTADOS, declarada: nao-selado -> selado. O que NAO existe e um
--- terceiro estado onde o selo existe e nao vale.
+-- IT IS A TWO-STATE MACHINE, declared: unsealed -> sealed. What does NOT exist is a third
+-- state where the seal exists and does not hold.
 {{ config(
     location = 's3://retail-lakehouse/silver/frozen_capture.parquet',
     options = {'overwrite_or_ignore': 1}

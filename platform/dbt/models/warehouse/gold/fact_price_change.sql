@@ -1,28 +1,29 @@
--- TRANSICAO DE PRECO entre snapshots EXISTENTES.
+-- PRICE TRANSITION between EXISTING snapshots.
 --
--- GRAO: (snapshot_date, previous_snapshot_date, wh, source_product_id). 43.204 linhas.
--- TIPO: observed (derivado por diff, mas de dado observado).
+-- GRAIN: (snapshot_date, previous_snapshot_date, wh, source_product_id). 43,204 rows.
+-- TYPE: observed (derived by diff, but from observed data).
 --
--- POR QUE EXISTE, e nao e por conveniencia. O campo `price_decreased` da fonte e FALSO em
--- 100% das linhas enquanto 152 precos mudaram entre duas particoes: o campo que a fonte
--- oferece para sinalizar variacao nao sinaliza nada. A unica forma de detectar mudanca e
--- o diff de snapshots, e essa correcao ja foi feita e testada no Silver.
+-- WHY IT EXISTS, and it is not for convenience. The source's `price_decreased` field is
+-- FALSE in 100% of rows while 152 prices changed between two partitions: the field the
+-- source offers to flag a change flags nothing. The only way to detect a change is to diff
+-- snapshots, and that fix has already been done and tested in Silver.
 --
--- POR QUE NAO E REDERIVADO AQUI a partir de FACT_PRICE_SNAPSHOT com uma window function:
--- isso criaria uma SEGUNDA implementacao do mesmo lag() ciente-de-lacuna, em outro motor,
--- e as duas divergiriam no primeiro ajuste. Duplicar 43 mil linhas custa menos que
--- duplicar logica. Alem disso o grao e genuinamente outro — transicao, nao snapshot.
+-- WHY IT IS NOT RE-DERIVED HERE from FACT_PRICE_SNAPSHOT with a window function: that
+-- would create a SECOND implementation of the same gap-aware lag(), on another engine,
+-- and the two would diverge at the first adjustment. Duplicating 43 thousand rows costs
+-- less than duplicating logic. Besides, the grain is genuinely different — transition,
+-- not snapshot.
 --
--- previous_snapshot_date E A PARTICAO ANTERIOR EXISTENTE, nao "ontem". Ha um vao de 8 dias
--- entre 08-16 e 08-24, e days_between_snapshots torna isso visivel: uma variacao de preco
--- ao longo de 8 dias nao e comparavel a uma de 1 dia, e um mart que ignorasse a diferenca
--- estaria comparando coisas distintas.
+-- previous_snapshot_date IS THE PREVIOUS EXISTING PARTITION, not "yesterday". There is an
+-- 8-day gap between 08-16 and 08-24, and days_between_snapshots makes that visible: a
+-- price change over 8 days is not comparable to one over 1 day, and a mart that ignored
+-- the difference would be comparing different things.
 --
--- price_delta/price_delta_pct SAO CRUS (sobre unit_price), preservados por fidelidade —
--- mesmo criterio de silver_product_price. purchasable_price_delta/_pct, ao lado, sao o
--- preco que um consumidor realmente paga (ver silver_price_change), e change_type ja
--- classifica "mudou" contra ELE, nao contra o cru. Quem le variacao de preco para decidir
--- algo (oferta, tendencia) quer as colunas purchasable_*, nao as cruas.
+-- price_delta/price_delta_pct ARE RAW (over unit_price), preserved for fidelity — same
+-- criterion as silver_product_price. purchasable_price_delta/_pct, next to them, are the
+-- price a consumer actually pays (see silver_price_change), and change_type already
+-- classifies "changed" against IT, not against the raw one. Whoever reads price changes
+-- to decide something (promotion, trend) wants the purchasable_* columns, not the raw ones.
 {{ config(materialized = 'table') }}
 
 select
@@ -55,9 +56,10 @@ select
     c.change_type,
     c.catalog_appearances,
 
-    -- FILA DE REVISAO DE IDENTIDADE, nao um detalhe. Id novo cujo display_name ja existia
-    -- na particao anterior: a fonte nao diz se e o mesmo item rechaveado ou um item
-    -- retirado e outro lancado. Este fato APONTA os casos; nao decide por eles.
+    -- IDENTITY REVIEW QUEUE, not a detail. A new id whose display_name already existed in the
+    -- previous partition: the source does not say whether it is the same item re-keyed or an
+    -- item withdrawn and another launched. This fact POINTS OUT the cases; it does not decide
+    -- for them.
     c.name_seen_before
 from {{ source('stage', 'STG_PRICE_CHANGE') }} c
 left join {{ ref('dim_product') }} d

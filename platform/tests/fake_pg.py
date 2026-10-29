@@ -1,21 +1,22 @@
-"""Duplo de conexao Postgres que GRAVA A FRONTEIRA DA TRANSACAO.
+"""Postgres connection double that RECORDS THE TRANSACTION BOUNDARY.
 
-O QUE ELE PROVA, E O QUE ELE NAO PROVA — a distincao importa mais que o codigo.
+WHAT IT PROVES, AND WHAT IT DOES NOT — the distinction matters more than the code.
 
-  PROVA: que `apply_event` emite a linha do outbox e as mudancas de estado entre o mesmo
-  inicio e o mesmo `commit`, sem commit intermediario, e que qualquer falha no meio termina
-  em `rollback` e nunca em `commit`. Esse e o defeito que se comete de verdade ao escrever
-  um outbox — um `commit()` a mais no meio, e o padrao vira dual-write sem que nada mude de
-  aparencia. Um duplo que grava a ordem das chamadas pega isso, e pega offline.
+  PROVES: that `apply_event` emits the outbox row and the state changes between the same
+  begin and the same `commit`, with no intermediate commit, and that any failure in the
+  middle ends in `rollback` and never in `commit`. That is the defect people really commit
+  when writing an outbox — one extra `commit()` in the middle, and the pattern becomes a
+  dual-write without anything changing in appearance. A double that records the order of
+  calls catches that, and catches it offline.
 
-  NAO PROVA: que `rollback` desfaz alguma coisa. Isso e propriedade do MOTOR, e nenhum
-  duplo pode demonstra-la — um duplo que "desfaz" so demonstra que o duplo desfaz. A prova
-  correspondente e `make orders-prove-atomicity`, contra um Postgres de verdade, com um
-  trigger que faz o insert no outbox explodir.
+  DOES NOT PROVE: that `rollback` undoes anything. That is a property of the ENGINE, and no
+  double can demonstrate it — a double that "undoes" only demonstrates that the double
+  undoes. The matching proof is `make orders-prove-atomicity`, against a real Postgres, with
+  a trigger that makes the outbox insert blow up.
 
-As duas provas sao necessarias e nenhuma substitui a outra. E o mesmo par de
-`fake_s3.py` (valida o checksum como o servidor validaria) e `verify-landing` (le o objeto
-de volta do MinIO de verdade).
+Both proofs are necessary and neither replaces the other. It is the same pair as
+`fake_s3.py` (validates the checksum as the server would) and `verify-landing` (reads the
+object back from the real MinIO).
 """
 
 from __future__ import annotations
@@ -24,13 +25,14 @@ import re
 
 
 class FakePgError(Exception):
-    """O que o duplo levanta no lugar de psycopg.Error."""
+    """What the double raises in place of psycopg.Error."""
 
 
-# ANCORADOS NO INICIO, e nao em qualquer posicao. Um `select ... for update skip locked` —
-# que e exatamente como o publisher drena o outbox — contem a palavra "update" no meio, e um
-# regex sem ancora o etiquetaria como escrita. O teste entao asseriria sobre a etiqueta
-# errada e passaria pelo motivo errado; foi o que aconteceu na primeira versao deste duplo.
+# ANCHORED AT THE START, not at any position. A `select ... for update skip locked` —
+# which is exactly how the publisher drains the outbox — contains the word "update" in the
+# middle, and an unanchored regex would tag it as a write. The test would then assert on the
+# wrong tag and pass for the wrong reason; that is what happened in the first version of
+# this double.
 _INSERT = re.compile(r"^insert\s+into\s+(\w+)", re.I)
 _UPDATE = re.compile(r"^update\s+(\w+)", re.I)
 _SELECT = re.compile(r"^(select|with)\b", re.I)
@@ -38,7 +40,7 @@ _DELETE = re.compile(r"^delete\s+from\s+(\w+)", re.I)
 
 
 def tag(sql: str) -> str:
-    """Etiqueta legivel do comando, para que a asercao do teste fale a lingua do dominio."""
+    """Readable tag of the statement, so the test assertion speaks the language of the domain."""
     text = " ".join(sql.split())
     for pattern, prefix in ((_INSERT, "insert"), (_UPDATE, "update"), (_DELETE, "delete")):
         found = pattern.match(text)
@@ -64,7 +66,7 @@ class FakeCursor:
         label = tag(sql)
         self._connection.journal.append(("execute", label, params))
         if self._connection.fail_on is not None and self._connection.fail_on(label, params):
-            raise FakePgError(f"falha injetada em {label}")
+            raise FakePgError(f"injected failure on {label}")
         self.rowcount = self._connection.rowcount_for(label, params)
         self._connection._pending = self._connection.result_for(label, params)
         return self
@@ -78,10 +80,10 @@ class FakeCursor:
 
 
 class FakeConnection:
-    """Conexao de mentira com diario. `journal` e o artefato que os testes leem.
+    """Fake connection with a journal. `journal` is the artifact the tests read.
 
-    `rowcounts` e `results` sao mapas de etiqueta -> valor (ou callable(params)), para que
-    um teste escreva o cenario em vez de descrever SQL.
+    `rowcounts` and `results` are maps of tag -> value (or callable(params)), so a test
+    writes the scenario instead of describing SQL.
     """
 
     def __init__(self, *, rowcounts=None, results=None, fail_on=None, applied_event_ids=()):
@@ -89,14 +91,14 @@ class FakeConnection:
         self.rowcounts = rowcounts or {}
         self.results = results or {}
         self.fail_on = fail_on
-        # Eventos que o outbox ja tem. E o que faz `on conflict do nothing` devolver 0
-        # linhas, que e como o replay descobre que nao ha nada a fazer.
+        # Events the outbox already has. That is what makes `on conflict do nothing` return 0
+        # rows, which is how a replay finds out there is nothing to do.
         self.applied_event_ids = set(applied_event_ids)
         self._pending: list = []
         self._queues: dict = {}
         self.closed = False
 
-    # ---- interface consumida por orders_oltp.py ----------------------------
+    # ---- interface consumed by orders_oltp.py ------------------------------
     def cursor(self):
         return FakeCursor(self)
 
@@ -116,11 +118,11 @@ class FakeConnection:
         self.close()
         return False
 
-    # ---- roteiro ------------------------------------------------------------
+    # ---- script -------------------------------------------------------------
     def rowcount_for(self, label, params):
         if label == "insert:outbox":
-            # params[0] e event_id. Ja aplicado -> 0 linhas, exatamente como o Postgres
-            # responde a um `on conflict (event_id) do nothing`.
+            # params[0] is event_id. Already applied -> 0 rows, exactly as Postgres answers
+            # an `on conflict (event_id) do nothing`.
             return 0 if params and params[0] in self.applied_event_ids else 1
         value = self.rowcounts.get(label, 1)
         return value(params) if callable(value) else value
@@ -129,15 +131,15 @@ class FakeConnection:
         value = self.results.get(label, [])
         if callable(value):
             return value(params)
-        # Roteiro em fila: uma lista DE listas e consumida em ordem, uma por chamada. E o que
-        # permite escrever um cenario em que tres SELECTs seguidos devolvem coisas
-        # diferentes — o caso do `order_picked`, que confere tres invariantes distintos.
+        # Queued script: a list OF lists is consumed in order, one per call. That is what
+        # allows writing a scenario where three consecutive SELECTs return different things
+        # — the `order_picked` case, which checks three distinct invariants.
         if value and isinstance(value[0], list):
             queue = self._queues.setdefault(label, list(value))
             return queue.pop(0) if queue else []
         return value
 
-    # ---- leitura do diario --------------------------------------------------
+    # ---- journal reading ----------------------------------------------------
     @property
     def tags(self) -> list[str]:
         return [row[1] if row[0] == "execute" else row[0] for row in self.journal]

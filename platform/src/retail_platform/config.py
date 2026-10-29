@@ -1,7 +1,7 @@
-"""Configuracao lida do ambiente. Nenhuma credencial no codigo.
+"""Configuration read from the environment. No credentials in the code.
 
-Le um arquivo .env se existir, para que o CLI funcione sem depender do Makefile. O
-parser e deliberadamente minimo (stdlib): a plataforma nao precisa de python-dotenv.
+Reads a .env file if it exists, so the CLI works without depending on the Makefile. The
+parser is deliberately minimal (stdlib): the platform does not need python-dotenv.
 """
 
 from __future__ import annotations
@@ -12,19 +12,19 @@ from dataclasses import dataclass
 DEFAULT_ENDPOINT = "http://localhost:9000"
 DEFAULT_RAW_BUCKET = "retail-raw"
 DEFAULT_LAKEHOUSE_BUCKET = "retail-lakehouse"
-# MinIO ignora a regiao, mas boto3 exige uma para assinar a requisicao.
+# MinIO ignores the region, but boto3 requires one to sign the request.
 DEFAULT_REGION = "us-east-1"
 
 
 class ConfigError(Exception):
-    """Ambiente sem informacao suficiente para falar com o object storage."""
+    """Environment without enough information to talk to the object storage."""
 
 
 def load_dotenv(path: str = ".env") -> None:
-    """Carrega KEY=VALUE de um .env para o ambiente, sem sobrescrever o que ja existe.
+    """Loads KEY=VALUE from a .env into the environment, without overwriting what exists.
 
-    Variavel ja presente no ambiente ganha do arquivo: assim o Makefile, o Airflow ou um
-    export manual sempre tem a ultima palavra sobre o .env de desenvolvimento.
+    A variable already present in the environment wins over the file: that way the
+    Makefile, Airflow or a manual export always has the last word over the development .env.
     """
     if not os.path.exists(path):
         return
@@ -50,10 +50,10 @@ class Config:
     region: str = DEFAULT_REGION
 
     def client(self):
-        """Cliente S3 apontado para o endpoint configurado.
+        """S3 client pointed at the configured endpoint.
 
-        Importa boto3 aqui, e nao no topo do modulo, para que ler o manifesto e validar
-        uma particao nao exija boto3 instalado.
+        Imports boto3 here, not at the top of the module, so that reading the manifest and
+        validating a partition do not require boto3 to be installed.
         """
         import boto3
 
@@ -67,15 +67,15 @@ class Config:
 
 
 def from_env(dotenv: str = ".env") -> Config:
-    """Monta a configuracao do ambiente. Aceita credencial AWS_* ou MINIO_ROOT_*."""
+    """Builds the configuration from the environment. Accepts AWS_* or MINIO_ROOT_* credentials."""
     load_dotenv(dotenv)
 
     access = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ROOT_USER")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_ROOT_PASSWORD")
     if not access or not secret:
         raise ConfigError(
-            "credencial ausente: defina AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY ou "
-            "MINIO_ROOT_USER/MINIO_ROOT_PASSWORD (veja .env.example)."
+            "missing credentials: set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or "
+            "MINIO_ROOT_USER/MINIO_ROOT_PASSWORD (see .env.example)."
         )
 
     return Config(

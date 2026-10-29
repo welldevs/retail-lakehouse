@@ -1,6 +1,6 @@
--- Integridade referencial por particao: toda categoria citada em silver_product_price
--- existe na arvore da MESMA particao. Um join por category_id sem a data cruzaria
--- particoes e esconderia uma categoria que saiu da arvore.
+-- Referential integrity per partition: every category cited in silver_product_price
+-- exists in the tree of the SAME partition. A join on category_id without the date would cross
+-- partitions and hide a category that left the tree.
 select
     p.ingestion_date,
     p.warehouse,

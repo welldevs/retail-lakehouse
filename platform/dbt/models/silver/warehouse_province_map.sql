@@ -1,16 +1,16 @@
--- PASSAGEM do seed para o object storage. O seed (platform/dbt/seeds/) e a fonte de
--- verdade VERSIONADA — mas `retail_platform query`/`connect_lakehouse()` nunca le
--- tabela nativa do .duckdb local, so escaneia parquet sob s3://.../silver/ (ver
--- query.py). Sem este modelo, o seed carrega certinho no `dbt build` mas fica invisivel
--- pra qualquer consulta feita do jeito que o resto da plataforma consulta o Silver —
--- medido: `make query SQL="select * from warehouse_province_map"` dava "table does not
--- exist" mesmo com o seed carregado, porque a tabela so existia LOCALMENTE, nunca no
--- bucket. Este modelo e so um "select *" do seed, materializado igual aos outros 5
--- modelos do Silver, pra ficar visivel do mesmo jeito que eles.
+-- PASS-THROUGH of the seed to object storage. The seed (platform/dbt/seeds/) is the
+-- VERSIONED source of truth — but `retail_platform query`/`connect_lakehouse()` never reads
+-- a native table of the local .duckdb, it only scans parquet under s3://.../silver/ (see
+-- query.py). Without this model, the seed loads fine in `dbt build` but stays invisible
+-- to any query made the way the rest of the platform queries Silver — measured:
+-- `make query SQL="select * from warehouse_province_map"` gave "table does not exist"
+-- even with the seed loaded, because the table only existed LOCALLY, never in the
+-- bucket. This model is just a "select *" of the seed, materialized like the other 5
+-- Silver models, so it is visible the same way they are.
 --
--- Nao pertence a mercadona/ nem a ine/: e uma tabela de referencia (dimensao),
--- ortogonal as duas sources, por isso fica direto sob silver/ como raw_manifest.sql
--- ficava antes de virar especifico da Mercadona.
+-- It does not belong in mercadona/ nor in ine/: it is a reference table (dimension),
+-- orthogonal to both sources, so it sits directly under silver/ like raw_manifest.sql
+-- did before it became Mercadona-specific.
 {{ config(
     location = 's3://retail-lakehouse/silver/warehouse_province_map.parquet',
     options = {'overwrite_or_ignore': 1}

@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Prova de transporte, semantica de entrega, consumo idempotente e replay.
+"""Proof of transport, delivery semantics, idempotent consumption and replay.
 
-POR QUE ISTO NAO E "SUBIR UM BROKER E CONTAR MENSAGENS".
+WHY THIS IS NOT "START A BROKER AND COUNT MESSAGES".
 
-Contar mensagens prova que algo trafegou. Nao prova que trafegou intacto, nem o que
-acontece quando alguem morre no meio, nem que reprocessar e seguro. As quatro propriedades
-que interessam sao independentes entre si e cada uma precisa de uma prova propria:
+Counting messages proves that something flowed. It does not prove that it flowed intact, nor
+what happens when someone dies midway, nor that reprocessing is safe. The four properties
+that matter are independent of each other and each one needs its own proof:
 
-  1. TRANSPORTE FIEL — o topico relido do offset 0 reproduz o `sha256` dos 16 manifestos.
-  2. ORDEM POR CHAVE — cada pedido mora numa unica particao e seus offsets crescem com
-     `sequence_no`. Nao e detalhe de configuracao: e a PREMISSA da deduplicacao. Se a ordem
-     nao valesse, uma duplicata poderia chegar antes do original e seria lida como buraco.
-  3. AT-LEAST-ONCE E REAL — nao afirmado, DEMONSTRADO: reproduzimos a janela em que o
-     publisher morre depois do ack do broker e antes do commit do `published_at`, e o topico
-     passa a ter mais mensagens do que o log tem eventos.
-  4. CONSUMO IDEMPOTENTE E REPLAY — apesar das duplicatas, a projecao nao muda; e rebobinar
-     o grupo e reprocessar o topico inteiro tambem nao muda.
+  1. FAITHFUL TRANSPORT — the topic re-read from offset 0 reproduces the `sha256` of the 16 manifests.
+  2. ORDER PER KEY — each order lives in a single partition and its offsets grow with
+     `sequence_no`. It is not a configuration detail: it is the PREMISE of deduplication. If
+     ordering did not hold, a duplicate could arrive before the original and be read as a gap.
+  3. AT-LEAST-ONCE IS REAL — not claimed, DEMONSTRATED: we reproduce the window in which the
+     publisher dies after the broker ack and before the `published_at` commit, and the topic
+     ends up with more messages than the log has events.
+  4. IDEMPOTENT CONSUMPTION AND REPLAY — despite the duplicates, the projection does not change;
+     and rewinding the group and reprocessing the whole topic does not change it either.
 
-Mais duas que so existem por serem capazes de reprovar:
+Two more that only exist because they are able to fail:
 
-  5. BURACO E RECUSADO — um evento fora de sequencia nao vira no-op silencioso.
-  6. TRES FOLDS INDEPENDENTES CONCORDAM — Silver (window function), OLTP (transacional) e
-     projecao (streaming). Tres caminhos, um numero.
+  5. A GAP IS REFUSED — an out-of-sequence event does not become a silent no-op.
+  6. THREE INDEPENDENT FOLDS AGREE — Silver (window function), OLTP (transactional) and
+     projection (streaming). Three paths, one number.
 
     make orders-prove-stream
 """
@@ -63,13 +63,13 @@ failures = []
 
 
 def check(label, condition, detail=""):
-    print(f"  [{'OK   ' if condition else 'FALHA'}] {label}{(' — ' + detail) if detail else ''}")
+    print(f"  [{'OK  ' if condition else 'FAIL'}] {label}{(' — ' + detail) if detail else ''}")
     if not condition:
         failures.append(label)
 
 
 def manifests() -> dict:
-    """{(ingestion_date, wh): (sha256, bytes, records)} das particoes em disco."""
+    """{(ingestion_date, wh): (sha256, bytes, records)} of the partitions on disk."""
     out = {}
     for day in sorted(os.listdir(ORDERS_ROOT)):
         if not day.startswith("ingestion_date="):
@@ -88,7 +88,7 @@ def manifests() -> dict:
 
 
 def partition_of(order_id: str) -> tuple:
-    """`ord_<wh>_<YYYYMMDD>_<n>` — a chave ja carrega a particao a que o evento pertence."""
+    """`ord_<wh>_<YYYYMMDD>_<n>` — the key already carries the partition the event belongs to."""
     _, wh, day, _ = order_id.split("_", 3)
     return f"{day[:4]}-{day[4:6]}-{day[6:]}", wh
 
@@ -102,110 +102,111 @@ def main() -> int:
     topic = os.environ.get("KAFKA_ORDERS_TOPIC", DEFAULT_TOPIC)
     group = os.environ.get("KAFKA_ORDERS_GROUP", DEFAULT_GROUP)
     declared = manifests()
-    eventos_no_log = sum(v[2] for v in declared.values())
+    events_in_log = sum(v[2] for v in declared.values())
 
     marks = topic_watermarks(bootstrap, topic)
-    print(f"broker ........... {bootstrap}")
-    print(f"topico ........... {topic}  ({len(marks)} particoes)")
-    print(f"particoes em disco {len(declared)}, {eventos_no_log} eventos")
+    print(f"broker ............ {bootstrap}")
+    print(f"topic ............. {topic}  ({len(marks)} partitions)")
+    print(f"partitions on disk  {len(declared)}, {events_in_log} events")
     print()
 
-    # ---- 1. transporte fiel ------------------------------------------------------------
-    print("1. transporte fiel — o topico relido reproduz o sha256 de cada manifesto")
+    # ---- 1. faithful transport ---------------------------------------------------------
+    print("1. faithful transport — the re-read topic reproduces each manifest's sha256")
     messages = read_topic(bootstrap, topic)
-    check("o topico tem pelo menos um evento por linha do log",
-          len(messages) >= eventos_no_log, f"{len(messages)} mensagens")
+    check("the topic has at least one event per log line",
+          len(messages) >= events_in_log, f"{len(messages)} messages")
 
-    por_particao = defaultdict(dict)
+    by_partition = defaultdict(dict)
     for message in messages:
         event = json.loads(message["value"])
-        # Dedup por event_id: o topico e at-least-once, entao a mesma linha pode estar la
-        # mais de uma vez. Reconstituir sem deduplicar mediria a duplicacao, nao a fidelidade.
-        por_particao[partition_of(event["order_id"])][event["event_id"]] = (
+        # Dedup by event_id: the topic is at-least-once, so the same line may be there
+        # more than once. Rebuilding without deduplicating would measure duplication, not fidelity.
+        by_partition[partition_of(event["order_id"])][event["event_id"]] = (
             event["occurred_at"], event["order_id"], event["sequence_no"], message["value"]
         )
 
-    batem = 0
-    for chave, (sha, tamanho, linhas) in sorted(declared.items()):
-        vistos = por_particao.get(chave, {})
+    matching = 0
+    for key, (sha, size, lines) in sorted(declared.items()):
+        seen = by_partition.get(key, {})
         blob = "".join(
-            f"{v[3]}\n" for v in sorted(vistos.values(), key=lambda v: (v[0], v[1], v[2]))
+            f"{v[3]}\n" for v in sorted(seen.values(), key=lambda v: (v[0], v[1], v[2]))
         ).encode("utf-8")
-        if hashlib.sha256(blob).hexdigest() == sha and len(blob) == tamanho:
-            batem += 1
+        if hashlib.sha256(blob).hexdigest() == sha and len(blob) == size:
+            matching += 1
         else:
-            print(f"      divergiu: {chave} ({len(vistos)} de {linhas} eventos)")
-    check("as 16 particoes reconstituidas do topico batem sha256", batem == len(declared),
-          f"{batem}/{len(declared)}")
+            print(f"      diverged: {key} ({len(seen)} of {lines} events)")
+    check("the 16 partitions rebuilt from the topic match sha256", matching == len(declared),
+          f"{matching}/{len(declared)}")
     print()
 
-    # ---- 2. ordem por chave ------------------------------------------------------------
-    print("2. ordem por chave — a premissa em que a deduplicacao se apoia")
-    particoes_por_pedido = defaultdict(set)
-    trilha = defaultdict(list)
+    # ---- 2. order per key --------------------------------------------------------------
+    print("2. order per key — the premise deduplication rests on")
+    partitions_per_order = defaultdict(set)
+    trail = defaultdict(list)
     for message in messages:
         event = json.loads(message["value"])
-        particoes_por_pedido[event["order_id"]].add(message["partition"])
-        trilha[event["order_id"]].append((message["offset"], event["sequence_no"]))
+        partitions_per_order[event["order_id"]].add(message["partition"])
+        trail[event["order_id"]].append((message["offset"], event["sequence_no"]))
 
-    espalhados = [o for o, p in particoes_por_pedido.items() if len(p) > 1]
-    check("todo pedido mora numa unica particao", not espalhados,
-          f"{len(espalhados)} espalhados" if espalhados else f"{len(particoes_por_pedido)} pedidos")
+    scattered = [o for o, p in partitions_per_order.items() if len(p) > 1]
+    check("every order lives in a single partition", not scattered,
+          f"{len(scattered)} scattered" if scattered else f"{len(partitions_per_order)} orders")
 
-    # A GARANTIA E SOBRE A ORDEM DE PRODUCAO, NAO SOBRE A LISTA DE OFFSETS. Uma duplicata
-    # republicada foi produzida DEPOIS, entao aparecer depois e o comportamento correto — a
-    # sequencia crua de um pedido com duplicata le 1, 2, ..., 1. Exigir a lista inteira
-    # ordenada reprovaria o broker por fazer exatamente o certo (foi o que aconteceu na
-    # primeira versao desta prova, no segundo run, quando o topico ja tinha duplicata).
+    # THE GUARANTEE IS ABOUT PRODUCTION ORDER, NOT ABOUT THE OFFSET LIST. A republished
+    # duplicate was produced LATER, so appearing later is the correct behavior — the
+    # raw sequence of an order with a duplicate reads 1, 2, ..., 1. Demanding the whole list
+    # sorted would fail the broker for doing exactly the right thing (that is what happened in
+    # the first version of this proof, on the second run, when the topic already had duplicates).
     #
-    # As duas propriedades que realmente importam, e que a deduplicacao usa:
-    fora_de_ordem = 0
-    repeticao_antes_do_original = 0
-    for eventos in trilha.values():
-        eventos.sort()
-        primeira_vez = {}
-        for offset, sequencia in eventos:
-            if sequencia in primeira_vez:
-                if offset < primeira_vez[sequencia]:
-                    repeticao_antes_do_original += 1
+    # The two properties that really matter, and that deduplication uses:
+    out_of_order = 0
+    repeat_before_original = 0
+    for events in trail.values():
+        events.sort()
+        first_seen = {}
+        for offset, sequence in events:
+            if sequence in first_seen:
+                if offset < first_seen[sequence]:
+                    repeat_before_original += 1
             else:
-                primeira_vez[sequencia] = offset
-        originais = [s for s, _ in sorted(primeira_vez.items(), key=lambda kv: kv[1])]
-        if originais != sorted(originais):
-            fora_de_ordem += 1
-    check("a PRIMEIRA aparicao de cada sequence_no vem em ordem", fora_de_ordem == 0,
-          f"{fora_de_ordem} pedidos fora de ordem")
-    check("toda repeticao vem DEPOIS do seu original", repeticao_antes_do_original == 0,
-          "e por isso `sequence_no <= last` basta para deduplicar")
+                first_seen[sequence] = offset
+        originals = [s for s, _ in sorted(first_seen.items(), key=lambda kv: kv[1])]
+        if originals != sorted(originals):
+            out_of_order += 1
+    check("the FIRST appearance of each sequence_no comes in order", out_of_order == 0,
+          f"{out_of_order} orders out of order")
+    check("every repeat comes AFTER its original", repeat_before_original == 0,
+          "which is why `sequence_no <= last` is enough to deduplicate")
 
-    # AS DUAS CONFERENCIAS ACIMA PASSARIAM COM UMA CHAVE DEGENERADA (constante, ou `wh`):
-    # tudo numa particao so satisfaz "um pedido, uma particao" e "offsets em ordem" por
-    # acidente. Esta terceira e a que distingue ordem GARANTIDA POR CHAVE de ordem global
-    # por falta de paralelismo.
-    ocupacao = defaultdict(int)
-    for order_id, particoes in particoes_por_pedido.items():
-        ocupacao[next(iter(particoes))] += 1
-    check("os pedidos se espalham por todas as particoes", len(ocupacao) == len(marks),
-          " ".join(f"p{p}={ocupacao[p]}" for p in sorted(ocupacao)))
-    if len(set(ocupacao.values())) == 1:
-        # MEDIDO, E NAO E MERITO DO PARTICIONADOR. A parte variavel da chave e um contador
-        # sequencial denso com zeros a esquerda, e os bits baixos do murmur2 acompanham os
-        # ultimos digitos de forma linear: o resultado e um sistema completo de residuos, e
-        # o corte sai exatamente uniforme em cada (armazem, dia). Com `order_id` esparso ou
-        # em UUID o equilibrio viraria apenas estatistico. Nao dependa deste numero.
-        print("      distribuicao EXATAMENTE uniforme: artefato do indice sequencial denso na")
-        print("      chave, nao qualidade do hash. Nao e garantia e nao deve virar premissa.")
-    print("      (com 1 particao as duas primeiras seriam verdade POR ACIDENTE — o topico tem 4)")
+    # THE TWO CHECKS ABOVE WOULD PASS WITH A DEGENERATE KEY (a constant, or `wh`):
+    # everything in a single partition satisfies "one order, one partition" and "offsets in
+    # order" by accident. This third one is what distinguishes ordering GUARANTEED BY KEY from
+    # global ordering due to lack of parallelism.
+    occupancy = defaultdict(int)
+    for order_id, partitions in partitions_per_order.items():
+        occupancy[next(iter(partitions))] += 1
+    check("orders spread across all partitions", len(occupancy) == len(marks),
+          " ".join(f"p{p}={occupancy[p]}" for p in sorted(occupancy)))
+    if len(set(occupancy.values())) == 1:
+        # MEASURED, AND NOT TO THE PARTITIONER'S CREDIT. The variable part of the key is a dense
+        # sequential counter with leading zeros, and the low bits of murmur2 follow the
+        # last digits linearly: the result is a complete residue system, and the split comes
+        # out exactly uniform for each (warehouse, day). With a sparse or UUID `order_id` the
+        # balance would only be statistical. Do not depend on this number.
+        print("      EXACTLY uniform distribution: an artifact of the dense sequential index in")
+        print("      the key, not hash quality. It is not a guarantee and must not become a premise.")
+    print("      (with 1 partition the first two would be true BY ACCIDENT — the topic has 4)")
     print()
 
-    # ---- 3. at-least-once e real -------------------------------------------------------
-    print(f"3. at-least-once — reproduzindo a morte do publisher depois do ack ({REPUBLISH} eventos)")
-    antes = total_messages(topic_watermarks(bootstrap, topic))
+    # ---- 3. at-least-once is real ------------------------------------------------------
+    print(f"3. at-least-once — reproducing the publisher dying after the ack ({REPUBLISH} events)")
+    before = total_messages(topic_watermarks(bootstrap, topic))
     with oltp_connect() as connection:
         with connection.cursor() as cur:
-            # A JANELA EXATA: o broker aceitou, o `published_at` ainda nao era duravel, o
-            # processo morreu. Ao voltar, o lote esta na fila de novo. Nao ha transacao entre
-            # Postgres e Kafka que feche isso; a alternativa seria marcar antes e PERDER.
+            # THE EXACT WINDOW: the broker accepted, `published_at` was not durable yet, the
+            # process died. On restart, the batch is back in the queue. There is no transaction
+            # spanning Postgres and Kafka that closes this; the alternative would be marking first
+            # and LOSING.
             cur.execute(
                 """
                 update outbox set published_at = null
@@ -215,45 +216,45 @@ def main() -> int:
                 """,
                 (REPUBLISH,),
             )
-            revertidos = cur.rowcount
+            reverted = cur.rowcount
         connection.commit()
         producer = build_producer(bootstrap)
-        republicados = publish(connection, producer, topic).published
-    depois = total_messages(topic_watermarks(bootstrap, topic))
-    check("o lote voltou para a fila", revertidos == REPUBLISH, f"{revertidos}")
-    check("e foi republicado", republicados == REPUBLISH, f"{republicados}")
-    check("o topico agora tem MAIS mensagens que o log tem eventos",
-          depois == antes + REPUBLISH and depois > eventos_no_log,
-          f"{antes} -> {depois}, log={eventos_no_log}")
-    print("      at-least-once nao e uma ressalva de documentacao: e o que acabou de acontecer")
+        republished = publish(connection, producer, topic).published
+    after = total_messages(topic_watermarks(bootstrap, topic))
+    check("the batch went back into the queue", reverted == REPUBLISH, f"{reverted}")
+    check("and was republished", republished == REPUBLISH, f"{republished}")
+    check("the topic now has MORE messages than the log has events",
+          after == before + REPUBLISH and after > events_in_log,
+          f"{before} -> {after}, log={events_in_log}")
+    print("      at-least-once is not a documentation caveat: it is what just happened")
     print()
 
-    # ---- 4. consumo idempotente --------------------------------------------------------
-    print("4. consumo idempotente — as duplicatas nao mexem na projecao")
+    # ---- 4. idempotent consumption -----------------------------------------------------
+    print("4. idempotent consumption — the duplicates do not touch the projection")
     sla = read_sla_minutes(os.path.join(REPO, "platform", "dbt", "seeds"))
     with projection_connect() as connection:
         projection = PostgresProjection(connection)
-        digest_antes = projection.digest()
-        linhas_antes = projection.count()
+        digest_before = projection.digest()
+        rows_before = projection.count()
         consumer = build_consumer(bootstrap, group, topic=topic, from_beginning=True)
         try:
-            resultado = project(consumer, projection, sla_minutes=sla, idle_timeout=6.0)
+            result = project(consumer, projection, sla_minutes=sla, idle_timeout=6.0)
         finally:
             consumer.close()
-        digest_depois = projection.digest()
-        linhas_depois = projection.count()
+        digest_after = projection.digest()
+        rows_after = projection.count()
 
-    check("as duplicatas foram reconhecidas e descartadas", resultado.duplicates >= REPUBLISH,
-          f"{resultado.duplicates} descartadas, {resultado.applied} aplicadas")
-    check("nenhum buraco", not resultado.gaps)
-    check("a projecao nao mudou", digest_antes == digest_depois,
-          f"{digest_antes[:16]}...")
-    check("nenhuma linha a mais", linhas_antes == linhas_depois, f"{linhas_depois} pedidos")
+    check("the duplicates were recognized and discarded", result.duplicates >= REPUBLISH,
+          f"{result.duplicates} discarded, {result.applied} applied")
+    check("no gap", not result.gaps)
+    check("the projection did not change", digest_before == digest_after,
+          f"{digest_before[:16]}...")
+    check("no extra row", rows_before == rows_after, f"{rows_after} orders")
     print()
 
     # ---- 5. replay ---------------------------------------------------------------------
-    print("5. replay — rebobinar o grupo e reprocessar o topico inteiro")
-    particoes = reset_group(bootstrap, topic, group)
+    print("5. replay — rewinding the group and reprocessing the whole topic")
+    partitions = reset_group(bootstrap, topic, group)
     with projection_connect() as connection:
         projection = PostgresProjection(connection)
         consumer = build_consumer(bootstrap, group, topic=topic, from_beginning=True)
@@ -262,22 +263,22 @@ def main() -> int:
         finally:
             consumer.close()
         digest_replay = projection.digest()
-        linhas_replay = projection.count()
+        rows_replay = projection.count()
 
-    check(f"o grupo foi rebobinado em {particoes} particoes", particoes == len(marks))
-    check("o topico inteiro foi reprocessado",
-          replay.duplicates + replay.applied >= eventos_no_log,
-          f"{replay.duplicates + replay.applied} mensagens")
-    check("NADA foi aplicado de novo", replay.applied == 0, f"aplicados={replay.applied}")
-    check("o digest da projecao e identico", digest_replay == digest_antes,
+    check(f"the group was rewound on {partitions} partitions", partitions == len(marks))
+    check("the whole topic was reprocessed",
+          replay.duplicates + replay.applied >= events_in_log,
+          f"{replay.duplicates + replay.applied} messages")
+    check("NOTHING was applied again", replay.applied == 0, f"applied={replay.applied}")
+    check("the projection digest is identical", digest_replay == digest_before,
           f"{digest_replay[:16]}...")
-    check("a contagem de pedidos e identica", linhas_replay == linhas_antes)
-    print("      a projecao NAO foi apagada antes: reprocessar por cima e o que prova")
-    print("      idempotencia. Apagar antes provaria que o fold e deterministico, que e outra coisa.")
+    check("the order count is identical", rows_replay == rows_before)
+    print("      the projection was NOT deleted first: reprocessing on top of it is what proves")
+    print("      idempotency. Deleting first would prove the fold is deterministic, which is something else.")
     print()
 
-    # ---- 6. buraco e recusado ----------------------------------------------------------
-    print("6. buraco na sequencia — perda tem de virar recusa, nao no-op")
+    # ---- 6. a gap is refused -----------------------------------------------------------
+    print("6. a gap in the sequence — a loss must become a refusal, not a no-op")
     with projection_connect() as connection:
         projection = PostgresProjection(connection)
         with connection.cursor() as cur:
@@ -285,82 +286,82 @@ def main() -> int:
                 "select order_id, last_sequence_no from live_order_state "
                 "where last_sequence_no >= 4 order by order_id limit 1"
             )
-            order_id, ultimo = cur.fetchone()
-        forjado = {
+            order_id, last = cur.fetchone()
+        forged = {
             "event_id": "0" * 32, "event_type": "order_dispatched", "event_version": 1,
             "occurred_at": "2026-08-27T23:00:00Z", "order_id": order_id,
-            # +2: um evento nao chegou. E o unico defeito que a deduplicacao NAO pode
-            # absorver, porque absorve-lo seria aplicar um estado que pulou etapa.
-            "sequence_no": ultimo + 2, "wh": order_id.split("_")[1],
+            # +2: one event did not arrive. It is the only defect deduplication can NOT
+            # absorb, because absorbing it would mean applying a state that skipped a step.
+            "sequence_no": last + 2, "wh": order_id.split("_")[1],
             "producer": "simulated_orders", "payload": {},
         }
-        resultado = project_batch(projection, [forjado], sla_minutes=sla)
+        result = project_batch(projection, [forged], sla_minutes=sla)
         connection.rollback()
-    check("o buraco foi detectado", len(resultado.gaps) == 1,
-          resultado.gaps[0][:70] if resultado.gaps else "nenhum")
-    check("e o evento NAO foi aplicado", resultado.applied == 0)
+    check("the gap was detected", len(result.gaps) == 1,
+          result.gaps[0][:70] if result.gaps else "none")
+    check("and the event was NOT applied", result.applied == 0)
 
-    duplicata = dict(forjado, sequence_no=ultimo)
+    duplicate = dict(forged, sequence_no=last)
     with projection_connect() as connection:
-        resultado = project_batch(PostgresProjection(connection), [duplicata], sla_minutes=sla)
+        result = project_batch(PostgresProjection(connection), [duplicate], sla_minutes=sla)
         connection.rollback()
-    check("e a duplicata continua sendo descartada em silencio",
-          resultado.duplicates == 1 and not resultado.gaps)
+    check("and the duplicate is still discarded silently",
+          result.duplicates == 1 and not result.gaps)
     print()
 
-    # ---- 7. tres folds independentes ---------------------------------------------------
-    print("7. tres folds independentes — Silver, OLTP e projecao")
+    # ---- 7. three independent folds ----------------------------------------------------
+    print("7. three independent folds — Silver, OLTP and projection")
     with oltp_connect() as connection:
         with connection.cursor() as cur:
             cur.execute(
                 "select order_id, status, last_sequence_no, line_count, picked_line_count, "
                 "gross_amount, net_amount from orders order by order_id"
             )
-            do_oltp = {r[0]: r[1:] for r in cur.fetchall()}
+            from_oltp = {r[0]: r[1:] for r in cur.fetchall()}
     with projection_connect() as connection:
         with connection.cursor() as cur:
             cur.execute(
                 "select order_id, status, last_sequence_no, line_count, picked_line_count, "
                 "gross_amount, net_amount from live_order_state order by order_id"
             )
-            da_projecao = {r[0]: r[1:] for r in cur.fetchall()}
+            from_projection = {r[0]: r[1:] for r in cur.fetchall()}
 
-    check("mesmo conjunto de pedidos", set(do_oltp) == set(da_projecao),
-          f"OLTP={len(do_oltp)} projecao={len(da_projecao)}")
-    divergentes = [k for k in do_oltp if do_oltp[k] != da_projecao.get(k)]
-    check("estado, sequencia, contagens e valores identicos", not divergentes,
-          f"{len(divergentes)} divergentes" if divergentes else f"{len(do_oltp)} pedidos")
-    print("      (contra o Silver: `make orders-reconcile` no Marco 6)")
+    check("same set of orders", set(from_oltp) == set(from_projection),
+          f"OLTP={len(from_oltp)} projection={len(from_projection)}")
+    divergent = [k for k in from_oltp if from_oltp[k] != from_projection.get(k)]
+    check("identical status, sequence, counts and amounts", not divergent,
+          f"{len(divergent)} divergent" if divergent else f"{len(from_oltp)} orders")
+    print("      (against Silver: `make orders-reconcile` in Milestone 6)")
     print()
 
-    # ---- 8. o alerta de SLA ------------------------------------------------------------
-    print("8. o alerta de SLA — o mecanismo funciona; o limiar declarado nunca liga")
+    # ---- 8. the SLA alert --------------------------------------------------------------
+    print("8. the SLA alert — the mechanism works; the declared threshold never fires")
     with projection_connect() as connection:
         with connection.cursor() as cur:
             cur.execute("select max(picking_minutes), count(*) filter (where sla_breached) "
                         "from live_order_state")
-            maior, estourados = cur.fetchone()
+            longest, breached = cur.fetchone()
         projection = PostgresProjection(connection)
         with connection.cursor() as cur:
             cur.execute("select order_id, last_sequence_no from live_order_state "
                         "where picking_minutes is not null order by picking_minutes desc limit 1")
             order_id, _ = cur.fetchone()
-    check(f"nenhum pedido estourou o SLA declarado de {sla} min", estourados == 0,
-          f"maior separacao observada: {maior} min")
-    print(f"      DECLARADO NAO E ALCANCAVEL: basket_lines_max x minutes_per_line_picked")
-    print(f"      = 40 x 2 = 80 min < {sla} min. O limiar nao pode disparar por construcao.")
-    print("      Nao foi ajustado para produzir alerta: adaptar uma premissa declarada ate a")
-    print("      verificacao acender e o oposto de verificar. Fica registrado como medido.")
+    check(f"no order breached the declared SLA of {sla} min", breached == 0,
+          f"longest picking observed: {longest} min")
+    print(f"      THE DECLARED VALUE IS NOT REACHABLE: basket_lines_max x minutes_per_line_picked")
+    print(f"      = 40 x 2 = 80 min < {sla} min. The threshold cannot fire by construction.")
+    print("      It was not tuned to produce an alert: adapting a declared premise until the")
+    print("      check lights up is the opposite of checking. It stays recorded as measured.")
     print()
 
     print("=" * 78)
     if failures:
-        print(f"REPROVADO: {len(failures)} conferencia(s) falharam:")
+        print(f"FAILED: {len(failures)} check(s) failed:")
         for name in failures:
             print(f"  - {name}")
         return 1
-    print("APROVADO: transporte fiel, ordem por chave, at-least-once demonstrado,")
-    print("consumo idempotente, replay sem efeito, buraco recusado e tres folds de acordo.")
+    print("PASSED: faithful transport, order per key, at-least-once demonstrated,")
+    print("idempotent consumption, replay with no effect, gap refused and three folds in agreement.")
     return 0
 
 
@@ -368,5 +369,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except OrdersStreamError as exc:
-        print(f"ERRO: {exc}")
+        print(f"ERROR: {exc}")
         raise SystemExit(2)

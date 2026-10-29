@@ -1,11 +1,11 @@
--- O eixo da particao tem de bater com o que o registro diz, nos dois modelos que expoem os
--- dois lados.
+-- The partition axis must match what the record says, in the two models that expose the
+-- two sides.
 --
--- POR QUE ESTA COLUNA EXTRA EXISTE. O campo `wh` do evento e o segmento hive `wh=` tem o
--- MESMO nome, e o DuckDB os deduplica numa coluna so — o valor do registro vence e o do
--- caminho desaparece. Sem `partition_wh`, uma particao pousada sob o diretorio errado seria
--- internamente consistente e portanto invisivel para todo teste a jusante. Mesmo defeito que
--- o `wh` invalido da API da Mercadona produz, e que ja esta registrado no ARCHITECTURE.md.
+-- WHY THIS EXTRA COLUMN EXISTS. The event's `wh` field and the hive `wh=` segment have the
+-- SAME name, and DuckDB deduplicates them into a single column — the record's value wins and the
+-- path's disappears. Without `partition_wh`, a partition landed under the wrong directory would be
+-- internally consistent and therefore invisible to every downstream test. The same defect
+-- the invalid Mercadona API `wh` produces, which is already recorded in ARCHITECTURE.md.
 select 'silver_order_event' as modelo, order_id as chave, wh, partition_wh
 from {{ ref('silver_order_event') }}
 where partition_wh is distinct from wh

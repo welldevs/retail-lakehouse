@@ -1,6 +1,6 @@
--- Unicidade do GRAO COMPOSTO. Deliberadamente nao e `unique` em source_product_id:
--- CONTRACT.md 4.8 diz que o produto repete entre categorias e subgrupos, e um teste de
--- unicidade no id isolado falharia por desenho da fonte, nao por defeito.
+-- Uniqueness of the COMPOSITE GRAIN. Deliberately not `unique` on source_product_id:
+-- CONTRACT.md 4.8 says the product repeats across categories and subgroups, and a uniqueness
+-- test on the id alone would fail by the source's design, not by defect.
 select
     ingestion_date,
     warehouse,

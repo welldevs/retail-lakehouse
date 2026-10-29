@@ -1,26 +1,26 @@
--- GRAO: (order_date, wh, buyer_age_band, demand_group) — o que cada coorte de comprador
--- leva de cada grupo de demanda, por armazem e dia.
+-- GRAIN: (order_date, wh, buyer_age_band, demand_group) — what each buyer cohort
+-- takes from each demand group, per warehouse and day.
 --
--- PERGUNTA QUE RESPONDE: a Fase 5 mudou alguma coisa? O agregado NAO se move de proposito
--- — esse e o criterio de aceitacao do IPF — entao nenhum total deste mart difere do que
--- MART_BASKET_DAILY ja mostrava. O que muda esta na CONDICIONAL, e este e o unico lugar do
--- warehouse onde ela e consultavel.
+-- QUESTION IT ANSWERS: did Phase 5 change anything? The aggregate does NOT move on purpose
+-- — that is the IPF acceptance criterion — so no total in this mart differs from what
+-- MART_BASKET_DAILY already showed. What changes is in the CONDITIONAL, and this is the only
+-- place in the warehouse where it can be queried.
 --
--- COMO LER `share_within_band`. E a fatia que aquele grupo ocupa DENTRO da coorte, e nao no
--- total. Comparar a mesma linha entre duas faixas etarias e a leitura util: se vinho pesa
--- 4x mais em GE65 que em LT35, e porque o informe mede 48,9% do volume domestico de vinho
--- em lares cujo responsavel tem 65 anos ou mais, contra 1,6% nos de menos de 35.
+-- HOW TO READ `share_within_band`. It is the slice that group takes WITHIN the cohort, not in
+-- the total. Comparing the same row across two age bands is the useful reading: if wine weighs
+-- 4x more in GE65 than in LT35, it is because the report measures 48.9% of household wine volume
+-- in homes whose head is 65 or older, against 1.6% in those under 35.
 --
--- POR QUE A FAIXA VEM DO PEDIDO E NAO DO CLIENTE. `buyer_age_band` foi carimbada no evento
--- `order_placed` pela Source, e e ela que escolheu o vetor de pesos daquela cesta. Derivar
--- a faixa aqui, de `dim_customer.birth_year`, daria a faixa de HOJE e reimplementaria os
--- limites das faixas numa segunda linguagem — que divergiria da primeira no primeiro
--- ajuste, e a divergencia produziria um mix plausivel.
+-- WHY THE BAND COMES FROM THE ORDER AND NOT FROM THE CUSTOMER. `buyer_age_band` was stamped on the
+-- `order_placed` event by the Source, and it is what chose that basket's weight vector. Deriving
+-- the band here, from `dim_customer.birth_year`, would give TODAY's band and would reimplement the
+-- band boundaries in a second language — which would diverge from the first at the first
+-- adjustment, and the divergence would produce a plausible mix.
 --
--- NAO ADITIVO ENTRE FAIXAS NA COLUNA DE PEDIDOS. `orders_in_cohort` conta pedidos
--- distintos daquela coorte que tocaram o grupo; somar as quatro faixas de um grupo NAO da
--- o total de pedidos do dia, pelo mesmo motivo que `orders_touching_category` nao soma
--- entre categorias em MART_BASKET_DAILY. Linhas, unidades e valor sao aditivos.
+-- NOT ADDITIVE ACROSS BANDS IN THE ORDERS COLUMN. `orders_in_cohort` counts distinct
+-- orders of that cohort that touched the group; summing a group's four bands does NOT give
+-- the day's order total, for the same reason `orders_touching_category` does not sum
+-- across categories in MART_BASKET_DAILY. Lines, units and value are additive.
 {{ config(materialized = 'table') }}
 
 with linhas as (
@@ -71,9 +71,9 @@ select
     sum(l.line_amount)                                      as revenue_fulfilled,
     '{{ var("currency") }}'                                 as currency,
 
-    -- A COLUNA QUE A FASE EXISTE PARA PRODUZIR. Denominador e a propria coorte naquele
-    -- (dia, armazem), e nao o total: e assim que a comparacao entre faixas isola a
-    -- propensao do tamanho da coorte.
+    -- THE COLUMN THIS PHASE EXISTS TO PRODUCE. The denominator is the cohort itself in that
+    -- (day, warehouse), not the total: that is how the comparison across bands isolates
+    -- propensity from cohort size.
     round({{ div0('count(*)', 'max(b.lines_in_band)') }}, 6) as share_within_band
 from linhas l
 join {{ ref('dim_date') }} d on d.date_key = l.date_key

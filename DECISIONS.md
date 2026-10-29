@@ -3249,3 +3249,256 @@ closed in direct response to a live failure the user reported (`warehouse_load` 
 not ahead of one — the runbook CR-006 deferred is the runbook this CR executed, and the
 four gaps under "Insufficiency" are exactly what a runbook written in advance, without
 running the DAG for real, cannot see.
+
+### CR-008 · A new Snowflake account replaces the expired trial — and the bootstrap's escaping defect
+
+```
+Need             A new Snowflake account replaced the trial that expired
+                 on 2026-09-14 (CR-007). Its first `make warehouse-snowflake-load` failed:
+                 `Your primary role RETAIL_LOADER must have CREATE TABLE granted on
+                 SCHEMA RETAIL.STAGE`.
+Evidence         Read-only inspection of the account: database, schemas and the role
+                 RETAIL_LOADER existed, `show grants to role RETAIL_LOADER` was EMPTY, and
+                 RETAIL_TRANSFORMER / RETAIL_READER did not exist. Rerunning the idempotent
+                 `make warehouse-snowflake-bootstrap` showed the real error:
+                 `001003 (42000): syntax error line 1 at position 108 unexpected 'role'`.
+                 The role comment "This is dbt's role." was interpolated raw into
+                 `comment = '...'` — the apostrophe closed the literal, so bootstrap died
+                 right after creating the first role, every time.
+Insufficiency    The load's error named a grant, not the cause. Nothing in the suite built
+                 the DDL with a comment containing a quote. PROBABLE, not confirmed: the
+                 comment reached its English wording in the CR-002 translation, after the
+                 old account had already been bootstrapped, which is why it never failed
+                 there.
+Component        platform/src/retail_platform/snowflake_load.py (`_literal()` doubles single
+                 quotes; used for schema and role comments).
+Contracts        None. Same objects, same grants, same names.
+Regression       test_snowflake_load.py — +1 test, asserts the emitted DDL carries
+                 `dbt''s role` and that the command exists before iterating (no vacuous pass).
+Semantics        No field changes meaning.
+Provenance       Unchanged.
+Reproducibility  Unchanged; bootstrap remains idempotent.
+Cost             One four-line helper.
+Proof            Against the new account, with the user's go-ahead for the live run:
+                 bootstrap applied 42 commands; `warehouse-snowflake-load` loaded 15 STAGE
+                 tables, 7,285,229 rows, reconciled count by count; `make warehouse-snowflake`
+                 `PASS=205 WARN=0 ERROR=0 SKIP=0`; bootstrap rerun: "isolamento conferido papel
+                 a papel". Before dbt ran, the isolation check failed on GOLD/MART — expected,
+                 those tables did not exist yet.
+Loss             Nothing. The README/Makefile line "Snowflake, paused" stops being true and
+                 now reads "opt-in"; Postgres stays the default (CR-007 unchanged).
+```
+
+Decision logged on 2026-10-29.
+
+### CR-009 · Documentation and generator drift found by the 2026-10-29 review
+
+```
+Need             A review of every stage against its code found claims that were no longer
+                 true, two of them on generated pages that the next regeneration would have
+                 silently reverted.
+Evidence         1. Commit 48d59a5 hand-edited `docs/FREEZE.md` (total row; per-partition
+                    tables replaced by a pointer to the seed) and
+                    `docs/demand-evidence/README.md` (three near-identical tables replaced
+                    by prose; caps emphasis replaced by bold). Neither generator
+                    (`freeze.py:render`, `demand_check.py:render`) had changed.
+                 2. `postgres_load.py` told the user to run `make warehouse-postgres-bootstrap`,
+                    a target that never existed — and `test_postgres_load.py` asserted that
+                    wrong name, locking the defect in.
+                 3. `snowflake_evidence.py` and ARCHITECTURE cited `make warehouse-evidence`,
+                    renamed to `warehouse-snowflake-evidence` in CR-007.
+                 4. Makefile comments pointed at "line 15" for the bare `export` (line 21);
+                    `profiles.yml` said warehouse models run on Snowflake only.
+                 5. The two trigger-rule settings behind the two-warehouse defect
+                    (§ "Two orchestration defects") had no offline guard: reverting
+                    either one brings the symptom back with no error.
+Insufficiency    The doc suite checks links, anchors and that targets appear in `make help`;
+                 it does not check target names inside Python strings or comments, and it
+                 cannot know a generated page was edited by hand.
+Component        freeze.py, demand_check.py, postgres_load.py, snowflake_evidence.py,
+                 Makefile, profiles.yml, ARCHITECTURE.md; tests test_freeze.py,
+                 test_postgres_load.py.
+Contracts        None. The seed (`frozen_capture_seed.csv`) keeps its columns; FREEZE.md
+                 already pointed to it.
+Regression       test_freeze.py now asserts the page carries `capture_id` and points to the
+                 seed instead of duplicating per-partition hashes; test_postgres_load.py
+                 asserts the cited target is the real one; test_silver_gate.py gains
+                 TriggerRulesDasDagsTest (AST over the six DAGs: every gate keeps
+                 `ignore_downstream_trigger_rules=False`, every `silver` keeps
+                 NONE_FAILED_MIN_ONE_SUCCESS, `trigger_warehouse_load` keeps all_success).
+                 Each of the three was shown red with its defect injected in memory.
+Semantics        None.
+Provenance       Unchanged — `capture_id` still ties the page to the same collection.
+Reproducibility  Generators reproduce the committed pages: FREEZE.md differs only in the
+                 seal date; the demand page differs only in data-dependent sections when
+                 rendered from an older snapshot. The "39 categories" count is now computed.
+Cost             Text only, plus two assertions.
+Proof            `make test` green (1,138 tests on 2026-10-29). Line-number references in
+                 comments were replaced by a description that does not age.
+Loss             Nothing. Historical mentions of the old target names in this file stay —
+                 they are dated.
+```
+
+Decision logged on 2026-10-29.
+
+### CR-010 · Widen the price window to 2026-10-29 and re-seal the capture
+
+```
+Need             After CR-001 the daily DAG kept extracting: 82 complete Mercadona partitions
+                 landed after the 2026-09-01 seal (21 collection days, 2026-09-03 to
+                 2026-10-29). The price series is the project's only real time series, and
+                 it was being read over 9 days while 31 existed.
+Evidence         `make freeze-check` on 2026-10-29: 163 partitions against 81 sealed, all 82
+                 differences of kind "NEW partition, outside the seal", all
+                 `mercadona_catalog_api` — no sealed partition CHANGED or went MISSING.
+                 Local and object storage agreed: 116 complete Mercadona partitions on both.
+Insufficiency    The seal guards a window. Leaving it red indefinitely turns the guard into
+                 noise; widening it without a record would be the re-seal-to-go-green the
+                 Phase 7 rule forbids. This CR is the record.
+Component        RAW untouched (already landed by the DAG). `make silver`, `make
+                 warehouse-refresh`, `make freeze`, `make warehouse-snowflake-evidence`.
+Contracts        None. Same Sources, same manifests, same cut rules.
+Regression       None expected; `make silver` PASS=392 against the new seal.
+Semantics        Unchanged. The two windows now differ on purpose: PRICE covers
+                 2026-08-15..2026-10-29 (31 days, with gaps); ORDERS and CUSTOMERS keep
+                 2026-08-24..2026-09-01. Orders were deliberately not extended — that is a
+                 regeneration (seed, stream reset, calibration evidence), not a refresh.
+Provenance       Each new partition keeps its own manifest and sha256; the seal now names 163.
+Reproducibility  Same RAW → same Silver/warehouse. Days without collection stay missing:
+                 the API serves only today's price, so there is no backfill.
+                 Known gaps: no collection on several days (e.g. 09-05..09-07,
+                 10-15..10-27); 2026-10-13/vlc1 (network failure, one category) and
+                 2026-10-28/bcn1 (interrupted run) are incomplete, were never landed, and
+                 are outside the seal.
+Cost             One rebuild; numbers in README/ARCHITECTURE re-dated.
+Proof            On 2026-10-29: Silver product price 530,091 rows over 31 days × 4 warehouses
+                 (was 9 days); Silver 11,204,828 rows across its 18 tables, 412 MB; the
+                 cut crosses 7,285,229 (65.0% — denominator: all 18 Silver tables; the exact
+                 table set behind the earlier 3.85% / 9.95% / 46.9% rows was not recorded, so
+                 read the series as indicative). `make warehouse-refresh` PASS=205 on
+                 Postgres; Snowflake carries the same 7,285,229 rows (CR-008). `make freeze`
+                 → capture_id 6dc09846…, 163 partitions, 2,597,650 records;
+                 `make freeze-check` OK. `make test` 1,139 green.
+Loss             The 2026-09-01 seal (`cec10cb5…`) stops being the guard; it stays in git
+                 history and in the dated sections above.
+```
+
+Decision logged on 2026-10-29.
+
+### CR-011 · Fix documentation that gave wrong results to whoever followed it
+
+```
+Need             A full check-up on 2026-10-29 found instructions that fail when followed:
+                 README quoted silver-gate output the CLI never printed, described `make up`
+                 two contradictory ways, cited targets that do not exist
+                 (`warehouse-evidence`; `warehouse-bootstrap` for a Snowflake account swap),
+                 still called the Snowflake account a live trial, and quoted stale counts.
+Evidence         Each item reproduced against the Makefile and the CLI; `stock-metadata` had
+                 no caller anywhere; the cli.py docstring listed 26 of 35 subcommands.
+Insufficiency    The doc suite checked links and anchors, not `make <target>` names in prose.
+Component        README, ARCHITECTURE, docs/README, .env examples, ci.yml, compose and DAG
+                 comments, cli.py (gate output in English, one line per Iceberg table, dead
+                 `stock-metadata` removed, docstring points to `--help`), mart/schema.yml
+                 (the one dbt deprecation that was ours), .gitignore (BACKLOG.md line that
+                 had no effect on a tracked file).
+Contracts        None.
+Regression       test_docs.py gains a check that every backticked `make X` in README,
+                 ARCHITECTURE, docs/, streamlit/*.md and the .env examples exists — shown red
+                 on the pre-fix files (it named the two `warehouse-evidence` citations).
+Semantics        None. Provenance, Reproducibility: unchanged.
+Cost             Text, one removed subcommand, one test.
+Proof            `make test` green; `make silver` prints exactly the README's gate example.
+Loss             Nothing.
+```
+
+### CR-012 · Rename what lied about what it does
+
+```
+Need             Names that misled: `snowflake_export.py` / `export-snowflake` /
+                 `data/snowflake-stage` cut the Silver for BOTH engines (Postgres is the
+                 default); "oltp" meant both the customer generator's reference and the
+                 orders OLTP; two different files were called `stock_ledger.py`; a "spike"
+                 script was a live check; three Postgres services, one named just `postgres`.
+Evidence         `git grep` of each name; the Makefile itself called snowflake-stage "a
+                 historical leftover".
+Insufficiency    Comments explaining a wrong name are a tax on every reader.
+Component        warehouse_cut.py (+ `export-cut`, `data/warehouse-cut`, WAREHOUSE_CUT_DIR,
+                 WarehouseCutError, public `describe`), customers_reference.py,
+                 stock_bridge.py, scripts/check_spark_iceberg.py (`check-spark-iceberg`),
+                 scripts/gen_secrets.py, compose service `airflow-postgres` (volume name kept,
+                 so Airflow metadata survives), one CLI invocation form in the Makefile.
+                 REMOVED: scripts/spike_iceberg_duckdb.py and `spike-iceberg` — a closed
+                 experiment; `make orders-prove-projection` proves the same properties on the
+                 live module (the script stays in git history).
+Contracts        None — CLI verbs of Sources, source_name values, model names untouched.
+                 Deliberately NOT renamed: source_name `_api` suffixes, the frozen Source
+                 packages, Silver model names, DAG ids (each would touch RAW, the seal,
+                 dozens of ref()s or Airflow history for little clarity).
+Regression       Full suite; live `make warehouse-refresh` (PASS=205) through `export-cut`;
+                 Airflow `dags list-import-errors` empty.
+Semantics        None. Provenance, Reproducibility: unchanged.
+Cost             Mechanical; DECISIONS keeps the old names in dated sections.
+Proof            As above. The running `retail-postgres` container must be recreated once
+                 (`make airflow`) to pick up the new service name.
+Loss             Old names stop resolving; nothing outside this repo used them.
+```
+
+### CR-013 · One indicator catalog, outside the UI — groundwork for the LLM layer
+
+```
+Need             The 31 indicators (question, grain, kind, SQL, caveats) — the natural corpus
+                 for the planned RAG/LLM layer — lived inside streamlit/ as twins
+                 (indicators.py / price_indicators.py, contract.py / price_contract.py,
+                 smoke.py / price_smoke.py), with the "orders" module doubling as a hidden
+                 shared kernel and Portuguese field names about to become a schema.
+Evidence         price_indicators.py imported its types from indicators.py; the two contract
+                 generators differed by 116 lines of mostly copied structure.
+Insufficiency    A second consumer (the LLM layer) would have to import from a UI folder.
+Component        platform/src/retail_platform/indicators/ (model.py, operations.py,
+                 prices.py, contract.py); generated pages moved to docs/indicators/;
+                 streamlit/ keeps only operations_app.py, prices_app.py, connection.py and a
+                 parametrized smoke.py. Fields and bound parameters in English (key, title,
+                 group, question, grain, kind, caveats, dated; start, end, warehouses, term).
+                 Make: `indicators-contract` replaces two targets; `dashboard-check` renders
+                 both panels AND now runs `connection.probe_isolation`, which existed but was
+                 never called while three docs claimed the panel proved its boundary.
+                 README restructured for a first reader (pitch, screenshot, one quickstart;
+                 operational depth moved to docs/operations.md); the Postgres/Snowflake swap
+                 told once, in ARCHITECTURE.
+Contracts        The panels' SQL is unchanged except parameter names.
+Regression       test_indicators_operations / test_indicators_prices (pages byte-identical to
+                 the generator, every parameter bound, MART-only).
+Proof            `make dashboard-check` on 2026-10-29: both panels render with no exception
+                 and no warning; isolation probe: MART read, GOLD and STAGE refused.
+Loss             streamlit/CONTRACT.md and PRICE_CONTRACT.md paths.
+```
+
+### CR-014 · English everywhere a reader looks
+
+```
+Need             CR-002 translated only the "reading layer"; code, comments, CLI output, make
+                 help, tests and the five Sources stayed Portuguese, and the boundary was
+                 written nowhere a reader would find it.
+Component        sources/ (all five packages: code, README, CONTRACT, Makefile), platform/src
+                 and platform/tests (test_documentacao.py → test_docs.py; `--sem-spark` →
+                 `--no-spark`), Makefile, DAGs, compose, Dockerfiles, scripts, jobs/spark,
+                 streamlit, dbt comments/descriptions, .env examples.
+Contracts        Byte-for-byte unchanged on purpose: every JSON key, manifest field and value,
+                 source_name, file layout, CLI verb and flag (except `--no-spark`), exit code,
+                 dbt model/column name and seed. Kept in Portuguese BECAUSE they are data or a
+                 cross-module key: anomaly kinds and messages persisted in `failures[].error`,
+                 SQL aliases consumed by the panels and frozen demand snapshots, dict keys
+                 shared with the Spark job, `identity()` keys, the INE User-Agent string.
+Reproducibility  Verified, not assumed: per-module syntax trees with strings masked are
+                 identical; simulated customers and order logs regenerate byte-identical for
+                 the same seed; Silver PASS=392, warehouse PASS=205 with the same 7,285,229
+                 rows, freeze-check OK.
+Proof            `make test` 1,139 green (679 Sources + 460 platform), same counts as before.
+Numbers         English notation (7,285,229 · 65.0%) in every current doc and generator
+                 (freeze.py, demand_check.py, spark_evidence.py no longer swap separators);
+                 FREEZE and demand pages regenerated, the spark page's two figures edited to
+                 the generator's new output. Dated sections above keep their original notation.
+Loss             Nothing that was true stops being true.
+```
+
+Decisions logged on 2026-10-29.

@@ -1,11 +1,11 @@
--- Um municipio tem UMA populacao por sexo e ano. Nao e redundante com o teste de grao:
--- aquele usa series_code, e o defeito que este pega tinha series_code DIFERENTE.
+-- A municipality has ONE population per sex and year. It is not redundant with the grain test:
+-- that one uses series_code, and the defect this one catches had a DIFFERENT series_code.
 --
--- O lado RAW da tabela 29005 e nacional (~8.200 municipios) e traz homonimos de outras
--- provincias com "Nombre" identico; o join por nome casava os dois e o municipio ficava
--- com duas linhas divergentes (ex.: Torrent com 90.928 e com 182, esta ultima de Girona).
--- Resolvido por ine_ambiguous_series_seed, com o codigo oficial do INE. Este teste e o
--- que garante que continua resolvido.
+-- The RAW side of table 29005 is national (~8,200 municipalities) and carries homonyms from other
+-- provinces with identical "Nombre"; the join by name matched both and the municipality ended up
+-- with two divergent rows (e.g. Torrent with 90,928 and with 182, the latter from Girona).
+-- Resolved by ine_ambiguous_series_seed, with INE's official code. This test is what
+-- guarantees it stays resolved.
 select
     ingestion_date,
     province_code,

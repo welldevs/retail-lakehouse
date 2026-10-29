@@ -8,55 +8,57 @@ version = "0.1.0"
 description = "Camada de plataforma: RAW no object storage e Silver sobre os snapshots da Source"
 requires-python = ">=3.12"
 
-# A FRONTEIRA: estas dependencias sao da PLATAFORMA. A Source, em
-# sources/mercadona-catalog-source, mantem dependencies = [] e um venv proprio.
-# Os dois conjuntos nunca se encontram, e nada aqui importa mercadona_catalog_source.
+# THE BOUNDARY: these dependencies belong to the PLATFORM. The Source, in
+# sources/mercadona-catalog-source, keeps dependencies = [] and its own venv.
+# The two sets never meet, and nothing here imports mercadona_catalog_source.
 dependencies = [
     "boto3>=1.34",
     "duckdb>=1.1",
     "dbt-core>=1.8",
     "dbt-duckdb>=1.8",
-    # Segundo target do dbt. O SQL do Silver continua rodando em duckdb; a arvore
-    # models/warehouse/ roda aqui. Os dois nunca se cruzam numa execucao — adaptadores
-    # diferentes nao compartilham `ref()` — e o guard `+enabled` por target no
-    # dbt_project.yml e o que impede rodar a arvore errada no motor errado.
+    # Second dbt target. The Silver SQL keeps running on duckdb; the models/warehouse/
+    # tree runs here. The two never cross in one run — different adapters do not share
+    # `ref()` — and the per-target `+enabled` guard in dbt_project.yml is what prevents
+    # running the wrong tree on the wrong engine.
     "dbt-snowflake>=1.8",
-    # Transporte do recorte (PUT em stage interno + COPY INTO). A credencial vem sempre
-    # de ~/.snowflake/config.toml pelo nome da conexao; nada de segredo no repo.
+    # Transport for the cut (PUT to an internal stage + COPY INTO). The credential always
+    # comes from ~/.snowflake/config.toml by connection name; no secrets in the repo.
     "snowflake-connector-python>=3.12",
-    # TERCEIRO target do dbt: Postgres local, segundo alvo de warehouse ao lado do
-    # Snowflake — fallback para quando o trial vencer (ver DECISIONS.md). Mesmo guard por
-    # `target.type` do dbt_project.yml decide qual arvore roda em qual motor.
+    # THIRD dbt target: local Postgres, a second warehouse target next to Snowflake —
+    # the fallback for when the trial expires (see DECISIONS.md). The same `target.type`
+    # guard in dbt_project.yml decides which tree runs on which engine.
     "dbt-postgres>=1.8",
-    # O OLTP de pedidos e seu outbox. Fica NA PLATAFORMA, nunca na Source: uma Source com
-    # dependencia de banco deixaria de ser FROZEN, e `make source-test` reprova isso por AST.
-    # Reaproveitado tambem por `postgres_load.py`: nenhum driver novo para o warehouse local.
+    # The orders OLTP and its outbox. It lives IN THE PLATFORM, never in the Source: a
+    # Source with a database dependency would stop being FROZEN, and `make source-test`
+    # fails that by AST. Also reused by `postgres_load.py`: no new driver for the local
+    # warehouse.
     "psycopg[binary]>=3.2",
-    # Transporte dos eventos. Tambem so na plataforma: a Source produz o log e nao sabe que
-    # existe broker — `make source-test` reprova por AST se um dia souber.
+    # Event transport. Also platform-only: the Source produces the log and does not know a
+    # broker exists — `make source-test` fails by AST if it ever does.
     "confluent-kafka>=2.5",
-    # Projecao viva em Iceberg, com catalogo SQL no proprio Postgres do OLTP.
+    # Live projection in Iceberg, with a SQL catalog in the OLTP's own Postgres.
     #
-    # SEM O EXTRA `s3fs`, DE PROPOSITO: ele arrasta um `aiobotocore` que fixa um botocore
-    # antigo e conflita com o boto3 que a plataforma ja usa para o RAW — medido, o pip
-    # aceita instalar e o `boto3` quebra depois. O `PyArrowFileIO` faz o mesmo trabalho com
-    # o pyarrow que o pyiceberg ja traz, e e o que o catalogo declara em `py-io-impl`.
+    # WITHOUT THE `s3fs` EXTRA, ON PURPOSE: it drags in an `aiobotocore` that pins an old
+    # botocore and conflicts with the boto3 the platform already uses for RAW — measured,
+    # pip accepts the install and `boto3` breaks afterwards. `PyArrowFileIO` does the same
+    # job with the pyarrow that pyiceberg already ships, and it is what the catalog
+    # declares in `py-io-impl`.
     "pyiceberg[sql-postgres,pyarrow]>=0.9",
 ]
 
-# FORA de `dependencies`, e o motivo e concreto: infra/Dockerfile.airflow instala
-# exatamente `['project']['dependencies']` desta lista. Streamlit, pandas e altair pesam
-# ~150 MB e nao servem a nenhuma DAG — deixa-los na lista principal os empurraria para
-# dentro da imagem do Airflow, que nao renderiza dashboard nenhum.
+# OUTSIDE `dependencies`, for a concrete reason: infra/Dockerfile.airflow installs exactly
+# `['project']['dependencies']` from this list. Streamlit, pandas and altair weigh ~150 MB
+# and serve no DAG — keeping them in the main list would push them into the Airflow image,
+# which renders no dashboard at all.
 #
-# Mesmo venv, porem: o app precisa do `snowflake-connector-python` que ja esta acima, e um
-# segundo venv duplicaria o conector so para nao duplicar o streamlit. Instale com
-# `make dashboard-venv`.
+# Same venv, though: the app needs the `snowflake-connector-python` already listed above,
+# and a second venv would duplicate the connector just to avoid duplicating streamlit.
+# Install with `make dashboard-venv`.
 [project.optional-dependencies]
 dashboard = [
     "streamlit>=1.39",
-    # O conector devolve o resultado em pandas por `fetch_pandas_all()`, que e o caminho
-    # que evita construir 112 mil tuplas em Python para depois converter.
+    # The connector returns results as pandas via `fetch_pandas_all()`, which is the path
+    # that avoids building 112 thousand Python tuples only to convert them afterwards.
     "pandas>=2.2",
     "pyarrow>=15",
     "altair>=5.4",

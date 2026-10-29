@@ -1,25 +1,25 @@
-"""Deriva e reconfere o mapeamento wh -> provincia/municipio contra o Callejero do INE.
+"""Derives and re-checks the wh -> province/municipality mapping against the INE Callejero.
 
-O Callejero nao tem API (source manual, baixada do site do INE, semestral) e nao veio
-com "Diseno de Registro" (layout oficial dos campos). Os codigos abaixo foram
-reconstruidos por evidencia, cruzando DUAS fontes independentes dentro do proprio
-Callejero — nao presumidos:
+The Callejero has no API (manual source, downloaded from the INE website, twice a year) and
+did not come with a "Diseno de Registro" (official field layout). The codes below were
+reconstructed from evidence, crossing TWO independent sources inside the Callejero
+itself — not assumed:
 
-  1. UP (Unidades Poblacionais): a linha cujo codigo termina em 7 zeros e o municipio
-     inteiro (as demais sao nucleos/entidades dentro dele); o nome da cidade aparece
-     nessa linha.
-  2. SECC (Secoes censitarias): o prefixo provincia+municipio deve aparecer em pelo
-     menos uma secao censitaria — confirma que e um municipio real, nao um erro de
-     leitura do UP.
+  1. UP (Unidades Poblacionales): the row whose code ends in 7 zeros is the whole
+     municipality (the others are nuclei/entities within it); the city name appears
+     on that row.
+  2. SECC (census sections): the province+municipality prefix must appear in at least
+     one census section — this confirms it is a real municipality, not a misreading
+     of UP.
 
-Encoding real dos arquivos e ISO-8859-1 (Latin-1), confirmado com `file`; abrir como
-UTF-8 falha silenciosamente (decode error ou, pior, matches perdidos em busca de texto).
+The real file encoding is ISO-8859-1 (Latin-1), confirmed with `file`; opening as
+UTF-8 fails silently (decode error or, worse, lost matches in text search).
 
-Uso:
-    python3 scripts/derive_warehouse_province_map.py <diretorio-do-callejero>
+Usage:
+    python3 scripts/derive_warehouse_province_map.py <callejero-directory>
 
-Reexecutavel contra qualquer download futuro do Callejero (e semestral) para reconferir
-os codigos, nao so contra o `temp/` desta rodada.
+Re-runnable against any future Callejero download (it is semiannual) to re-check
+the codes, not only against this round's `temp/`.
 """
 
 from __future__ import annotations
@@ -27,21 +27,21 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# wh -> (codigo de provincia, codigo de municipio, nome pra buscar no UP)
+# wh -> (province code, municipality code, name to search for in UP)
 WAREHOUSES = {
     "mad1": ("28", "079", "MADRID"),
     "bcn1": ("08", "019", "BARCELONA"),
     "svq1": ("41", "091", "SEVILLA"),
-    "vlc1": ("46", "250", "VAL"),  # "VALÈNCIA"/"VALENCIA" — busca parcial, sem acento
+    "vlc1": ("46", "250", "VAL"),  # "VALÈNCIA"/"VALENCIA" — partial match, no accent
 }
 
 
 def find_file(root: Path, prefix: str, province_code: str) -> Path:
     matches = sorted(root.glob(f"**/{prefix}.P{province_code}.*"))
     if not matches:
-        raise SystemExit(f"nao achei {prefix}.P{province_code}.* dentro de {root}")
+        raise SystemExit(f"could not find {prefix}.P{province_code}.* under {root}")
     if len(matches) > 1:
-        raise SystemExit(f"mais de um {prefix}.P{province_code}.* dentro de {root}: {matches}")
+        raise SystemExit(f"more than one {prefix}.P{province_code}.* under {root}: {matches}")
     return matches[0]
 
 
@@ -54,10 +54,10 @@ def check_up(root: Path, province_code: str, municipio_code: str, name_hint: str
             if line.startswith(target_prefix):
                 if name_hint not in line.upper():
                     raise SystemExit(
-                        f"UP {path.name}: linha {target_prefix!r} nao contem {name_hint!r}: {line!r}"
+                        f"UP {path.name}: row {target_prefix!r} does not contain {name_hint!r}: {line!r}"
                     )
                 return line.strip()
-    raise SystemExit(f"UP {path.name}: nenhuma linha comecando com {target_prefix!r}")
+    raise SystemExit(f"UP {path.name}: no row starting with {target_prefix!r}")
 
 
 def check_secc(root: Path, province_code: str, municipio_code: str) -> int:
@@ -69,7 +69,7 @@ def check_secc(root: Path, province_code: str, municipio_code: str) -> int:
             if line.startswith(prefix):
                 count += 1
     if count == 0:
-        raise SystemExit(f"SECC {path.name}: nenhuma secao censitaria com prefixo {prefix!r}")
+        raise SystemExit(f"SECC {path.name}: no census section with prefix {prefix!r}")
     return count
 
 
@@ -79,16 +79,16 @@ def main(argv: list[str]) -> int:
         return 2
     root = Path(argv[1])
     if not root.is_dir():
-        print(f"nao e um diretorio: {root}", file=sys.stderr)
+        print(f"not a directory: {root}", file=sys.stderr)
         return 2
 
-    print(f"{'wh':6} {'prov':4} {'munic':5} {'secoes':7} nome (UP)")
+    print(f"{'wh':6} {'prov':4} {'munic':5} {'sections':8} name (UP)")
     for wh, (province_code, municipio_code, name_hint) in WAREHOUSES.items():
         up_line = check_up(root, province_code, municipio_code, name_hint)
         n_secc = check_secc(root, province_code, municipio_code)
-        print(f"{wh:6} {province_code:4} {municipio_code:5} {n_secc:7} {up_line}")
+        print(f"{wh:6} {province_code:4} {municipio_code:5} {n_secc:8} {up_line}")
 
-    print("\nOK: os 4 codigos batem em UP (nome) e SECC (secoes censitarias existem).")
+    print("\nOK: the 4 codes match in UP (name) and SECC (census sections exist).")
     return 0
 
 

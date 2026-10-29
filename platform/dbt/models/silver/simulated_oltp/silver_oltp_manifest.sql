@@ -1,27 +1,27 @@
--- O MANIFESTO DA SOURCE DE OLTP COMO FONTE MODELADA. Irmao de raw_manifest.sql, com a
--- mesma finalidade: fazer de "o Silver perdeu linha?" um TESTE, e nao um script solto.
+-- THE OLTP SOURCE'S MANIFEST AS A MODELED SOURCE. Sibling of raw_manifest.sql, with the
+-- same purpose: to make "did Silver lose a row?" a TEST, and not a loose script.
 --
--- GRAO: (ingestion_date, wh) — um manifesto por particao.
+-- GRAIN: (ingestion_date, wh) — one manifest per partition.
 --
--- Aqui ele carrega uma coisa a mais que o da Mercadona: a LINHAGEM DOS INSUMOS. Esta
--- source e derivada — consome o Silver que as outras tres produziram — entao "de qual
--- Callejero e de qual populacao estes clientes sairam" e uma pergunta legitima e a
--- resposta so existe no manifesto. O bloco `reference` e o unico lugar onde as tres
--- ingestion_date de insumo ficam registradas.
+-- Here it carries one more thing than Mercadona's: the LINEAGE OF THE INPUTS. This source
+-- is derived — it consumes the Silver the other three produced — so "which Callejero and
+-- which population did these customers come from" is a legitimate question and the answer
+-- only exists in the manifest. The `reference` block is the only place where the three
+-- input ingestion_dates are recorded.
 --
--- previous_runs conta o `history`, que a Source acumula a cada --overwrite guardando a
--- seed e o count de cada execucao anterior (partition.py:130-153). Sem isso, uma
--- regeracao com outra seed trocaria as pessoas por tras dos mesmos customer_id sem deixar
--- rastro. Com isso, "esta base foi regerada 3 vezes" e consultavel.
+-- previous_runs counts the `history`, which the Source accumulates on each --overwrite by
+-- keeping the seed and count of each previous run (partition.py:130-153). Without it, a
+-- regeneration with another seed would swap the people behind the same customer_id
+-- without leaving a trace. With it, "this base was regenerated 3 times" is queryable.
 --
--- Desde a Fase 6 o escopo do CADASTRO viaja junto: idade minima, taxa de penetracao e regra
--- de alocacao. As tres tem a mesma natureza da seed — trocam as pessoas por tras dos mesmos
--- ids — e sem elas duas particoes com a mesma contagem seriam indistinguiveis. `customer_target`
--- ao lado de `requested_count` responde "a base tem o tamanho que a populacao pedia?" sem
--- refazer a conta.
+-- Since Phase 6 the REGISTRATION scope travels along: minimum age, penetration rate and
+-- allocation rule. All three have the same nature as the seed — they swap the people behind
+-- the same ids — and without them two partitions with the same count would be
+-- indistinguishable. `customer_target` next to `requested_count` answers "does the base
+-- have the size the population called for?" without redoing the math.
 --
--- CONTRACT.md secao 1: uma lista ausente equivale a lista vazia — dai o coalesce antes de
--- len(), mesmo padrao de raw_manifest.sql.
+-- CONTRACT.md section 1: a missing list is equivalent to an empty list — hence the
+-- coalesce before len(), same pattern as raw_manifest.sql.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_oltp_manifest.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -42,17 +42,18 @@ select
     finished_at_utc,
     duration_seconds,
 
-    -- O que reproduz esta particao exatamente. seed + reference + ingestion_date + escopo do
-    -- cadastro sao as QUATRO condicoes da garantia de reprodutibilidade (CONTRACT.md secao 3).
+    -- What reproduces this partition exactly. seed + reference + ingestion_date + registration
+    -- scope are the FOUR conditions of the reproducibility guarantee (CONTRACT.md section 3).
     config.seed                             as seed,
     config.count                            as requested_count,
-    -- 'reference' quando o tamanho veio da populacao, 'cli' quando alguem passou --count.
-    -- Sem esta coluna, uma base gerada com override manual seria indistinguivel de uma
-    -- derivada da populacao, e a unica forma de descobrir seria refazer a conta.
+    -- 'reference' when the size came from the population, 'cli' when someone passed --count.
+    -- Without this column, a base generated with a manual override would be indistinguishable
+    -- from one derived from the population, and the only way to find out would be to redo the
+    -- math.
     config.count_source                     as count_source,
     config.reference                        as reference_path,
 
-    -- Linhagem dos insumos: de qual Silver estes clientes foram derivados.
+    -- Lineage of the inputs: which Silver these customers were derived from.
     reference.callejero_ingestion_date       as callejero_ingestion_date,
     reference.population_ingestion_date      as population_ingestion_date,
     reference.population_series_ingestion_date as population_series_ingestion_date,
@@ -64,9 +65,9 @@ select
     reference.age_fk_periodo                 as age_fk_periodo,
     reference.age_reference_date             as age_reference_date,
 
-    -- O ESCOPO DO CADASTRO. As tres primeiras trocam as pessoas por tras dos mesmos
-    -- customer_id tanto quanto a seed troca, e por isso viajam ao lado dela. Sem elas, duas
-    -- particoes com a mesma contagem e o mesmo aspecto seriam indistinguiveis.
+    -- THE REGISTRATION SCOPE. The first three swap the people behind the same customer_id
+    -- as much as the seed does, which is why they travel next to it. Without them, two
+    -- partitions with the same count and the same look would be indistinguishable.
     reference.min_customer_age               as min_customer_age,
     reference.penetration_pct                as penetration_pct,
     reference.allocation_rule                as allocation_rule,

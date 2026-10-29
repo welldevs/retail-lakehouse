@@ -1,7 +1,7 @@
--- A fonte entrega a linhagem de nivel 1 por DOIS caminhos: a arvore em
--- categories/categories.json e o array categories[] dentro de cada produto. Medido:
--- concordam em 100% das linhas. A redundancia e o teste — se um dia divergirem, a forma
--- da fonte mudou de um jeito que o schema_fingerprint nao pega.
+-- The source delivers the level-1 lineage along TWO paths: the tree in
+-- categories/categories.json and the categories[] array inside each product. Measured:
+-- they agree on 100% of rows. The redundancy is the test — if they ever diverge, the shape
+-- of the source changed in a way schema_fingerprint does not catch.
 select
     p.ingestion_date,
     p.warehouse,

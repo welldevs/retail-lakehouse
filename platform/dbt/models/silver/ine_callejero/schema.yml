@@ -3,27 +3,27 @@ version: 2
 models:
   - name: silver_callejero_sections
     description: >
-      Secoes censitarias do INE (arquivo SECC do Callejero), projetadas sem
-      interpretacao alem de decompor o codigo. GRAO: (ingestion_date, section_code).
-      Layout medido, nao documentado oficialmente — ver CONTRACT.md da source
-      (sources/ine-callejero-source), secao 2.
+      INE census sections (the Callejero SECC file), projected with no
+      interpretation beyond decomposing the code. GRAIN: (ingestion_date, section_code).
+      Layout measured, not officially documented — see the source's CONTRACT.md
+      (sources/ine-callejero-source), section 2.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
-        description: Nome original do arquivo do INE (ex. SECC.P28.D260630.G260702) — proveniencia.
+        description: Original INE file name (e.g. SECC.P28.D260630.G260702) — provenance.
         tests: [not_null]
       - name: section_code
-        description: Codigo de 10 digitos, provincia+municipio+distrito+secao concatenados.
+        description: 10-digit code, province+municipality+district+section concatenated.
         tests: [not_null, unique]
       - name: province_code
         tests: [not_null]
@@ -36,25 +36,25 @@ models:
 
   - name: silver_callejero_population_units
     description: >
-      Unidades populacionais/nucleos do INE (arquivo UP do Callejero). GRAO:
-      (ingestion_date, unit_code). is_municipality_aggregate=true e a linha do
-      MUNICIPIO inteiro, nao de um nucleo especifico dentro dele.
+      INE population units/nuclei (the Callejero UP file). GRAIN:
+      (ingestion_date, unit_code). is_municipality_aggregate=true is the row of the whole
+      MUNICIPALITY, not of a specific nucleus within it.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
         tests: [not_null]
       - name: unit_code
-        description: Codigo de 12 digitos, provincia+municipio+sufixo de entidade.
+        description: 12-digit code, province+municipality+entity suffix.
         tests: [not_null, unique]
       - name: province_code
         tests: [not_null]
@@ -65,38 +65,38 @@ models:
       - name: is_municipality_aggregate
         tests: [not_null]
       - name: reference_date
-        description: Data de referencia do Callejero (do proprio arquivo, nao ingestion_date).
+        description: Callejero reference date (from the file itself, not ingestion_date).
         tests: [not_null]
       - name: municipality_name
         tests: [not_null]
       - name: population_unit_name
         description: >
-          Nome do nucleo/entidade dentro do municipio: pedania/aldeia historicamente
-          anexada (ex. Valencia tem 16 nomeadas — BENIFARAIG, PINEDO, EL SALER...) ou
-          "*DISEMINADO*" para populacao dispersa fora de qualquer nucleo. NAO e bairro
-          administrativo (tipo Chamberi/Retiro em Madrid) — esse conceito pertence a
-          prefeitura de cada cidade, nao ao nomenclator do INE, e nao esta em nenhum dos
-          4 arquivos desta source. Medido: Madrid, Barcelona e Sevilla capital sao UMA
-          entidade unica sem subdivisao no UP (so retornam o proprio nome do municipio);
-          Valencia e a unica dos 4 warehouses com pedanias nomeadas, por ter anexado
-          varios nucleos historicamente (L'Horta). Vazio quando a linha e so o registro
-          "container" do nucleo (sufixo terminado em 00, sem *DISEMINADO*/nome proprio).
+          Name of the nucleus/entity within the municipality: a historically annexed hamlet/village
+          (e.g. Valencia has 16 named ones — BENIFARAIG, PINEDO, EL SALER...) or
+          "*DISEMINADO*" for scattered population outside any nucleus. It is NOT an administrative
+          neighborhood (like Chamberi/Retiro in Madrid) — that concept belongs to each city's
+          council, not to the INE gazetteer, and it is not in any of this source's
+          4 files. Measured: Madrid, Barcelona and Sevilla city are ONE single
+          entity with no subdivision in UP (they only return the municipality's own name);
+          Valencia is the only one of the 4 warehouses with named hamlets, having annexed
+          several nuclei historically (L'Horta). Empty when the row is just the nucleus's
+          "container" record (suffix ending in 00, with no *DISEMINADO*/proper name).
         tests: [not_null]
 
   - name: silver_callejero_streets
     description: >
-      Ruas do INE (arquivo VIAS do Callejero). GRAO: (ingestion_date, street_code).
-      Validado contra enderecos reais (Alcala/Madrid, Gran Via em 3 municipios) — ver
-      CONTRACT.md da source.
+      INE streets (the Callejero VIAS file). GRAIN: (ingestion_date, street_code).
+      Validated against real addresses (Alcala/Madrid, Gran Via in 3 municipalities) — see
+      the source's CONTRACT.md.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
@@ -113,7 +113,7 @@ models:
       - name: reference_date
         tests: [not_null]
       - name: street_type
-        description: "Abreviatura do tipo de logradouro (CALLE, PLAZA, CMNO, PRAJE, ...)."
+        description: "Abbreviation of the street type (CALLE, PLAZA, CMNO, PRAJE, ...)."
         tests: [not_null]
       - name: street_name_short
         tests: [not_null]
@@ -124,19 +124,19 @@ models:
 
   - name: silver_callejero_pseudo_addresses
     description: >
-      Pseudovias do INE (arquivo PSEU do Callejero): pontos enderecaveis fora de rua
-      convencional (caixas de correio, estacionamentos, conjuntos de edificios). GRAO:
-      (ingestion_date, pseudo_address_code). Nao e auxiliar de silver_callejero_streets
-      — identidades e codigos proprios, sem correspondencia 1:1 com rua.
+      INE pseudo-streets (the Callejero PSEU file): addressable points outside a conventional
+      street (mailboxes, car parks, building complexes). GRAIN:
+      (ingestion_date, pseudo_address_code). It is not an auxiliary of silver_callejero_streets
+      — its own identities and codes, with no 1:1 correspondence to a street.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
@@ -159,29 +159,29 @@ models:
 
   - name: silver_callejero_tramos
     description: >
-      Tramos de via do INE (arquivo TRAM do Callejero): a unica das 4 tabelas que liga
-      secao + entidade/nucleo + via/pseudovia + CODIGO POSTAL + faixa de numeracao num
-      so registro. GRAO composto (sem coluna unica de id do tramo nos bytes) — ver
-      assert_callejero_tramos_grain_is_unique.sql. street_code/pseudo_address_code sao
-      reconstruidos para JOIN com silver_callejero_streets/pseudo_addresses; unit_code
-      para JOIN com silver_callejero_population_units. "00000" em street_id/
-      pseudo_address_id significa "nao se aplica" (sao mutuamente exclusivos).
+      INE street segments (the Callejero TRAM file): the only one of the 4 tables that links
+      section + entity/nucleus + street/pseudo-street + POSTAL CODE + numbering range in
+      a single record. Composite GRAIN (no single segment-id column in the bytes) — see
+      assert_callejero_tramos_grain_is_unique.sql. street_code/pseudo_address_code are
+      rebuilt for a JOIN with silver_callejero_streets/pseudo_addresses; unit_code
+      for a JOIN with silver_callejero_population_units. "00000" in street_id/
+      pseudo_address_id means "not applicable" (they are mutually exclusive).
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: source_dataset
         tests: [not_null]
       - name: source_file
         tests: [not_null]
       - name: section_code
-        description: Codigo de secao censitaria (mesmo formato de silver_callejero_sections.section_code).
+        description: Census section code (same format as silver_callejero_sections.section_code).
         tests: [not_null]
       - name: province_code
         tests: [not_null]
@@ -195,34 +195,34 @@ models:
         tests: [not_null]
       - name: unit_code
         description: >
-          provincia+municipio+entity_suffix — chave de JOIN com
+          province+municipality+entity_suffix — JOIN key with
           silver_callejero_population_units.unit_code.
         tests: [not_null]
       - name: street_id
-        description: '"00000" quando o tramo pertence a uma pseudovia, nao a uma via.'
+        description: '"00000" when the segment belongs to a pseudo-street, not a street.'
         tests: [not_null]
       - name: street_code
         description: >
-          provincia+municipio+street_id — chave de JOIN com
-          silver_callejero_streets.street_code (so bate quando street_id != "00000").
+          province+municipality+street_id — JOIN key with
+          silver_callejero_streets.street_code (only matches when street_id != "00000").
         tests: [not_null]
       - name: pseudo_address_id
-        description: '"00000" quando o tramo pertence a uma via, nao a uma pseudovia.'
+        description: '"00000" when the segment belongs to a street, not a pseudo-street.'
         tests: [not_null]
       - name: pseudo_address_code
         description: >
-          provincia+municipio+pseudo_address_id — chave de JOIN com
-          silver_callejero_pseudo_addresses.pseudo_address_code (so bate quando
+          province+municipality+pseudo_address_id — JOIN key with
+          silver_callejero_pseudo_addresses.pseudo_address_code (only matches when
           pseudo_address_id != "00000").
         tests: [not_null]
       - name: postal_code
         description: >
-          CEP (CPOS no layout oficial). Unico dos 4 datasets do Callejero com codigo
-          postal. Validado: sempre com o prefixo correto da provincia em 305.361/305.408
-          linhas reais (99,985%); as poucas excecoes ocorrem so em Barcelona.
+          Postal code (CPOS in the official layout). The only one of the 4 Callejero datasets with a postal
+          code. Validated: always with the right province prefix in 305,361/305,408
+          real rows (99.985%); the few exceptions occur only in Barcelona.
         tests: [not_null]
       - name: numbering_type
-        description: '"0"=sem numeracao, "1"=impar, "2"=par (TINUM no layout oficial).'
+        description: '"0"=no numbering, "1"=odd, "2"=even (TINUM in the official layout).'
         tests:
           - not_null
           - accepted_values:

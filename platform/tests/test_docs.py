@@ -1,17 +1,17 @@
-"""A documentacao conferida como codigo. Sem rede.
+"""The documentation checked as code. No network.
 
-POR QUE ESTA SUITE EXISTE. A revisao de 2026-09-01 encontrou, so na documentacao: uma
-arvore de diretorios que anunciava 7 marts onde havia 8 e omitia 8 dos 14 seeds, uma
-tabela de cobertura que dizia 131 testes onde havia 376, e a MESMA secao afirmando 29 e 16
-para o mesmo modulo em dois paragrafos. Nada disso quebra nada — e exatamente por isso
-sobreviveu a seis fases.
+WHY THIS SUITE EXISTS. The 2026-09-01 review found, in the documentation alone: a
+directory tree that announced 7 marts where there were 8 and left out 8 of the 14 seeds, a
+coverage table that said 131 tests where there were 376, and the SAME section claiming 29
+and 16 for the same module in two paragraphs. None of that breaks anything — and that is
+exactly why it survived six phases.
 
-O que da para verificar por maquina, aqui esta. O que nao da (se o texto esta CERTO)
-continua sendo leitura humana; estes testes so garantem que ele nao esta apontando para
-coisa que nao existe.
+What a machine can check is here. What it cannot (whether the text is RIGHT) is still
+human reading; these tests only guarantee that the text does not point at things that do
+not exist.
 
-Deliberadamente NAO confere contagem de teste escrita em prosa: o remedio ali foi parar de
-escrever o numero, nao automatizar a copia dele. Ver ARCHITECTURE.md, "Cobertura de teste".
+It deliberately does NOT check test counts written in prose: the fix there was to stop
+writing the number, not to automate copying it. See ARCHITECTURE.md, "Test coverage".
 """
 
 from __future__ import annotations
@@ -22,322 +22,345 @@ import re
 import subprocess
 import unittest
 
-RAIZ = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def _versionados(padrao: str) -> list[pathlib.Path]:
-    saida = subprocess.run(
-        ["git", "ls-files", padrao], cwd=RAIZ, capture_output=True, text=True, check=True
+def _tracked(pattern: str) -> list[pathlib.Path]:
+    output = subprocess.run(
+        ["git", "ls-files", pattern], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout
-    return [RAIZ / linha for linha in saida.splitlines() if linha]
+    return [ROOT / line for line in output.splitlines() if line]
 
 
-class ArvoreDeEstruturaTest(unittest.TestCase):
-    """A arvore do README nomeia caminho por caminho o que existe no repositorio.
+class StructureTreeTest(unittest.TestCase):
+    """The README tree names, path by path, what exists in the repository.
 
-    E o mapa que alguem le antes de abrir qualquer arquivo, entao um caminho errado nele
-    custa mais que um comentario errado: manda a pessoa procurar o que nao ha.
+    It is the map someone reads before opening any file, so a wrong path in it costs more
+    than a wrong comment: it sends the reader looking for something that is not there.
     """
 
-    def _caminhos_da_arvore(self) -> list[str]:
-        texto = (RAIZ / "README.md").read_text(encoding="utf-8")
-        bloco = re.search(r"## Structure\n\n```\n(.*?)\n```", texto, re.S)
-        self.assertIsNotNone(bloco, "o bloco '## Structure' sumiu do README")
-        pilha: list[str] = []
-        caminhos: list[str] = []
-        for linha in bloco.group(1).splitlines():
-            achado = re.match(r"^([│ ]*)(?:├── |└── )(\S+)", linha)
-            if not achado:
+    def _tree_paths(self) -> list[str]:
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        block = re.search(r"## Structure\n\n```\n(.*?)\n```", text, re.S)
+        self.assertIsNotNone(block, "the '## Structure' block is gone from the README")
+        stack: list[str] = []
+        paths: list[str] = []
+        for line in block.group(1).splitlines():
+            found = re.match(r"^([│ ]*)(?:├── |└── )(\S+)", line)
+            if not found:
                 continue
-            profundidade = len(achado.group(1)) // 4
-            pilha = pilha[:profundidade] + [achado.group(2).rstrip("/")]
-            caminhos.append("/".join(pilha))
-        return caminhos
+            depth = len(found.group(1)) // 4
+            stack = stack[:depth] + [found.group(2).rstrip("/")]
+            paths.append("/".join(stack))
+        return paths
 
-    def test_todo_caminho_da_arvore_existe(self):
-        caminhos = self._caminhos_da_arvore()
-        self.assertGreater(len(caminhos), 15, "a arvore encolheu — o parser provavelmente quebrou")
+    def test_every_tree_path_exists(self):
+        paths = self._tree_paths()
+        self.assertGreater(len(paths), 15, "the tree shrank — the parser probably broke")
 
-        # data/ e seus filhos sao a unica excecao: a propria arvore os marca "outside
-        # version control" (.gitignore linha 36) porque sao scratch de extracao, nunca
-        # codigo-fonte. Um checkout limpo nunca os tem antes de rodar o pipeline — a CI
-        # e quem expos isso, passando so localmente onde o pipeline ja rodou alguma vez.
-        fora_de_versionamento = {c for c in caminhos if c == "data" or c.startswith("data/")}
-        normais = [c for c in caminhos if c not in fora_de_versionamento]
+        # data/ and its children are the only exception: the tree itself marks them
+        # "outside version control" (.gitignore line 36) because they are extraction
+        # scratch, never source code. A clean checkout never has them before running the
+        # pipeline — CI is what exposed this, since it only passed locally where the
+        # pipeline had already run at some point.
+        untracked = {p for p in paths if p == "data" or p.startswith("data/")}
+        regular = [p for p in paths if p not in untracked]
 
-        ausentes = sorted(c for c in normais if not (RAIZ / c).exists())
+        missing = sorted(p for p in regular if not (ROOT / p).exists())
         self.assertEqual(
-            ausentes, [],
-            "a arvore do README nomeia caminhos que nao existem:\n  " + "\n  ".join(ausentes),
+            missing, [],
+            "the README tree names paths that do not exist:\n  " + "\n  ".join(missing),
         )
 
-        nao_ignorados = sorted(
-            c for c in fora_de_versionamento
-            if subprocess.run(["git", "check-ignore", "-q", c + "/"], cwd=RAIZ).returncode != 0
+        not_ignored = sorted(
+            p for p in untracked
+            if subprocess.run(["git", "check-ignore", "-q", p + "/"], cwd=ROOT).returncode != 0
         )
         self.assertEqual(
-            nao_ignorados, [],
-            "a arvore marca estes caminhos como fora de versionamento, "
-            "mas o .gitignore nao os cobre:\n  " + "\n  ".join(nao_ignorados),
+            not_ignored, [],
+            "the tree marks these paths as outside version control, "
+            "but .gitignore does not cover them:\n  " + "\n  ".join(not_ignored),
         )
 
 
-class LinksRelativosTest(unittest.TestCase):
-    """Um link quebrado em Markdown nao falha em lugar nenhum: ele so nao abre.
+class RelativeLinksTest(unittest.TestCase):
+    """A broken Markdown link fails nowhere: it just does not open.
 
-    Confere so os RELATIVOS. URL externa nao entra: conferi-la exigiria rede, e a suite e
-    offline por invariante do repositorio.
+    Checks only RELATIVE links. External URLs are left out: checking them would need the
+    network, and the suite is offline by repository invariant.
     """
 
-    def test_todo_link_relativo_resolve(self):
-        quebrados = []
-        for arquivo in _versionados("*.md"):
-            base = arquivo.parent
-            texto = arquivo.read_text(encoding="utf-8")
-            for alvo in re.findall(r"\]\(([^)\s]+)\)", texto):
-                alvo = alvo.split("#")[0]
-                if not alvo or alvo.startswith(("http://", "https://", "mailto:", "s3://")):
+    def test_every_relative_link_resolves(self):
+        broken = []
+        for path in _tracked("*.md"):
+            base = path.parent
+            text = path.read_text(encoding="utf-8")
+            for target in re.findall(r"\]\(([^)\s]+)\)", text):
+                target = target.split("#")[0]
+                if not target or target.startswith(("http://", "https://", "mailto:", "s3://")):
                     continue
-                if not (base / alvo).exists():
-                    quebrados.append(f"{arquivo.relative_to(RAIZ)} -> {alvo}")
+                if not (base / target).exists():
+                    broken.append(f"{path.relative_to(ROOT)} -> {target}")
         self.assertEqual(
-            sorted(quebrados), [],
-            "links relativos que nao resolvem:\n  " + "\n  ".join(sorted(quebrados)),
+            sorted(broken), [],
+            "relative links that do not resolve:\n  " + "\n  ".join(sorted(broken)),
         )
 
 
-class ReferenciaPorNomeDeSecaoTest(unittest.TestCase):
-    """`[DOC.md § "Titulo"](DOC.md)` tem de apontar para um titulo que existe la.
+class SectionNameReferenceTest(unittest.TestCase):
+    """`[DOC.md § "Title"](DOC.md)` must point at a heading that exists there.
 
-    POR QUE ISTO NAO ERA COBERTO. `LinksRelativosTest` confere que o ARQUIVO existe, e todas
-    estas referencias apontam para arquivos que existem — entao ela passava. O que ninguem
-    conferia era o RÓTULO: a secao nomeada podia ter sido renomeada, ou ter mudado de
-    arquivo, e o link continuaria "valido" levando o leitor ao documento errado.
+    WHY THIS WAS NOT COVERED. `RelativeLinksTest` checks that the FILE exists, and all of
+    these references point at files that exist — so it passed. What nobody checked was the
+    LABEL: the named section could have been renamed, or moved to another file, and the
+    link would stay "valid" while taking the reader to the wrong document.
 
-    Isso deixou de ser hipotetico na Fase 7, quando 17 secoes de narrativa mudaram de
-    ARCHITECTURE.md para DECISIONS.md. Cinco referencias precisaram ser redirecionadas — e
-    duas outras pareceram quebradas ate eu descobrir que meu proprio verificador so olhava
-    titulos de nivel 2. O teste olha TODOS os niveis.
+    This stopped being hypothetical in Phase 7, when 17 narrative sections moved from
+    ARCHITECTURE.md to DECISIONS.md. Five references had to be redirected — and two others
+    looked broken until I found out my own checker only looked at level-2 headings. The
+    test looks at ALL levels.
 
-    A COMPARACAO E POR PREFIXO de proposito: as referencias abreviam ("Fase 2" aponta para
-    "Fase 2: camada analitica no Snowflake"). Exigir o titulo inteiro obrigaria a repetir
-    frases longas dentro do texto corrido, e a abreviacao nao introduz ambiguidade — nao ha
-    duas secoes cujo titulo comece igual.
+    THE COMPARISON IS BY PREFIX on purpose: references abbreviate ("Phase 2" points at
+    "Phase 2: analytical layer on Snowflake"). Requiring the full heading would force
+    repeating long phrases inside running text, and the abbreviation introduces no
+    ambiguity — no two sections have headings that start the same way.
     """
 
-    PADRAO = re.compile(r'\[([A-Za-z_.\/-]*\.md) § "([^"]+)"\]')
+    PATTERN = re.compile(r'\[([A-Za-z_.\/-]*\.md) § "([^"]+)"\]')
 
-    def _titulos(self, caminho: pathlib.Path) -> set[str]:
+    def _headings(self, path: pathlib.Path) -> set[str]:
         try:
-            texto = caminho.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError:
             return set()
         return {
-            linha.lstrip("#").strip()
-            for linha in texto.split("\n")
-            if re.match(r"^#{1,6}\s", linha)
+            line.lstrip("#").strip()
+            for line in text.split("\n")
+            if re.match(r"^#{1,6}\s", line)
         }
 
-    def test_toda_secao_citada_por_nome_existe_no_documento_citado(self):
-        problemas = []
-        for caminho in _versionados("*.md"):
+    def test_every_section_cited_by_name_exists_in_the_cited_document(self):
+        problems = []
+        for path in _tracked("*.md"):
             try:
-                texto = caminho.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8")
             except OSError:
                 continue
-            for alvo, titulo in self.PADRAO.findall(texto):
-                destino = (caminho.parent / alvo).resolve()
-                if not destino.exists():
-                    # LinksRelativosTest ja cobre arquivo ausente; aqui so o rotulo.
+            for target, heading in self.PATTERN.findall(text):
+                destination = (path.parent / target).resolve()
+                if not destination.exists():
+                    # RelativeLinksTest already covers a missing file; here, only the label.
                     continue
-                titulos = self._titulos(destino)
-                if not any(t == titulo or t.startswith(titulo) or titulo in t
-                           for t in titulos):
-                    problemas.append(
-                        f"{caminho.relative_to(RAIZ)} cita "
-                        f'{alvo} § "{titulo}", que nao existe la'
+                headings = self._headings(destination)
+                if not any(h == heading or h.startswith(heading) or heading in h
+                           for h in headings):
+                    problems.append(
+                        f"{path.relative_to(ROOT)} cites "
+                        f'{target} § "{heading}", which does not exist there'
                     )
-        self.assertEqual(problemas, [], "\n" + "\n".join(problemas))
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
-class TetoDeLinhasTest(unittest.TestCase):
-    """README e ARCHITECTURE nao podem voltar a crescer sem limite.
+class LineCeilingTest(unittest.TestCase):
+    """README and ARCHITECTURE must not go back to growing without limit.
 
-    O TAMANHO E, POR SI, UM QUESTIONAMENTO DE COMPLEXIDADE. Antes da Fase 7 o README tinha
-    1.435 linhas e o ARCHITECTURE 2.475, e boa parte era a MESMA explicacao em dois lugares,
-    envelhecendo em ritmos diferentes. A narrativa foi para DECISIONS.md e os dois cairam
-    para menos da metade.
+    SIZE IS, IN ITSELF, A COMPLEXITY QUESTION. Before Phase 7 the README had 1,435 lines and
+    ARCHITECTURE 2,475, and much of it was the SAME explanation in two places, ageing at
+    different rates. The narrative went to DECISIONS.md and both dropped to less than half.
 
-    O TETO NAO E UMA META ESTETICA, e o numero nao foi escolhido por gosto: e o tamanho de
-    hoje com uma folga estreita. O efeito pretendido nao e forcar cortes — e fazer com que
-    CRESCER seja uma decisao, e nao um acumulo. Quem precisar de mais espaco muda o numero
-    aqui, e essa mudanca aparece no diff.
+    THE CEILING IS NOT AN AESTHETIC GOAL, and the number was not picked by taste: it is
+    today's size with a narrow margin. The intended effect is not to force cuts — it is to
+    make GROWING a decision rather than an accumulation. Whoever needs more room changes the
+    number here, and that change shows up in the diff.
 
-    ONDE O TEXTO DEVE IR quando o teto apertar: historia para DECISIONS.md, escopo futuro
-    para BACKLOG.md, e detalhe de uma Source para o README dela.
+    WHERE TEXT SHOULD GO when the ceiling gets tight: history to DECISIONS.md, future scope
+    to BACKLOG.md, and a Source's details to its own README.
 
-    O TETO DO README SUBIU DE 700 PARA 760 em 2026-09-02, e a razao vai escrita porque o
-    proprio teste diz que crescer tem de ser decisao e nao acumulo: entrou a secao "As quatorze
-    perguntas do fechamento", um INDICE de uma linha por pergunta apontando para onde a
-    evidencia mora. Ela nao duplica explicacao — e o oposto disso, e existe para que um leitor
-    possa conferir se a documentacao sustenta o que afirma sem ler 3.000 linhas.
+    THE README CEILING WENT FROM 700 TO 760 on 2026-09-02, and the reason is written down
+    because the test itself says growing must be a decision and not an accumulation: the
+    section "The fourteen closing questions" came in, an INDEX of one line per question
+    pointing at where the evidence lives. It does not duplicate explanation — it is the
+    opposite, and it exists so that a reader can check whether the documentation backs what
+    it claims without reading 3,000 lines.
 
-    OS DOIS TETOS CAIRAM em 2026-09-14, numa revisao voltada para leitor externo (o
-    repositorio passou a ser anexado como demonstracao tecnica): a arvore de diretorios do
-    README foi condensada a top-level, e o ARCHITECTURE perdeu tres subsecoes de postmortem
-    (RBAC, `warehouse_load`, homonimos na populacao) e uma segunda tabela de historico que
-    duplicava o que `DECISIONS.md` ja narra por fase — nada foi perdido, so realocado para o
-    arquivo que ja existe para guardar historia.
+    BOTH CEILINGS DROPPED on 2026-09-14, in a review aimed at external readers (the
+    repository started being attached as a technical showcase): the README directory tree
+    was condensed to top level, and ARCHITECTURE lost three postmortem subsections (RBAC,
+    `warehouse_load`, homonyms in the population) and a second history table that
+    duplicated what `DECISIONS.md` already narrates per phase — nothing was lost, only moved
+    to the file that already exists to keep history.
     """
 
-    TETOS = {
+    CEILINGS = {
         "README.md": 680,
         "ARCHITECTURE.md": 560,
     }
 
-    def test_nenhum_documento_de_estado_passa_do_teto(self):
-        for nome, teto in self.TETOS.items():
-            with self.subTest(nome):
-                linhas = len((RAIZ / nome).read_text(encoding="utf-8").splitlines())
+    def test_no_state_document_exceeds_its_ceiling(self):
+        for name, ceiling in self.CEILINGS.items():
+            with self.subTest(name):
+                lines = len((ROOT / name).read_text(encoding="utf-8").splitlines())
                 self.assertLessEqual(
-                    linhas, teto,
-                    f"{nome} tem {linhas} linhas (teto {teto}). Historia vai para "
-                    f"DECISIONS.md, escopo futuro para BACKLOG.md.",
+                    lines, ceiling,
+                    f"{name} has {lines} lines (ceiling {ceiling}). History goes to "
+                    f"DECISIONS.md, future scope to BACKLOG.md.",
                 )
 
-    def test_os_quatro_documentos_de_raiz_existem_e_tem_papel_distinto(self):
-        """A estrutura que o projeto declara: estado, historia, escopo, execucao."""
-        for nome in ("README.md", "ARCHITECTURE.md", "DECISIONS.md", "BACKLOG.md"):
-            with self.subTest(nome):
-                self.assertTrue((RAIZ / nome).exists(), f"{nome} nao existe")
+    def test_the_four_root_documents_exist_and_have_distinct_roles(self):
+        """The structure the project declares: state, history, scope, execution."""
+        for name in ("README.md", "ARCHITECTURE.md", "DECISIONS.md", "BACKLOG.md"):
+            with self.subTest(name):
+                self.assertTrue((ROOT / name).exists(), f"{name} does not exist")
 
 
-class AncorasResolvemTest(unittest.TestCase):
-    """`](#secao)` e `](DOC.md#secao)` tem de apontar para um titulo que existe.
+class AnchorsResolveTest(unittest.TestCase):
+    """`](#section)` and `](DOC.md#section)` must point at a heading that exists.
 
-    POR QUE ISTO E SEPARADO DE `LinksRelativosTest`. Aquela confere que o ARQUIVO existe, e
-    um link com ancora quebrada aponta para um arquivo que existe — entao ela passa, e o
-    leitor cai no topo do documento sem saber que errou de lugar. Um indice inteiro pode
-    apodrecer assim sem nenhum teste reclamar, e foi o risco concreto da Fase 7, quando 17
-    secoes mudaram de arquivo e um indice novo nasceu com 11 ancoras.
+    WHY THIS IS SEPARATE FROM `RelativeLinksTest`. That one checks that the FILE exists, and
+    a link with a broken anchor points at a file that exists — so it passes, and the reader
+    lands at the top of the document without knowing they are in the wrong place. A whole
+    index can rot this way without any test complaining, and that was the concrete risk of
+    Phase 7, when 17 sections changed files and a new index was born with 11 anchors.
 
-    A REGRA DE SLUG E A DO GITHUB, e uma versao anterior deste verificador estava ERRADA:
-    ela colapsava espacos repetidos, e o GitHub nao colapsa. Isso produziu cinco falsos
-    positivos num documento correto — um verificador errado custa mais caro que verificador
-    nenhum, porque ensina a ignorar o resultado.
+    THE SLUG RULE IS GITHUB'S, and an earlier version of this checker was WRONG: it
+    collapsed repeated spaces, and GitHub does not. That produced five false positives in a
+    correct document — a wrong checker costs more than no checker, because it teaches people
+    to ignore the result.
     """
 
     @staticmethod
-    def _slug(titulo: str) -> str:
-        texto = titulo.lower()
-        texto = re.sub(r"[^\w\s-]", "", texto, flags=re.UNICODE)
-        return texto.strip().replace(" ", "-")
+    def _slug(heading: str) -> str:
+        text = heading.lower()
+        text = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE)
+        return text.strip().replace(" ", "-")
 
-    def _titulos(self, caminho: pathlib.Path) -> set[str]:
-        """Titulos MAIS ancoras HTML explicitas.
+    def _headings(self, path: pathlib.Path) -> set[str]:
+        """Headings PLUS explicit HTML anchors.
 
-        `streamlit/CONTRACT.md` e gerado e usa `<a id="chave"></a>` antes de cada indicador,
-        porque a chave do indicador e mais estavel que o titulo dele. Um verificador que so
-        olhasse cabecalho reprovaria 22 ancoras corretas — e verificador que reprova o certo
-        e pior que verificador nenhum, porque ensina a ignorar o resultado. Ja aconteceu
-        neste projeto, com um slug que colapsava espacos repetidos e o GitHub nao colapsa.
+        `docs/indicators/operations.md` is generated and uses `<a id="key"></a>` before each
+        indicator, because the indicator key is more stable than its title. A checker that
+        only looked at headings would fail 22 correct anchors — and a checker that fails
+        what is right is worse than no checker, because it teaches people to ignore the
+        result. It already happened in this project, with a slug that collapsed repeated
+        spaces when GitHub does not.
         """
         try:
-            texto = caminho.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError:
             return set()
-        cabecalhos = {self._slug(linha.lstrip("#").strip())
-                      for linha in texto.split("\n") if re.match(r"^#{1,6}\s", linha)}
-        explicitas = set(re.findall(r'<a\s+id="([^"]+)"', texto))
-        return cabecalhos | explicitas
+        headings = {self._slug(line.lstrip("#").strip())
+                    for line in text.split("\n") if re.match(r"^#{1,6}\s", line)}
+        explicit = set(re.findall(r'<a\s+id="([^"]+)"', text))
+        return headings | explicit
 
-    def test_toda_ancora_aponta_para_um_titulo_existente(self):
-        padrao = re.compile(r"\]\(([^)\s]*)#([^)\s]+)\)")
-        problemas = []
-        for caminho in _versionados("*.md"):
+    def test_every_anchor_points_at_an_existing_heading(self):
+        pattern = re.compile(r"\]\(([^)\s]*)#([^)\s]+)\)")
+        problems = []
+        for path in _tracked("*.md"):
             try:
-                texto = caminho.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8")
             except OSError:
                 continue
-            for alvo, ancora in padrao.findall(texto):
-                if alvo.startswith(("http://", "https://")):
+            for target, anchor in pattern.findall(text):
+                if target.startswith(("http://", "https://")):
                     continue
-                destino = caminho if not alvo else (caminho.parent / alvo).resolve()
-                if not destino.exists():
-                    continue  # arquivo ausente e assunto de LinksRelativosTest
-                if ancora not in self._titulos(destino):
-                    problemas.append(
-                        f"{caminho.relative_to(RAIZ)} -> {alvo or caminho.name}#{ancora}")
-        self.assertEqual(problemas, [], "\n" + "\n".join(problemas))
+                destination = path if not target else (path.parent / target).resolve()
+                if not destination.exists():
+                    continue  # a missing file is RelativeLinksTest's business
+                if anchor not in self._headings(destination):
+                    problems.append(
+                        f"{path.relative_to(ROOT)} -> {target or path.name}#{anchor}")
+        self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
-class SemLixoVersionadoTest(unittest.TestCase):
-    """Um log de execucao commitado por engano nao atrapalha nada, e por isso fica anos.
+class NoTrackedJunkTest(unittest.TestCase):
+    """A run log committed by mistake gets in nobody's way, and that is why it stays for years.
 
-    `platform/logs/dbt.log` ficou desde o primeiro commit: 16 linhas de uma invocacao
-    abortada do dbt, referenciada em lugar nenhum. O dbt escreve `logs/` RELATIVO ao cwd,
-    nao ao `--project-dir`, entao rodar dbt de dentro de `platform/` recria o diretorio.
+    `platform/logs/dbt.log` was there since the first commit: 16 lines of an aborted dbt
+    invocation, referenced nowhere. dbt writes `logs/` RELATIVE to the cwd, not to
+    `--project-dir`, so running dbt from inside `platform/` recreates the directory.
     """
 
-    def test_nenhum_log_nem_artefato_de_execucao_esta_versionado(self):
-        proibidos = []
-        for arquivo in _versionados("*"):
-            relativo = arquivo.relative_to(RAIZ).as_posix()
-            if re.search(r"(^|/)(logs?/|.*\.log$|\.duckdb$|__pycache__/)", relativo):
-                proibidos.append(relativo)
+    def test_no_log_or_run_artifact_is_tracked(self):
+        forbidden = []
+        for path in _tracked("*"):
+            relative = path.relative_to(ROOT).as_posix()
+            if re.search(r"(^|/)(logs?/|.*\.log$|\.duckdb$|__pycache__/)", relative):
+                forbidden.append(relative)
         self.assertEqual(
-            sorted(proibidos), [],
-            "artefatos de execucao versionados:\n  " + "\n  ".join(sorted(proibidos)),
+            sorted(forbidden), [],
+            "tracked run artifacts:\n  " + "\n  ".join(sorted(forbidden)),
         )
 
 
-class MakefileSeExplicaTest(unittest.TestCase):
-    """`make help` e a unica interface do repositorio. Alvo fora dele nao existe na
-    pratica, e script sem alvo e um arquivo que ninguem sabe como rodar.
+class MakefileExplainsItselfTest(unittest.TestCase):
+    """`make help` is the repository's only interface. A target outside it does not exist
+    in practice, and a script without a target is a file nobody knows how to run.
 
-    Achado na revisao de 2026-09-01: cinco alvos reais fora do help (`logs`, `stream-logs`,
-    `orders-oltp-init`, `orders-projection-init`, `iceberg-metadata`) e quatro scripts
-    `derive_*` sem alvo nenhum — justamente os que derivam os seeds VERSIONADOS, ou seja,
-    a procedencia de quatro CSVs so estava no docstring de um arquivo que o README nao
-    dizia como executar.
+    Found in the 2026-09-01 review: five real targets missing from help (`logs`,
+    `stream-logs`, `orders-oltp-init`, `orders-projection-init`, `iceberg-metadata`) and
+    four `derive_*` scripts with no target at all — precisely the ones that derive the
+    TRACKED seeds, meaning the provenance of four CSVs lived only in the docstring of a file
+    the README did not say how to run.
     """
 
     def _makefile(self) -> str:
-        return (RAIZ / "Makefile").read_text(encoding="utf-8")
+        return (ROOT / "Makefile").read_text(encoding="utf-8")
 
-    def test_todo_alvo_aparece_no_make_help(self):
-        texto = self._makefile()
-        alvos = set(re.findall(r"^([a-z][a-z0-9_-]*):", texto, re.M)) - {"help"}
-        bloco = re.search(r"^help:\n(.*?)(?=\n[^\t\n])", texto, re.S | re.M)
-        self.assertIsNotNone(bloco, "o alvo `help` sumiu do Makefile")
-        citados = set(re.findall(r'@echo "  ([a-z][a-z0-9_-]*)', bloco.group(1)))
-        ausentes = sorted(alvos - citados)
+    def test_every_target_appears_in_make_help(self):
+        text = self._makefile()
+        targets = set(re.findall(r"^([a-z][a-z0-9_-]*):", text, re.M)) - {"help"}
+        block = re.search(r"^help:\n(.*?)(?=\n[^\t\n])", text, re.S | re.M)
+        self.assertIsNotNone(block, "the `help` target is gone from the Makefile")
+        cited = set(re.findall(r'@echo "  ([a-z][a-z0-9_-]*)', block.group(1)))
+        missing = sorted(targets - cited)
         self.assertEqual(
-            ausentes, [],
-            "alvos que existem e o `make help` nao cita:\n  " + "\n  ".join(ausentes),
+            missing, [],
+            "targets that exist and `make help` does not cite:\n  " + "\n  ".join(missing),
         )
 
-    def test_todo_script_tem_alvo_no_makefile(self):
-        texto = self._makefile()
-        orfaos = sorted(
-            arquivo.name for arquivo in _versionados("scripts/*")
-            if arquivo.name not in texto
+    def test_every_script_has_a_makefile_target(self):
+        text = self._makefile()
+        orphans = sorted(
+            path.name for path in _tracked("scripts/*")
+            if path.name not in text
         )
         self.assertEqual(
-            orfaos, [],
-            "scripts sem alvo no Makefile — sem forma documentada de rodar:\n  "
-            + "\n  ".join(orfaos),
+            orphans, [],
+            "scripts without a Makefile target — no documented way to run them:\n  "
+            + "\n  ".join(orphans),
         )
 
-    def test_toda_variavel_do_makefile_e_usada(self):
-        """Variavel definida e nunca referenciada e configuracao que promete um efeito e
-        nao tem nenhum — pior que ausente, porque parece existir."""
-        texto = self._makefile()
-        mortas = sorted(
-            nome for nome in set(re.findall(r"^([A-Z][A-Z0-9_]*)\s*[?:]?=", texto, re.M))
-            if f"$({nome})" not in texto
+    def test_every_makefile_variable_is_used(self):
+        """A variable that is defined and never referenced is configuration that promises an
+        effect and has none — worse than absent, because it looks like it exists."""
+        text = self._makefile()
+        dead = sorted(
+            name for name in set(re.findall(r"^([A-Z][A-Z0-9_]*)\s*[?:]?=", text, re.M))
+            if f"$({name})" not in text
         )
-        self.assertEqual(mortas, [], "variaveis do Makefile nunca referenciadas: " + ", ".join(mortas))
+        self.assertEqual(dead, [], "Makefile variables never referenced: " + ", ".join(dead))
+
+    def test_every_target_cited_in_the_docs_exists(self):
+        """A `make X` in prose is an instruction: if the target does not exist, whoever
+        follows the text hits an error. That is how `warehouse-evidence` survived three
+        reviews after being renamed (CR-009). DECISIONS.md is left out on purpose: it is
+        dated history, and the name a target had back then is the truth of that time."""
+        targets = set(re.findall(r"^([a-z][a-z0-9_-]*):", self._makefile(), re.M))
+        documents = [ROOT / "README.md", ROOT / "ARCHITECTURE.md",
+                     ROOT / ".env.example", ROOT / ".env.snowflake.example",
+                     *_tracked("docs/*.md"), *_tracked("docs/**/*.md"),
+                     *_tracked("streamlit/*.md")]
+        broken = sorted({
+            f"{doc.relative_to(ROOT)}: make {target}"
+            for doc in set(documents) if doc.exists()
+            # `make warehouse-snowflake-*` is a family wildcard, not a target.
+            for target in re.findall(r"`make ([a-z][a-z0-9_-]*)(?![*\w-])",
+                                     doc.read_text(encoding="utf-8"))
+            if target not in targets
+        })
+        self.assertEqual(broken, [],
+                         "cited targets that do not exist in the Makefile:\n  " + "\n  ".join(broken))
 
 
 if __name__ == "__main__":

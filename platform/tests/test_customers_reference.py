@@ -1,18 +1,20 @@
-"""As tres queries do export, contra fixtures DuckDB reais — sem rede, sem MinIO.
+"""The export's three queries, against real DuckDB fixtures — no network, no MinIO.
 
-Cada caso da fixture reproduz um problema MEDIDO no Lakehouse de verdade, e existe para
-que ele seja pego aqui e nao la:
+Each fixture case reproduces a problem MEASURED in the real Lakehouse, and exists so it is
+caught here and not there:
 
-  * o municipio cujos tramos penduram em nucleo, nunca na linha agregada: o join ingenuo
-    por unit_code devolvia 0 de 7.194 tramos de Valencia;
-  * o tramo que nao casa nem com rua nem com pseudovia (3 no escopo real): tem de ser
-    excluido E contado;
-  * o municipio com serie homonima vinda de outra provincia (Torrent/Girona=182 contra
-    Torrent/Valencia=90.928): resolvido no modelo Silver pelo codigo oficial do INE, e
-    aqui apenas RECONFERIDO — se voltar a aparecer, o export recusa em vez de escolher;
-  * os rotulos de idade agregados 'Total' e '85 y mas anos', que somados as 101 idades
-    simples inflam a piramide em 2,03x;
-  * a tabela de series duplicada em duas ingestion_date, que dobraria cada provincia.
+  * the municipality whose tramos hang off a nucleus, never off the aggregate row: the naive
+    join by unit_code returned 0 of Valencia's 7,194 tramos;
+  * the tramo that matches neither a street nor a pseudo-address (3 in the real scope): it
+    must be excluded AND counted;
+  * the municipality with a homonymous series coming from another province
+    (Torrent/Girona=182 against Torrent/Valencia=90,928): resolved in the Silver model by
+    INE's official code, and here only RE-CHECKED — if it shows up again, the export refuses
+    instead of choosing;
+  * the aggregate age labels 'Total' and '85 y mas anos', which added to the 101 single ages
+    inflate the pyramid 2.03x;
+  * the series table duplicated across two ingestion_date values, which would double each
+    province.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from retail_platform.oltp_reference import (  # noqa: E402
+from retail_platform.customers_reference import (  # noqa: E402
     ReferenceExportError,
     build,
     write,
@@ -48,9 +50,9 @@ wh1,46,Valencia/València,250,València
 wh2,08,Barcelona,019,Barcelona
 """
 
-# As quatro premissas do cadastro. `min_customer_age` corta a piramide e
-# `customer_penetration_source` APONTA para o outro seed — o 2,2 nao aparece aqui, e um teste
-# abaixo prova que ele nao aparece.
+# The four customer-base premises. `min_customer_age` cuts the pyramid and
+# `customer_penetration_source` POINTS to the other seed — the 2.2 does not appear here, and a
+# test below proves it does not.
 CUSTOMER_PREMISES_CSV = """premise_key,value,unit,label,rationale
 min_customer_age,18,years,synthetic,"Capacidade legal para contratar."
 customer_penetration_source,demand_profile.channel_reference_pct,reference,synthetic,"Ponteiro, nao copia."
@@ -58,8 +60,8 @@ customer_population_basis,adult_resident_population,rule,synthetic,"O denominado
 customer_allocation,per_warehouse_population,rule,synthetic,"O total e consequencia."
 """
 
-# So a linha que este export le. O seed real tem 17 parametros; repetir todos aqui faria a
-# fixture envelhecer junto do modelo de demanda sem nenhum ganho.
+# Only the row this export reads. The real seed has 17 parameters; repeating them all here
+# would make the fixture age along with the demand model for no gain.
 DEMAND_PROFILE_CSV = """param_key,value,unit,label,rationale
 channel_reference_pct,2.2,percent,observed,"E-commerce no volume de alimentacao, MAPA sec.3."
 """
@@ -112,7 +114,7 @@ def tramo(municipality, street_id, code, postal, numbering="1", low="0001", high
     )
 
 
-@unittest.skipIf(duckdb is None, "duckdb nao instalado")
+@unittest.skipIf(duckdb is None, "duckdb not installed")
 class OltpReferenceTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -127,7 +129,7 @@ class OltpReferenceTestCase(unittest.TestCase):
         self.connection = duckdb.connect(":memory:")
         self.addCleanup(self.connection.close)
         self.connection.execute(SCHEMA)
-        self._popular()
+        self._populate()
 
     def _seed(self, name, content):
         with open(os.path.join(self.seeds, name), "w", encoding="utf-8") as handle:
@@ -139,37 +141,37 @@ class OltpReferenceTestCase(unittest.TestCase):
         marks = ", ".join(["?"] * len(rows[0]))
         self.connection.executemany(f"insert into {table} values ({marks})", rows)
 
-    def _popular(self):
+    def _populate(self):
         self._insert("silver_callejero_tramos", [
-            # Torrent (46/244): dois tramos em ruas nomeadas.
+            # Torrent (46/244): two tramos on named streets.
             tramo("244", "00001", "4624400001", "46900", unit="4624400101"),
             tramo("244", "00002", "4624400002", "46901", numbering="2",
                   low="0002", high="0010", unit="4624400101"),
-            # València (46/250): o caso que quebrava. Os tramos penduram em unit_code de
-            # NUCLEO; a linha agregada do municipio tem outro unit_code.
+            # València (46/250): the case that broke. The tramos hang off a NUCLEUS
+            # unit_code; the municipality's aggregate row has another unit_code.
             tramo("250", "00010", "4625000010", "46001", unit="4625000101"),
             tramo("250", "00011", "4625000011", "46002", unit="4625000102"),
-            # València: uma pseudovia (street_id sentinela "00000").
+            # València: a pseudo-address (sentinel street_id "00000").
             tramo("250", "00000", "4625000000", "46003", numbering="0",
                   low="0000", high="0000", unit="4625000101",
                   pseudo_id="00007", pseudo_code="4625000007"),
-            # València: ORFAO — nao casa com rua nem com pseudovia.
+            # València: ORPHAN — matches neither a street nor a pseudo-address.
             tramo("250", "09999", "4625009999", "46004", unit="4625000101"),
-            # Barcelona (08/019), outro warehouse.
+            # Barcelona (08/019), another warehouse.
             tramo("019", "00050", "0801900050", "08001", unit="0801900101"),
-            # Extracao ANTERIOR da mesma publicacao: o Silver empilha as duas datas. Se o
-            # export nao filtrasse por is_latest_ingestion, este tramo entraria de novo e
-            # cada endereco de Torrent apareceria duas vezes entre os candidatos.
+            # EARLIER extraction of the same publication: Silver stacks both dates. If the
+            # export did not filter by is_latest_ingestion, this tramo would come in again and
+            # each Torrent address would appear twice among the candidates.
             tramo("244", "00001", "4624400001", "46900", unit="4624400101", latest=False),
         ])
         self._insert("silver_callejero_population_units", [
-            # Linhas agregadas do municipio: unit_code TERMINADO EM 0000, diferente do
-            # unit_code dos tramos. E exatamente por isso que o join tem de ser por
-            # (province_code, municipality_code) e nao por unit_code.
+            # The municipality's aggregate rows: unit_code ENDING IN 0000, different from the
+            # tramos' unit_code. That is exactly why the join has to be by
+            # (province_code, municipality_code) and not by unit_code.
             (TODAY, True, "4624400000", "46", "244", "00", True, "TORRENT", ""),
             (TODAY, True, "4625000000", "46", "250", "00", True, "VALÈNCIA", ""),
             (TODAY, True, "0801900000", "08", "019", "00", True, "BARCELONA", ""),
-            # Nucleos/pedanias onde os tramos realmente penduram.
+            # Nuclei/hamlets where the tramos actually hang.
             (TODAY, True, "4624400101", "46", "244", "01", False, "TORRENT", "TORRENT"),
             (TODAY, True, "4625000101", "46", "250", "01", False, "VALÈNCIA", "VALENCIA"),
             (TODAY, True, "4625000102", "46", "250", "01", False, "VALÈNCIA", "EL SALER"),
@@ -186,7 +188,7 @@ class OltpReferenceTestCase(unittest.TestCase):
             (TODAY, True, "4625000007", "PARC DE CAPCALERA"),
         ])
 
-        populacao = []
+        population = []
         for municipality, name, total, male in (
             ("244", "Torrent", 90928, 44000),
             ("250", "València", 800215, 380000),
@@ -196,38 +198,38 @@ class OltpReferenceTestCase(unittest.TestCase):
             for sex, value in (
                 ("Total", total), ("Hombres", male), ("Mujeres", total - male)
             ):
-                populacao.append(
+                population.append(
                     (TODAY, True, f"DP{municipality}{sex[:1]}", province, municipality,
                      name, sex, 2025, "2024-12-31", float(value))
                 )
-        self._insert("silver_ine_population_by_municipality", populacao)
+        self._insert("silver_ine_population_by_municipality", population)
 
         series = []
-        # Duas ingestion_date com linhas identicas: so a mais recente pode ser usada.
+        # Two ingestion_date values with identical rows: only the latest may be used.
         for ingestion in (YESTERDAY, TODAY):
             latest = ingestion == TODAY
             for province_name in ("Valencia/València", "Barcelona"):
-                simples = [(age, 100.0) for age in range(0, 101)]
-                for age, value in simples:
-                    rotulo = "100 y más años" if age == 100 else f"{age} años"
-                    series.append((ingestion, latest, "31304", province_name, rotulo,
+                single_ages = [(age, 100.0) for age in range(0, 101)]
+                for age, value in single_ages:
+                    label = "100 y más años" if age == 100 else f"{age} años"
+                    series.append((ingestion, latest, "31304", province_name, label,
                                    "Ambos sexos", 2022, 27, "2022-06-30", 2, value))
-                # Agregados sobrepostos: somados aos simples, inflariam a piramide.
+                # Overlapping aggregates: added to the single ages, they would inflate the pyramid.
                 series.append((ingestion, latest, "31304", province_name, "Total",
                                "Ambos sexos", 2022, 27, "2022-06-30", 2, 10100.0))
                 series.append((ingestion, latest, "31304", province_name, "85 y más años",
                                "Ambos sexos", 2022, 27, "2022-06-30", 2, 1600.0))
-                # Rotulo que nao e provincia nossa.
+                # A label that is not one of our provinces.
                 series.append((ingestion, latest, "31304", "Total Nacional", "30 años",
                                "Ambos sexos", 2022, 27, "2022-06-30", 2, 999.0))
         self._insert("silver_ine_population_series", series)
 
-    def _injetar_homonimo(self):
-        """Regressao do fanout: segunda serie de 'Torrent', a de Girona, com 182.
+    def _inject_homonym(self):
+        """Fanout regression: a second 'Torrent' series, the Girona one, with 182.
 
-        O modelo Silver passou a resolver isso pelo codigo oficial do INE
-        (ine_ambiguous_series_seed), entao esta linha nao deveria mais existir. Se voltar
-        a existir, o export tem de RECUSAR — nao escolher um valor por conta propria.
+        The Silver model now resolves this by INE's official code
+        (ine_ambiguous_series_seed), so this row should no longer exist. If it exists again,
+        the export must REFUSE — not pick a value on its own.
         """
         self._insert("silver_ine_population_by_municipality", [
             (TODAY, True, f"DPGIRONA{sex[:1]}", "46", "244", "Torrent", sex, 2025,
@@ -239,184 +241,188 @@ class OltpReferenceTestCase(unittest.TestCase):
         return build(self.connection, seeds_dir=self.seeds)
 
 
-class AlocacaoDeClientesTest(OltpReferenceTestCase):
-    """Quantos clientes cada armazem tem, e de onde esse numero vem.
+class CustomerAllocationTest(OltpReferenceTestCase):
+    """How many customers each warehouse has, and where that number comes from.
 
-    Ate a Fase 5 eram 5.000 por armazem, digitados na linha de comando — o mesmo numero para
-    AUFs que diferem por 4,6x em populacao. Nada reprovava: os totais fechavam, os enderecos
-    eram reais, o manifesto batia. A unica coisa errada era que a densidade nao existia, e
-    densidade nao aparece em nenhum total.
+    Until Phase 5 it was 5,000 per warehouse, typed on the command line — the same number
+    for AUFs that differ 4.6x in population. Nothing failed: the totals added up, the
+    addresses were real, the manifest matched. The only thing wrong was that density did not
+    exist, and density does not show up in any total.
     """
 
-    # Fixture: wh1 = Torrent 90.928 + Valencia 800.215 = 891.143 habitantes; wh2 = Barcelona
-    # 1.660.122. A piramide tem 101 idades de valor igual, entao o share adulto e 83/101.
+    # Fixture: wh1 = Torrent 90,928 + Valencia 800,215 = 891,143 inhabitants; wh2 = Barcelona
+    # 1,660,122. The pyramid has 101 ages of equal value, so the adult share is 83/101.
     ADULT_SHARE = 83 / 101
 
-    def test_alocacao_deriva_da_populacao_adulta_por_armazem(self):
-        alocacao = self.build()["weights"]["customer_allocation"]
-        por_wh = {linha["wh"]: linha for linha in alocacao["by_warehouse"]}
+    def test_allocation_derives_from_the_adult_population_per_warehouse(self):
+        allocation = self.build()["weights"]["customer_allocation"]
+        by_wh = {row["wh"]: row for row in allocation["by_warehouse"]}
 
-        self.assertEqual(por_wh["wh1"]["population_total"], 891143)
-        self.assertEqual(por_wh["wh2"]["population_total"], 1660122)
-        # 891.143 x 83/101 x 2,2% = 16.111,16 -> 16.111
-        self.assertEqual(por_wh["wh1"]["customers"], 16111)
-        # 1.660.122 x 83/101 x 2,2% = 30.013,69 -> 30.014
-        self.assertEqual(por_wh["wh2"]["customers"], 30014)
-        self.assertEqual(alocacao["total_customers"], 16111 + 30014)
+        self.assertEqual(by_wh["wh1"]["population_total"], 891143)
+        self.assertEqual(by_wh["wh2"]["population_total"], 1660122)
+        # 891,143 x 83/101 x 2.2% = 16,111.16 -> 16,111
+        self.assertEqual(by_wh["wh1"]["customers"], 16111)
+        # 1,660,122 x 83/101 x 2.2% = 30,013.69 -> 30,014
+        self.assertEqual(by_wh["wh2"]["customers"], 30014)
+        self.assertEqual(allocation["total_customers"], 16111 + 30014)
 
-    def test_alocar_por_populacao_total_daria_outro_numero(self):
-        """O denominador ADULTO nao e decorativo: com o total, wh1 teria 1.494 a mais.
+    def test_allocating_by_total_population_would_give_another_number(self):
+        """The ADULT denominator is not decorative: with the total, wh1 would have 1,494 more.
 
-        Sem este caso, trocar `adult_population` por `population_total` no export passaria em
-        todos os outros testes — as proporcoes entre armazens quase nao mudam, e o total
-        continuaria plausivel.
+        Without this case, swapping `adult_population` for `population_total` in the export
+        would pass every other test — the proportions between warehouses barely change, and
+        the total would remain plausible.
         """
-        alocacao = self.build()["weights"]["customer_allocation"]
-        por_wh = {linha["wh"]: linha for linha in alocacao["by_warehouse"]}
-        pela_populacao_total = round(891143 * 0.022)
-        self.assertEqual(pela_populacao_total, 19605)
-        self.assertNotEqual(por_wh["wh1"]["customers"], pela_populacao_total)
+        allocation = self.build()["weights"]["customer_allocation"]
+        by_wh = {row["wh"]: row for row in allocation["by_warehouse"]}
+        by_total_population = round(891143 * 0.022)
+        self.assertEqual(by_total_population, 19605)
+        self.assertNotEqual(by_wh["wh1"]["customers"], by_total_population)
 
-    def test_o_total_e_consequencia_e_nao_cota_repartida(self):
-        """Somar as partes tem de dar o total, e nenhuma parte pode ser um resto.
+    def test_the_total_is_a_consequence_not_a_split_quota(self):
+        """Summing the parts must give the total, and no part may be a remainder.
 
-        Com cota repartida, o ultimo armazem receberia `total - soma(os outros)` e absorveria
-        todo o arredondamento. Aqui cada armazem sai da propria populacao e o total e a soma.
+        With a split quota, the last warehouse would get `total - sum(the others)` and absorb
+        all the rounding. Here each warehouse comes from its own population and the total is
+        the sum.
         """
-        alocacao = self.build()["weights"]["customer_allocation"]
+        allocation = self.build()["weights"]["customer_allocation"]
         self.assertEqual(
-            alocacao["total_customers"],
-            sum(linha["customers"] for linha in alocacao["by_warehouse"]),
+            allocation["total_customers"],
+            sum(row["customers"] for row in allocation["by_warehouse"]),
         )
         self.assertEqual(
-            alocacao["served_population"],
-            sum(linha["population_total"] for linha in alocacao["by_warehouse"]),
+            allocation["served_population"],
+            sum(row["population_total"] for row in allocation["by_warehouse"]),
         )
 
-    def test_a_alocacao_e_uma_lista_ordenada_e_estavel(self):
-        """LISTA, e nao dict — e o `sorted()` e a segunda tranca, nao a primeira.
+    def test_the_allocation_is_a_sorted_and_stable_list(self):
+        """A LIST, not a dict — and `sorted()` is the second lock, not the first.
 
-        Honestidade sobre o que este caso prova e o que ele nao prova: `_population_sql` ja
-        devolve as linhas com `order by a.wh`, entao remover o `sorted()` do modulo NAO faria
-        este caso reprovar. O que ele protege de verdade e a forma — uma lista, que sobrevive
-        ao JSON com a ordem intacta — contra um dict, cuja iteracao do outro lado da fronteira
-        dependeria de ordem de insercao. O `sorted()` continua no modulo porque a garantia nao
-        deve depender de um `order by` numa consulta que pode ser reescrita.
+        Honesty about what this case proves and what it does not: `_population_sql` already
+        returns the rows with `order by a.wh`, so removing `sorted()` from the module would
+        NOT make this case fail. What it really protects is the shape — a list, which
+        survives JSON with its order intact — against a dict, whose iteration on the other
+        side of the boundary would depend on insertion order. `sorted()` stays in the module
+        because the guarantee should not depend on an `order by` in a query that may be
+        rewritten.
         """
-        primeira = self.build()["weights"]["customer_allocation"]
-        segunda = self.build()["weights"]["customer_allocation"]
-        self.assertIsInstance(primeira["by_warehouse"], list)
-        nomes = [linha["wh"] for linha in primeira["by_warehouse"]]
-        self.assertEqual(nomes, sorted(nomes))
+        first = self.build()["weights"]["customer_allocation"]
+        second = self.build()["weights"]["customer_allocation"]
+        self.assertIsInstance(first["by_warehouse"], list)
+        names = [row["wh"] for row in first["by_warehouse"]]
+        self.assertEqual(names, sorted(names))
         self.assertEqual(
-            json.dumps(primeira, sort_keys=True), json.dumps(segunda, sort_keys=True)
+            json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True)
         )
 
-    def test_a_alocacao_nao_fica_na_beira_do_arredondamento(self):
-        """A margem que faz o arredondamento nao ser um cara-ou-coroa.
+    def test_the_allocation_does_not_sit_on_the_rounding_edge(self):
+        """The margin that keeps rounding from being a coin toss.
 
-        MEDIDO no Lakehouse real: duas execucoes de `export-oltp-reference` produzem
-        `adult_share` diferentes no ULTIMO BIT do double — 0,8224668719886548 contra
-        0,8224668719886545 — porque a agregacao paralela do DuckDB nao fixa a ordem da soma
-        de ponto flutuante. Isso nao e defeito deste modulo e nao propaga: os quatro alvos
-        saem identicos, e a base gerada a partir dos dois exports tem o mesmo sha256.
+        MEASURED in the real Lakehouse: two runs of `export-oltp-reference` produce
+        `adult_share` values that differ in the LAST BIT of the double — 0.8224668719886548
+        against 0.8224668719886545 — because DuckDB's parallel aggregation does not fix the
+        order of the floating-point sum. That is not a defect of this module and does not
+        propagate: the four targets come out identical, and the base generated from the two
+        exports has the same sha256.
 
-        Mas so nao propaga porque nenhum dos quatro produtos cai perto de um `.5`. Se um dia
-        cair, o alvo passa a alternar entre dois inteiros de export para export, a base muda
-        de tamanho sem que nada tenha sido decidido, e o teste dbt
-        `assert_customer_base_follows_the_declared_population_allocation` — que tolera 1
-        cliente exatamente por causa disto — comeca a passar por sorte. Este caso e o aviso.
+        But it only does not propagate because none of the four products falls near a `.5`.
+        If one ever does, the target starts alternating between two integers from export to
+        export, the base changes size without anything having been decided, and the dbt test
+        `assert_customer_base_follows_the_declared_population_allocation` — which tolerates 1
+        customer exactly because of this — starts passing by luck. This case is the warning.
 
-        A margem mais apertada hoje e a de mad1: 128.770,524404, a 0,024 de um empate. Em
-        populacao isso e cerca de 135 residentes — se Madrid crescer ou encolher esse tanto na
-        proxima 29005, o alvo passa a alternar entre 128.770 e 128.771.
+        The tightest margin today is mad1's: 128,770.524404, 0.024 away from a tie. In
+        population that is about 135 residents — if Madrid grows or shrinks that much in the
+        next 29005, the target starts alternating between 128,770 and 128,771.
         """
-        alocacao = self.build()["weights"]["customer_allocation"]
-        taxa = alocacao["penetration_pct"]
-        for linha in alocacao["by_warehouse"]:
-            exato = linha["adult_population"] * taxa / 100.0
-            distancia = abs((exato % 1.0) - 0.5)
+        allocation = self.build()["weights"]["customer_allocation"]
+        rate = allocation["penetration_pct"]
+        for row in allocation["by_warehouse"]:
+            exact = row["adult_population"] * rate / 100.0
+            distance = abs((exact % 1.0) - 0.5)
             self.assertGreater(
-                distancia, 1e-6,
-                f"{linha['wh']}: {exato} fica a {distancia} de um empate de arredondamento; "
-                f"o alvo passaria a alternar entre exports",
+                distance, 1e-6,
+                f"{row['wh']}: {exact} is {distance} away from a rounding tie; "
+                f"the target would start alternating between exports",
             )
 
-    def test_a_taxa_vem_do_seed_de_demanda_e_nao_esta_repetida(self):
-        """Mudar `channel_reference_pct` tem de mudar a base — e o 2,2 nao pode estar em
-        customer_premises_seed, ou existiriam dois lugares para muda-lo."""
-        conteudo = open(
+    def test_the_rate_comes_from_the_demand_seed_and_is_not_repeated(self):
+        """Changing `channel_reference_pct` must change the base — and the 2.2 cannot be in
+        customer_premises_seed, or there would be two places to change it."""
+        content = open(
             os.path.join(self.seeds, "customer_premises_seed.csv"), encoding="utf-8"
         ).read()
-        self.assertNotIn("2.2", conteudo)
+        self.assertNotIn("2.2", content)
 
-        antes = self.build()["weights"]["customer_allocation"]["total_customers"]
+        before = self.build()["weights"]["customer_allocation"]["total_customers"]
         self._seed(
             "demand_profile_seed.csv",
             DEMAND_PROFILE_CSV.replace("channel_reference_pct,2.2", "channel_reference_pct,4.4"),
         )
-        depois = self.build()["weights"]["customer_allocation"]["total_customers"]
-        self.assertAlmostEqual(depois / antes, 2.0, places=3)
+        after = self.build()["weights"]["customer_allocation"]["total_customers"]
+        self.assertAlmostEqual(after / before, 2.0, places=3)
 
-    def test_ponteiro_para_outro_lugar_reprova(self):
+    def test_pointer_to_somewhere_else_fails(self):
         self._seed(
             "customer_premises_seed.csv",
             CUSTOMER_PREMISES_CSV.replace(
                 "demand_profile.channel_reference_pct", "algum_outro_seed.qualquer_coisa"
             ),
         )
-        with self.assertRaises(ReferenceExportError) as erro:
+        with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("aponta para", str(erro.exception))
+        self.assertIn("points to", str(caught.exception))
 
-    def test_premissa_ausente_reprova(self):
+    def test_missing_premise_fails(self):
         self._seed(
             "customer_premises_seed.csv",
             "\n".join(
-                linha for linha in CUSTOMER_PREMISES_CSV.splitlines()
-                if not linha.startswith("min_customer_age")
+                line for line in CUSTOMER_PREMISES_CSV.splitlines()
+                if not line.startswith("min_customer_age")
             ) + "\n",
         )
-        with self.assertRaises(ReferenceExportError) as erro:
+        with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("min_customer_age", str(erro.exception))
+        self.assertIn("min_customer_age", str(caught.exception))
 
-    def test_seed_de_premissas_ausente_reprova_com_mensagem_acionavel(self):
+    def test_missing_premises_seed_fails_with_an_actionable_message(self):
         os.remove(os.path.join(self.seeds, "customer_premises_seed.csv"))
-        with self.assertRaises(ReferenceExportError) as erro:
+        with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("customer_premises_seed.csv", str(erro.exception))
+        self.assertIn("customer_premises_seed.csv", str(caught.exception))
 
 
-class IdadeAdultaTest(OltpReferenceTestCase):
-    """A distribuicao entregue e a do CADASTRO, nao a da populacao."""
+class AdultAgeTest(OltpReferenceTestCase):
+    """The delivered distribution is the CUSTOMER BASE's, not the population's."""
 
-    def test_a_distribuicao_comeca_no_minimo_declarado(self):
+    def test_the_distribution_starts_at_the_declared_minimum(self):
         ages = self.build()["ages"]
         self.assertEqual(ages["min_customer_age"], 18)
         self.assertEqual(min(int(row["age"]) for row in ages["rows"]), 18)
         self.assertEqual(max(int(row["age"]) for row in ages["rows"]), 100)
 
-    def test_a_distribuicao_truncada_e_renormalizada_para_somar_um(self):
-        """Truncar sem renormalizar entregaria um vetor somando ~0,82.
+    def test_the_truncated_distribution_is_renormalized_to_sum_to_one(self):
+        """Truncating without renormalizing would deliver a vector summing to ~0.82.
 
-        E o modo de falha silencioso desta mudanca: `rng.choices` com `cum_weights` nao
-        reclama de um vetor que nao soma 1 — ele simplesmente nunca sorteia a cauda que falta.
+        That is the silent failure mode of this change: `rng.choices` with `cum_weights` does
+        not complain about a vector that does not sum to 1 — it simply never draws the
+        missing tail.
         """
         rows = self.build()["ages"]["rows"]
-        por_provincia = {}
+        by_province = {}
         for row in rows:
-            por_provincia.setdefault(row["province_code"], 0.0)
-            por_provincia[row["province_code"]] += float(row["proportion"])
-        self.assertEqual(sorted(por_provincia), ["08", "46"])
-        for provincia, soma in por_provincia.items():
-            self.assertAlmostEqual(soma, 1.0, places=9, msg=f"provincia {provincia}")
+            by_province.setdefault(row["province_code"], 0.0)
+            by_province[row["province_code"]] += float(row["proportion"])
+        self.assertEqual(sorted(by_province), ["08", "46"])
+        for province, total in by_province.items():
+            self.assertAlmostEqual(total, 1.0, places=9, msg=f"province {province}")
 
-    def test_o_share_adulto_e_medido_antes_da_truncagem(self):
-        """Medir depois do corte devolveria 100% em toda provincia.
+    def test_the_adult_share_is_measured_before_truncation(self):
+        """Measuring after the cut would return 100% in every province.
 
-        E um bug que nao reprovaria nada sozinho: 100% e um numero plausivel, e o efeito seria
-        dimensionar a base inteira pela populacao TOTAL como se ela fosse adulta.
+        It is a bug that would fail nothing on its own: 100% is a plausible number, and the
+        effect would be to size the whole base by the TOTAL population as if it were adult.
         """
         shares = self.build()["ages"]["adult_share_by_province"]
         self.assertEqual([s["province_code"] for s in shares], ["08", "46"])
@@ -426,164 +432,166 @@ class IdadeAdultaTest(OltpReferenceTestCase):
             self.assertEqual(share["population_value"], 101 * 100.0)
             self.assertEqual(share["adult_population_value"], 83 * 100.0)
 
-    def test_piramide_ja_truncada_na_fonte_reprova(self):
-        """Se o Silver so tivesse adultos, o share sairia 1,0 e a base dobraria de tamanho
-        sem que nenhum total parecesse errado."""
+    def test_pyramid_already_truncated_at_the_source_fails(self):
+        """If Silver only had adults, the share would come out 1.0 and the base would double
+        in size without any total looking wrong."""
         self.connection.execute(
             "delete from silver_ine_population_series where "
             "cast(regexp_extract(age_label, '^(\\d+)', 1) as integer) < 18 "
             "and age_label not in ('Total', '85 y más años')"
         )
-        with self.assertRaises(ReferenceExportError) as erro:
+        with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("share adulto fora de", str(erro.exception))
+        self.assertIn("adult share outside", str(caught.exception))
 
 
-class EnderecoTest(OltpReferenceTestCase):
-    def test_o_nome_do_municipio_resolve_mesmo_quando_o_tramo_pendura_em_nucleo(self):
-        """O bug de Valencia: o join por unit_code devolveria 0 linhas para o municipio."""
+class AddressTest(OltpReferenceTestCase):
+    def test_the_municipality_name_resolves_even_when_the_tramo_hangs_off_a_nucleus(self):
+        """The Valencia bug: the join by unit_code would return 0 rows for the municipality."""
         rows = self.build()["candidates"]["rows"]
         valencia = [r for r in rows if r["municipality_code"] == "250"]
-        self.assertEqual(len(valencia), 3, "tramos de Valencia sumiram no join")
+        self.assertEqual(len(valencia), 3, "Valencia's tramos vanished in the join")
         for row in valencia:
             self.assertEqual(row["municipality_name_callejero"], "VALÈNCIA")
 
-    def test_a_ingestion_anterior_nao_entra_nos_candidatos(self):
-        """O Silver empilha todas as extracoes; o export le so a mais recente.
+    def test_the_earlier_ingestion_does_not_enter_the_candidates(self):
+        """Silver stacks every extraction; the export reads only the latest.
 
-        A fixture tem o MESMO tramo de Torrent em duas ingestion_date. Sem o filtro por
-        is_latest_ingestion ele apareceria duas vezes, e todo endereco daquele municipio
-        teria o dobro da chance de ser sorteado — vies silencioso, nao erro visivel.
+        The fixture has the SAME Torrent tramo in two ingestion_date values. Without the
+        is_latest_ingestion filter it would appear twice, and every address in that
+        municipality would have twice the chance of being drawn — silent bias, not a visible
+        error.
         """
         rows = self.build()["candidates"]["rows"]
-        repetidos = [r for r in rows if r["postal_code"] == "46900"]
-        self.assertEqual(len(repetidos), 1, "o tramo da extracao anterior entrou junto")
+        repeated = [r for r in rows if r["postal_code"] == "46900"]
+        self.assertEqual(len(repeated), 1, "the earlier extraction's tramo came in too")
 
-    def test_o_tramo_orfao_e_excluido_e_contado(self):
+    def test_the_orphan_tramo_is_excluded_and_counted(self):
         candidates = self.build()["candidates"]
         self.assertEqual(candidates["excluded_rows"]["no_street_or_pseudo_match"], 1)
         self.assertNotIn("46004", [r["postal_code"] for r in candidates["rows"]])
 
-    def test_pseudovia_entra_com_o_nome_da_pseudovia(self):
+    def test_pseudo_address_enters_with_the_pseudo_address_name(self):
         rows = self.build()["candidates"]["rows"]
         pseudo = [r for r in rows if r["is_pseudo_address"]]
         self.assertEqual(len(pseudo), 1)
         self.assertEqual(pseudo[0]["street_name"], "PARC DE CAPCALERA")
         self.assertEqual(pseudo[0]["numbering_type"], "0")
 
-    def test_so_entram_municipios_da_service_area(self):
+    def test_only_service_area_municipalities_enter(self):
         rows = self.build()["candidates"]["rows"]
         self.assertEqual(
             {(r["wh"], r["municipality_code"]) for r in rows},
             {("wh1", "244"), ("wh1", "250"), ("wh2", "019")},
         )
 
-    def test_numeros_saem_como_inteiro(self):
+    def test_numbers_come_out_as_integers(self):
         row = self.build()["candidates"]["rows"][0]
         self.assertIsInstance(row["number_from"], int)
         self.assertIsInstance(row["number_to"], int)
 
-    def test_a_ordem_das_linhas_e_estavel_entre_execucoes(self):
-        """A posicao da linha e o candidate_index do cliente: se a ordem variar, a
-        linhagem aponta para outro tramo."""
-        primeira = [r["postal_code"] for r in self.build()["candidates"]["rows"]]
-        segunda = [r["postal_code"] for r in self.build()["candidates"]["rows"]]
-        self.assertEqual(primeira, segunda)
+    def test_the_row_order_is_stable_across_runs(self):
+        """The row position is the customer's candidate_index: if the order varies, the
+        lineage points to another tramo."""
+        first = [r["postal_code"] for r in self.build()["candidates"]["rows"]]
+        second = [r["postal_code"] for r in self.build()["candidates"]["rows"]]
+        self.assertEqual(first, second)
 
-    def test_municipio_sem_linha_agregada_reprova(self):
+    def test_municipality_without_aggregate_row_fails(self):
         self.connection.execute(
             "delete from silver_callejero_population_units where is_municipality_aggregate"
         )
         with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("sem linha agregada", str(caught.exception))
+        self.assertIn("without an aggregate row", str(caught.exception))
 
 
-class PopulacaoTest(OltpReferenceTestCase):
+class PopulationTest(OltpReferenceTestCase):
     def rows(self):
         return self.build()["weights"]["rows"]
 
-    def test_uma_linha_por_municipio(self):
+    def test_one_row_per_municipality(self):
         torrent = [r for r in self.rows() if r["municipality_code"] == "244"]
         self.assertEqual(len(torrent), 1)
         self.assertEqual(torrent[0]["population_total"], 90928)
 
-    def test_serie_duplicada_reprova_em_vez_de_escolher_um_valor(self):
-        """Uma serie por municipio e garantia do modelo Silver; aqui e so reconferida.
+    def test_duplicated_series_fails_instead_of_choosing_a_value(self):
+        """One series per municipality is a guarantee of the Silver model; here it is only
+        re-checked.
 
-        Se cair, escolher um valor por conta propria enviesaria o peso do warehouse em
-        silencio — este export prefere recusar e apontar o modelo.
+        If it breaks, choosing a value on our own would silently bias the warehouse weight —
+        this export prefers to refuse and point at the model.
         """
-        self._injetar_homonimo()
+        self._inject_homonym()
         with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        mensagem = str(caught.exception)
-        self.assertIn("mais de uma serie", mensagem)
-        self.assertIn("Torrent", mensagem)
+        message = str(caught.exception)
+        self.assertIn("more than one population series", message)
+        self.assertIn("Torrent", message)
 
-    def test_a_proporcao_usa_a_populacao_do_municipio_certo(self):
+    def test_the_proportion_uses_the_right_municipality_population(self):
         wh1 = [r for r in self.rows() if r["wh"] == "wh1"]
         self.assertEqual(len(wh1), 2)
         total = 90928 + 800215
         torrent = next(r for r in wh1 if r["municipality_code"] == "244")
         self.assertAlmostEqual(torrent["proportion_within_wh"], 90928 / total, places=12)
 
-    def test_proporcoes_somam_um_por_warehouse(self):
+    def test_proportions_sum_to_one_per_warehouse(self):
         for wh in ("wh1", "wh2"):
-            soma = sum(r["proportion_within_wh"] for r in self.rows() if r["wh"] == wh)
-            self.assertAlmostEqual(soma, 1.0, places=12)
+            total = sum(r["proportion_within_wh"] for r in self.rows() if r["wh"] == wh)
+            self.assertAlmostEqual(total, 1.0, places=12)
 
-    def test_proporcao_de_sexo_soma_um(self):
+    def test_sex_proportion_sums_to_one(self):
         for row in self.rows():
             self.assertAlmostEqual(
                 row["sex_hombres_proportion"] + row["sex_mujeres_proportion"], 1.0, places=12
             )
 
-    def test_province_name_vem_do_seed_com_a_grafia_exata(self):
+    def test_province_name_comes_from_the_seed_with_the_exact_spelling(self):
         wh1 = next(r for r in self.rows() if r["wh"] == "wh1")
         self.assertEqual(wh1["province_name"], "Valencia/València")
 
 
-class IdadeTest(OltpReferenceTestCase):
+class AgeTest(OltpReferenceTestCase):
     def payload(self):
         return self.build()["ages"]
 
-    def test_os_agregados_sobrepostos_sao_excluidos(self):
-        """Sem isto a piramide sai 2,03x inflada, e nenhum teste da Source pegaria.
+    def test_the_overlapping_aggregates_are_excluded(self):
+        """Without this the pyramid comes out 2.03x inflated, and no Source test would catch it.
 
-        83 e nao 101 desde que o arquivo passou a entregar a distribuicao do CADASTRO: as
-        idades de 18 a 100 sao o que sobra das 101 simples depois do corte de
-        min_customer_age. Os dois rotulos agregados continuam fora pelo motivo de sempre, que
-        e outro — eles se SOBREPOEM as idades simples, nao sao um recorte delas.
+        83 and not 101 since the file started delivering the CUSTOMER BASE distribution: ages
+        18 to 100 are what is left of the 101 single ages after the min_customer_age cut. The
+        two aggregate labels stay out for the usual reason, which is a different one — they
+        OVERLAP the single ages, they are not a slice of them.
         """
         rows = self.payload()["rows"]
-        por_provincia = [r for r in rows if r["province_code"] == "46"]
-        self.assertEqual(len(por_provincia), 83, "entraram rotulos alem das idades simples")
-        self.assertEqual(max(r["age"] for r in por_provincia), 100)
+        by_province = [r for r in rows if r["province_code"] == "46"]
+        self.assertEqual(len(by_province), 83, "labels other than single ages came in")
+        self.assertEqual(max(r["age"] for r in by_province), 100)
 
-    def test_o_balde_terminal_de_100_anos_permanece(self):
-        """'100 y mas anos' e idade simples legitima; so 'Total' e '85 y mas anos' saem.
+    def test_the_terminal_100_year_bucket_remains(self):
+        """'100 y mas anos' is a legitimate single age; only 'Total' and '85 y mas anos' go.
 
-        O corte de idade minima nao pode virar desculpa para perder a cauda: um bug de
-        intervalo que cortasse tambem o topo passaria despercebido num teste que so olha o
-        piso, e o cadastro ficaria sem centenarios sem ninguem notar.
+        The minimum-age cut cannot become an excuse to lose the tail: a range bug that also
+        cut the top would go unnoticed in a test that only looks at the floor, and the
+        customer base would be left without centenarians with nobody noticing.
         """
-        idades = {r["age"] for r in self.payload()["rows"] if r["province_code"] == "46"}
-        self.assertIn(100, idades)
-        self.assertEqual(idades, set(range(18, 101)))
+        ages = {r["age"] for r in self.payload()["rows"] if r["province_code"] == "46"}
+        self.assertIn(100, ages)
+        self.assertEqual(ages, set(range(18, 101)))
 
-    def test_proporcoes_somam_um_por_provincia(self):
+    def test_proportions_sum_to_one_per_province(self):
         rows = self.payload()["rows"]
         for province in ("46", "08"):
-            soma = sum(r["proportion"] for r in rows if r["province_code"] == province)
-            self.assertAlmostEqual(soma, 1.0, places=12)
+            total = sum(r["proportion"] for r in rows if r["province_code"] == province)
+            self.assertAlmostEqual(total, 1.0, places=12)
 
-    def test_ingestion_date_duplicada_nao_duplica_as_linhas(self):
+    def test_duplicated_ingestion_date_does_not_duplicate_the_rows(self):
         rows = self.payload()["rows"]
-        chaves = [(r["province_code"], r["age"]) for r in rows]
-        self.assertEqual(len(chaves), len(set(chaves)))
+        keys = [(r["province_code"], r["age"]) for r in rows]
+        self.assertEqual(len(keys), len(set(keys)))
 
-    def test_declara_o_periodo_pinado_e_a_natureza_do_dado(self):
+    def test_declares_the_pinned_period_and_the_nature_of_the_data(self):
         payload = self.payload()
         self.assertEqual(payload["year"], 2022)
         self.assertEqual(payload["fk_periodo"], 27)
@@ -591,60 +599,60 @@ class IdadeTest(OltpReferenceTestCase):
         self.assertEqual(payload["fk_tipo_dato"], 2)
         self.assertEqual(payload["excluded_age_labels"], ["Total", "85 y más años"])
 
-    def test_total_nacional_nao_entra(self):
-        provincias = {r["province_code"] for r in self.payload()["rows"]}
-        self.assertEqual(provincias, {"46", "08"})
+    def test_national_total_does_not_enter(self):
+        provinces = {r["province_code"] for r in self.payload()["rows"]}
+        self.assertEqual(provinces, {"46", "08"})
 
 
-class CoberturaTest(OltpReferenceTestCase):
-    def test_municipio_com_peso_mas_sem_endereco_reprova(self):
-        """Cobertura e verificada em execucao, nunca presumida como permanente."""
+class CoverageTest(OltpReferenceTestCase):
+    def test_municipality_with_weight_but_no_address_fails(self):
+        """Coverage is checked at run time, never presumed permanent."""
         self.connection.execute(
             "delete from silver_callejero_tramos where municipality_code = '244'"
         )
         with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("sem nenhum candidato de endereco", str(caught.exception))
+        self.assertIn("no address candidate", str(caught.exception))
 
-    def test_provincia_sem_distribuicao_etaria_reprova(self):
+    def test_province_without_age_distribution_fails(self):
         self.connection.execute(
             "delete from silver_ine_population_series where province_name = 'Barcelona'"
         )
         with self.assertRaises(ReferenceExportError) as caught:
             self.build()
-        self.assertIn("sem distribuicao etaria", str(caught.exception))
+        self.assertIn("without an age distribution", str(caught.exception))
 
-    def test_seed_ausente_reprova_com_mensagem_acionavel(self):
+    def test_missing_seed_fails_with_an_actionable_message(self):
         os.unlink(os.path.join(self.seeds, "warehouse_service_area_seed.csv"))
         with self.assertRaises(ReferenceExportError) as caught:
             self.build()
         self.assertIn("--seeds-dir", str(caught.exception))
 
 
-class EscritaTest(OltpReferenceTestCase):
-    def test_grava_os_tres_arquivos_e_relele_como_json(self):
+class WriteTest(OltpReferenceTestCase):
+    def test_writes_the_three_files_and_rereads_them_as_json(self):
         out = os.path.join(self.tmp.name, "out")
-        tamanhos = write(self.build(), out)
-        self.assertEqual(len(tamanhos), 3)
-        for name in tamanhos:
+        sizes = write(self.build(), out)
+        self.assertEqual(len(sizes), 3)
+        for name in sizes:
             with open(os.path.join(out, name), encoding="utf-8") as handle:
                 self.assertIn("rows", json.load(handle))
 
-    def test_reescrita_produz_arquivo_byte_identico(self):
-        """Mesmo dado, mesma saida: e o que o `ORDER BY` das queries garante."""
+    def test_rewrite_produces_a_byte_identical_file(self):
+        """Same data, same output: that is what the queries' `ORDER BY` guarantees."""
         out = os.path.join(self.tmp.name, "out")
         write(self.build(), out)
         path = os.path.join(out, "address_candidates.json")
         with open(path, "rb") as handle:
-            primeiro = handle.read()
+            first = handle.read()
         payloads = self.build()
-        # generated_at_utc muda; comparamos o conteudo que descreve o Lakehouse.
+        # generated_at_utc changes; we compare the content that describes the Lakehouse.
         payloads["candidates"]["generated_at_utc"] = json.loads(
-            primeiro.decode("utf-8")
+            first.decode("utf-8")
         )["generated_at_utc"]
         write(payloads, out)
         with open(path, "rb") as handle:
-            self.assertEqual(primeiro, handle.read())
+            self.assertEqual(first, handle.read())
 
 
 if __name__ == "__main__":

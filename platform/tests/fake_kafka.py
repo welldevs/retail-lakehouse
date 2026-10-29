@@ -1,30 +1,30 @@
-"""Duplos de produtor e consumidor Kafka que GRAVAM A ORDEM DAS OPERACOES.
+"""Kafka producer and consumer doubles that RECORD THE ORDER OF OPERATIONS.
 
-O QUE ELES PROVAM. A semantica de entrega nao e uma propriedade do broker: e uma
-propriedade da ORDEM em que este codigo faz as coisas. Duas escolhas decidem tudo, e as
-duas sao invisiveis para qualquer teste que so conte mensagens:
+WHAT THEY PROVE. Delivery semantics are not a property of the broker: they are a property
+of the ORDER in which this code does things. Two choices decide everything, and both are
+invisible to any test that only counts messages:
 
-    produzir -> ack -> marcar published_at        at-least-once   (correto aqui)
-    marcar   -> produzir                          at-most-once    (perde)
+    produce -> ack -> mark published_at        at-least-once   (correct here)
+    mark    -> produce                         at-most-once    (loses)
 
-    escrever a projecao -> commitar o offset      at-least-once   (correto aqui)
-    commitar o offset   -> escrever a projecao    at-most-once    (perde)
+    write the projection -> commit the offset  at-least-once   (correct here)
+    commit the offset    -> write the projection at-most-once  (loses)
 
-Trocar qualquer uma das duas continua compilando, continua passando em teste de contagem, e
-so aparece como dado faltando semanas depois. Um duplo que grava o diario pega as duas,
-offline, e reprova a inversao.
+Swapping either one still compiles, still passes count tests, and only shows up as missing
+data weeks later. A double that records the journal catches both, offline, and fails the
+inversion.
 
-O QUE ELES NAO PROVAM. Que o broker preserva ordem por chave, que `enable.idempotence`
-deduplica retry, ou que um grupo rebalanceia sem perder. Isso e do broker, e so se prova
-contra um broker: `make orders-prove-stream`. Mesmo par de fake_pg.py com
-`make orders-prove-atomicity`.
+WHAT THEY DO NOT PROVE. That the broker preserves per-key order, that `enable.idempotence`
+deduplicates retries, or that a group rebalances without loss. That belongs to the broker,
+and can only be proven against one: `make orders-prove-stream`. Same pairing as fake_pg.py
+with `make orders-prove-atomicity`.
 """
 
 from __future__ import annotations
 
 
 class FakeKafkaError(Exception):
-    """O que os duplos levantam no lugar de confluent_kafka.KafkaException."""
+    """What the doubles raise in place of confluent_kafka.KafkaException."""
 
 
 class FakeMessage:
@@ -57,10 +57,10 @@ class FakeMessage:
 
 
 class RecordingProducer:
-    """Produtor que guarda o que foi produzido e quando o flush aconteceu.
+    """Producer that keeps what was produced and when the flush happened.
 
-    `fail_on(key, value)` injeta recusa do broker: o callback recebe erro, e o codigo sob
-    teste tem de nao marcar NADA como publicado.
+    `fail_on(key, value)` injects a broker rejection: the callback receives an error, and the
+    code under test must mark NOTHING as published.
     """
 
     def __init__(self, *, fail_on=None):
@@ -85,7 +85,7 @@ class RecordingProducer:
                 continue
             failure = None
             if self.fail_on is not None and self.fail_on(record["key"], record["value"]):
-                failure = "Broker: injecao de teste"
+                failure = "Broker: test injection"
             callback(failure, FakeMessage(record["value"], key=record["key"]))
         return 0
 
@@ -99,17 +99,17 @@ class RecordingProducer:
 
 
 class RecordingConsumer:
-    """Consumidor com roteiro. `journal` grava poll/commit/close na ordem em que ocorrem.
+    """Scripted consumer. `journal` records poll/commit/close in the order they occur.
 
-    `poll` devolve as mensagens do roteiro e depois None para sempre, que e como o codigo
-    sob teste descobre que o topico secou.
+    `poll` returns the scripted messages and then None forever, which is how the code under
+    test discovers the topic has run dry.
     """
 
     def __init__(self, messages=(), *, commit_fails=False, journal=None):
         self._messages = list(messages)
-        # Diario COMPARTILHAVEL com a projecao. A ordem entre "escreveu" e "commitou o
-        # offset" e a propriedade sob teste, e ela nao existe em dois diarios separados —
-        # reconstruir a intercalacao depois seria inventar a evidencia.
+        # Journal SHAREABLE with the projection. The order between "wrote" and "committed
+        # the offset" is the property under test, and it does not exist in two separate
+        # journals — reconstructing the interleaving afterwards would be inventing evidence.
         self.journal: list[tuple] = journal if journal is not None else []
         self.commits = 0
         self.closed = False
@@ -118,32 +118,32 @@ class RecordingConsumer:
     def poll(self, _timeout=None):
         if self._messages:
             message = self._messages.pop(0)
-            self.journal.append(("consumidor:poll", message.offset()))
+            self.journal.append(("consumer:poll", message.offset()))
             return message
-        self.journal.append(("consumidor:poll", None))
+        self.journal.append(("consumer:poll", None))
         return None
 
     def commit(self, *_args, **kwargs):
         if self.commit_fails:
-            raise FakeKafkaError("commit de offset recusado")
-        # `asynchronous=False` e obrigatorio: um commit assincrono voltaria antes de o
-        # offset estar durável, e a garantia dependeria de sorte no tempo.
-        self.journal.append(("consumidor:commit-offset", kwargs.get("asynchronous")))
+            raise FakeKafkaError("offset commit rejected")
+        # `asynchronous=False` is mandatory: an asynchronous commit would return before the
+        # offset is durable, and the guarantee would depend on timing luck.
+        self.journal.append(("consumer:commit-offset", kwargs.get("asynchronous")))
         self.commits += 1
 
     def close(self):
-        self.journal.append(("consumidor:close",))
+        self.journal.append(("consumer:close",))
         self.closed = True
 
     def subscribe(self, topics):
-        self.journal.append(("consumidor:subscribe", tuple(topics)))
+        self.journal.append(("consumer:subscribe", tuple(topics)))
 
 
 class RecordingProjection:
-    """Sink da projecao que grava save/commit/rollback, com estado em memoria.
+    """Projection sink that records save/commit/rollback, with in-memory state.
 
-    Implementa a mesma interface pequena de `PostgresProjection` — que e a costura que o
-    Marco 6 troca por Iceberg. Se esta classe deixar de servir, a costura vazou.
+    Implements the same small interface as `PostgresProjection` — which is the seam
+    Milestone 6 swaps for Iceberg. If this class stops fitting, the seam has leaked.
     """
 
     def __init__(self, *, initial=None, fail_on_save=False, journal=None):
@@ -152,21 +152,21 @@ class RecordingProjection:
         self.fail_on_save = fail_on_save
 
     def load(self, order_ids) -> dict:
-        self.journal.append(("projecao:load", tuple(sorted(order_ids))))
+        self.journal.append(("projection:load", tuple(sorted(order_ids))))
         return {k: dict(v) for k, v in self.state.items() if k in order_ids}
 
     def save(self, states) -> None:
         if self.fail_on_save:
-            raise FakeKafkaError("escrita da projecao recusada")
-        self.journal.append(("projecao:save", tuple(sorted(s["order_id"] for s in states))))
+            raise FakeKafkaError("projection write rejected")
+        self.journal.append(("projection:save", tuple(sorted(s["order_id"] for s in states))))
         for entry in states:
             self.state[entry["order_id"]] = dict(entry)
 
     def commit(self) -> None:
-        self.journal.append(("projecao:commit",))
+        self.journal.append(("projection:commit",))
 
     def rollback(self) -> None:
-        self.journal.append(("projecao:rollback",))
+        self.journal.append(("projection:rollback",))
 
     def count(self) -> int:
         return len(self.state)
@@ -185,5 +185,5 @@ class RecordingProjection:
 
 
 def steps(journal) -> list:
-    """So as etiquetas do diario compartilhado, na ordem — o que o teste assere."""
+    """Only the labels of the shared journal, in order — what the test asserts."""
     return [entry[0] for entry in journal]

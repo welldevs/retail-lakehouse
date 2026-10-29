@@ -1,25 +1,25 @@
--- TODA CHEGADA TEM UMA ORDEM QUE A EXPLICA, EMITIDA `supplier_lead_days` DIAS ANTES.
+-- EVERY ARRIVAL HAS AN ORDER THAT EXPLAINS IT, ISSUED `supplier_lead_days` DAYS EARLIER.
 --
--- E O TESTE DA REALIMENTACAO, e por isso ele existe separado da conservacao do saldo. A
--- conservacao verifica a aritmetica DENTRO de um dia; esta verifica o laco ENTRE dias, que
--- e a unica razao de este job nao ser SQL. Um `sum() over (...)` passaria na conservacao —
--- ele so nunca produziria uma chegada.
+-- IT IS THE FEEDBACK-LOOP TEST, which is why it exists apart from balance conservation. Conservation
+-- checks the arithmetic WITHIN a day; this one checks the loop ACROSS days, which
+-- is the only reason this job is not SQL. A `sum() over (...)` would pass conservation —
+-- it would just never produce an arrival.
 --
--- AS TRES COISAS QUE ELE AMARRA:
+-- THE THREE THINGS IT TIES TOGETHER:
 --
---   1. Nenhuma chegada sem ordem. `units_received > 0` no dia D exige uma linha da MESMA
---      serie no dia D - prazo com `reorder_units` igual.
---   2. Nenhuma ordem chega antes da hora. `reorder_eta` tem de ser exatamente
+--   1. No arrival without an order. `units_received > 0` on day D requires a row of the SAME
+--      series on day D - lead time with equal `reorder_units`.
+--   2. No order arrives early. `reorder_eta` must be exactly
 --      `stock_date + supplier_lead_days`.
---   3. Nenhuma ordem se perde DENTRO da janela. Uma ordem cuja chegada caberia na janela
---      tem de ter chegado. As que chegam DEPOIS do ultimo dia sao legitimas e ficam de
---      fora: pedido em transito no fim do periodo e propriedade real de qualquer ledger, e
---      exigir que sumisse seria exigir que o modelo mentisse. (Foi exatamente esta a
---      assercao errada que reprovou a pergunta S7 do spike na primeira execucao.)
+--   3. No order gets lost WITHIN the window. An order whose arrival would fit in the window
+--      must have arrived. Those arriving AFTER the last day are legitimate and stay
+--      out: an order in transit at the end of the period is a real property of any ledger, and
+--      demanding it disappear would be demanding the model lie. (That was exactly the
+--      wrong assertion that failed spike question S7 on its first run.)
 --
--- O PRAZO NAO E CONSTANTE DESTE ARQUIVO: vem de `stock_premises`, que projeta o seed que o
--- job leu. Cravar 2 aqui criaria a segunda copia, e no dia em que o seed mudasse este teste
--- passaria a conferir um laco que nenhuma linha percorreu.
+-- THE LEAD TIME IS NOT A CONSTANT OF THIS FILE: it comes from `stock_premises`, which projects the seed the
+-- job read. Hard-coding 2 here would create a second copy, and the day the seed changed this test
+-- would start checking a loop no row went through.
 with prazo as (
 
     select cast(value as integer) as supplier_lead_days
@@ -40,7 +40,7 @@ ledger as (
 
 ),
 
--- 1. chegada orfa: recebeu sem que nada tenha sido pedido no dia certo
+-- 1. orphan arrival: received without anything having been ordered on the right day
 chegada_sem_ordem as (
 
     select
@@ -58,7 +58,7 @@ chegada_sem_ordem as (
 
 ),
 
--- 2. eta fora do prazo declarado
+-- 2. eta outside the declared lead time
 eta_errada as (
 
     select
@@ -71,7 +71,7 @@ eta_errada as (
 
 ),
 
--- 3. ordem que caberia na janela e nunca chegou
+-- 3. an order that would fit in the window and never arrived
 ordem_perdida as (
 
     select

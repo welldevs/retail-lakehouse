@@ -1,16 +1,16 @@
--- Toda chave natural das duas SCD2 tem EXATAMENTE uma versao corrente, e os intervalos
--- nao se sobrepoem nem deixam buraco.
+-- Every natural key of the two SCD2s has EXACTLY one current version, and the intervals
+-- neither overlap nor leave gaps.
 --
--- Sao dois defeitos classicos de SCD2, e nenhum dos dois falha sozinho:
---   * DUAS versoes correntes: um join com a dimensao passa a duplicar todo fato ligado
---     aquela chave, e o total dobra em silencio;
---   * ZERO versoes correntes: o mesmo join simplesmente perde as linhas, e o total
---     encolhe sem erro nenhum.
+-- These are two classic SCD2 defects, and neither fails on its own:
+--   * TWO current versions: a join with the dimension starts duplicating every fact linked to
+--     that key, and the total silently doubles;
+--   * ZERO current versions: the same join simply loses the rows, and the total
+--     shrinks with no error at all.
 --
--- Ambos sao consequencia tipica de um `lead()` com particao errada, que continua
--- compilando e produzindo uma tabela de aparencia normal.
+-- Both are a typical consequence of a `lead()` with the wrong partition, which keeps
+-- compiling and producing a normal-looking table.
 --
--- Falha com uma linha por chave natural com contagem diferente de 1.
+-- Fails with one row per natural key with a count different from 1.
 {% set dimensoes = [
     ('dim_product',  'source_product_id'),
     ('dim_customer', 'customer_id'),

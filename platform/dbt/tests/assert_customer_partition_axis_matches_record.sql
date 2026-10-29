@@ -1,17 +1,17 @@
--- O EIXO DA PARTICAO TEM DE CONCORDAR COM O REGISTRO, nos dois modelos da source.
+-- THE PARTITION AXIS MUST AGREE WITH THE RECORD, in both of the source's models.
 --
--- Medido: em customers.json o campo `wh` do registro e o segmento hive `wh=` do caminho
--- tem o mesmo nome, e o read_json do DuckDB deduplica os dois numa coluna so — o valor do
--- registro vence e o do caminho some. Uma particao pousada sob o diretorio errado ficaria
--- invisivel: a coluna leria "vlc1" (do registro) enquanto o objeto moraria em wh=svq1/.
--- silver_customer.partition_wh existe exatamente para dar ao caminho um nome proprio e
--- tornar essa comparacao possivel.
+-- Measured: in customers.json the record's `wh` field and the hive `wh=` path segment
+-- have the same name, and DuckDB's read_json deduplicates the two into a single column — the
+-- record's value wins and the path's disappears. A partition landed under the wrong directory would be
+-- invisible: the column would read "vlc1" (from the record) while the object lived in wh=svq1/.
+-- silver_customer.partition_wh exists precisely to give the path a name of its own and
+-- make that comparison possible.
 --
--- No manifesto o problema nao existe (source.wh e o hive wh tem nomes distintos), mas a
--- checagem e a mesma e vale pelo mesmo motivo — e o padrao que raw_manifest.sql ja usa
--- com warehouse/source_warehouse.
+-- In the manifest the problem does not exist (source.wh and hive wh have distinct names), but the
+-- check is the same and holds for the same reason — it is the pattern raw_manifest.sql already uses
+-- with warehouse/source_warehouse.
 --
--- Falha com uma linha por divergencia.
+-- Fails with one row per divergence.
 select 'silver_customer' as modelo, ingestion_date, wh, partition_wh as caminho, count(*) as linhas
 from {{ ref('silver_customer') }}
 where partition_wh is distinct from wh

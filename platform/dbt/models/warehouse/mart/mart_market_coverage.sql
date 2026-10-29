@@ -1,19 +1,19 @@
--- GRAO: (wh, province_code, municipality_code) — um municipio da AUF por linha, TODOS
---        eles, inclusive os que ainda nao receberam nenhum cliente.
+-- GRAIN: (wh, province_code, municipality_code) — one AUF municipality per row, ALL
+--        of them, including those that have not received any customer yet.
 --
--- PERGUNTA QUE RESPONDE: onde a simulacao tem densidade e onde nao tem.
+-- QUESTION IT ANSWERS: where the simulation has density and where it does not.
 --
--- E O MART MAIS UTIL DA FASE, e o motivo e o LEFT JOIN. Partir dos 370 municipios da AUF e
--- pendurar os clientes neles — em vez de agrupar os clientes — faz o municipio com ZERO
--- clientes aparecer como uma linha com zero, e nao desaparecer da tabela. Um mart que
--- comecasse pelos clientes mostraria 100% de cobertura por construcao, sempre, qualquer
--- que fosse o tamanho da base. Medido hoje: com 5.000 clientes por armazem, mad1 cobre 125
--- dos 128 municipios; com os 200 originais cobria 46. Esta tabela e onde isso se ve.
+-- IT IS THE MOST USEFUL MART OF THE PHASE, and the reason is the LEFT JOIN. Starting from the 370
+-- AUF municipalities and hanging the customers on them — instead of grouping the customers — makes
+-- a municipality with ZERO customers show up as a row with zero, instead of vanishing from the table.
+-- A mart that started from the customers would show 100% coverage by construction, always, whatever
+-- the size of the base. Measured today: with 5,000 customers per warehouse, mad1 covers 125
+-- of 128 municipalities; with the original 200 it covered 46. This table is where that shows.
 --
--- customers_per_10k_inhabitants cruza o SINTETICO com o OBSERVADO, e por isso e a coluna
--- que precisa ser lida com mais cuidado: o numerador e inventado, o denominador e do INE.
--- Serve para comparar a densidade da simulacao ENTRE municipios, nunca como estimativa de
--- penetracao de mercado real.
+-- customers_per_10k_inhabitants crosses the SYNTHETIC with the OBSERVED, which is why it is the
+-- column that needs the most careful reading: the numerator is invented, the denominator is from INE.
+-- It serves to compare the simulation's density ACROSS municipalities, never as an estimate of
+-- real market penetration.
 {{ config(materialized = 'table') }}
 
 with clientes as (
@@ -33,8 +33,8 @@ with clientes as (
 
 ),
 
--- Reduz ao municipio ANTES de somar: STG_GEOGRAPHY e (municipio, CEP), e
--- municipality_population e atributo do municipio repetido em cada CEP dele.
+-- Reduces to the municipality BEFORE summing: STG_GEOGRAPHY is (municipality, postal code), and
+-- municipality_population is a municipality attribute repeated in each of its postal codes.
 geografia as (
 
     select
@@ -69,15 +69,15 @@ select
     coalesce(c.customers_without_house_number, 0)           as customers_without_house_number,
     c.avg_age,
 
-    -- Denominador do INE, numerador sintetico. Comparar densidade ENTRE municipios, nunca
-    -- ler como penetracao de mercado.
+    -- INE denominator, synthetic numerator. Compare density ACROSS municipalities, never
+    -- read it as market penetration.
     case
         when g.municipality_population is null or g.municipality_population = 0 then null
-        -- Postgres so tem `round(numeric, int)`, nao `round(double precision, int)"
-        -- ("function round(double precision, integer) does not exist", medido):
-        -- municipality_population atravessa como double precision. O Snowflake aceita
-        -- FLOAT direto, e cravar ::numeric la truncaria o NUMBER default para escala 0
-        -- antes do round — por isso o cast so entra do lado Postgres.
+        -- Postgres only has `round(numeric, int)`, not `round(double precision, int)"
+        -- ("function round(double precision, integer) does not exist", measured):
+        -- municipality_population crosses over as double precision. Snowflake accepts
+        -- FLOAT directly, and hard-coding ::numeric there would truncate the default NUMBER to scale 0
+        -- before the round — which is why the cast only applies on the Postgres side.
         else round(
             (10000.0 * coalesce(c.customers, 0) / g.municipality_population)
                 {%- if target.type == 'postgres' %}::numeric{% endif -%}, 3)
@@ -86,8 +86,8 @@ select
     (c.customers is null)                                   as has_no_customers
 from geografia g
 join {{ ref('dim_warehouse') }} w on w.wh = g.wh
--- LEFT: o municipio sem cliente TEM de aparecer. E a unica forma de a tabela mostrar o
--- que falta em vez de so o que existe.
+-- LEFT: a municipality with no customer MUST appear. It is the only way for the table to show
+-- what is missing instead of only what exists.
 left join clientes c
        on  c.wh                = g.wh
       and  c.province_code     = g.province_code

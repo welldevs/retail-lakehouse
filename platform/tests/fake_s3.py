@@ -1,12 +1,12 @@
-"""Duplo de cliente S3 em memoria, no espirito do duplo de HTTP que a Source usa.
+"""In-memory S3 client double, in the spirit of the HTTP double the Source uses.
 
-O ponto nao e simular a AWS: e poder exercitar as garantias de land/verify sem rede e sem
-container. Duas fidelidades importam e estao implementadas:
+The point is not to simulate AWS: it is to exercise the land/verify guarantees without
+network and without containers. Two fidelities matter and are implemented:
 
-  - put_object VALIDA o ChecksumSHA256 declarado, como o servidor real faz. Sem isso, um
-    bug na conversao hex->base64 passaria em teste e falharia em producao;
-  - head_object levanta ClientError 404 de verdade (a classe do botocore), porque
-    land._remote_checksum depende de capturar exatamente essa excecao.
+  - put_object VALIDATES the declared ChecksumSHA256, as the real server does. Without
+    that, a bug in the hex->base64 conversion would pass in tests and fail in production;
+  - head_object raises a real ClientError 404 (the botocore class), because
+    land._remote_checksum depends on catching exactly that exception.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def b64_sha256(blob: bytes) -> str:
 
 
 class ChecksumMismatch(Exception):
-    """O servidor recusou o objeto: os bytes nao correspondem ao checksum declarado."""
+    """The server rejected the object: the bytes do not match the declared checksum."""
 
 
 class FakePaginator:
@@ -36,8 +36,8 @@ class FakePaginator:
             for (bucket, key), blob in sorted(self._store.items())
             if bucket == Bucket and key.startswith(Prefix)
         ]
-        # Uma pagina basta para o volume desta plataforma; o codigo sob teste usa o
-        # paginator de qualquer forma, entao a interface e a mesma.
+        # One page is enough for this platform's volume; the code under test uses the
+        # paginator anyway, so the interface is the same.
         yield {"Contents": contents} if contents else {}
 
 
@@ -48,12 +48,12 @@ class FakeS3Client:
         self.gets = 0
         self.heads = 0
 
-    # ---- interface consumida por land.py e verify.py ------------------------
+    # ---- interface consumed by land.py and verify.py ------------------------
     def put_object(self, Bucket, Key, Body, ChecksumAlgorithm=None, ChecksumSHA256=None):
         self.puts += 1
         if ChecksumSHA256 is not None and ChecksumSHA256 != b64_sha256(Body):
             raise ChecksumMismatch(
-                f"checksum declarado nao corresponde aos bytes enviados: {Key}"
+                f"declared checksum does not match the bytes sent: {Key}"
             )
         self.store[(Bucket, Key)] = Body
         return {"ChecksumSHA256": b64_sha256(Body)}
@@ -84,13 +84,13 @@ class FakeS3Client:
         keys = [key for (bucket, key) in self.store if bucket == Bucket and key.startswith(Prefix)]
         return {"KeyCount": min(len(keys), MaxKeys)}
 
-    # ---- utilitarios de teste ----------------------------------------------
+    # ---- test utilities ----------------------------------------------------
     def corrupt(self, bucket: str, key: str) -> None:
-        """Adultera bytes ja armazenados, simulando manipulacao em repouso.
+        """Tampers with already-stored bytes, simulating tampering at rest.
 
-        Escreve direto no store, sem passar por put_object: o servidor real aceitaria um
-        objeto cujo checksum declarado corresponde aos bytes adulterados. E exatamente o
-        que o verify tem de pegar, porque ele confere contra o MANIFESTO.
+        Writes straight to the store, bypassing put_object: the real server would accept
+        an object whose declared checksum matches the tampered bytes. That is exactly what
+        verify has to catch, because it checks against the MANIFEST.
         """
         self.store[(bucket, key)] = self.store[(bucket, key)] + b" "
 
@@ -102,7 +102,7 @@ class FakeS3Client:
 
 
 class FakeConfig:
-    """Config minima: land/verify usam apenas .client() e .raw_bucket."""
+    """Minimal config: land/verify use only .client() and .raw_bucket."""
 
     def __init__(self, client: FakeS3Client, raw_bucket: str = "retail-raw"):
         self._client = client

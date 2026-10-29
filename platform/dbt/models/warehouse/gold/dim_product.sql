@@ -1,44 +1,45 @@
--- PRODUTO, SCD2 — e a dimensao NOMEIA uma ambiguidade em vez de escondê-la.
+-- PRODUCT, SCD2 — and the dimension NAMES an ambiguity instead of hiding it.
 --
--- GRAO: uma versao de produto, (source_product_id, valid_from).
--- CHAVE: product_sk. Chave natural: source_product_id.
--- TIPO: observed.
+-- GRAIN: one product version, (source_product_id, valid_from).
+-- KEY: product_sk. Natural key: source_product_id.
+-- TYPE: observed.
 --
--- O QUE ESTE SCD2 REALMENTE MODELA. Chavear em `source_product_id` modela o ciclo de vida
--- DA CHAVE DA FONTE, nao do item comercial — o CONTRACT.md 4.5 e o ARCHITECTURE.md ja
--- registram que a fonte nao oferece identidade de negocio. Nos casos medidos de
--- `name_seen_before` (id novo cujo display_name ja existia na particao anterior), o SCD2
--- produz "um produto morreu, outro nasceu". Pode estar certo, mas e uma ESCOLHA, e por
--- isso a flag identity_ambiguous e carregada para dentro da dimensao: quem consultar ve o
--- caso, em vez de herdar a decisao sem saber.
+-- WHAT THIS SCD2 REALLY MODELS. Keying on `source_product_id` models the life cycle OF THE
+-- SOURCE KEY, not of the commercial item — CONTRACT.md 4.5 and ARCHITECTURE.md already
+-- record that the source offers no business identity. In the measured `name_seen_before`
+-- cases (a new id whose display_name already existed in the previous partition), the SCD2
+-- produces "one product died, another was born". It may be right, but it is a CHOICE, and
+-- that is why the identity_ambiguous flag is carried into the dimension: whoever queries
+-- sees the case, instead of inheriting the decision without knowing.
 --
--- SCD2 DERIVADO DA HISTORIA, NAO ACUMULADO POR MERGE — e esta e a decisao de fundo.
--- O STAGE traz TODAS as particoes, e o RAW guarda todos os snapshots: a dimensao pode ser
--- reconstruida do zero a qualquer momento, sempre igual. Um `dbt snapshot` faria o oposto
--- — criaria estado que se acumula fora do RAW, que nao pode ser reconstruido e que pode
--- divergir dele em silencio. O repo inteiro se apoia em "o RAW e o ponto de nao-retorno,
--- tudo a jusante e reconstruivel"; derivar da historia e a unica forma coerente com isso.
+-- SCD2 DERIVED FROM HISTORY, NOT ACCUMULATED BY MERGE — and this is the underlying decision.
+-- STAGE brings ALL partitions, and RAW keeps all snapshots: the dimension can be rebuilt
+-- from scratch at any time, always the same. A `dbt snapshot` would do the opposite — it
+-- would create state that accumulates outside RAW, that cannot be rebuilt and that can
+-- silently diverge from it. The whole repo rests on "RAW is the point of no return,
+-- everything downstream is rebuildable"; deriving from history is the only way consistent
+-- with that.
 --
--- CONSEQUENCIA HONESTA A REGISTRAR: o ARCHITECTURE.md dizia que o Iceberg entraria
--- "quando o Gold dim_product precisar de SCD2 por MERGE em tabela existente". Esse gatilho
--- NAO disparou — a historia completa tornou o MERGE desnecessario. O Snowflake continua
--- justificado por governanca (RBAC) e por ser camada servida, nao por MERGE.
+-- HONEST CONSEQUENCE TO RECORD: ARCHITECTURE.md said Iceberg would come in "when Gold
+-- dim_product needs SCD2 via MERGE into an existing table". That trigger did NOT fire —
+-- the complete history made MERGE unnecessary. Snowflake remains justified by governance
+-- (RBAC) and by being the served layer, not by MERGE.
 --
--- ATRIBUTOS RASTREADOS (Tipo 2): display_name e a categoria primaria. Preco NAO — preco e
--- fato, e vive em FACT_PRICE_SNAPSHOT. Rastrear preco aqui criaria uma versao nova de
--- produto a cada oscilacao e a dimensao viraria o fato.
+-- TRACKED ATTRIBUTES (Type 2): display_name and the primary category. Price is NOT — price
+-- is a fact, and lives in FACT_PRICE_SNAPSHOT. Tracking price here would create a new
+-- product version at every fluctuation and the dimension would become the fact.
 --
--- DIMENSAO GLOBAL, sem eixo de armazem: medido que display_name nao varia entre os 4
--- armazens (0 divergencias). O que varia entre armazens e preco e sortimento, e os dois
--- sao fatos.
+-- GLOBAL DIMENSION, with no warehouse axis: measured that display_name does not vary across
+-- the 4 warehouses (0 divergences). What varies across warehouses is price and assortment,
+-- and both are facts.
 {{ config(materialized = 'table') }}
 
 with por_data as (
 
-    -- Um produto por data, atravessando os armazens. `max` e seguro aqui pela medicao
-    -- acima; se display_name passar a divergir entre armazens, o teste de unicidade de
-    -- grao nao pega — mas o de contagem de versoes sim, porque a dimensao passaria a
-    -- oscilar. Fica dito.
+    -- One product per date, across warehouses. `max` is safe here per the measurement
+    -- above; if display_name starts diverging across warehouses, the grain-uniqueness test
+    -- does not catch it — but the version-count one does, because the dimension would start
+    -- to oscillate. So noted.
     select
         source_product_id,
         ingestion_date,
@@ -55,8 +56,9 @@ with por_data as (
 
 ),
 
--- A especificacao da janela e repetida em vez de nomeada por uma clausula `window`:
--- o Snowflake nao suporta `WINDOW <nome> AS (...)`. Repetir e feio e e o que compila.
+-- The window specification is repeated instead of named via a `window` clause:
+-- Snowflake does not support `WINDOW <name> AS (...)`. Repeating is ugly and it is what
+-- compiles.
 marcado as (
 
     select
@@ -107,9 +109,10 @@ versoes as (
 
 ),
 
--- Id novo cujo display_name ja existia na particao anterior: a fonte nao diz se e o mesmo
--- item rechaveado ou um item retirado e outro lancado. silver_price_change ja marca esses
--- casos; aqui a marca so viaja para a dimensao.
+-- A new id whose display_name already existed in the previous partition: the source does
+-- not say whether it is the same item re-keyed or an item withdrawn and another launched.
+-- silver_price_change already flags these cases; here the flag just travels to the
+-- dimension.
 ambiguidade as (
 
     select distinct source_product_id
@@ -125,9 +128,9 @@ select
     v.version_number,
 
     v.valid_from,
-    -- valid_to e o valid_from da PROXIMA versao, nao "o dia anterior a ela": as particoes
-    -- tem lacunas (08-17 a 08-23 nao existem), entao subtrair um dia inventaria uma data
-    -- em que nada foi observado. Intervalo fechado-aberto [valid_from, valid_to).
+    -- valid_to is the valid_from of the NEXT version, not "the day before it": the partitions
+    -- have gaps (08-17 to 08-23 do not exist), so subtracting a day would invent a date on
+    -- which nothing was observed. Closed-open interval [valid_from, valid_to).
     lead(v.valid_from) over (
         partition by v.source_product_id order by v.version_number
     )                                                       as valid_to,

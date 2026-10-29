@@ -7,57 +7,58 @@ model-paths: ["models"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
-# SO PARA O TARGET POSTGRES. `try_parse_json` e nativo do Snowflake; aqui a mesma chamada,
-# de proposito IDENTICA em fact_order_event.sql nos dois motores, precisa de uma funcao
-# equivalente que o proprio dbt cria antes de qualquer modelo rodar — nao um passo manual a
-# lembrar depois de `make warehouse-postgres-bootstrap`. Ver macros/warehouse_compat.sql.
+# POSTGRES TARGET ONLY. `try_parse_json` is native to Snowflake; here the same call,
+# deliberately IDENTICAL in fact_order_event.sql on both engines, needs an equivalent
+# function that dbt itself creates before any model runs — not a manual step to remember
+# after `make warehouse-postgres-bootstrap`. See macros/warehouse_compat.sql.
 on-run-start:
   - "{% if target.type == 'postgres' %}{{ create_try_parse_json_function() }}{% endif %}"
 
 vars:
-  # Prefixo do RAW aterrissado. Sobrescrevivel para apontar para outro bucket.
+  # Prefix of the landed RAW. Overridable to point at another bucket.
   raw_prefix: "s3://retail-raw/mercadona_catalog_api"
-  # Segunda source, mesmo bucket RAW, prefixo proprio — land.py deriva o prefixo do
-  # source_name do manifesto, entao nao foi preciso nenhum bucket novo para isto.
+  # Second source, same RAW bucket, its own prefix — land.py derives the prefix from the
+  # manifest's source_name, so no new bucket was needed for this.
   ine_raw_prefix: "s3://retail-raw/ine_population_api"
-  # Terceira source: Callejero do INE (sem API, intake de arquivos baixados manualmente).
+  # Third source: INE Callejero (no API, intake of manually downloaded files).
   callejero_raw_prefix: "s3://retail-raw/ine_callejero"
-  # Quarta source, a primeira DERIVADA: consome o Silver que as outras tres produziram e
-  # devolve uma RAW nova. Mesmo bucket, prefixo proprio — land.py deriva o prefixo do
-  # source_name do manifesto, entao nada estrutural mudou para acomoda-la.
+  # Fourth source, the first DERIVED one: consumes the Silver the other three produced and
+  # returns a new RAW. Same bucket, its own prefix — land.py derives the prefix from the
+  # manifest's source_name, so nothing structural changed to accommodate it.
   oltp_raw_prefix: "s3://retail-raw/simulated_oltp"
-  # Quinta source, a segunda DERIVADA, e a primeira que entrega um LOG e nao uma fotografia.
-  # Mesmo bucket, prefixo proprio, mesma razao das anteriores.
+  # Fifth source, the second DERIVED one, and the first that delivers a LOG rather than a
+  # snapshot. Same bucket, its own prefix, same reason as the previous ones.
   orders_raw_prefix: "s3://retail-raw/simulated_orders"
-  # Onde esta o metadado CORRENTE da tabela Iceberg da projecao viva. Vazio por padrao: o
-  # modelo `silver_live_order_state` so entra no build quando `make silver` consegue resolver
-  # o caminho no catalogo, e ai passa o valor por --vars. Cravar um caminho aqui envelheceria
-  # a cada commit da tabela; adivinhar varrendo o storage e o que o DuckDB chama de inseguro.
+  # Where the CURRENT metadata of the live projection's Iceberg table is. Empty by default:
+  # the `silver_live_order_state` model only joins the build when `make silver` can resolve
+  # the path in the catalog, and then passes the value via --vars. Hard-coding a path here
+  # would go stale on every table commit; guessing by scanning storage is what DuckDB calls
+  # unsafe.
   live_order_state_metadata: ""
-  # A fonte NAO declara moeda (CONTRACT.md 4.6). O Silver nao inventa: esta var existe
-  # para o Gold, e e PREMISSA do consumidor, nao dado da fonte.
+  # The source does NOT declare a currency (CONTRACT.md 4.6). Silver does not invent one:
+  # this var exists for Gold, and it is a consumer PREMISE, not source data.
   currency: "EUR"
 
 models:
   retail_lakehouse:
     silver:
-      # Saida em parquet no object storage. Cada modelo declara seu proprio `location`
-      # e particionamento: o grao difere entre eles.
+      # Output as parquet in object storage. Each model declares its own `location`
+      # and partitioning: the grain differs between them.
       +materialized: external
       +format: parquet
-      # GUARD POR MOTOR. Sem ele, `dbt build --target snowflake` tentaria rodar um
-      # read_json sobre s3:// dentro do Snowflake e falharia com um erro de sintaxe que
-      # nao diz o que aconteceu. Com ele, cada arvore so existe no motor que a entende, e
-      # `dbt build` sem --select faz a coisa certa nos dois targets.
+      # PER-ENGINE GUARD. Without it, `dbt build --target snowflake` would try to run a
+      # read_json over s3:// inside Snowflake and fail with a syntax error that does not
+      # say what happened. With it, each tree only exists on the engine that understands
+      # it, and `dbt build` without --select does the right thing on both targets.
       +enabled: "{{ target.type == 'duckdb' }}"
 
     warehouse:
-      # O modelo dimensional. Vive no Snowflake OU no Postgres local — nao ha espelho em
-      # DuckDB, porque espelhar significaria duas materializacoes da mesma verdade. A
-      # portabilidade que importa e a do SQL do dbt, nao uma segunda copia
-      # (ARCHITECTURE.md:44). Postgres entrou como SEGUNDO motor aceito aqui — nao um
-      # terceiro guard novo — porque e o mesmo papel que o Snowflake ja tinha: destino
-      # relacional que le STAGE por `source()` e escreve GOLD/MART. Ver DECISIONS.md.
+      # The dimensional model. Lives in Snowflake OR in local Postgres — there is no DuckDB
+      # mirror, because mirroring would mean two materializations of the same truth. The
+      # portability that matters is that of the dbt SQL, not a second copy
+      # (ARCHITECTURE.md:44). Postgres came in as a SECOND engine accepted here — not a new
+      # third guard — because it plays the same role Snowflake already had: a relational
+      # destination that reads STAGE through `source()` and writes GOLD/MART. See DECISIONS.md.
       +enabled: "{{ target.type in ('snowflake', 'postgres') }}"
       +materialized: table
       gold:
@@ -65,11 +66,11 @@ models:
       mart:
         +schema: MART
 
-# MESMO GUARD, PARA OS TESTES SINGULARES. Sem isto o build quebra nos DOIS sentidos, e o
-# erro nao diz por que: os testes de tests/*.sql fazem ref() de modelos Silver (desligados
-# no Snowflake) e os de tests/warehouse/*.sql fazem ref() de modelos do Gold (desligados no
-# DuckDB). O dbt compila TODO teste singular do projeto, independente do target — um ref()
-# para modelo desabilitado e erro de compilacao, nao um skip.
+# SAME GUARD, FOR THE SINGULAR TESTS. Without this the build breaks in BOTH directions, and
+# the error does not say why: the tests in tests/*.sql ref() Silver models (disabled on
+# Snowflake) and those in tests/warehouse/*.sql ref() Gold models (disabled on DuckDB).
+# dbt compiles EVERY singular test in the project, regardless of target — a ref() to a
+# disabled model is a compilation error, not a skip.
 data_tests:
   retail_lakehouse:
     +enabled: "{{ target.type == 'duckdb' }}"
@@ -78,34 +79,35 @@ data_tests:
 
 seeds:
   retail_lakehouse:
-    # SO NO DUCKDB. Os dezesseis seeds alimentam modelos do Silver: warehouse_service_area
-    # e warehouse_province_map, os dois de-para do INE (codigo de municipio e serie
-    # homonima), as premissas de Orders, as de Customer, as de Stock, o selo da captura
-    # congelada, e os oito da calibracao de demanda — tudo do lado do lakehouse. A arvore
-    # do warehouse le exclusivamente `source()` sobre o STAGE e nao referencia seed nenhum.
-    # Sem este guard, `dbt build --target snowflake` carregava os dezesseis para dentro do
-    # Snowflake, onde ficavam sem funcao e sem quem os mantivesse em dia.
+    # DUCKDB ONLY. The sixteen seeds feed Silver models: warehouse_service_area and
+    # warehouse_province_map, the two INE mappings (municipality code and homonymous
+    # series), the Orders premises, the Customer ones, the Stock ones, the frozen-capture
+    # seal, and the eight demand-calibration ones — all on the lakehouse side. The
+    # warehouse tree reads exclusively `source()` over STAGE and references no seed.
+    # Without this guard, `dbt build --target snowflake` loaded all sixteen into
+    # Snowflake, where they sat with no purpose and nobody to keep them up to date.
     +enabled: "{{ target.type == 'duckdb' }}"
 
     frozen_capture_seed:
-      # POR QUE ESTE PRECISA DECLARAR TIPO, e o motivo e diferente dos outros. Ele nasce
-      # VAZIO — so cabecalho — porque "ainda nao selado" e um estado legitimo, o de qualquer
-      # clone novo. Sem linha para inferir, o dbt-duckdb tipa toda coluna como INTEGER, e o
-      # teste que le o seed quebra com "replace(INTEGER, ...)" — um erro sobre o tipo, tres
-      # passos longe da causa, que e a AUSENCIA de dado.
+      # WHY THIS ONE MUST DECLARE TYPES, and the reason differs from the others. It starts
+      # EMPTY — header only — because "not sealed yet" is a legitimate state, that of any
+      # fresh clone. With no row to infer from, dbt-duckdb types every column as INTEGER,
+      # and the test that reads the seed breaks with "replace(INTEGER, ...)" — an error
+      # about the type, three steps away from the cause, which is the ABSENCE of data.
       #
-      # Um seed vazio nao pode mudar o schema. Declarar os tipos faz o estado nao-selado se
-      # comportar exatamente como o selado, so que sem linhas.
+      # An empty seed must not change the schema. Declaring the types makes the unsealed
+      # state behave exactly like the sealed one, just without rows.
       #
-      # E `+full_refresh` PORQUE A SEQUENCIA NORMAL QUEBRAVA SEM ELE. Quem roda `make silver`
-      # antes de `make freeze` — que e a ordem natural — criava a tabela a partir do CSV
-      # VAZIO; o dbt entao reutiliza o schema existente, e a carga seguinte, ja com o selo,
-      # morria em "Could not convert string 'ine_callejero' to INTEGER". O erro fala de tipo
-      # e a causa e o estado anterior da tabela, o que e o pior tipo de mensagem.
+      # And `+full_refresh` BECAUSE THE NORMAL SEQUENCE BROKE WITHOUT IT. Whoever ran
+      # `make silver` before `make freeze` — the natural order — created the table from the
+      # EMPTY CSV; dbt then reuses the existing schema, and the next load, now with the
+      # seal, died with "Could not convert string 'ine_callejero' to INTEGER". The error
+      # talks about type and the cause is the previous state of the table, which is the
+      # worst kind of message.
       #
-      # Semanticamente e o certo, e nao um contorno: o selo e SUBSTITUIDO inteiro por
-      # `make freeze`, nunca acrescentado. Uma tabela que so pode ser trocada por completo
-      # nao tem por que ser carregada incrementalmente.
+      # Semantically it is the right thing, not a workaround: the seal is REPLACED whole by
+      # `make freeze`, never appended to. A table that can only be swapped out completely
+      # has no reason to be loaded incrementally.
       +full_refresh: true
       +column_types:
         source: varchar
@@ -115,8 +117,8 @@ seeds:
         bytes: bigint
         content_sha256: varchar
     warehouse_province_map_seed:
-      # Sem isto, a inferencia de tipo do dbt-duckdb le "08"/"079" como inteiro e come o
-      # zero a esquerda (08 -> 8) — os codigos do INE nao sao numeros, sao identificadores.
+      # Without this, dbt-duckdb type inference reads "08"/"079" as integers and eats the
+      # leading zero (08 -> 8) — INE codes are not numbers, they are identifiers.
       +column_types:
         wh: varchar
         province_code: varchar
@@ -144,11 +146,11 @@ seeds:
         municipality_code: varchar
 
     order_premises_seed:
-      # `value` DECIMAL e nao DOUBLE, apesar de nenhuma destas linhas ser dinheiro. O
-      # motivo e outro: a coluna mistura proporcoes (0.008) com contagens de minutos (90),
-      # e um DOUBLE faria `date_diff(...) > value` depender de arredondamento binario num
-      # limiar que existe justamente para ser comparado. DECIMAL compara exato e vira
-      # NUMBER(18,6) do outro lado da fronteira sem passar por FLOAT.
+      # `value` DECIMAL and not DOUBLE, even though none of these rows is money. The reason
+      # is different: the column mixes proportions (0.008) with minute counts (90), and a
+      # DOUBLE would make `date_diff(...) > value` depend on binary rounding at a threshold
+      # that exists precisely to be compared. DECIMAL compares exactly and becomes
+      # NUMBER(18,6) on the other side of the boundary without going through FLOAT.
       +column_types:
         premise_key: varchar
         value: decimal(18,6)
@@ -157,11 +159,12 @@ seeds:
         rationale: varchar
 
     customer_premises_seed:
-      # `value` VARCHAR e nao DECIMAL, ao contrario de order_premises_seed: esta coluna
-      # mistura um inteiro (18) com tres nomes de regra ("adult_resident_population",
-      # "per_warehouse_population") e um ponteiro para outro seed. Tipar como numero exigiria
-      # dois arquivos, e separar a idade minima das regras que a acompanham seria pior — o
-      # mesmo criterio que ja mantem demand_profile_seed.value como varchar.
+      # `value` VARCHAR and not DECIMAL, unlike order_premises_seed: this column mixes an
+      # integer (18) with three rule names ("adult_resident_population",
+      # "per_warehouse_population") and a pointer to another seed. Typing it as a number
+      # would require two files, and separating the minimum age from the rules that come
+      # with it would be worse — the same criterion that keeps demand_profile_seed.value
+      # as varchar.
       +column_types:
         premise_key: varchar
         value: varchar
@@ -170,10 +173,11 @@ seeds:
         rationale: varchar
 
     mapa_2025_benchmark_seed:
-      # `informe_section` PRECISA ser varchar: "4.3" e "3" viram DOUBLE na inferencia e a
-      # citacao da secao — que e a rastreabilidade inteira desta tabela — vira 4.3 e 3.0.
-      # Os shares sao DECIMAL pelo mesmo motivo de order_premises_seed: sao comparados
-      # contra medicoes num teste de tolerancia, e comparacao binaria de limiar nao serve.
+      # `informe_section` MUST be varchar: "4.3" and "3" become DOUBLE under inference and
+      # the section citation — which is this table's entire traceability — becomes 4.3 and
+      # 3.0. The shares are DECIMAL for the same reason as order_premises_seed: they are
+      # compared against measurements in a tolerance test, and binary threshold comparison
+      # does not work.
       +column_types:
         mapa_key: varchar
         mapa_label: varchar
@@ -197,9 +201,10 @@ seeds:
         mapa_key: varchar
         rationale: varchar
     demand_profile_seed:
-      # `value` e varchar de proposito: a coluna mistura versao ("mapa_2025_v1"), nome de
-      # regra ("assortment") e numero (0.85). Tipar como numero forcaria dois seeds, e
-      # separar a versao do modelo dos parametros que ela versiona seria pior.
+      # `value` is varchar on purpose: the column mixes a version ("mapa_2025_v1"), a rule
+      # name ("assortment") and a number (0.85). Typing it as a number would force two
+      # seeds, and separating the model version from the parameters it versions would be
+      # worse.
       +column_types:
         param_key: varchar
         value: varchar
@@ -214,9 +219,9 @@ seeds:
         rationale: varchar
 
     demand_cohort_age_seed:
-      # `informe_page` e varchar porque uma linha cita TRES paginas ("57;61;65"): o perfil
-      # de ACEITES_OLIVA e composto das tres secoes de azeite de oliva. Tipar como inteiro
-      # perderia justamente a linha cuja rastreabilidade e menos obvia.
+      # `informe_page` is varchar because one row cites THREE pages ("57;61;65"): the
+      # ACEITES_OLIVA profile is composed of the three olive-oil sections. Typing it as an
+      # integer would lose precisely the row whose traceability is least obvious.
       +column_types:
         mapa_key: varchar
         age_band: varchar
@@ -226,8 +231,8 @@ seeds:
         provenance: varchar
         note: varchar
     demand_cohort_region_seed:
-      # `ccaa_code` varchar pelo mesmo motivo de province_code: 01 e 09 sao identificadores
-      # do INE, e a inferencia numerica comeria o zero a esquerda.
+      # `ccaa_code` varchar for the same reason as province_code: 01 and 09 are INE
+      # identifiers, and numeric inference would eat the leading zero.
       +column_types:
         mapa_key: varchar
         ccaa_code: varchar

@@ -1,19 +1,19 @@
-"""L1 Landing: sobe uma particao para o object storage, byte a byte identica.
+"""L1 Landing: uploads a partition to the object storage, byte-for-byte identical.
 
-Nada e reempacotado. E a canonicalizacao feita pela Source que torna o SHA-256 do
-manifesto verificavel ponta a ponta; um .tar destruiria a conferencia por objeto e a
-leitura direta pelo DuckDB.
+Nothing is repackaged. It is the canonicalization done by the Source that makes the
+manifest's SHA-256 verifiable end to end; a .tar would destroy the per-object check and
+direct reading by DuckDB.
 
-Tres disciplinas, herdadas da propria Source:
+Three disciplines, inherited from the Source itself:
 
-  1. NAO PROPAGAR CORRUPCAO. Antes de subir, o sha256 do arquivo local e recalculado e
-     conferido contra o manifesto. A plataforma nao assume que `validate` rodou.
-  2. VALIDACAO NO SERVIDOR. Cada PUT declara ChecksumSHA256; o object storage recusa o
-     objeto se os bytes que chegaram nao corresponderem.
-  3. _SUCCESS POR ULTIMO. Um upload interrompido nunca parece completo — espelha a
-     escrita atomica da Source, onde nenhum arquivo e observavel em estado parcial.
+  1. DO NOT PROPAGATE CORRUPTION. Before uploading, the local file's sha256 is recomputed
+     and checked against the manifest. The platform does not assume `validate` ran.
+  2. SERVER-SIDE VALIDATION. Each PUT declares ChecksumSHA256; the object storage rejects
+     the object if the bytes that arrived do not match.
+  3. _SUCCESS LAST. An interrupted upload never looks complete — mirrors the Source's
+     atomic write, where no file is observable in a partial state.
 
-Idempotente: objeto ja presente com o checksum esperado e pulado, nao reenviado.
+Idempotent: an object already present with the expected checksum is skipped, not re-sent.
 """
 
 from __future__ import annotations
@@ -27,19 +27,19 @@ from .manifest import Partition, SUCCESS_NAME, read
 
 
 class LandingError(Exception):
-    """Particao nao pode ser aterrissada com seguranca."""
+    """Partition cannot be landed safely."""
 
 
 def _b64_of_hex(sha256_hex: str) -> str:
-    """S3 espera o checksum em base64 do digest cru, nao em hexadecimal."""
+    """S3 expects the checksum as base64 of the raw digest, not hexadecimal."""
     return base64.b64encode(bytes.fromhex(sha256_hex)).decode("ascii")
 
 
 def object_key(partition: Partition, relative_path: str) -> str:
-    """Chave do objeto. O prefixo comeca pelo nome declarado em partition.source_name (o
-    proprio manifesto, nao uma constante fixa), para que uma segunda source aterrisse ao
-    lado sem reorganizar nada. O layout hive da Source (ingestion_date=.../wh=... ou so
-    ingestion_date=...) e preservado para que o DuckDB o leia com hive_partitioning=1."""
+    """Object key. The prefix starts with the name declared in partition.source_name (the
+    manifest itself, not a fixed constant), so a second source lands alongside without
+    reorganizing anything. The Source's hive layout (ingestion_date=.../wh=... or just
+    ingestion_date=...) is preserved so DuckDB reads it with hive_partitioning=1."""
     return f"{partition.source_name}/{relative_path}"
 
 
@@ -59,7 +59,7 @@ class LandResult:
 
 
 def _remote_checksum(client, bucket: str, key: str) -> tuple[str | None, int | None]:
-    """Checksum SHA-256 (base64) e tamanho do objeto remoto, ou (None, None) se ausente."""
+    """SHA-256 checksum (base64) and size of the remote object, or (None, None) if absent."""
     from botocore.exceptions import ClientError
 
     try:
@@ -84,16 +84,16 @@ def _put(client, bucket: str, key: str, blob: bytes, sha256_hex: str) -> None:
 
 def _upload_one(client, bucket: str, key: str, local_path: str, expected_sha: str | None,
                 result: LandResult) -> None:
-    """Sobe um arquivo, conferindo o local antes e pulando o que ja esta correto."""
+    """Uploads one file, checking the local copy first and skipping what is already correct."""
     with open(local_path, "rb") as handle:
         blob = handle.read()
     observed = hashlib.sha256(blob).hexdigest()
 
     if expected_sha and observed != expected_sha:
         raise LandingError(
-            f"sha256 divergente ANTES do upload em {local_path}: "
-            f"manifesto={expected_sha} disco={observed}. Particao corrompida em disco; "
-            f"rode `validate` na Source antes de aterrissar."
+            f"sha256 mismatch BEFORE upload in {local_path}: "
+            f"manifest={expected_sha} disk={observed}. Partition corrupted on disk; "
+            f"run `validate` on the Source before landing."
         )
 
     want = _b64_of_hex(observed)
@@ -109,7 +109,7 @@ def _upload_one(client, bucket: str, key: str, local_path: str, expected_sha: st
 
 
 def land(config, partition_path: str) -> LandResult:
-    """Aterrissa a particao. Levanta LandingError antes de gravar _SUCCESS em qualquer falha."""
+    """Lands the partition. Raises LandingError before writing _SUCCESS on any failure."""
     partition = read(partition_path)
     client = config.client()
     bucket = config.raw_bucket
@@ -120,33 +120,33 @@ def land(config, partition_path: str) -> LandResult:
         prefix=object_key(partition, partition.prefix_suffix) + "/",
     )
 
-    # 1. Arquivos declarados em files[], cada um com sha256 no manifesto.
+    # 1. Files declared in files[], each with a sha256 in the manifest.
     for entry in partition.files:
         if not os.path.exists(entry.local_path):
-            raise LandingError(f"arquivo declarado e ausente em disco: {entry.path}")
+            raise LandingError(f"declared file missing on disk: {entry.path}")
         _upload_one(
             client, bucket, object_key(partition, entry.path),
             entry.local_path, entry.sha256, result,
         )
 
-    # 2. Arquivos previstos pelo contrato e nao declarados: _manifest.json e _run.log.
-    #    Nao ha sha256 declarado para eles (o manifesto nao declara a si mesmo), entao o
-    #    checksum enviado ao servidor e o calculado agora.
+    # 2. Files expected by the contract but not declared: _manifest.json and _run.log.
+    #    There is no declared sha256 for them (the manifest does not declare itself), so
+    #    the checksum sent to the server is the one computed now.
     for local_path, name in partition.undeclared_paths():
         if name == SUCCESS_NAME:
-            continue  # sempre por ultimo, fora deste laco
+            continue  # always last, outside this loop
         _upload_one(
             client, bucket,
             object_key(partition, f"{partition.prefix_suffix}/{name}"),
             local_path, None, result,
         )
 
-    # 3. _SUCCESS por ultimo: e o marcador que o consumidor a jusante le para decidir se a
-    #    particao pode ser consumida. Gravado antes dos dados, uma interrupcao deixaria uma
-    #    particao incompleta anunciando-se como completa.
+    # 3. _SUCCESS last: it is the marker the downstream consumer reads to decide whether
+    #    the partition can be consumed. Written before the data, an interruption would leave
+    #    an incomplete partition announcing itself as complete.
     success_local = os.path.join(partition.path, SUCCESS_NAME)
     if not os.path.exists(success_local):
-        raise LandingError(f"{SUCCESS_NAME} ausente: particao nao esta completa")
+        raise LandingError(f"{SUCCESS_NAME} missing: partition is not complete")
     _upload_one(
         client, bucket,
         object_key(partition, f"{partition.prefix_suffix}/{SUCCESS_NAME}"),

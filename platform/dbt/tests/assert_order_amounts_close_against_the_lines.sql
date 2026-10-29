@@ -1,16 +1,16 @@
--- A aritmetica do fold fecha, nos dois sentidos.
+-- The fold arithmetic closes, in both directions.
 --
---   gross_amount_placed = soma das linhas COLOCADAS
---   net_amount          = soma das linhas EFETIVAS (removida contribui zero)
+--   gross_amount_placed = sum of the PLACED lines
+--   net_amount          = sum of the EFFECTIVE lines (a removed line contributes zero)
 --
--- POR QUE ISTO NAO E REDUNDANTE COM O MANIFESTO. O teste de reconciliacao compara o fold do
--- Silver com o fold da Source. Este compara o fold do PEDIDO com o fold das LINHAS, dois
--- modelos do proprio Silver construidos por caminhos diferentes: silver_order soma o que os
--- eventos `order_picked` declararam, silver_order_line reconstroi linha a linha aplicando
--- substituicao e remocao. Se os dois concordam, a substituicao foi aplicada ao valor certo.
+-- WHY THIS IS NOT REDUNDANT WITH THE MANIFEST. The reconciliation test compares Silver's fold
+-- with the Source's fold. This one compares the ORDER fold with the LINES fold, two
+-- Silver models built along different paths: silver_order sums what the
+-- `order_picked` events declared, silver_order_line rebuilds line by line applying
+-- substitution and removal. If the two agree, the substitution was applied to the right value.
 --
--- `net_amount` e nulo para pedido que nunca chegou a separacao. Esses ficam de fora do
--- segundo teste de propósito: nulo ali significa "nao houve separacao", nao "zero".
+-- `net_amount` is null for an order that never reached picking. Those stay out of the
+-- second test on purpose: null there means "there was no picking", not "zero".
 with das_linhas as (
 
     select
@@ -18,9 +18,9 @@ with das_linhas as (
         cast(sum(line_amount_placed) as decimal(14, 2)) as soma_colocada,
         cast(sum(line_amount) as decimal(14, 2))        as soma_efetiva,
         count(*)                                        as linhas,
-        -- Contar o COMPLEMENTO de 'removed' era equivalente enquanto so existiam tres
-        -- valores. Com `not_picked` no vocabulario deixa de ser: uma linha de pedido
-        -- cancelado nao foi removida e tambem nao foi cumprida.
+        -- Counting the COMPLEMENT of 'removed' was equivalent while only three
+        -- values existed. With `not_picked` in the vocabulary it no longer is: a line of a
+        -- cancelled order was not removed and was not fulfilled either.
         sum(case when line_status in ('fulfilled', 'substituted') then 1 else 0 end)
                                                         as linhas_cumpridas
     from {{ ref('silver_order_line') }}

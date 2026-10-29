@@ -1,11 +1,11 @@
--- `is_latest_ingestion` tem de marcar UMA e apenas uma ingestion_date por modelo.
+-- `is_latest_ingestion` must mark ONE and only one ingestion_date per model.
 --
--- A coluna existe porque estes modelos empilham todas as extracoes de proposito, e sem
--- uma marca explicita quem consultasse sem filtrar contaria em dobro (ja aconteceu:
--- silver_ine_population_series ficou com 1.547.496 linhas em cada uma de duas datas).
--- A expressao correta e `max(ingestion_date) over ()`; trocar por um `over (partition
--- by ...)` distraidamente marcaria varias datas como "a mais recente" e o filtro passaria
--- a nao filtrar nada. Este teste e o que impede essa regressao passar em silencio.
+-- The column exists because these models stack every extraction on purpose, and without
+-- an explicit marker whoever queried without filtering would double-count (it already happened:
+-- silver_ine_population_series ended up with 1,547,496 rows in each of two dates).
+-- The correct expression is `max(ingestion_date) over ()`; swapping it absent-mindedly for an `over (partition
+-- by ...)` would mark several dates as "the most recent" and the filter would stop
+-- filtering anything. This test is what keeps that regression from passing silently.
 {% set modelos = [
     'silver_callejero_sections',
     'silver_callejero_population_units',

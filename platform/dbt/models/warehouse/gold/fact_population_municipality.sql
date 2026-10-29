@@ -1,24 +1,25 @@
--- POPULACAO OBSERVADA por municipio, sexo e ano. O DENOMINADOR do modelo.
+-- OBSERVED POPULATION by municipality, sex and year. The model's DENOMINATOR.
 --
--- GRAO: (province_code, municipality_code, sex_label, year). 21.410 linhas, 1996-2025.
--- TIPO: observed (INE, tabela 29005, cifras oficiales).
+-- GRAIN: (province_code, municipality_code, sex_label, year). 21,410 rows, 1996-2025.
+-- TYPE: observed (INE, table 29005, cifras oficiales).
 --
--- POR QUE FATO E NAO DIMENSAO. Tem grao temporal (29 anos medidos), e aditiva por
--- municipio e por sexo, e e o denominador de toda razao per-capita ou de penetracao. Isso
--- e a definicao de fato. O que vai para DIM_GEOGRAPHY e apenas o valor do ANO CORRENTE,
--- como atributo de tamanho — conveniencia de slicing, nao a serie.
+-- WHY A FACT AND NOT A DIMENSION. It has a temporal grain (29 years measured), it is
+-- additive by municipality and by sex, and it is the denominator of every per-capita or
+-- penetration ratio. That is the definition of a fact. What goes to DIM_GEOGRAPHY is only
+-- the CURRENT YEAR's value, as a size attribute — a slicing convenience, not the series.
 --
--- O AGREGADO 'Total' JA FOI EXCLUIDO NO RECORTE, e vale dizer por que aqui tambem: a
--- fonte mistura o agregado com o detalhe na MESMA coluna sex_label. Somar os tres rotulos
--- da exatamente o dobro da populacao. E a mesma armadilha que na Fase 1 inflou a piramide
--- etaria em 2,03x com age_label, e ela nao falha — produz um numero plausivel. Um teste em
--- schema.yml reconfere Hombres + Mujeres contra o 'Total' da propria fonte.
+-- THE 'Total' AGGREGATE WAS ALREADY EXCLUDED IN THE CUT, and it is worth saying why here
+-- too: the source mixes the aggregate with the detail in the SAME sex_label column.
+-- Summing the three labels gives exactly double the population. It is the same trap that
+-- in Phase 1 inflated the age pyramid by 2.03x with age_label, and it does not fail — it
+-- produces a plausible number. A test in schema.yml re-checks Hombres + Mujeres against the
+-- source's own 'Total'.
 --
--- LIMITACAO DECLARADA: este fato e ANUAL e municipal. Nao existe faixa etaria por
--- municipio nas tabelas que esta plataforma ingere — a 29005 nao tem coluna de idade e a
--- 31304 so tem provincia. A piramide etaria dos clientes sinteticos usa a distribuicao
--- PROVINCIAL como proxy, e essa aproximacao esta declarada no contrato da Source, nao
--- escondida aqui.
+-- DECLARED LIMITATION: this fact is ANNUAL and municipal. There is no age band per
+-- municipality in the tables this platform ingests — 29005 has no age column and
+-- 31304 only has province. The synthetic customers' age pyramid uses the PROVINCIAL
+-- distribution as a proxy, and that approximation is declared in the Source's contract,
+-- not hidden here.
 {{ config(materialized = 'table') }}
 
 select
@@ -33,14 +34,14 @@ select
     reference_date,
 
     population_value,
-    -- is_secret vem da fonte: o INE suprime valores de municipios muito pequenos por
-    -- sigilo estatistico. Null aqui NAO e dado faltando por erro nosso, e a coluna
-    -- companheira e o que distingue os dois casos.
+    -- is_secret comes from the source: INE suppresses values for very small municipalities
+    -- for statistical confidentiality. Null here is NOT data missing due to our error, and
+    -- the companion column is what distinguishes the two cases.
     is_secret,
 
-    -- year e reference_date PODEM discordar, e nao e erro de calculo: e a convencao do
-    -- INE (year=2025 registrado com Fecha em 2024-12-31). Nenhum dos dois e "corrigido"
-    -- para bater com o outro; quem precisar da data exata usa reference_date.
+    -- year and reference_date MAY disagree, and it is not a calculation error: it is INE's
+    -- convention (year=2025 recorded with Fecha on 2024-12-31). Neither is "corrected" to
+    -- match the other; whoever needs the exact date uses reference_date.
     (year = (select max(year) from {{ source('stage', 'STG_POPULATION_MUNICIPALITY') }}))
                                                             as is_latest_year
 from {{ source('stage', 'STG_POPULATION_MUNICIPALITY') }}

@@ -1,26 +1,26 @@
--- O LEDGER DE ESTOQUE COBRE A JANELA DOS PEDIDOS QUE O ALIMENTARAM.
+-- THE STOCK LEDGER COVERS THE WINDOW OF THE ORDERS THAT FED IT.
 --
--- O DEFEITO CONCRETO QUE ISTO PEGA, e ele aconteceu de verdade em 2026-09-01.
+-- THE CONCRETE DEFECT THIS CATCHES, and it really happened on 2026-09-01.
 --
--- `silver_stock_ledger` fica FORA do `dbt build` quando a tabela Iceberg nao existe — e
--- isso e deliberado, e o que mantem o Spark opcional. Mas o PARQUET do Silver sobrevive a
--- exclusao: ele e o que a ultima construcao bem-sucedida deixou. Entao um `make silver` que
--- pula o modelo, seguido de um `make warehouse`, publica no Snowflake um ledger de uma
--- janela que nao existe mais — e nada quebra, porque cada linha continua internamente
--- consistente e todo total continua fechando.
+-- `silver_stock_ledger` stays OUT of `dbt build` when the Iceberg table does not exist — and
+-- that is deliberate, it is what keeps Spark optional. But the Silver PARQUET survives the
+-- exclusion: it is what the last successful build left behind. So a `make silver` that
+-- skips the model, followed by a `make warehouse`, publishes to Snowflake a ledger for a
+-- window that no longer exists — and nothing breaks, because each row stays internally
+-- consistent and every total keeps closing.
 --
--- Foi exatamente o que se mediu: a regeracao levou os pedidos de 4 para 9 dias, o ledger
--- ficou nos 5 dias antigos, e MART_STOCK_HEALTH descreveu um periodo diferente de todos os
--- outros marts sem que um unico teste reprovasse.
+-- That is exactly what was measured: the regeneration took orders from 4 to 9 days, the ledger
+-- stayed on the old 5 days, and MART_STOCK_HEALTH described a period different from all the
+-- other marts without a single test failing.
 --
--- E DEFEITO DE FRESCOR ENTRE DOMINIOS, que nenhuma invariante DENTRO de um dominio pega —
--- a mesma familia do defeito de reparticao da Fase 6. Por isso o teste mora aqui, no
--- warehouse, onde os dois dominios finalmente se encontram.
+-- IT IS A CROSS-DOMAIN FRESHNESS DEFECT, which no invariant WITHIN a domain catches —
+-- the same family as the Phase 6 allocation defect. That is why the test lives here, in the
+-- warehouse, where the two domains finally meet.
 --
--- A COMPARACAO E `>=`, E NAO `=`, e a diferenca e real: o consumo e datado pela SEPARACAO,
--- e um pedido colocado tarde no ultimo dia e separado no dia seguinte. O ledger enxerga um
--- dia a MAIS que os pedidos. Exigir igualdade obrigaria a descartar consumo observado para
--- fazer duas tabelas parecerem simetricas.
+-- THE COMPARISON IS `>=`, NOT `=`, and the difference is real: consumption is dated by PICKING,
+-- and an order placed late on the last day is picked the next day. The ledger sees one
+-- day MORE than the orders. Demanding equality would force discarding observed consumption to
+-- make two tables look symmetric.
 with pedidos as (
 
     select min(order_date) as de, max(order_date) as ate

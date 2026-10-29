@@ -1,8 +1,8 @@
-"""O carregador do segundo alvo de warehouse (Postgres local), conferido sem Postgres real.
+"""The loader of the second warehouse target (local Postgres), checked without a real Postgres.
 
-Mesma disciplina de `test_snowflake_load.py`: tudo aqui roda contra cursor/conexao FALSOS,
-sem rede e sem servidor de pe — o container `warehouse-postgres` e opt-in (profile proprio
-do compose) e nao deveria ser pre-requisito de `make test`.
+Same discipline as `test_snowflake_load.py`: everything here runs against FAKE
+cursors/connections, with no network and no server up — the `warehouse-postgres` container
+is opt-in (its own compose profile) and should not be a prerequisite of `make test`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from retail_platform.snowflake_export import SPECS  # noqa: E402
+from retail_platform.warehouse_cut import SPECS  # noqa: E402
 from retail_platform.postgres_load import (  # noqa: E402
     DEFAULT_LOAD_ROLE,
     GOLD,
@@ -32,71 +32,71 @@ from retail_platform.postgres_load import (  # noqa: E402
 
 
 class DDLTest(unittest.TestCase):
-    def test_ddl_cita_schema_e_tabela_em_maiusculo(self):
-        """MAIUSCULO E CITADO, como no Snowflake: `sources.yml`/`dbt_project.yml` sao
-        compartilhados pelos dois alvos e usam STAGE/GOLD/MART literais — sem aspas,
-        Postgres dobraria para minusculo e dbt nunca encontraria a tabela."""
+    def test_ddl_quotes_schema_and_table_in_uppercase(self):
+        """UPPERCASE AND QUOTED, as in Snowflake: `sources.yml`/`dbt_project.yml` are
+        shared by both targets and use literal STAGE/GOLD/MART — without quotes, Postgres
+        would fold to lowercase and dbt would never find the table."""
         ddl = ddl_for({"name": "STG_CATEGORY"}, [("category_id", "INTEGER")], schema=STAGE)
         self.assertIn('create table "STAGE"."STG_CATEGORY"', ddl)
 
-    def test_decimal_vira_numeric_preservando_precisao(self):
+    def test_decimal_becomes_numeric_keeping_precision(self):
         ddl = ddl_for({"name": "X"}, [("value", "DECIMAL(18,6)")], schema=STAGE)
         self.assertIn("numeric(18,6)", ddl)
 
-    def test_tipo_desconhecido_falha_em_vez_de_virar_text(self):
-        """Mesmo criterio do `_TYPE_MAP` do Snowflake: um tipo sem entrada deve FALHAR,
-        nao perder precisao em silencio virando texto."""
+    def test_unknown_type_fails_instead_of_becoming_text(self):
+        """Same criterion as Snowflake's `_TYPE_MAP`: a type with no entry must FAIL, not
+        silently lose precision by becoming text."""
         with self.assertRaises(PostgresLoadError):
             ddl_for({"name": "X"}, [("c", "BLOB")], schema=STAGE)
 
-    def test_timestamp_com_fuso_vira_timestamptz(self):
+    def test_timestamp_with_time_zone_becomes_timestamptz(self):
         ddl = ddl_for({"name": "X"}, [("t", "TIMESTAMP WITH TIME ZONE")], schema=STAGE)
         self.assertIn("timestamptz", ddl)
 
 
-class QualificacaoTest(unittest.TestCase):
-    def test_qualified_cita_os_dois_identificadores(self):
+class QualificationTest(unittest.TestCase):
+    def test_qualified_quotes_both_identifiers(self):
         self.assertEqual(qualified("STG_CUSTOMER", "STAGE"), '"STAGE"."STG_CUSTOMER"')
 
-    def test_qualified_e_a_mesma_forma_usada_no_ddl_e_na_reconferencia(self):
+    def test_qualified_is_the_same_form_used_in_ddl_and_in_the_recheck(self):
         ddl = ddl_for({"name": "STG_CUSTOMER"}, [("customer_id", "INTEGER")], schema=STAGE)
         self.assertIn(qualified("STG_CUSTOMER", STAGE), ddl)
 
 
 class SchemasTest(unittest.TestCase):
-    def test_as_tres_camadas_sao_os_mesmos_nomes_literais_do_dbt(self):
+    def test_the_three_layers_are_the_same_literal_names_as_dbt(self):
         self.assertEqual(set(SCHEMAS), {STAGE, GOLD, MART})
         self.assertEqual({STAGE, GOLD, MART}, {"STAGE", "GOLD", "MART"})
-        for nome, comentario in SCHEMAS.items():
-            self.assertTrue(comentario.strip(), f"{nome} sem comentario")
-            # O comentario entra inline no DDL (ver bootstrap) porque `comment on schema`
-            # nao aceita parametro ligado — uma aspa quebraria o SQL.
-            self.assertNotIn("'", comentario, f"{nome}: aspa quebraria o DDL")
+        for name, comment in SCHEMAS.items():
+            self.assertTrue(comment.strip(), f"{name} without a comment")
+            # The comment goes inline into the DDL (see bootstrap) because `comment on
+            # schema` does not accept a bound parameter — a quote would break the SQL.
+            self.assertNotIn("'", comment, f"{name}: a quote would break the DDL")
 
 
-class _CursorFalso:
-    """Devolve contagens combinadas, para exercitar `verify` sem rede."""
+class _FakeCursor:
+    """Returns agreed counts, to exercise `verify` without a network."""
 
-    def __init__(self, contagens):
-        self.contagens = contagens
+    def __init__(self, counts):
+        self.counts = counts
 
     def execute(self, sql, params=None):
-        for nome, valor in self.contagens.items():
-            if nome in sql:
-                if isinstance(valor, Exception):
-                    raise valor
-                self._valor = valor
+        for name, value in self.counts.items():
+            if name in sql:
+                if isinstance(value, Exception):
+                    raise value
+                self._value = value
                 return self
-        raise AssertionError(f"consulta inesperada: {sql}")
+        raise AssertionError(f"unexpected query: {sql}")
 
     def fetchone(self):
-        return (self._valor,)
+        return (self._value,)
 
     def close(self):
         pass
 
 
-class _ConexaoFalsa:
+class _FakeConnection:
     def __init__(self, cursor):
         self._cursor = cursor
 
@@ -104,149 +104,151 @@ class _ConexaoFalsa:
         return self._cursor
 
 
-class ReconferenciaTest(unittest.TestCase):
-    """Carregar sem reconferir e confiar no transporte — mesma disciplina do Snowflake."""
+class RecheckTest(unittest.TestCase):
+    """Loading without rechecking is trusting the transport — same discipline as Snowflake."""
 
-    def contagens(self, override=None):
+    def counts(self, override=None):
         base = {spec["name"]: 10 for spec in SPECS}
         base.update(override or {})
         return base
 
-    def test_silencio_quando_tudo_bate(self):
-        con = _ConexaoFalsa(_CursorFalso(self.contagens()))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        self.assertEqual(verify(con, "/tmp", esperado), [])
+    def test_silence_when_everything_matches(self):
+        con = _FakeConnection(_FakeCursor(self.counts()))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        self.assertEqual(verify(con, "/tmp", expected), [])
 
-    def test_acusa_divergencia_de_contagem(self):
-        con = _ConexaoFalsa(_CursorFalso(self.contagens({"STG_CUSTOMER": 9})))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        problemas = verify(con, "/tmp", esperado)
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_CUSTOMER", problemas[0])
-        self.assertIn("10", problemas[0])
-        self.assertIn("9", problemas[0])
+    def test_flags_a_count_mismatch(self):
+        con = _FakeConnection(_FakeCursor(self.counts({"STG_CUSTOMER": 9})))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        problems = verify(con, "/tmp", expected)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_CUSTOMER", problems[0])
+        self.assertIn("10", problems[0])
+        self.assertIn("9", problems[0])
 
-    def test_acusa_tabela_que_o_export_nao_declarou(self):
-        con = _ConexaoFalsa(_CursorFalso(self.contagens()))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS if spec["name"] != "STG_WAREHOUSE"}
-        problemas = verify(con, "/tmp", esperado)
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_WAREHOUSE", problemas[0])
+    def test_flags_a_table_the_export_did_not_declare(self):
+        con = _FakeConnection(_FakeCursor(self.counts()))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS if spec["name"] != "STG_WAREHOUSE"}
+        problems = verify(con, "/tmp", expected)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_WAREHOUSE", problems[0])
 
-    def test_acusa_tabela_ausente_no_destino_em_vez_de_estourar(self):
-        con = _ConexaoFalsa(_CursorFalso(
-            self.contagens({"STG_GEOGRAPHY": RuntimeError("relation does not exist")})
+    def test_flags_a_table_missing_at_the_destination_instead_of_blowing_up(self):
+        con = _FakeConnection(_FakeCursor(
+            self.counts({"STG_GEOGRAPHY": RuntimeError("relation does not exist")})
         ))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        problemas = verify(con, "/tmp", esperado)
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_GEOGRAPHY", problemas[0])
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        problems = verify(con, "/tmp", expected)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_GEOGRAPHY", problems[0])
 
 
-class _CursorGravador:
-    """Guarda todo SQL (e parametros) executado, para conferir o bootstrap sem Postgres."""
+class _RecordingCursor:
+    """Keeps every SQL statement (and parameters) executed, to check bootstrap without Postgres."""
 
-    def __init__(self, respostas=None):
-        self.chamadas: list[tuple[str, tuple | None]] = []
-        self.respostas = respostas or {}
+    def __init__(self, responses=None):
+        self.calls: list[tuple[str, tuple | None]] = []
+        self.responses = responses or {}
 
     def execute(self, sql, params=None):
-        self.chamadas.append((sql, params))
-        self._linhas = []
-        for chave, valor in self.respostas.items():
-            if chave in sql:
-                self._linhas = valor
+        self.calls.append((sql, params))
+        self._rows = []
+        for key, value in self.responses.items():
+            if key in sql:
+                self._rows = value
         return self
 
     def fetchall(self):
-        return self._linhas
+        return self._rows
 
     def fetchone(self):
-        return self._linhas[0] if self._linhas else None
+        return self._rows[0] if self._rows else None
 
     def close(self):
         pass
 
-    def emitiu(self, *fragmentos):
-        return [sql for sql, _ in self.chamadas if all(f in sql for f in fragmentos)]
+    def emitted(self, *fragments):
+        return [sql for sql, _ in self.calls if all(f in sql for f in fragments)]
 
 
-class GovernancaTest(unittest.TestCase):
-    """Os tres papeis e os grants automaticos sobre tabela futura — o equivalente Postgres
-    do 'grant on future tables' do Snowflake, sem o qual o full-refresh (drop+create)
-    silenciaria o papel seguinte a cada carga."""
+class GovernanceTest(unittest.TestCase):
+    """The three roles and the automatic grants on future tables — the Postgres equivalent
+    of Snowflake's 'grant on future tables', without which the full refresh (drop+create)
+    would silence the next role on every load."""
 
     def setUp(self):
-        self.cursor = _CursorGravador()
-        bootstrap(self.cursor, grant_to_user="alguem")
+        self.cursor = _RecordingCursor()
+        bootstrap(self.cursor, grant_to_user="someone")
 
-    def test_os_tres_schemas_sao_criados_citados_e_comentados(self):
-        for nome in SCHEMAS:
-            self.assertTrue(self.cursor.emitiu(f'create schema if not exists "{nome}"'))
-            self.assertTrue(self.cursor.emitiu(f'comment on schema "{nome}"'))
+    def test_the_three_schemas_are_created_quoted_and_commented(self):
+        for name in SCHEMAS:
+            self.assertTrue(self.cursor.emitted(f'create schema if not exists "{name}"'))
+            self.assertTrue(self.cursor.emitted(f'comment on schema "{name}"'))
 
-    def test_os_tres_papeis_sao_criados(self):
-        for nome in ROLES:
-            self.assertTrue(self.cursor.emitiu(f"create role {nome}"))
+    def test_the_three_roles_are_created(self):
+        for name in ROLES:
+            self.assertTrue(self.cursor.emitted(f"create role {name}"))
 
-    def test_loader_so_tem_usage_e_create_no_stage(self):
-        self.assertTrue(self.cursor.emitiu(f'grant usage, create on schema "{STAGE}"', "retail_loader"))
+    def test_loader_only_has_usage_and_create_on_stage(self):
+        self.assertTrue(self.cursor.emitted(f'grant usage, create on schema "{STAGE}"', "retail_loader"))
 
-    def test_transformer_recebe_select_automatico_em_tabela_futura_do_stage(self):
-        """Sem `alter default privileges`, o TRANSFORMER ficaria sem enxergar a tabela que
-        o LOADER recria a cada carga — `create table` novo nao herda grant nenhum."""
-        self.assertTrue(self.cursor.emitiu(
+    def test_transformer_gets_automatic_select_on_future_stage_tables(self):
+        """Without `alter default privileges`, the TRANSFORMER would not see the table the
+        LOADER recreates on every load — a new `create table` inherits no grant at all."""
+        self.assertTrue(self.cursor.emitted(
             f'alter default privileges for role retail_loader in schema "{STAGE}"',
             "grant select on tables to retail_transformer",
         ))
 
-    def test_reader_recebe_select_automatico_em_tabela_futura_do_mart(self):
-        self.assertTrue(self.cursor.emitiu(
+    def test_reader_gets_automatic_select_on_future_mart_tables(self):
+        self.assertTrue(self.cursor.emitted(
             f'alter default privileges for role retail_transformer in schema "{MART}"',
             "grant select on tables to retail_reader",
         ))
 
-    def test_reader_nao_recebe_privilegio_futuro_em_gold(self):
-        """So MART. O mesmo isolamento que o Snowflake prova com `check_isolation`."""
-        self.assertFalse(self.cursor.emitiu(
+    def test_reader_gets_no_future_privilege_on_gold(self):
+        """Only MART. The same isolation Snowflake proves with `check_isolation`."""
+        self.assertFalse(self.cursor.emitted(
             f'alter default privileges for role retail_transformer in schema "{GOLD}"',
             "retail_reader",
         ))
 
-    def test_grant_to_user_concede_os_tres_papeis(self):
-        for nome in ROLES:
-            self.assertTrue(self.cursor.emitiu(f"grant {nome} to alguem"))
+    def test_grant_to_user_grants_the_three_roles(self):
+        for name in ROLES:
+            self.assertTrue(self.cursor.emitted(f"grant {name} to someone"))
 
-    def test_sem_usuario_nao_concede_papel_a_ninguem(self):
-        cursor = _CursorGravador()
+    def test_without_a_user_no_role_is_granted_to_anyone(self):
+        cursor = _RecordingCursor()
         bootstrap(cursor)
-        self.assertEqual(cursor.emitiu("grant retail_loader to"), [])
+        self.assertEqual(cursor.emitted("grant retail_loader to"), [])
 
 
-class RequerSchemasTest(unittest.TestCase):
-    def test_passa_quando_o_schema_existe(self):
-        cursor = _CursorGravador({"information_schema.schemata": [("STAGE",)]})
+class RequireSchemasTest(unittest.TestCase):
+    def test_passes_when_the_schema_exists(self):
+        cursor = _RecordingCursor({"information_schema.schemata": [("STAGE",)]})
         require_schemas(cursor, (STAGE,))
 
-    def test_acusa_e_sugere_o_bootstrap_quando_falta(self):
-        cursor = _CursorGravador({"information_schema.schemata": [("GOLD",), ("MART",)]})
-        with self.assertRaises(PostgresLoadError) as erro:
+    def test_flags_and_suggests_bootstrap_when_missing(self):
+        cursor = _RecordingCursor({"information_schema.schemata": [("GOLD",), ("MART",)]})
+        with self.assertRaises(PostgresLoadError) as error:
             require_schemas(cursor, (STAGE,))
-        self.assertIn(STAGE, str(erro.exception))
-        self.assertIn("warehouse-postgres-bootstrap", str(erro.exception))
+        self.assertIn(STAGE, str(error.exception))
+        # The cited target has to exist: the message once told people to run
+        # `warehouse-postgres-bootstrap`, which never existed in the Makefile.
+        self.assertIn("`make warehouse-bootstrap`", str(error.exception))
 
 
-class PapelDaCargaTest(unittest.TestCase):
-    def test_a_carga_nao_roda_como_administrador(self):
-        """O papel da carga e explicito, nao o usuario administrativo do container."""
+class LoadRoleTest(unittest.TestCase):
+    def test_the_load_does_not_run_as_administrator(self):
+        """The load role is explicit, not the container's administrative user."""
         self.assertEqual(DEFAULT_LOAD_ROLE, "retail_loader")
 
-    def test_papel_desconhecido_e_recusado_antes_de_abrir_conexao(self):
-        """`set role` nao aceita parametro ligado — o nome precisa ser validado ANTES de
-        entrar no SQL, e a validacao roda antes de qualquer tentativa de rede."""
-        with self.assertRaises(PostgresLoadError) as erro:
-            connect(role="admin_do_mal")
-        self.assertIn("papel desconhecido", str(erro.exception))
+    def test_unknown_role_is_refused_before_opening_a_connection(self):
+        """`set role` does not accept a bound parameter — the name must be validated BEFORE
+        reaching the SQL, and the validation runs before any network attempt."""
+        with self.assertRaises(PostgresLoadError) as error:
+            connect(role="evil_admin")
+        self.assertIn("unknown role", str(error.exception))
 
 
 if __name__ == "__main__":

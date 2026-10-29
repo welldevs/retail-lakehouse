@@ -1,74 +1,29 @@
-"""The panel's indicators: the query AND the explanation, in the SAME place.
+"""Operations indicators: orders, fulfillment, basket, assortment, stock and customer base.
 
-WHY THIS IS A MODULE AND NOT A DOCUMENT. This folder's `CONTRACT.md` is GENERATED from here
-(`make dashboard-contract`). If the explanation lived in a hand-written markdown, it would be a
-second place where the indicator lives, and the two would diverge at the first SQL tweak — with
-the cruel detail that the review would keep "passing", because nobody reads a SQL query and a
-text side by side looking for disagreement. It's the same reason the STAGE's DDL is derived from
-the cut instead of hand-written, and why `docs/warehouse-evidence/` is generated.
-
-WHAT EACH FIELD CARRIES, and why none of them is optional:
-
-  `pergunta`  — what the indicator answers. If it doesn't fit in one sentence, the indicator is
-                doing two things.
-  `grao`      — the source's grain. It's what says whether a sum is legitimate: summing
-                `orders_touching_category` across categories counts the same order multiple times.
-  `tipo`      — `observado` (came from a real source), `sintetico` (was generated), `misto` or
-                `derivado`. A panel that doesn't distinguish the two invites reading simulation
-                density as market penetration.
-  `armadilhas`— what goes wrong when rebuilding this in Power BI. It's not a footnote caveat:
-                these are the cases where the obvious measure produces a PLAUSIBLE and wrong
-                number, which is the only class of error no test catches.
-
-PARAMETERS. Every query with a date axis accepts `%(inicio)s`, `%(fim)s` and `%(armazens)s`
-(comma-separated list). The warehouse filter uses
-`wh = any(string_to_array(%(armazens)s, ','))` — one line, with no SQL assembled by
-concatenation, so there's no way to inject anything through the interface's selector.
+The query AND the explanation live in the SAME place. `docs/indicators/operations.md` is
+GENERATED from here (`make indicators-contract`): if the explanation lived in hand-written
+markdown it would be a second place where the indicator lives, and the two would diverge at
+the first SQL tweak. Consumers: `streamlit/operations_app.py` today, the LLM layer next.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from .model import (  # noqa: F401 — DB is re-exported for the contract
+    DATE_FILTER, DB, MART, SNAPSHOT_DATE_FILTER, STOCK_DATE_FILTER, WAREHOUSE_FILTER, Indicator,
+)
 
-DB = "retail"
-# Quoted, uppercase: dbt_project.yml declares `+schema: MART` literally, and Postgres
-# case-folds an UNQUOTED identifier to lowercase — `from MART.mart_order_funnel` would
-# look for a schema named `mart`, which does not exist (measured: "schema does not
-# exist"). No database prefix either: Postgres has no cross-database query within one
-# connection, unlike the RETAIL.MART.MART_X this module used against Snowflake.
-MART = '"MART"'
-FILTRO_DATA = "order_date between %(inicio)s and %(fim)s"
-FILTRO_DATA_SNAP = "snapshot_date between %(inicio)s and %(fim)s"
-FILTRO_DATA_STOCK = "stock_date between %(inicio)s and %(fim)s"
-FILTRO_WH = "wh = any(string_to_array(%(armazens)s, ','))"
-
-
-@dataclass(frozen=True)
-class Indicador:
-    chave: str
-    titulo: str
-    grupo: str
-    pergunta: str
-    grao: str
-    tipo: str
-    marts: tuple[str, ...]
-    sql: str
-    armadilhas: tuple[str, ...] = field(default_factory=tuple)
-    datado: bool = True
-
-
-INDICADORES: tuple[Indicador, ...] = (
+INDICATORS: tuple[Indicator, ...] = (
 
     # ================================================================= A. COMMERCIAL
-    Indicador(
-        chave="resumo_comercial",
-        titulo="Commercial summary",
-        grupo="A. Commercial",
-        pergunta="How many orders came in, how many reached the customer, and how much revenue was realized?",
-        grao="(order_date, wh) aggregated for the period total",
-        tipo="synthetic (the order) over observed (customer, product, price)",
+    Indicator(
+        key="resumo_comercial",
+        title="Commercial summary",
+        group="A. Commercial",
+        question="How many orders came in, how many reached the customer, and how much revenue was realized?",
+        grain="(order_date, wh) aggregated for the period total",
+        kind="synthetic (the order) over observed (customer, product, price)",
         marts=("MART_ORDER_FUNNEL",),
-        armadilhas=(
+        caveats=(
             "AVERAGE TICKET has two possible denominators and they are NOT equivalent: "
             "revenue/orders_picked = 95.11 and revenue/orders_placed = 90.91. The second "
             "divides the revenue of whoever was picked by the total including whoever never "
@@ -94,19 +49,19 @@ INDICADORES: tuple[Indicador, ...] = (
                       / nullif(sum(orders_placed), 0))::numeric, 4)           as taxa_entrega,
                 max(currency)                                       as moeda
             from {MART}.mart_order_funnel
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
         """,
     ),
 
-    Indicador(
-        chave="funil",
-        titulo="Conversion funnel, by milestone reached",
-        grupo="A. Commercial",
-        pergunta="Out of every 100 orders placed, how many made it through each stage?",
-        grao="(order_date, wh) aggregated; one row per STAGE",
-        tipo="derived from milestone count",
+    Indicator(
+        key="funil",
+        title="Conversion funnel, by milestone reached",
+        group="A. Commercial",
+        question="Out of every 100 orders placed, how many made it through each stage?",
+        grain="(order_date, wh) aggregated; one row per STAGE",
+        kind="derived from milestone count",
         marts=("MART_ORDER_FUNNEL",),
-        armadilhas=(
+        caveats=(
             "STAGES ARE COUNTED BY MILESTONE REACHED, never by status. `order_status` holds "
             "the state of the LAST event: a returned order has status RETURNED and WAS "
             "delivered. Measured on this base: counting status='DELIVERED' gives 193,789; "
@@ -127,7 +82,7 @@ INDICADORES: tuple[Indicador, ...] = (
                     sum(orders_dispatched)      as despachado,
                     sum(orders_delivered)       as entregue
                 from {MART}.mart_order_funnel
-                where {FILTRO_DATA} and {FILTRO_WH}
+                where {DATE_FILTER} and {WAREHOUSE_FILTER}
             )
             select 1 as ordem, 'Placed'            as etapa, colocado            as pedidos, 1.0 as taxa from total
             union all select 2, 'Payment approved', confirmado,         round((confirmado/nullif(colocado,0))::numeric,4)         from total
@@ -139,15 +94,15 @@ INDICADORES: tuple[Indicador, ...] = (
         """,
     ),
 
-    Indicador(
-        chave="vazamento",
-        titulo="Where the order leaks out",
-        grupo="A. Commercial",
-        pergunta="How many orders left the funnel, and for what reason?",
-        grao="(order_date, wh) aggregated; one row per exit reason",
-        tipo="derived from milestone count",
+    Indicator(
+        key="vazamento",
+        title="Where the order leaks out",
+        group="A. Commercial",
+        question="How many orders left the funnel, and for what reason?",
+        grain="(order_date, wh) aggregated; one row per exit reason",
+        kind="derived from milestone count",
         marts=("MART_ORDER_FUNNEL",),
-        armadilhas=(
+        caveats=(
             "THESE COUNTS DO NOT ADD UP WITH THE FUNNEL STAGES. `orders_returned` counts "
             "whoever left AFTER going through the entire funnel; adding exits to stages would "
             "count the returned orders twice. In Power BI, keep the two blocks separate and "
@@ -156,32 +111,32 @@ INDICADORES: tuple[Indicador, ...] = (
         sql=f"""
             select 'Payment declined' as motivo, sum(orders_payment_failed)  as pedidos,
                    round((sum(orders_payment_failed)/nullif(sum(orders_placed),0))::numeric,4) as sobre_colocados
-              from {MART}.mart_order_funnel where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_order_funnel where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 'Cancelled', sum(orders_cancelled),
                    round((sum(orders_cancelled)/nullif(sum(orders_placed),0))::numeric,4)
-              from {MART}.mart_order_funnel where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_order_funnel where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 'Delivery failed', sum(orders_delivery_failed),
                    round((sum(orders_delivery_failed)/nullif(sum(orders_placed),0))::numeric,4)
-              from {MART}.mart_order_funnel where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_order_funnel where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 'Returned (after delivery)', sum(orders_returned),
                    round((sum(orders_returned)/nullif(sum(orders_placed),0))::numeric,4)
-              from {MART}.mart_order_funnel where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_order_funnel where {DATE_FILTER} and {WAREHOUSE_FILTER}
             order by pedidos desc
         """,
     ),
 
-    Indicador(
-        chave="decomposicao_perda",
-        titulo="Value loss, decomposed by CAUSE",
-        grupo="A. Commercial",
-        pergunta="What was placed but not realized as revenue — and why?",
-        grao="(order_date, wh) aggregated",
-        tipo="derived",
+    Indicator(
+        key="decomposicao_perda",
+        title="Value loss, decomposed by CAUSE",
+        group="A. Commercial",
+        question="What was placed but not realized as revenue — and why?",
+        grain="(order_date, wh) aggregated",
+        kind="derived",
         marts=("MART_ORDER_FUNNEL",),
-        armadilhas=(
+        caveats=(
             "THIS IS THE EASIEST INDICATOR IN THE PANEL TO GET WRONG, and the error produces "
             "a plausible number. `SUM(gross) - SUM(net)` gives 1,278,522.89 and MIXES two "
             "losses with opposite causes. `SUM(amount_delta)` gives 393,757.28 — and that's "
@@ -212,7 +167,7 @@ INDICADORES: tuple[Indicador, ...] = (
                        sum(orders_placed)       as pedidos,
                        sum(orders_picked)       as separados
                 from {MART}.mart_order_funnel
-                where {FILTRO_DATA} and {FILTRO_WH}
+                where {DATE_FILTER} and {WAREHOUSE_FILTER}
             )
             select 1 as ordem, 'Loss at picking (basket shrank)' as causa,
                    delta_separacao as valor, separados as pedidos_afetados,
@@ -228,15 +183,15 @@ INDICADORES: tuple[Indicador, ...] = (
         """,
     ),
 
-    Indicador(
-        chave="serie_diaria",
-        titulo="Daily series: orders and revenue",
-        grupo="A. Commercial",
-        pergunta="How do orders and revenue move day by day, by warehouse?",
-        grao="(order_date, wh) — the mart's native grain",
-        tipo="mixed",
+    Indicator(
+        key="serie_diaria",
+        title="Daily series: orders and revenue",
+        group="A. Commercial",
+        question="How do orders and revenue move day by day, by warehouse?",
+        grain="(order_date, wh) — the mart's native grain",
+        kind="mixed",
         marts=("MART_ORDER_FUNNEL",),
-        armadilhas=(
+        caveats=(
             "THE CURRENT WINDOW HAS 4 DAYS. There is no trend, seasonality or weekly "
             "comparison to extract from this — any trend line over 4 points is decoration. "
             "The axis exists so the series GROWS, and it grows every day the DAG runs.",
@@ -247,21 +202,21 @@ INDICADORES: tuple[Indicador, ...] = (
                    round((net_amount_picked/nullif(orders_picked,0))::numeric,2) as ticket_medio,
                    delivery_rate
             from {MART}.mart_order_funnel
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
             order by order_date, wh
         """,
     ),
 
     # ================================================================= B. OPERATIONS
-    Indicador(
-        chave="sla_separacao",
-        titulo="Picking SLA: threshold, maximum and violations",
-        grupo="B. Operations",
-        pergunta="How many orders breached the declared picking threshold?",
-        grao="(order_date, wh) aggregated",
-        tipo="derived from a declared assumption (synthetic)",
+    Indicator(
+        key="sla_separacao",
+        title="Picking SLA: threshold, maximum and violations",
+        group="B. Operations",
+        question="How many orders breached the declared picking threshold?",
+        grain="(order_date, wh) aggregated",
+        kind="derived from a declared assumption (synthetic)",
         marts=("MART_FULFILLMENT_SLA",),
-        armadilhas=(
+        caveats=(
             "THE THREE COLUMNS ONLY MEAN SOMETHING TOGETHER. Until Phase 7 "
             "`orders_breaching_sla` was 0 not because operations were good: the declared "
             "threshold was 90 minutes against an ARITHMETIC ceiling of 80 (`basket_lines_max` "
@@ -286,19 +241,19 @@ INDICADORES: tuple[Indicador, ...] = (
                 sum(orders_breaching_sla)   as violacoes,
                 sum(orders_with_pick)       as pedidos_com_separacao
             from {MART}.mart_fulfillment_sla
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
         """,
     ),
 
-    Indicador(
-        chave="percentis_etapa",
-        titulo="Time per stage (p50 / p90)",
-        grupo="B. Operations",
-        pergunta="How long does each stage take, at the middle and at the tail?",
-        grao="(order_date, wh); median of medians when aggregated — see gotchas",
-        tipo="derived",
+    Indicator(
+        key="percentis_etapa",
+        title="Time per stage (p50 / p90)",
+        group="B. Operations",
+        question="How long does each stage take, at the middle and at the tail?",
+        grain="(order_date, wh); median of medians when aggregated — see gotchas",
+        kind="derived",
         marts=("MART_FULFILLMENT_SLA",),
-        armadilhas=(
+        caveats=(
             "PERCENTILE DOESN'T SUM AND DOESN'T AVERAGE. The mart holds p50/p90 by (day, "
             "warehouse); the panel shows the AVERAGE of these percentiles when there's more "
             "than one row, and that's an approximation, not the percentile of the whole set. "
@@ -315,37 +270,37 @@ INDICADORES: tuple[Indicador, ...] = (
                    round((avg(p50_minutes_to_confirm))::numeric,1) as media_p50,
                    round((avg(p90_minutes_to_confirm))::numeric,1) as media_p90,
                    sum(orders_with_confirm)             as pedidos
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 2, 'Picking (start -> end)', round((avg(p50_minutes_to_pick))::numeric,1),
                    round((avg(p90_minutes_to_pick))::numeric,1), sum(orders_with_pick)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 3, 'Picked -> dispatched', round((avg(p50_minutes_to_dispatch))::numeric,1),
                    round((avg(p90_minutes_to_dispatch))::numeric,1), sum(orders_with_pick)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 4, 'Dispatched -> delivered', round((avg(p50_minutes_to_deliver))::numeric,1),
                    round((avg(p90_minutes_to_deliver))::numeric,1), sum(orders_with_deliver)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 5, 'Total cycle (placed -> delivered)',
                    round((avg(p50_minutes_placed_to_delivered))::numeric,1),
                    round((avg(p90_minutes_placed_to_delivered))::numeric,1), sum(orders_with_deliver)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             order by ordem
         """,
     ),
 
-    Indicador(
-        chave="janela_entrega",
-        titulo="Delivery window: before, within, after",
-        grupo="B. Operations",
-        pergunta="Did the delivery happen within the window promised to the customer?",
-        grao="(order_date, wh) aggregated; one row per outcome",
-        tipo="derived",
+    Indicator(
+        key="janela_entrega",
+        title="Delivery window: before, within, after",
+        group="B. Operations",
+        question="Did the delivery happen within the window promised to the customer?",
+        grain="(order_date, wh) aggregated; one row per outcome",
+        kind="derived",
         marts=("MART_FULFILLMENT_SLA",),
-        armadilhas=(
+        caveats=(
             "ARRIVING EARLY AND ARRIVING LATE ARE OPPOSITE PROBLEMS, and a single 'adherence' "
             "rate erases which one is happening. Always publish the direction: low adherence "
             "invites the conclusion 'operations are running late', and this project has "
@@ -367,27 +322,27 @@ INDICADORES: tuple[Indicador, ...] = (
         sql=f"""
             select 1 as ordem, 'Before the window opens' as resultado,
                    sum(orders_delivered_before_slot) as entregas
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 2, 'Within the window', sum(orders_delivered_within_slot)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             union all
             select 3, 'After the window closes', sum(orders_delivered_after_slot)
-              from {MART}.mart_fulfillment_sla where {FILTRO_DATA} and {FILTRO_WH}
+              from {MART}.mart_fulfillment_sla where {DATE_FILTER} and {WAREHOUSE_FILTER}
             order by ordem
         """,
     ),
 
     # ================================================================= C. BASKET
-    Indicador(
-        chave="receita_categoria",
-        titulo="Revenue by category",
-        grupo="C. Basket and category",
-        pergunta="Which categories account for the realized revenue?",
-        grao="(order_date, wh, category_id) aggregated by category",
-        tipo="mixed",
+    Indicator(
+        key="receita_categoria",
+        title="Revenue by category",
+        group="C. Basket and category",
+        question="Which categories account for the realized revenue?",
+        grain="(order_date, wh, category_id) aggregated by category",
+        kind="mixed",
         marts=("MART_BASKET_DAILY",),
-        armadilhas=(
+        caveats=(
             "`orders_touching_category` IS NOT ADDITIVE across categories: an order with milk "
             "and bread counts once in each. Adding up the 151 categories of a single day "
             "gives far more than the ~22,947 orders of that day — and it's always ~22,947, "
@@ -413,21 +368,21 @@ INDICADORES: tuple[Indicador, ...] = (
                 count(distinct order_date)          as dias,
                 max(currency)                       as moeda
             from {MART}.mart_basket_daily
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             order by receita_apurada desc nulls last
         """,
     ),
 
-    Indicador(
-        chave="substituicao_categoria",
-        titulo="Substitution and removal, by category",
-        grupo="C. Basket and category",
-        pergunta="Where does the basket change the most between order and delivery?",
-        grao="(order_date, wh, category_id) aggregated by category",
-        tipo="derived from a declared assumption (synthetic)",
+    Indicator(
+        key="substituicao_categoria",
+        title="Substitution and removal, by category",
+        group="C. Basket and category",
+        question="Where does the basket change the most between order and delivery?",
+        grain="(order_date, wh, category_id) aggregated by category",
+        kind="derived from a declared assumption (synthetic)",
         marts=("MART_BASKET_DAILY",),
-        armadilhas=(
+        caveats=(
             "THE RATES ARE AN ASSUMPTION, NOT AN OBSERVATION. `substitution_rate` (0.04) and "
             "`removal_rate` (0.02) were DECLARED in the generator's seed; no source in this "
             "repository measures availability. The variation across categories is sampling "
@@ -450,22 +405,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 round((sum(lines_substituted)/nullif(sum(lines_placed),0))::numeric, 4) as taxa_substituicao,
                 round((sum(lines_removed)    /nullif(sum(lines_placed),0))::numeric, 4) as taxa_remocao
             from {MART}.mart_basket_daily
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1
             having sum(lines_placed) >= 100
             order by taxa_substituicao desc
         """,
     ),
 
-    Indicador(
-        chave="perfil_por_faixa",
-        titulo="Consumption profile by buyer age band",
-        grupo="C. Basket and category",
-        pergunta="What does each age band buy, and where does it differ most from the others?",
-        grao="(order_date, wh, buyer_age_band, demand_group) aggregated by band and group",
-        tipo="synthetic calibrated against benchmark (MAPA 2025)",
+    Indicator(
+        key="perfil_por_faixa",
+        title="Consumption profile by buyer age band",
+        group="C. Basket and category",
+        question="What does each age band buy, and where does it differ most from the others?",
+        grain="(order_date, wh, buyer_age_band, demand_group) aggregated by band and group",
+        kind="synthetic calibrated against benchmark (MAPA 2025)",
         marts=("MART_DEMAND_COHORT",),
-        armadilhas=(
+        caveats=(
             "THE AGGREGATE DOESN'T CHANGE ACROSS BANDS, ON PURPOSE. Cohort calibration is "
             "neutral in the total — an IPF guarantees that the weighted average of the "
             "per-cohort weights reproduces the aggregate mix. Looking for this layer's effect "
@@ -492,7 +447,7 @@ INDICADORES: tuple[Indicador, ...] = (
                     demand_group,
                     sum(lines_placed)                               as linhas
                 from {MART}.mart_demand_cohort
-                where {FILTRO_DATA} and {FILTRO_WH}
+                where {DATE_FILTER} and {WAREHOUSE_FILTER}
                 group by 1, 2
             ),
             total as (
@@ -528,15 +483,15 @@ INDICADORES: tuple[Indicador, ...] = (
         """,
     ),
 
-    Indicador(
-        chave="pedidos_por_regiao",
-        titulo="Orders by warehouse, and the regional intensity that separates them",
-        grupo="C. Basket and category",
-        pergunta="Why does bcn1 place more orders than mad1, if the customer bases are the same size?",
-        grao="(order_date, wh) aggregated by warehouse",
-        tipo="synthetic tilted by observed per-capita consumption (MAPA, section 3)",
+    Indicator(
+        key="pedidos_por_regiao",
+        title="Orders by warehouse, and the regional intensity that separates them",
+        group="C. Basket and category",
+        question="Why does bcn1 place more orders than mad1, if the customer bases are the same size?",
+        grain="(order_date, wh) aggregated by warehouse",
+        kind="synthetic tilted by observed per-capita consumption (MAPA, section 3)",
         marts=("MART_DEMAND_COHORT",),
-        armadilhas=(
+        caveats=(
             "THE DIFFERENCE IS DELIBERATE AND OBSERVED. Until the previous phase the four "
             "warehouses had the same count by construction. The report measures per-capita "
             "consumption by autonomous community — Catalonia 620.82 kg-L per person per year "
@@ -559,22 +514,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 round((sum(revenue_fulfilled))::numeric, 2)                    as receita,
                 max(currency)                                       as moeda
             from {MART}.mart_demand_cohort
-            where {FILTRO_DATA} and {FILTRO_WH}
+            where {DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1
             order by linhas desc
         """,
     ),
 
     # ================================================= D. ASSORTMENT AND PRICE
-    Indicador(
-        chave="sortimento_armazem",
-        titulo="Assortment by warehouse",
-        grupo="D. Assortment and price",
-        pergunta="How much catalog does each warehouse have, and how much of it is exclusive to it?",
-        grao="(snapshot_date, wh, category_id) aggregated by warehouse",
-        tipo="observed",
+    Indicator(
+        key="sortimento_armazem",
+        title="Assortment by warehouse",
+        group="D. Assortment and price",
+        question="How much catalog does each warehouse have, and how much of it is exclusive to it?",
+        grain="(snapshot_date, wh, category_id) aggregated by warehouse",
+        kind="observed",
         marts=("MART_ASSORTMENT_DAILY",),
-        armadilhas=(
+        caveats=(
             "ASSORTMENT IS THE PRESENCE OF THE LINE in the price fact, not a table of its "
             "own. A row states 'this product was in this warehouse's catalog on this day'. "
             "Be careful reading absence: it can be a product out of the catalog OR a day not "
@@ -603,7 +558,7 @@ INDICADORES: tuple[Indicador, ...] = (
                        avg(avg_unit_price)          as preco_medio_dia,
                        sum(new_arrivals)            as novidades
                 from {MART}.mart_assortment_daily
-                where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+                where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
                 group by 1, 2
             )
             group by 1
@@ -611,15 +566,15 @@ INDICADORES: tuple[Indicador, ...] = (
         """,
     ),
 
-    Indicador(
-        chave="variacao_preco",
-        titulo="Largest price changes",
-        grupo="D. Assortment and price",
-        pergunta="Which products changed price, and between which observed days?",
-        grao="(snapshot_date, wh, source_product_id)",
-        tipo="observed",
+    Indicator(
+        key="variacao_preco",
+        title="Largest price changes",
+        group="D. Assortment and price",
+        question="Which products changed price, and between which observed days?",
+        grain="(snapshot_date, wh, source_product_id)",
+        kind="observed",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "`days_since_previous_snapshot` IS MANDATORY READING. There are measured gaps of "
             "up to 8 days in the catalog; comparing an 8-day change with a 1-day one without "
             "this column treats the two as the same fact. It travels with the query on "
@@ -647,22 +602,22 @@ INDICADORES: tuple[Indicador, ...] = (
                 change_type as tipo_de_mudanca,
                 identity_ambiguous as identidade_ambigua
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
               and purchasable_price_delta is not null and purchasable_price_delta <> 0
             order by abs(purchasable_price_delta) desc
             limit 200
         """,
     ),
 
-    Indicador(
-        chave="movimento_catalogo",
-        titulo="Catalog movement",
-        grupo="D. Assortment and price",
-        pergunta="How many products entered, left, changed price, or stayed stable?",
-        grao="(snapshot_date, wh, source_product_id) aggregated by type",
-        tipo="observed",
+    Indicator(
+        key="movimento_catalogo",
+        title="Catalog movement",
+        group="D. Assortment and price",
+        question="How many products entered, left, changed price, or stayed stable?",
+        grain="(snapshot_date, wh, source_product_id) aggregated by type",
+        kind="observed",
         marts=("MART_PRICE_EVOLUTION",),
-        armadilhas=(
+        caveats=(
             "'Left' means ABSENT FROM THE NEXT OBSERVED SNAPSHOT, not discontinued. With a "
             "7-day gap in the series, the distinction matters: the product may have come back "
             "on a day nobody looked.",
@@ -672,21 +627,21 @@ INDICADORES: tuple[Indicador, ...] = (
                    count(distinct source_product_id) as produtos_distintos,
                    count(distinct snapshot_date) as dias
             from {MART}.mart_price_evolution
-            where {FILTRO_DATA_SNAP} and {FILTRO_WH}
+            where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1 order by produtos desc
         """,
     ),
 
     # ================================================= E. SUPPLY x DEMAND
-    Indicador(
-        chave="oferta_demanda",
-        titulo="Supply x demand, at the same grain",
-        grupo="E. Supply x demand",
-        pergunta="Of the catalog available in each category, how much was actually ordered?",
-        grao="(order_date, wh, category_id) — the grain COMMON to both marts",
-        tipo="mixed: observed supply, synthetic demand",
+    Indicator(
+        key="oferta_demanda",
+        title="Supply x demand, at the same grain",
+        group="E. Supply x demand",
+        question="Of the catalog available in each category, how much was actually ordered?",
+        grain="(order_date, wh, category_id) — the grain COMMON to both marts",
+        kind="mixed: observed supply, synthetic demand",
         marts=("MART_ASSORTMENT_DAILY", "MART_BASKET_DAILY"),
-        armadilhas=(
+        caveats=(
             "THIS IS THE ONLY CROSS THE TWO MARTS ALLOW WITHOUT REAGGREGATION, and that's why "
             "both have grain (date, wh, category_id). The join is by equality on the three "
             "columns; any other level requires aggregating first and the result becomes "
@@ -717,24 +672,24 @@ INDICADORES: tuple[Indicador, ...] = (
                    on  d.order_date  = o.snapshot_date
                   and  d.wh          = o.wh
                   and  d.category_id = o.category_id
-            where o.snapshot_date between %(inicio)s and %(fim)s
-              and o.wh = any(string_to_array(%(armazens)s, ','))
+            where o.snapshot_date between %(start)s and %(end)s
+              and o.wh = any(string_to_array(%(warehouses)s, ','))
             group by 1
             order by produtos_ofertados desc
         """,
     ),
 
     # ================================================= F. BASE AND COVERAGE
-    Indicador(
-        chave="base_clientes",
-        titulo="Customer base",
-        grupo="F. Base and coverage",
-        pergunta="How is the customer base distributed by warehouse, age band and sex?",
-        grao="customer_id (current version)",
-        tipo="SYNTHETIC (the person) over observed (the address)",
+    Indicator(
+        key="base_clientes",
+        title="Customer base",
+        group="F. Base and coverage",
+        question="How is the customer base distributed by warehouse, age band and sex?",
+        grain="customer_id (current version)",
+        kind="SYNTHETIC (the person) over observed (the address)",
         marts=("MART_CUSTOMER_BASE",),
-        datado=False,
-        armadilhas=(
+        dated=False,
+        caveats=(
             "THE PERSON IS INVENTED; WHERE THEY LIVE IS NOT. Municipality, street, postal "
             "code and house-number range always come from a real Callejero row. Distribution "
             "by age and sex is a generator assumption, not demographics — there is nothing to "
@@ -757,16 +712,16 @@ INDICADORES: tuple[Indicador, ...] = (
         """,
     ),
 
-    Indicador(
-        chave="cobertura_municipal",
-        titulo="Municipal coverage",
-        grupo="F. Base and coverage",
-        pergunta="Which municipalities in the service area have customers, and which don't?",
-        grao="(wh, province_code, municipality_code) — all 370 in the AUF",
-        tipo="mixed: synthetic numerator, observed denominator",
+    Indicator(
+        key="cobertura_municipal",
+        title="Municipal coverage",
+        group="F. Base and coverage",
+        question="Which municipalities in the service area have customers, and which don't?",
+        grain="(wh, province_code, municipality_code) — all 370 in the AUF",
+        kind="mixed: synthetic numerator, observed denominator",
         marts=("MART_MARKET_COVERAGE",),
-        datado=False,
-        armadilhas=(
+        dated=False,
+        caveats=(
             "`customers_per_10k_inhabitants` HAS A SYNTHETIC NUMERATOR AND AN OBSERVED "
             "DENOMINATOR. It serves to compare SIMULATION DENSITY between municipalities — "
             "never as a market-penetration estimate. It's the easiest indicator in the whole "
@@ -797,19 +752,19 @@ INDICADORES: tuple[Indicador, ...] = (
     # is no stock source. What changed is that the balance became CALCULATED, by
     # a Spark job, from consumption observed in orders plus a declared policy.
     #
-    # That's why `tipo` says "derived: observed consumption, synthetic policy" in all
+    # That's why `kind` says "derived: observed consumption, synthetic policy" in all
     # four, and not "observed". Reading stockout here as a field measurement would be the
     # same error as reading simulation density as market penetration.
 
-    Indicador(
-        chave="cobertura_estoque",
-        titulo="Stock coverage by category",
-        grupo="G. Stock and replenishment",
-        pergunta="How many days of demand does each category's stock still cover?",
-        grao="(stock_date, wh, category_id) — one row per level-2 category, per day",
-        tipo="derived: observed consumption, synthetic policy",
+    Indicator(
+        key="cobertura_estoque",
+        title="Stock coverage by category",
+        group="G. Stock and replenishment",
+        question="How many days of demand does each category's stock still cover?",
+        grain="(stock_date, wh, category_id) — one row per level-2 category, per day",
+        kind="derived: observed consumption, synthetic policy",
         marts=("MART_STOCK_HEALTH",),
-        armadilhas=(
+        caveats=(
             "BALANCE DOESN'T ADD UP ACROSS DAYS. `closing_units` from Monday plus Tuesday's "
             "is not the week's stock — it's the same stock counted twice. Summing across "
             "PRODUCTS within the day is correct; summing along a time axis never is. It's the "
@@ -843,21 +798,21 @@ INDICADORES: tuple[Indicador, ...] = (
                        as cobertura_do_produto_tipico,
                    sum(product_days) as pares_produto_dia
             from {MART}.mart_stock_health
-            where {FILTRO_DATA_STOCK} and {FILTRO_WH}
+            where {STOCK_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2, 3, 4
             order by dias_de_cobertura asc nulls last
         """,
     ),
 
-    Indicador(
-        chave="ruptura_estoque",
-        titulo="Stockout: units and series affected",
-        grupo="G. Stock and replenishment",
-        pergunta="How much of what demand asked for did the shelf not have, and in how many products?",
-        grao="(stock_date, wh, category_id)",
-        tipo="derived: observed consumption, synthetic policy",
+    Indicator(
+        key="ruptura_estoque",
+        title="Stockout: units and series affected",
+        group="G. Stock and replenishment",
+        question="How much of what demand asked for did the shelf not have, and in how many products?",
+        grain="(stock_date, wh, category_id)",
+        kind="derived: observed consumption, synthetic policy",
         marts=("MART_STOCK_HEALTH",),
-        armadilhas=(
+        caveats=(
             "THE TWO UNITS DON'T SUBSTITUTE FOR EACH OTHER. `units_short` says HOW MUCH was "
             "missing; `series_with_shortfall` says in how many (product, day) something was "
             "missing. A popular product short 500 units and 500 products short 1 each are "
@@ -882,22 +837,22 @@ INDICADORES: tuple[Indicador, ...] = (
                    round((sum(units_fulfilled) / nullif(sum(units_demanded), 0))::numeric, 4)
                        as taxa_de_atendimento
             from {MART}.mart_stock_health
-            where {FILTRO_DATA_STOCK} and {FILTRO_WH}
+            where {STOCK_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2, 3, 4
             having sum(units_demanded) > 0
             order by unidades_em_falta desc
         """,
     ),
 
-    Indicador(
-        chave="reposicao_estoque",
-        titulo="Replenishment: orders triggered",
-        grupo="G. Stock and replenishment",
-        pergunta="How many purchase orders did the policy trigger, and for how many units?",
-        grao="(stock_date, wh, category_id)",
-        tipo="derived: observed consumption, synthetic policy",
+    Indicator(
+        key="reposicao_estoque",
+        title="Replenishment: orders triggered",
+        group="G. Stock and replenishment",
+        question="How many purchase orders did the policy trigger, and for how many units?",
+        grain="(stock_date, wh, category_id)",
+        kind="derived: observed consumption, synthetic policy",
         marts=("MART_STOCK_HEALTH",),
-        armadilhas=(
+        caveats=(
             "AN ORDER ISSUED IS NOT AN ORDER ARRIVED. It arrives `supplier_lead_days` days "
             "later, and an order issued near the end of the window NEVER shows up as arrived "
             "— an order in transit at the end of the period is a real property of any ledger. "
@@ -921,22 +876,22 @@ INDICADORES: tuple[Indicador, ...] = (
                    round((sum(replenishment_orders) / nullif(sum(product_days), 0))::numeric, 4)
                        as fracao_de_produtos_repondo
             from {MART}.mart_stock_health
-            where {FILTRO_DATA_STOCK} and {FILTRO_WH}
+            where {STOCK_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2, 3, 4
             having sum(replenishment_orders) > 0
             order by ordens_emitidas desc
         """,
     ),
 
-    Indicador(
-        chave="giro_estoque",
-        titulo="Daily turnover by category",
-        grupo="G. Stock and replenishment",
-        pergunta="How many times per day does each category's stock turn over?",
-        grao="(stock_date, wh, category_id)",
-        tipo="derived: observed consumption, synthetic policy",
+    Indicator(
+        key="giro_estoque",
+        title="Daily turnover by category",
+        group="G. Stock and replenishment",
+        question="How many times per day does each category's stock turn over?",
+        grain="(stock_date, wh, category_id)",
+        kind="derived: observed consumption, synthetic policy",
         marts=("MART_STOCK_HEALTH",),
-        armadilhas=(
+        caveats=(
             "THIS IS NOT ANNUALIZED TURNOVER, so don't multiply by 365. The window has few "
             "days, and annualizing would project a seasonal behavior nobody observed — the "
             "generator itself has no day-of-week effect, because `daily_order_rate` is fixed.",
@@ -956,7 +911,7 @@ INDICADORES: tuple[Indicador, ...] = (
                    sum(closing_units) as saldo_fechamento,
                    sum(units_short) as unidades_em_falta
             from {MART}.mart_stock_health
-            where {FILTRO_DATA_STOCK} and {FILTRO_WH}
+            where {STOCK_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2, 3, 4
             order by giro_diario desc nulls last
         """,
@@ -969,7 +924,7 @@ INDICADORES: tuple[Indicador, ...] = (
 # Without this, a new load comes in and the panel changes the numbers without saying the
 # base changed. With this, each mart's count and window appear on screen and the
 # before/after comparison of a load is direct.
-FRESCOR = f"""
+FRESHNESS = f"""
     select 'MART_ORDER_FUNNEL' as mart, count(*) as linhas,
            min(order_date)::varchar as inicio, max(order_date)::varchar as fim
       from {MART}.mart_order_funnel
@@ -993,7 +948,7 @@ FRESCOR = f"""
 """
 
 # Date axis limits, so the selector doesn't offer an empty period.
-JANELA = f"""
+WINDOW = f"""
     select min(inicio)::varchar as inicio, max(fim)::varchar as fim from (
         select min(order_date) as inicio, max(order_date) as fim from {MART}.mart_order_funnel
         union all
@@ -1003,7 +958,7 @@ JANELA = f"""
     )
 """
 
-ARMAZENS = f"select distinct wh from {MART}.mart_order_funnel order by wh"
+WAREHOUSES = f"select distinct wh from {MART}.mart_order_funnel order by wh"
 
 
 # ------------------------------------------------------------------------------------
@@ -1012,7 +967,7 @@ ARMAZENS = f"select distinct wh from {MART}.mart_order_funnel order by wh"
 # A list of declared absences is worth more than an invented indicator. Each item states
 # the TRIGGER that would unlock it, so the conversation is about what's missing and not
 # about what could be approximated.
-FORA_DE_ALCANCE: tuple[tuple[str, str, str], ...] = (
+OUT_OF_SCOPE: tuple[tuple[str, str, str], ...] = (
     ("Margin, profit, COGS",
      "No source in this repository has cost. The Mercadona API exposes sale price, "
      "never acquisition cost.",

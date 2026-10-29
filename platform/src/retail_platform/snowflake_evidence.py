@@ -13,7 +13,7 @@ solves it is recording the result of the REAL run, with the date and account ide
 it exists.
 
 IT IS DELIBERATELY REGENERABLE, not a one-off dump. Linking another account and running
-`make warehouse-evidence` produces that account's evidence. It is the same property that
+`make warehouse-snowflake-evidence` produces that account's evidence. It is the same property that
 sustains the rest: the destination is swappable because the boundary with it is physical.
 
 WHAT THIS MODULE IS NOT: it validates nothing. What validates is the 88 dbt tests and the
@@ -30,19 +30,16 @@ from .snowflake_load import (
     check_isolation,
 )
 
-# Uma amostra por mart. Poucas linhas e poucas colunas de proposito: a evidencia e de que a
-# tabela existe com conteudo plausivel, nao um extrato de dado — para dado ha o proprio
-# warehouse enquanto ele viver.
-# A separacao de papeis vista no VERBO, e nao no nome. Um papel chamado RETAIL_READER
-# que executasse CREATE_TABLE estaria nomeado errado; esta consulta e o que torna isso
-# consultavel em vez de anedotico.
+# Role separation seen through the VERB, not the name. A role called RETAIL_READER that
+# ran CREATE_TABLE would be misnamed; this query is what makes that queryable instead of
+# anecdotal.
 #
-# 167 HORAS, e nao 7 dias: `information_schema.query_history` recusa a compilacao com
-# "Cannot retrieve data from more than 7 days ago" quando o limite bate exatamente na
-# borda. E tambem por que a secao pode vir VAZIA — uma semana sem execucao apaga o
-# historico, e vazio aqui significa "nao houve execucao na janela", nunca "nao ha
-# separacao". A pagina declara a ausencia em vez de imprimir uma tabela sem linhas.
-PAPEIS_EM_EXECUCAO = """
+# 167 HOURS, not 7 days: `information_schema.query_history` refuses to compile with
+# "Cannot retrieve data from more than 7 days ago" when the limit lands exactly on the
+# edge. It is also why the section can come back EMPTY — a week without any run wipes the
+# history, and empty here means "there was no run in the window", never "there is no
+# separation". The page declares the absence instead of printing a table with no rows.
+ROLES_IN_EXECUTION = """
 select role_name, query_type, count(*) as queries,
        to_char(max(start_time), 'YYYY-MM-DD HH24:MI') as ultima
 from table(information_schema.query_history(
@@ -53,17 +50,20 @@ group by 1, 2
 order by 1, 3 desc
 """
 
-AMOSTRAS = {
-    # O mart onde o sintetico encontra o observado: clientes gerados contra populacao do
-    # INE. E onde a densidade da simulacao fica visivel em vez de implicita.
+# One sample per mart. Few rows and few columns on purpose: the evidence is that the table
+# exists with plausible content, not a data extract — for data there is the warehouse
+# itself while it lives.
+SAMPLES = {
+    # The mart where the synthetic meets the observed: generated customers against INE
+    # population. It is where the simulation's density becomes visible instead of implicit.
     "MART_MARKET_COVERAGE": (
         "select wh, municipality_name, customers, municipality_population, "
         "customers_per_10k_inhabitants, has_no_customers "
         "from {db}.MART.MART_MARKET_COVERAGE "
         "order by customers_per_10k_inhabitants desc nulls last limit 5"
     ),
-    # days_since_previous_snapshot na amostra de proposito: e a coluna que impede comparar
-    # uma variacao de 8 dias com uma de 1 dia sem ninguem notar.
+    # days_since_previous_snapshot in the sample on purpose: it is the column that prevents
+    # comparing an 8-day change with a 1-day change without anyone noticing.
     "MART_PRICE_EVOLUTION": (
         "select snapshot_date, wh, display_name, unit_price, price_delta, "
         "days_since_previous_snapshot "
@@ -75,10 +75,10 @@ AMOSTRAS = {
         "products_exclusive_here, avg_unit_price "
         "from {db}.MART.MART_ASSORTMENT_DAILY order by products desc limit 5"
     ),
-    # A amostra ordena pela RAZAO entre a faixa mais velha e a mais nova, e nao pelo volume:
-    # o volume mostraria os grupos grandes, que sao os mesmos em toda faixa. O que esta
-    # camada produz e a diferenca entre coortes, e uma amostra que nao a mostrasse seria
-    # evidencia de que a fase existiu sem evidencia do que ela fez.
+    # The sample orders by the RATIO between the oldest and the youngest band, not by
+    # volume: volume would show the big groups, which are the same in every band. What this
+    # layer produces is the difference between cohorts, and a sample that did not show it
+    # would be evidence that the phase existed without evidence of what it did.
     "MART_DEMAND_COHORT": (
         "with f as ("
         " select demand_group, buyer_age_band, sum(lines_placed) as l"
@@ -97,18 +97,18 @@ AMOSTRAS = {
         "select customer_id, wh, municipality_name, postal_code, age_band, sex_label "
         "from {db}.MART.MART_CUSTOMER_BASE order by customer_id limit 5"
     ),
-    # O funil INTEIRO de um dia, e nao as 5 primeiras linhas: sao 16 linhas no total, e
-    # metade de um funil nao e evidencia de nada. As colunas de etapa e de saida viajam
-    # juntas para que a amostra mostre que elas NAO somam entre si.
+    # The WHOLE funnel of one day, not the first 5 rows: there are 16 rows in total, and
+    # half a funnel is evidence of nothing. The stage and exit columns travel together so
+    # the sample shows that they do NOT add up to each other.
     "MART_ORDER_FUNNEL": (
         "select order_date, wh, orders_placed, orders_confirmed, orders_picked, "
         "orders_delivered, orders_cancelled, orders_returned, delivery_rate "
         "from {db}.MART.MART_ORDER_FUNNEL order by order_date, wh limit 8"
     ),
-    # sla_minutes, max_picking_minutes e orders_breaching_sla na mesma linha de proposito:
-    # uma contagem de violacoes so e legivel ao lado do limiar declarado e do maximo
-    # possivel. Separada, ela nao diz se mede a operacao ou a aritmetica do seed — que foi
-    # exatamente o defeito de tres fases que a Fase 7 corrigiu.
+    # sla_minutes, max_picking_minutes and orders_breaching_sla on the same row on purpose:
+    # a breach count is only readable next to the declared threshold and the possible
+    # maximum. On its own, it does not say whether it measures the operation or the seed's
+    # arithmetic — which was exactly the three-phase defect that Phase 7 fixed.
     "MART_FULFILLMENT_SLA": (
         "select order_date, wh, sla_minutes, max_picking_minutes, orders_breaching_sla, "
         "p50_minutes_to_pick, p90_minutes_to_deliver, orders_delivered_before_slot, "
@@ -120,11 +120,11 @@ AMOSTRAS = {
         "lines_substituted, revenue_placed, revenue_fulfilled, substitution_rate "
         "from {db}.MART.MART_BASKET_DAILY order by revenue_fulfilled desc limit 5"
     ),
-    # AS CATEGORIAS COM MENOS COBERTURA, e nao as primeiras por data: uma amostra de estoque
-    # que mostrasse prateleiras cheias nao seria evidencia de nada. As duas leituras de
-    # cobertura viajam juntas porque a diferenca entre elas — razao das somas contra media
-    # das razoes — e a armadilha central deste mart. `stock_label` esta na linha para que
-    # ninguem leia ruptura calculada como ruptura medida.
+    # THE CATEGORIES WITH THE LEAST COVER, not the first by date: a stock sample showing
+    # full shelves would be evidence of nothing. The two cover readings travel together
+    # because the difference between them — ratio of sums versus mean of ratios — is this
+    # mart's central trap. `stock_label` is on the row so nobody reads a computed stockout
+    # as a measured one.
     "MART_STOCK_HEALTH": (
         "select stock_date, wh, category_name, closing_units, units_demanded, "
         "units_short, series_with_shortfall, fill_rate, days_of_cover, "
@@ -132,11 +132,11 @@ AMOSTRAS = {
         "from {db}.MART.MART_STOCK_HEALTH where units_demanded > 0 "
         "order by days_of_cover asc nulls last limit 8"
     ),
-    # CR-005: o unico fato de GOLD nesta lista, de proposito — os outros oito sao MART.
-    # duration_seconds/started_at_utc/finished_at_utc ja existiam duas camadas abaixo, no
-    # Silver, e eram descartados so por uma lista fixa de colunas na projecao do STAGE. A
-    # taxa (declared_rows/duration_seconds) e o sinal de THROUGHPUT exigido (BACKLOG.md,
-    # Observability) antes de qualquer coletor novo.
+    # CR-005: the only GOLD fact in this list, on purpose — the other eight are MART.
+    # duration_seconds/started_at_utc/finished_at_utc already existed two layers down, in
+    # Silver, and were dropped only by a fixed column list in the STAGE projection. The rate
+    # (declared_rows/duration_seconds) is the THROUGHPUT signal required (BACKLOG.md,
+    # Observability) before any new collector.
     "FACT_INGESTION_RUN": (
         "select source_name, ingestion_date, wh, started_at_utc, duration_seconds, "
         "declared_rows, round(declared_rows / nullif(duration_seconds, 0), 1) as rows_per_second, "
@@ -147,92 +147,97 @@ AMOSTRAS = {
 }
 
 
-def _tabela_markdown(colunas: list[str], linhas: list[tuple]) -> list[str]:
-    cabecalho = "| " + " | ".join(colunas) + " |"
-    separador = "|" + "|".join("---" for _ in colunas) + "|"
-    corpo = [
-        "| " + " | ".join("" if v is None else str(v) for v in linha) + " |"
-        for linha in linhas
+def _markdown_table(columns: list[str], lines: list[tuple]) -> list[str]:
+    header = "| " + " | ".join(columns) + " |"
+    separator = "|" + "|".join("---" for _ in columns) + "|"
+    body = [
+        "| " + " | ".join("" if v is None else str(v) for v in row) + " |"
+        for row in lines
     ]
-    return [cabecalho, separador, *corpo]
+    return [header, separator, *body]
 
 
-def _consulta(cursor, sql: str) -> tuple[list[str], list[tuple]]:
+def _query(cursor, sql: str) -> tuple[list[str], list[tuple]]:
     cursor.execute(sql)
-    colunas = [d[0] for d in cursor.description]
-    return colunas, cursor.fetchall()
+    columns = [d[0] for d in cursor.description]
+    return columns, cursor.fetchall()
 
 
 def collect(connection, connect_as_role, database: str = DEFAULT_DATABASE) -> dict:
     """Observes the destination. Returns everything the report needs, without formatting anything."""
     cursor = connection.cursor()
     try:
-        conta, usuario, papel, warehouse, agora = cursor.execute(
+        account, user, role, warehouse, now = cursor.execute(
             "select current_account(), current_user(), current_role(), "
             "current_warehouse(), to_char(current_timestamp, 'YYYY-MM-DD HH24:MI:SS TZH:TZM')"
         ).fetchone()
 
-        # Contagem e posse na mesma consulta: sao as duas metades da mesma pergunta —
-        # "o que existe la" e "sob que papel".
-        objetos = cursor.execute(
+        # Count and ownership in the same query: they are the two halves of the same
+        # question — "what exists there" and "under which role".
+        objects = cursor.execute(
             f"""select t.table_schema, t.table_name, t.table_owner, t.row_count
                 from {database}.information_schema.tables t
                 where t.table_schema in ('{STAGE_SCHEMA}', 'GOLD', 'MART')
                 order by t.table_schema, t.table_name"""
         ).fetchall()
 
-        # Tolerante pela mesma razao das amostras: uma conta sem privilegio de ler o
-        # historico, ou sem execucao na janela, nao pode derrubar a pagina inteira.
+        # Tolerant for the same reason as the samples: an account without the privilege to
+        # read the history, or without any run in the window, must not bring the whole
+        # page down.
         try:
-            papeis = _consulta(cursor, PAPEIS_EM_EXECUCAO)
+            roles_run = _query(cursor, ROLES_IN_EXECUTION)
         except Exception as exc:
-            papeis = (["erro"], [(str(exc).splitlines()[0],)])
+            roles_run = (["error"], [(str(exc).splitlines()[0],)])
 
-        amostras = {}
-        for nome, sql in AMOSTRAS.items():
+        samples = {}
+        for name, sql in SAMPLES.items():
             try:
-                amostras[nome] = _consulta(cursor, sql.format(db=database))
+                samples[name] = _query(cursor, sql.format(db=database))
             except Exception as exc:
-                amostras[nome] = (["erro"], [(str(exc).splitlines()[0],)])
+                samples[name] = (["error"], [(str(exc).splitlines()[0],)])
     finally:
         cursor.close()
 
     return {
         "identidade": {
-            "conta": conta,
-            "usuario": usuario,
-            "papel": papel,
+            "conta": account,
+            "usuario": user,
+            "papel": role,
             "warehouse": warehouse,
-            "capturado_em": agora,
+            "capturado_em": now,
             "database": database,
         },
-        "objetos": objetos,
-        "papeis_em_execucao": papeis,
-        "amostras": amostras,
+        "objetos": objects,
+        "papeis_em_execucao": roles_run,
+        "amostras": samples,
         "isolamento": check_isolation(connect_as_role, database),
     }
 
 
-def render(dados: dict) -> str:
+def render(data: dict) -> str:
     """Markdown. No hand-written number: everything comes from what was observed."""
-    ident = dados["identidade"]
-    linhas = [
+    ident = data["identidade"]
+    lines = [
         "# Analytical warehouse evidence",
         "",
-        "Generated by `make warehouse-evidence` against the live Snowflake account at the moment of",
+        "Generated by `make warehouse-snowflake-evidence` against the live Snowflake account at the moment of",
         "capture. **This is not hand-written documentation** — every number on this page came from a",
         "query to the destination.",
         "",
-        "It exists because the account is a trial and the Snowflake half of the project is not",
-        "reproducible offline like the Lakehouse half. When the account expires, this remains the",
-        "dated proof that the models ran; `make silver` and the suites keep running without it.",
+        "It exists because the Snowflake half of the project is not reproducible offline like the",
+        "Lakehouse half: it depends on a live account, and the first one (a trial) expired. If the",
+        "account goes away, this remains the dated proof that the models ran; `make silver` and the",
+        "suites keep running without it.",
         "",
         "## Capture identity",
         "",
         "| | |",
         "|---|---|",
-        f"| account | `{ident['conta']}` |",
-        f"| user | `{ident['usuario']}` |",
+        # Account and user do NOT go on the page: the repository is public and the two
+        # together are half a credential. The date, the role and the database are enough to
+        # date and place the capture; the real identity stays in the terminal of whoever ran it.
+        "| account | `<snowflake-account>` |",
+        "| user | `<user>` |",
         f"| session role | `{ident['papel']}` |",
         f"| warehouse | `{ident['warehouse']}` |",
         f"| database | `{ident['database']}` |",
@@ -252,17 +257,17 @@ def render(dados: dict) -> str:
         "",
     ]
 
-    colunas = ["schema", "table", "ownership", "rows"]
-    corpo = [
+    columns = ["schema", "table", "ownership", "rows"]
+    body = [
         (s, f"`{t}`", f"`{o}`", f"{n:,}" if n is not None else "")
-        for s, t, o, n in dados["objetos"]
+        for s, t, o, n in data["objetos"]
     ]
-    linhas += _tabela_markdown(colunas, corpo)
+    lines += _markdown_table(columns, body)
 
-    total = sum(n or 0 for _, _, _, n in dados["objetos"])
-    linhas += ["", f"Total at the destination: **{total:,} rows**.", ""]
+    total = sum(n or 0 for _, _, _, n in data["objetos"])
+    lines += ["", f"Total at the destination: **{total:,} rows**.", ""]
 
-    linhas += [
+    lines += [
         "## Isolation verified role by role",
         "",
         "Run with `use secondary roles none`. Without that the check would pass by mistake:",
@@ -270,24 +275,24 @@ def render(dados: dict) -> str:
         "all of the user's roles besides the primary one — measured on this account before the fix.",
         "",
     ]
-    for papel, esperado in ISOLATION_MATRIX.items():
-        linhas.append(f"- **{papel}** — {ROLES[papel]}")
-        for alvo in esperado["allow"]:
-            linhas.append(f"  - reads `{alvo.format(db=ident['database'])}`")
-        for alvo in esperado["deny"]:
-            linhas.append(f"  - **does not** read `{alvo.format(db=ident['database'])}`")
+    for role, expected in ISOLATION_MATRIX.items():
+        lines.append(f"- **{role}** — {ROLES[role]}")
+        for target in expected["allow"]:
+            lines.append(f"  - reads `{target.format(db=ident['database'])}`")
+        for target in expected["deny"]:
+            lines.append(f"  - **does not** read `{target.format(db=ident['database'])}`")
 
-    problemas = dados["isolamento"]
-    linhas += [""]
-    if problemas:
-        linhas += ["**The matrix does NOT check out:**", ""]
-        linhas += [f"- {p}" for p in problemas]
+    problems = data["isolamento"]
+    lines += [""]
+    if problems:
+        lines += ["**The matrix does NOT check out:**", ""]
+        lines += [f"- {p}" for p in problems]
     else:
-        linhas += ["Result: **the matrix checks out completely** — no violation."]
-    linhas += [""]
+        lines += ["Result: **the matrix checks out completely** — no violation."]
+    lines += [""]
 
-    colunas_papel, corpo_papel = dados.get("papeis_em_execucao", ([], []))
-    linhas += [
+    role_columns, role_body = data.get("papeis_em_execucao", ([], []))
+    lines += [
         "## Roles in execution, seen through the verb",
         "",
         "The matrix above proves what each role **can** read. This table proves what each one",
@@ -301,32 +306,45 @@ def render(dados: dict) -> str:
         "instead of printing an empty table, which would read as \"there is no separation\".",
         "",
     ]
-    if corpo_papel and colunas_papel != ["erro"]:
-        linhas += _tabela_markdown(
+    if role_body and role_columns != ["error"]:
+        lines += _markdown_table(
             ["role", "query type", "queries", "last"],
-            [(f"`{p}`", f"`{q}`", f"{n:,}", u) for p, q, n, u in corpo_papel],
+            [(f"`{p}`", f"`{q}`", f"{n:,}", u) for p, q, n, u in role_body],
         )
-    elif colunas_papel == ["erro"]:
-        linhas += [f"**Could not read the history:** `{corpo_papel[0][0]}`"]
+    elif role_columns == ["error"]:
+        lines += [f"**Could not read the history:** `{role_body[0][0]}`"]
     else:
-        linhas += [
+        lines += [
             "**No `RETAIL%` role executed anything in the seven-day window.** The absence is",
             "the data: there was no load nor `dbt build` during the week, and Snowflake's history",
             "does not keep more than that.",
         ]
-    linhas += [""]
+    lines += [""]
 
-    linhas += [
-        "## Samples",
+    # Every sample is QUERIED, but only FACT_INGESTION_RUN becomes a table: five rows of
+    # synthetic numbers per mart prove nothing beyond the count above. The mart ones keep
+    # running so a broken query shows up as an error here, and not as silence.
+    lines += [
+        "## Sample",
         "",
-        "A few rows per table below (every MART, plus FACT_INGESTION_RUN from GOLD), only",
-        "so the content stays inspectable after the destination no longer exists. They do",
-        "not replace the warehouse while it is alive.",
+        "Every MART listed in the ownership table above is real, dbt-built, queryable data —",
+        "not shown row by row here, since a 5-row dump of synthetic figures proves nothing a",
+        "reader couldn't already infer from the row counts above. One operational table is",
+        "kept in full below because it is what backs the pipeline's observability claim",
+        "(non-null `started_at_utc`/`duration_seconds`, a computed `rows_per_second` for",
+        "every row).",
         "",
     ]
-    for nome, (colunas_amostra, linhas_amostra) in dados["amostras"].items():
-        linhas += [f"### `{nome}`", ""]
-        linhas += _tabela_markdown(colunas_amostra, linhas_amostra)
-        linhas += [""]
+    failures = {name: body for name, (cols, body) in data["amostras"].items()
+                if cols == ["error"]}
+    for name, (sample_columns, sample_rows) in data["amostras"].items():
+        if name == "FACT_INGESTION_RUN" and name not in failures:
+            lines += [f"### `{name}`", ""]
+            lines += _markdown_table(sample_columns, sample_rows)
+            lines += [""]
+    if failures:
+        lines += ["**Sample queries that failed** — a failure must not read as an empty table:", ""]
+        lines += [f"- `{name}`: `{body[0][0]}`" for name, body in failures.items()]
+        lines += [""]
 
-    return "\n".join(linhas) + "\n"
+    return "\n".join(lines) + "\n"

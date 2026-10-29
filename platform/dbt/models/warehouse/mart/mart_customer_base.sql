@@ -1,15 +1,15 @@
--- GRAO: (customer_id) — a base VIGENTE, uma linha por cliente. As versoes anteriores
---        ficam em DIM_CUSTOMER; aqui e o retrato atual.
+-- GRAIN: (customer_id) — the CURRENT base, one row per customer. Previous versions
+--        stay in DIM_CUSTOMER; this is the current picture.
 --
--- PERGUNTA QUE RESPONDE: quem sao os clientes, onde moram e em que contexto demografico.
+-- QUESTION IT ANSWERS: who the customers are, where they live and in what demographic context.
 --
--- SINTETICO E OBSERVADO NA MESMA LINHA, com os rotulos separados de proposito:
---   * a PESSOA (nome, sexo, idade) e sintetica — amostrada, nao observada;
---   * o ENDERECO (municipio, via, CEP, faixa de numeracao) e real, do Callejero;
---   * a POPULACAO do municipio e observada, do INE.
--- Quem consulta este mart precisa saber qual metade e qual. E por isso que
--- municipality_population esta aqui: sem contexto, "3 clientes em Ajalvir" nao diz nada;
--- com ele, diz que 3 clientes cobrem um municipio de 4.500 habitantes.
+-- SYNTHETIC AND OBSERVED ON THE SAME ROW, with the labels kept apart on purpose:
+--   * the PERSON (name, sex, age) is synthetic — sampled, not observed;
+--   * the ADDRESS (municipality, street, postal code, numbering range) is real, from the Callejero;
+--   * the municipality POPULATION is observed, from INE.
+-- Whoever queries this mart needs to know which half is which. That is why
+-- municipality_population is here: without context, "3 customers in Ajalvir" says nothing;
+-- with it, it says 3 customers cover a municipality of 4,500 inhabitants.
 {{ config(materialized = 'table') }}
 
 select
@@ -27,8 +27,8 @@ select
     g.is_home_municipality,
     g.municipality_population,
 
-    -- Endereco: atribuicao sintetica sobre um tramo real. address_is_street_level diz que
-    -- o Callejero declara que a via nao tem numeracao — nao que o numero se perdeu.
+    -- Address: synthetic assignment over a real street segment. address_is_street_level says
+    -- the Callejero declares that the street has no numbering — not that the number was lost.
     c.street_name,
     c.house_number,
     c.numbering_type,

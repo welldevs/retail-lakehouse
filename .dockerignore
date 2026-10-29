@@ -1,6 +1,6 @@
-# O Dockerfile.airflow NAO copia codigo — o repositorio e montado em runtime. Este
-# arquivo existe para o contexto de build nao carregar o que nao serve: sem ele, os
-# snapshots e os venvs vao para o daemon a cada build.
+# Dockerfile.airflow does NOT copy code — the repository is mounted at runtime. This
+# file exists so the build context does not carry what is not needed: without it, the
+# snapshots and venvs are sent to the daemon on every build.
 .git
 data
 venv

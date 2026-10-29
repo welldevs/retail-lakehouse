@@ -1,5 +1,5 @@
-"""has-data: o Makefile decide, a partir do codigo de saida, se exclui do `dbt build` o
-modelo Silver de uma source que ainda nao aterrissou nada. Sem rede."""
+"""has-data: the Makefile decides, from the exit code, whether to exclude from `dbt build`
+the Silver model of a source that has not landed anything yet. No network."""
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ class TestHasData(unittest.TestCase):
         self.assertEqual(main(["has-data", "ine_population_api"]), EXIT_FAILED)
 
     def test_does_not_match_a_different_source_prefix(self):
-        """Um prefixo e sub-string de outro nao pode ser confundido com ele: sem a barra
-        final, "ine_population" casaria com "ine_population_api_v2" tambem."""
+        """A prefix that is a substring of another must not be confused with it: without the
+        trailing slash, "ine_population" would match "ine_population_api_v2" too."""
         self.client.store[("retail-raw", "ine_population_api_v2/ingestion_date=2026-08-25/x.json")] = b"{}"
         self.assertEqual(main(["has-data", "ine_population_api"]), EXIT_FAILED)
 

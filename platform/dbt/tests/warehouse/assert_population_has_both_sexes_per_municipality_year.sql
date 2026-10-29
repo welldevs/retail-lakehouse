@@ -1,17 +1,17 @@
--- Todo (municipio, ano) tem EXATAMENTE os dois rotulos de sexo.
+-- Every (municipality, year) has EXACTLY the two sex labels.
 --
--- E o teste que torna seguro ter excluido o agregado. O recorte tira `sex_label = 'Total'`
--- porque somar os tres rotulos daria o dobro da populacao — mas tirar o agregado so e
--- legitimo se o detalhe o reconstroi. Se um municipio aparecer com um unico rotulo (sigilo
--- estatistico do INE suprimindo um dos sexos, ou uma linha perdida no caminho), a soma
--- daquele municipio fica pela metade e o denominador de todo per-capita fica errado — sem
--- que nada mais no modelo perceba.
+-- It is the test that makes it safe to have excluded the aggregate. The cut drops `sex_label = 'Total'`
+-- because summing the three labels would give double the population — but dropping the aggregate is only
+-- legitimate if the detail rebuilds it. If a municipality shows up with a single label (INE's
+-- statistical confidentiality suppressing one of the sexes, or a row lost along the way), that
+-- municipality's sum is halved and the denominator of every per-capita figure is wrong — without
+-- anything else in the model noticing.
 --
--- Por que isto e teste e nao premissa: agregado misturado com detalhe nao FALHA, produz um
--- numero plausivel. Foi assim que a piramide etaria da Fase 1 saiu 2,03x inflada com
--- age_label, e nenhum teste de entao pegava.
+-- Why this is a test and not a premise: an aggregate mixed with detail does not FAIL, it produces a
+-- plausible number. That is how Phase 1's age pyramid came out 2.03x inflated with
+-- age_label, and no test at the time caught it.
 --
--- Falha com uma linha por (municipio, ano) incompleto.
+-- Fails with one row per incomplete (municipality, year).
 select
     province_code,
     municipality_code,

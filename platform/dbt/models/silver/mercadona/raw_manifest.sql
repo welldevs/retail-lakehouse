@@ -1,12 +1,12 @@
--- O MANIFESTO COMO FONTE MODELADA.
+-- THE MANIFEST AS A MODELED SOURCE.
 --
--- Existe para que "o Silver perdeu linha?" seja um TESTE, e nao um script solto: os
--- totais que a Source declarou ficam consultaveis ao lado dos dados derivados. Ver
--- schema.yml, testes de reconciliacao.
+-- It exists so that "did Silver lose a row?" is a TEST, and not a loose script: the totals
+-- the Source declared become queryable next to the derived data. See schema.yml,
+-- reconciliation tests.
 --
--- CONTRACT.md secao 1: uma lista ausente equivale a lista vazia. A particao de
--- 2026-08-15 foi gravada antes de anomalies[] existir, e por isso union_by_name e
--- obrigatorio aqui — sem ele, o schema do primeiro arquivo lido ditaria o de todos.
+-- CONTRACT.md section 1: a missing list is equivalent to an empty list. The 2026-08-15
+-- partition was written before anomalies[] existed, which is why union_by_name is
+-- mandatory here — without it, the schema of the first file read would dictate everyone's.
 {{ config(
     location = 's3://retail-lakehouse/silver/raw_manifest.parquet',
     options = {'overwrite_or_ignore': 1}

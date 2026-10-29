@@ -1,31 +1,31 @@
--- A BASE DE CADA ARMAZEM E A POPULACAO ADULTA DELE VEZES A TAXA — recalculada do zero.
+-- EACH WAREHOUSE'S BASE IS ITS ADULT POPULATION TIMES THE RATE — recomputed from scratch.
 --
--- O MODO DE FALHA QUE ISTO PEGA, e que nenhum outro teste pega. Ate a Fase 5 a base era
--- 5.000 clientes por armazem: um numero igual para AUFs que diferem por 4,6x em populacao
--- (mad1 tem 7,10 milhoes de habitantes, svq1 tem 1,59). Nada reprovava — os totais fechavam,
--- os enderecos eram reais, o grao era unico, e o manifesto batia com a contagem. A unica
--- coisa errada era que a densidade nao existia, e densidade nao aparece em nenhum total.
--- Este teste refaz a conta a partir do INE e compara.
+-- THE FAILURE MODE THIS CATCHES, and that no other test catches. Until Phase 5 the base was
+-- 5,000 customers per warehouse: the same number for AUFs whose populations differ by 4.6x
+-- (mad1 has 7.10 million inhabitants, svq1 has 1.59). Nothing failed — the totals closed,
+-- the addresses were real, the grain was unique, and the manifest matched the count. The only
+-- thing wrong was that density did not exist, and density does not show up in any total.
+-- This test redoes the calculation from INE and compares.
 --
--- A CONTA, e de onde vem cada pedaco:
+-- THE CALCULATION, and where each piece comes from:
 --
---   populacao municipal (29005, sex_label='Total', ano corrente)  somada pela area de servico
---     x share adulto da PROVINCIA (31304, idades >= min_customer_age)      <- proxy provincial
---     x taxa de penetracao (demand_profile.channel_reference_pct)          <- MAPA 2025 sec.3
---     = clientes esperados daquele armazem
+--   municipal population (29005, sex_label='Total', current year)  summed over the service area
+--     x the PROVINCE's adult share (31304, ages >= min_customer_age)       <- provincial proxy
+--     x penetration rate (demand_profile.channel_reference_pct)            <- MAPA 2025 sec.3
+--     = expected customers for that warehouse
 --
--- O SHARE ADULTO E MEDIDO SOBRE A PIRAMIDE INTEIRA, aqui como no export: e a fracao de
--- adultos na populacao, e calcula-la sobre uma piramide ja truncada devolveria 100% em toda
--- provincia — um bug que passaria despercebido porque 100% e um numero plausivel.
+-- THE ADULT SHARE IS MEASURED OVER THE WHOLE PYRAMID, here as in the export: it is the fraction of
+-- adults in the population, and computing it over an already-truncated pyramid would return 100% for
+-- every province — a bug that would go unnoticed because 100% is a plausible number.
 --
--- A TAXA NAO E LITERAL NESTE ARQUIVO. `customer_premises.customer_penetration_source` diz
--- ONDE ela mora, e este teste segue o ponteiro. Se alguem apontar para outro lugar, a ultima
--- metade abaixo reprova dizendo isso — melhor do que ler um numero que ninguem declarou.
+-- THE RATE IS NOT A LITERAL IN THIS FILE. `customer_premises.customer_penetration_source` says
+-- WHERE it lives, and this test follows the pointer. If someone points it elsewhere, the last
+-- half below fails saying so — better than reading a number nobody declared.
 --
--- TOLERANCIA DE 1 CLIENTE, e por que ela nao enfraquece nada. O export arredonda em Python e
--- este teste em SQL; as duas somas de 101 proporcoes podem diferir no ultimo bit e virar o
--- arredondamento. Os defeitos que este teste existe para pegar — alocacao uniforme,
--- denominador errado, taxa errada — erram por milhares, nunca por um.
+-- A TOLERANCE OF 1 CUSTOMER, and why it weakens nothing. The export rounds in Python and
+-- this test in SQL; the two sums of 101 proportions can differ in the last bit and flip the
+-- rounding. The defects this test exists to catch — uniform allocation,
+-- wrong denominator, wrong rate — are off by thousands, never by one.
 {{ config(severity = 'error') }}
 
 with premissa as (
@@ -47,7 +47,7 @@ taxa as (
 
 ),
 
--- Populacao municipal corrente, no escopo da area de servico de cada armazem.
+-- Current municipal population, within the scope of each warehouse's service area.
 municipal as (
 
     select
@@ -67,9 +67,9 @@ municipal as (
 
 ),
 
--- Piramide provincial INTEIRA. Os dois rotulos agregados sao excluidos pela mesma razao do
--- export: 'Total' e '85 y mas anos' se sobrepoem as 101 idades simples e somar os 103
--- ingenuamente da 2,03x o valor certo.
+-- The WHOLE provincial pyramid. The two aggregate labels are excluded for the same reason as the
+-- export: 'Total' and '85 y mas anos' overlap the 101 single ages and summing all 103
+-- naively gives 2.03x the right value.
 piramide as (
 
     select
@@ -116,9 +116,9 @@ esperado as (
         m.population_total,
         sa.adult_share,
         m.population_total * sa.adult_share as adult_population,
-        -- floor(x + 0.5) e nao round(): round() do DuckDB e o do Python nao arredondam .5
-        -- para o mesmo lado, e o export usa exatamente esta forma para que os dois deem o
-        -- mesmo inteiro sem depender de convencao de desempate.
+        -- floor(x + 0.5) and not round(): DuckDB's round() and Python's do not round .5
+        -- the same way, and the export uses exactly this form so that both give the
+        -- same integer without depending on a tie-breaking convention.
         cast(floor(m.population_total * sa.adult_share * t.penetration_pct / 100.0 + 0.5)
              as bigint) as clientes_esperados
     from municipal m
@@ -153,9 +153,9 @@ where r.clientes_reais is null
 
 union all
 
--- O PONTEIRO DA TAXA. Reprova se `customer_penetration_source` deixar de apontar para
--- demand_profile.channel_reference_pct: a partir dai a conta acima estaria usando um numero
--- que a premissa nao declara mais, e passar em silencio seria pior do que reprovar.
+-- THE RATE POINTER. Fails if `customer_penetration_source` stops pointing to
+-- demand_profile.channel_reference_pct: from then on the calculation above would be using a number
+-- the premise no longer declares, and passing silently would be worse than failing.
 select
     'PREMISSA'                                        as wh,
     'PONTEIRO_DA_TAXA'                                as verificacao,

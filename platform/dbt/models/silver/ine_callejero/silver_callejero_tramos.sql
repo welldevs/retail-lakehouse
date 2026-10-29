@@ -1,32 +1,33 @@
--- TRAMOS de via do Callejero (arquivo TRAM): a unica das 4 fontes de geografia do INE
--- que liga, num so registro, secao censitaria + entidade/nucleo + via OU pseudovia +
--- CODIGO POSTAL + faixa de numeracao. E o que permite montar Rua+Cidade+CEP+Bairro
--- (nucleo, onde existir) numa unica consulta, cruzando com os outros 3 modelos desta
--- source por codigo (nao ha FK fisica nos arquivos, so os codigos coincidem).
+-- Street SEGMENTS (tramos) of the Callejero (TRAM file): the only one of INE's 4 geography
+-- sources that links, in a single record, census section + entity/nucleus + street OR
+-- pseudo-street + POSTAL CODE + numbering range. It is what makes it possible to assemble
+-- Street+City+Postcode+Neighbourhood (nucleus, where it exists) in a single query, joining
+-- with the other 3 models of this source by code (there is no physical FK in the files,
+-- only the codes match).
 --
--- GRAO: (ingestion_date, section_code, entity_suffix, street_id, pseudo_address_id,
+-- GRAIN: (ingestion_date, section_code, entity_suffix, street_id, pseudo_address_id,
 -- postal_code, numbering_type, number_from, number_from_qualifier, number_to,
--- number_to_qualifier). Nao ha uma unica coluna de "id do tramo" nos bytes — grao
--- composto verificado sem excecao contra as 304.952 linhas reais das 4 provincias (ver
+-- number_to_qualifier). There is no single "segment id" column in the bytes — composite
+-- grain verified without exception against the 304,952 real rows of the 4 provinces (see
 -- assert_callejero_tramos_grain_is_unique.sql).
 --
--- Layout medido (CONTRACT.md da source, secao 2): linha de 273 chars. [0:10] codigo de
--- SECAO (mesmo formato de SECC) · [13:20] CUN, sufixo de entidade/nucleo (mesmo formato
--- de UP) · [20:25] CVIA, id de via (mesmo formato de VIAS; "00000" = nao se aplica) ·
--- [25:30] CPSVIA, id de pseudovia (mesmo formato de PSEU; "00000" = nao se aplica) —
--- CVIA e CPSVIA sao mutuamente exclusivos, confirmado sem excecao nas 4 provincias ·
--- [42:47] CPOS, codigo postal (5 digitos, sempre com o prefixo correto da provincia,
--- confirmado em 304.905/304.952 linhas — 47 excecoes, 0,015%, so em Barcelona) · [47:48]
--- TINUM, tipo de numeracao (0=sem numeracao, 1=impar, 2=par) · [48:52]+[52:53] EIN+CEIN,
--- extremo inferior da faixa + qualificador de duplicado · [53:57]+[57:58] ESN+CESN,
--- extremo superior + qualificador · [61:69] data de referencia. Confirmado contra o
--- "Diseno de registro" oficial do INE/IDA-Padron (nomeia os campos do "Tramero" na
--- mesma ordem observada nos bytes) — ver CONTRACT.md secao 6 para a referencia.
+-- Measured layout (the source's CONTRACT.md, section 2): 273-char line. [0:10] SECTION
+-- code (same format as SECC) · [13:20] CUN, entity/nucleus suffix (same format as UP) ·
+-- [20:25] CVIA, street id (same format as VIAS; "00000" = not applicable) ·
+-- [25:30] CPSVIA, pseudo-street id (same format as PSEU; "00000" = not applicable) —
+-- CVIA and CPSVIA are mutually exclusive, confirmed without exception in the 4 provinces ·
+-- [42:47] CPOS, postal code (5 digits, always with the province's correct prefix,
+-- confirmed in 304,905/304,952 rows — 47 exceptions, 0.015%, only in Barcelona) · [47:48]
+-- TINUM, numbering type (0=no numbering, 1=odd, 2=even) · [48:52]+[52:53] EIN+CEIN,
+-- lower bound of the range + duplicate qualifier · [53:57]+[57:58] ESN+CESN, upper bound
+-- + qualifier · [61:69] reference date. Confirmed against the official INE/IDA-Padron
+-- "Diseno de registro" (it names the "Tramero" fields in the same order observed in the
+-- bytes) — see CONTRACT.md section 6 for the reference.
 --
--- street_code/pseudo_address_code sao reconstruidos (provincia+municipio+id) para JOIN
--- direto com silver_callejero_streets/silver_callejero_pseudo_addresses; quando o id e
--- "00000" (sentinela de "nao se aplica"), o codigo reconstruido simplesmente nao bate
--- com nenhuma rua/pseudovia real — nenhum tratamento especial precisa disso.
+-- street_code/pseudo_address_code are rebuilt (province+municipality+id) for a direct JOIN
+-- with silver_callejero_streets/silver_callejero_pseudo_addresses; when the id is
+-- "00000" (the "not applicable" sentinel), the rebuilt code simply matches no real
+-- street/pseudo-street — no special handling is needed for that.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_tramos.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -54,13 +55,13 @@ with raw as (
 
 select
     ingestion_date,
-    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
-    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
-    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
-    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
-    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
-    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
-    -- acidente.
+    -- A re-extraction of the SAME INE publication creates another ingestion_date with
+    -- equivalent rows, and this model stacks them all (the history is deliberate). Without an
+    -- explicit marker, whoever queries without filtering double-counts — it already happened
+    -- with silver_ine_population_series, which ended up with 1,547,496 rows in EACH of two
+    -- ingestion_dates. `where is_latest_ingestion` is the right way to read the current
+    -- state; without the filter, the whole history is read, and that becomes a choice rather
+    -- than an accident.
     ingestion_date = max(ingestion_date) over () as is_latest_ingestion,
     'TRAM'                                                  as source_dataset,
     source_file,

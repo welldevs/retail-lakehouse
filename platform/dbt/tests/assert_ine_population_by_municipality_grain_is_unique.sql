@@ -1,6 +1,6 @@
--- Unicidade do GRAO COMPOSTO. fk_periodo=28 e o unico valor medido nesta tabela, mas
--- fica no grao por simetria com silver_ine_population_series (que precisa dele de
--- verdade) e como salvaguarda caso o INE publique mais de uma estimativa/ano aqui.
+-- Uniqueness of the COMPOSITE GRAIN. fk_periodo=28 is the only value measured in this table, but
+-- it stays in the grain for symmetry with silver_ine_population_series (which really
+-- needs it) and as a safeguard in case INE publishes more than one estimate/year here.
 select
     ingestion_date,
     series_code,

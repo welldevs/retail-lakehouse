@@ -1,19 +1,19 @@
-"""DAG sob demanda: RAW no object storage e Silver a partir do Callejero do INE.
+"""On-demand DAG: RAW in object storage and Silver from the INE Callejero.
 
-Terceira source, ao lado de mercadona_catalog_daily e ine_population_on_demand. Sem
-cron, igual a populacao — mas por um motivo estrutural diferente e ainda mais forte:
+Third source, next to mercadona_catalog_daily and ine_population_on_demand. No cron, like
+population — but for a different and even stronger structural reason:
 
-  1. schedule=None: o Callejero NAO TEM API. E publicado semestralmente para download
-     manual no site do INE. Uma DAG so pode rodar depois que alguem baixou os arquivos
-     novos e colocou em CALLEJERO_IN dentro do repositorio montado — nao ha nada pra
-     esta DAG "verificar" sozinha, ao contrario da populacao (que ao menos tem uma API
-     pra consultar sob demanda). Disparo manual (`make callejero-trigger` ou pela UI),
-     sempre depois de um download humano.
-  2. sem pool dedicado: nao ha requisicao de rede nenhuma aqui — `extract` so copia
-     arquivos locais (CONTRACT.md da source, secao 1). Nao ha o que throttle.
-  3. sem guard_date: mesma razao da populacao — a particao imutavel (partition.py)
-     ja protege contra reescrita acidental, e nao ha "dado de hoje rotulado como
-     ontem" possivel quando a fonte e um diretorio local, nao uma API com relogio.
+  1. schedule=None: the Callejero HAS NO API. It is published twice a year for manual
+     download from the INE website. A run only makes sense after someone has downloaded
+     the new files and put them in CALLEJERO_IN inside the mounted repository — there is
+     nothing for this DAG to "check" on its own, unlike population (which at least has an
+     API to query on demand). Manual trigger (`make callejero-trigger` or the UI), always
+     after a human download.
+  2. no dedicated pool: there is no network request at all here — `extract` only copies
+     local files (the source's CONTRACT.md, section 1). There is nothing to throttle.
+  3. no guard_date: same reason as population — the immutable partition (partition.py)
+     already protects against accidental rewrites, and "today's data labelled as
+     yesterday" is impossible when the source is a local directory, not an API with a clock.
 """
 
 from __future__ import annotations
@@ -44,20 +44,20 @@ PLATFORM_SRC = f"{REPO}/platform/src"
 SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 
-# Onde os arquivos baixados manualmente do site do INE devem estar, DENTRO do
-# repositorio montado no container, antes de disparar esta DAG.
+# Where the files manually downloaded from the INE website must be, INSIDE the repository
+# mounted in the container, before triggering this DAG.
 CALLEJERO_IN = os.environ.get("RETAIL_CALLEJERO_IN", f"{REPO}/temp")
 PROVINCES = os.environ.get("RETAIL_CALLEJERO_PROVINCES", "08,28,41,46")
 
-# Codigos de saida do CONTRACT.md secao 7 da source (mesmos valores das outras duas
-# sources, independentes — nao ha acoplamento em comparti-los aqui).
+# Exit codes from the source's CONTRACT.md section 7 (same values as the other two
+# sources, which are independent — sharing them here creates no coupling).
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_FATAL = 2
 
 
 def _run(argv: list[str], env_extra: dict | None = None) -> int:
-    """Executa e ENCAMINHA a saida linha a linha para o log da tarefa."""
+    """Run and FORWARD the output, line by line, to the task log."""
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
@@ -73,21 +73,21 @@ def _run(argv: list[str], env_extra: dict | None = None) -> int:
 
 
 def _run_source(argv: list[str]) -> int:
-    """Invoca a Source no interpretador do Airflow. Seguro porque dependencies = []."""
+    """Invoke the Source on Airflow's interpreter. Safe because dependencies = []."""
     return _run([SOURCE_PYTHON, "-m", "ine_callejero_source", *argv],
                 {"PYTHONPATH": CALLEJERO_SOURCE_SRC})
 
 
 def _run_platform(argv: list[str]) -> int:
-    """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
+    """Invoke the platform in its separate venv, with code from the mounted repo."""
     return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
                 {"PYTHONPATH": PLATFORM_SRC})
 
 
 def _log_task_failure(context: dict) -> None:
-    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
-    interno do scheduler. Usa o logger que a propria task ja escreve
-    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """CR-005: the only structured record a task failure leaves, besides the scheduler's
+    internal state. Uses the logger the task already writes to
+    (`logging.getLogger("airflow.task")`) — no new file, no new service.
     """
     ti = context.get("task_instance")
     exc = context.get("exception")
@@ -108,69 +108,69 @@ def partition_path(ingestion_date: str) -> str:
 
 
 def already_landed(ds: str, **_) -> bool:
-    """Short-circuit olhando o DESTINO, nao o disco local — mesmo raciocinio das outras
-    duas sources: exit 0 = nada a fazer; exit 1 = aterrissada mas divergente, `land`
-    se auto-corrige; exit 2 = nem existe, segue para extract."""
+    """Short-circuit that looks at the DESTINATION, not the local disk — same reasoning as
+    the other two sources: exit 0 = nothing to do; exit 1 = landed but divergent, `land`
+    self-heals; exit 2 = does not exist, carry on to extract."""
     code = _run_platform(["verify-landing", partition_path(ds)])
     if code == EXIT_OK:
-        print("particao ja aterrissada e verificada no destino: nada a fazer.")
+        print("partition already landed and verified at the destination: nothing to do.")
         return False
-    print(f"verify-landing retornou {code}: seguindo o pipeline.")
+    print(f"verify-landing returned {code}: continuing the pipeline.")
     return True
 
 
 def extract(ds: str, **_) -> None:
     if os.path.exists(os.path.join(partition_path(ds), "_SUCCESS")):
-        print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
+        print("partition already complete and immutable on disk: extract skipped (not a failure).")
         return
     if not os.path.isdir(CALLEJERO_IN):
         raise RuntimeError(
-            f"CALLEJERO_IN nao existe: {CALLEJERO_IN}. Baixe os arquivos do Callejero "
-            f"do site do INE e coloque nesse diretorio (dentro do repositorio montado) "
-            f"antes de disparar esta DAG."
+            f"CALLEJERO_IN does not exist: {CALLEJERO_IN}. Download the Callejero files "
+            f"from the INE website and put them in that directory (inside the mounted "
+            f"repository) before triggering this DAG."
         )
 
     code = _run_source(
         ["extract", "--in", CALLEJERO_IN, "--out", DATA_ROOT, "--provinces", PROVINCES, "--date", ds]
     )
     if code == EXIT_FATAL:
-        raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
+        raise RuntimeError(f"extract failed fatally (exit {code}); retrying will not fix it")
     if code == EXIT_PARTIAL:
-        raise RuntimeError(f"extract parcial (exit {code}): ha entradas em failures[]")
+        raise RuntimeError(f"partial extract (exit {code}): there are entries in failures[]")
     if code != EXIT_OK:
-        raise RuntimeError(f"extract retornou exit {code}")
+        raise RuntimeError(f"extract returned exit {code}")
 
 
 def validate(ds: str, **_) -> None:
     code = _run_source(["validate", partition_path(ds), "--strict"])
     if code != EXIT_OK:
-        raise RuntimeError(f"validate reprovou a particao (exit {code})")
+        raise RuntimeError(f"validate rejected the partition (exit {code})")
 
 
 def land(ds: str, **_) -> None:
     code = _run_platform(["land", partition_path(ds)])
     if code != EXIT_OK:
-        raise RuntimeError(f"land falhou (exit {code})")
+        raise RuntimeError(f"land failed (exit {code})")
 
 
 def verify_landing(ds: str, **_) -> None:
     code = _run_platform(["verify-landing", partition_path(ds)])
     if code != EXIT_OK:
-        raise RuntimeError(f"verify-landing reprovou o destino (exit {code})")
+        raise RuntimeError(f"verify-landing rejected the destination (exit {code})")
 
 
 def silver(**_) -> None:
-    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+    """Silver `dbt build`, with the gate applied by the platform.
 
-    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
-    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
-    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
-    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
-    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
-    source desta DAG.
+    THE GATE DOES NOT LIVE HERE, and it used to — that was the defect. Each DAG carried its
+    own partial copy of the decision (excluding its OWN source, and nothing else), the
+    Makefile carried the full version, and all six diverged. This DAG had no gate at all and
+    failed every day from the moment `silver_live_order_state` was born, because the Iceberg
+    projection can only be read when the catalog responds — and the catalog has nothing to
+    do with this DAG's source.
 
-    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
-    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    Now there is one verb: `retail_platform silver-build` observes what has landed and
+    whether the catalog responds, and builds `--exclude`/`--vars` itself. See silver_gate.py.
     """
     code = _run_platform([
         "silver-build",
@@ -178,12 +178,12 @@ def silver(**_) -> None:
         "--profiles-dir", f"{REPO}/platform/dbt",
     ])
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build falhou (exit {code})")
+        raise RuntimeError(f"dbt build failed (exit {code})")
 
 
 with DAG(
     dag_id="ine_callejero_on_demand",
-    description="RAW no object storage e Silver a partir do Callejero (geografia oficial) do INE",
+    description="RAW in object storage and Silver from the INE Callejero (official geography)",
     schedule=None,
     start_date=datetime(2026, 8, 25),
     catchup=False,
@@ -232,8 +232,8 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
-        # Mesma trigger_rule das outras duas: se o gate curto-circuitou (nada novo),
-        # silver ainda roda (barato, idempotente) em vez de ficar `skipped` arrastado.
+        # Same trigger_rule as the other two: if the gate short-circuited (nothing new),
+        # silver still runs (cheap, idempotent) instead of being dragged into `skipped`.
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 

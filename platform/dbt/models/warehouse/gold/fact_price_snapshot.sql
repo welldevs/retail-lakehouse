@@ -1,25 +1,28 @@
--- PRECO OBSERVADO — e a PRESENCA DA LINHA E O SORTIMENTO.
+-- OBSERVED PRICE — and the PRESENCE OF THE ROW IS THE ASSORTMENT.
 --
--- GRAO: (snapshot_date, wh, source_product_id). 60.384 linhas.
--- TIPO: observed.
+-- GRAIN: (snapshot_date, wh, source_product_id). 60,384 rows.
+-- TYPE: observed.
 --
--- CHAMA-SE SNAPSHOT, NAO DAILY, e a diferenca nao e estilistica. Ha lacunas medidas: os
--- dias 2026-08-17 a 08-23 nao existem e NAO podem ser recuperados — a API da Mercadona so
--- serve o preco de hoje, e backfill e impossivel nesta fonte. "Daily" prometeria uma
--- continuidade que a fonte nao tem, e um mart que a assumisse interpolaria a lacuna em
--- silencio. Quem precisar saber se um dia foi observado consulta FACT_INGESTION_RUN.
+-- IT IS CALLED SNAPSHOT, NOT DAILY, and the difference is not stylistic. There are
+-- measured gaps: days 2026-08-17 to 08-23 do not exist and CANNOT be recovered — the
+-- Mercadona API only serves today's price, and backfill is impossible for this source.
+-- "Daily" would promise a continuity the source does not have, and a mart that assumed it
+-- would silently interpolate the gap. Whoever needs to know whether a day was observed
+-- queries FACT_INGESTION_RUN.
 --
--- O EIXO `wh` FICA NO GRAO, e isso e medido: 187 produtos tem unit_price diferente entre
--- os 4 armazens no mesmo dia, e 0 divergem dentro do mesmo armazem. Um fato de preco sem
--- `wh` mediria uma media que nao existe em armazem nenhum.
+-- THE `wh` AXIS STAYS IN THE GRAIN, and that is measured: 187 products have a different
+-- unit_price across the 4 warehouses on the same day, and 0 diverge within the same
+-- warehouse. A price fact without `wh` would measure an average that exists in no
+-- warehouse.
 --
--- NAO EXISTE FACT_ASSORTMENT, de proposito: a presenca de uma linha aqui JA e a afirmacao
--- "este produto estava no catalogo deste armazem neste dia". Medido que os catalogos
--- divergem (4.283 a 4.335 produtos por armazem, so 3.859 nos quatro), entao a informacao
--- e real — mas uma tabela separada seria a mesma informacao numa segunda copia.
+-- THERE IS NO FACT_ASSORTMENT, on purpose: the presence of a row here ALREADY is the
+-- statement "this product was in this warehouse's catalog on this day". Measured that the
+-- catalogs diverge (4,283 to 4,335 products per warehouse, only 3,859 in all four), so the
+-- information is real — but a separate table would be the same information in a second
+-- copy.
 --
--- CUIDADO AO LER AUSENCIA: uma linha faltando pode significar "produto fora do catalogo"
--- OU "dia nao observado". So o cruzamento com FACT_INGESTION_RUN distingue os dois.
+-- CAREFUL WHEN READING ABSENCE: a missing row may mean "product out of the catalog"
+-- OR "day not observed". Only the cross with FACT_INGESTION_RUN distinguishes the two.
 {{ config(materialized = 'table') }}
 
 select
@@ -28,17 +31,18 @@ select
     p.warehouse                                             as wh,
     p.source_product_id,
 
-    -- Aponta a VERSAO da dimensao vigente no dia do snapshot, nao a versao corrente:
-    -- e o que faz um preco antigo se ligar ao nome que o produto tinha na epoca.
+    -- Points to the dimension VERSION in effect on the snapshot day, not the current version:
+    -- it is what links an old price to the name the product had at the time.
     d.product_sk,
     p.primary_category_id,
 
     p.unit_price,
 
-    -- O PRECO DE UNIDADE COMPRAVEL, ao lado do valor cru. Sao iguais em 99,9% das linhas; nas
-    -- 10 combinacoes produto x armazem vendidas a granel sem `unit_size`, a API devolve
-    -- `reference_price * 99` — o teto do seletor de peso, e nao um preco de consumo. E contra
-    -- ESTA coluna que FACT_ORDER_ITEM fecha: o pedido cobrou a porcao, nao o teto.
+    -- THE PURCHASABLE-UNIT PRICE, next to the raw value. They are equal in 99.9% of rows; in
+    -- the 10 product x warehouse combinations sold loose without `unit_size`, the API returns
+    -- `reference_price * 99` — the weight selector's ceiling, and not a consumer price. It is
+    -- against THIS column that FACT_ORDER_ITEM closes: the order charged the portion, not the
+    -- ceiling.
     p.purchasable_unit_price,
     p.price_basis,
     p.net_content_kg_l,
@@ -50,16 +54,18 @@ select
     p.previous_unit_price,
     p.tax_percentage,
 
-    -- PREMISSA DO CONSUMIDOR, NAO DADO DA FONTE. A Mercadona nao declara moeda em nenhum
-    -- campo (CONTRACT.md 4.6), e o Silver nao inventa. A var existe no dbt_project desde o
-    -- primeiro dia justamente para o Gold; materializa-la aqui faz a premissa viajar junto
-    -- do numero, em vez de ficar so num arquivo de configuracao que ninguem le ao olhar um
-    -- dashboard. Trocar de moeda e editar a var, nao cacar 'EUR' espalhado por modelo.
+    -- CONSUMER PREMISE, NOT SOURCE DATA. Mercadona does not declare a currency in any field
+    -- (CONTRACT.md 4.6), and Silver does not invent one. The var has existed in dbt_project
+    -- since day one precisely for Gold; materializing it here makes the premise travel with
+    -- the number, instead of sitting only in a configuration file nobody reads when looking at
+    -- a dashboard. Changing currency is editing the var, not hunting down 'EUR' scattered
+    -- across models.
     '{{ var("currency") }}'                                 as currency,
 
-    -- Preco sem imposto, derivado do preco COMPRAVEL. tax_percentage e da fonte; a divisao
-    -- e deste modelo, e por isso a coluna tem nome proprio em vez de sobrescrever
-    -- unit_price. Derivar do valor cru daria 3.663,00 sem imposto para 150 g de langostino.
+    -- Pre-tax price, derived from the PURCHASABLE price. tax_percentage comes from the
+    -- source; the division is this model's, which is why the column has its own name instead
+    -- of overwriting unit_price. Deriving from the raw value would give 3,663.00 pre-tax for
+    -- 150 g of langostino.
     case
         when p.tax_percentage is null or p.tax_percentage = 0 then null
         else round(p.purchasable_unit_price / (1 + p.tax_percentage / 100), 4)

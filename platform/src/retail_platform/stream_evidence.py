@@ -39,103 +39,103 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def _tabela(colunas: list[str], linhas: list) -> list[str]:
-    cabecalho = "| " + " | ".join(colunas) + " |"
-    separador = "|" + "|".join("---" for _ in colunas) + "|"
-    corpo = [
-        "| " + " | ".join("" if v is None else str(v) for v in linha) + " |"
-        for linha in linhas
+def _table(columns: list[str], lines: list) -> list[str]:
+    header = "| " + " | ".join(columns) + " |"
+    separator = "|" + "|".join("---" for _ in columns) + "|"
+    body = [
+        "| " + " | ".join("" if v is None else str(v) for v in row) + " |"
+        for row in lines
     ]
-    return [cabecalho, separador, *corpo]
+    return [header, separator, *body]
 
 
 # --------------------------------------------------------------------------------------
 # Observation, plane by plane
 # --------------------------------------------------------------------------------------
-# Cada bloco devolve `{"erro": "..."}` em vez de propagar a excecao. O relatorio precisa
-# poder ser gerado com o plano meio de pe — e precisa DIZER que estava meio de pe.
+# Each block returns `{"erro": "..."}` instead of propagating the exception. The report must
+# be producible with the plane half up — and it must SAY it was half up.
 
-def _observar_oltp(dsn=None) -> dict:
+def _observe_oltp(dsn=None) -> dict:
     from . import orders_oltp
     try:
-        conexao = orders_oltp.connect(dsn)
+        connection = orders_oltp.connect(dsn)
     except Exception as exc:
         return {"erro": str(exc).splitlines()[0]}
     try:
-        resumo = orders_oltp.outbox_summary(conexao)
-        with conexao.cursor() as cur:
+        summary = orders_oltp.outbox_summary(connection)
+        with connection.cursor() as cur:
             cur.execute("select count(*) from orders")
-            resumo["orders"] = cur.fetchone()[0]
+            summary["orders"] = cur.fetchone()[0]
             cur.execute("select count(*) from order_line")
-            resumo["order_lines"] = cur.fetchone()[0]
+            summary["order_lines"] = cur.fetchone()[0]
             cur.execute("select status, count(*) from order_line group by 1 order by 1")
-            resumo["lines_by_status"] = {r[0]: r[1] for r in cur.fetchall()}
+            summary["lines_by_status"] = {r[0]: r[1] for r in cur.fetchall()}
             cur.execute("select min(published_at), max(published_at) from outbox")
-            primeiro, ultimo = cur.fetchone()
-            resumo["published_from"] = str(primeiro) if primeiro else None
-            resumo["published_to"] = str(ultimo) if ultimo else None
-        return resumo
+            first, last = cur.fetchone()
+            summary["published_from"] = str(first) if first else None
+            summary["published_to"] = str(last) if last else None
+        return summary
     except Exception as exc:
         return {"erro": str(exc).splitlines()[0]}
     finally:
-        conexao.close()
+        connection.close()
 
 
-def _observar_broker(bootstrap: str, topic: str, grupos: list) -> dict:
+def _observe_broker(bootstrap: str, topic: str, groups: list) -> dict:
     from . import orders_stream
     try:
-        marcas = orders_stream.topic_watermarks(bootstrap, topic)
+        watermarks = orders_stream.topic_watermarks(bootstrap, topic)
     except Exception as exc:
         return {"erro": str(exc).splitlines()[0]}
     lags = {}
-    for grupo in grupos:
+    for group in groups:
         try:
-            lags[grupo] = orders_stream.group_lag(bootstrap, topic, grupo)
+            lags[group] = orders_stream.group_lag(bootstrap, topic, group)
         except Exception as exc:
-            lags[grupo] = {"erro": str(exc).splitlines()[0]}
-    return {"topic": topic, "bootstrap": bootstrap, "watermarks": marcas, "lags": lags}
+            lags[group] = {"erro": str(exc).splitlines()[0]}
+    return {"topic": topic, "bootstrap": bootstrap, "watermarks": watermarks, "lags": lags}
 
 
-def _observar_projecao(config, dsn=None) -> dict:
+def _observe_projection(config, dsn=None) -> dict:
     from . import orders_projection
     try:
         cat = orders_projection.catalog(config)
-        tabela = cat.load_table(orders_projection.TABLE_NAME)
+        table = cat.load_table(orders_projection.TABLE_NAME)
     except Exception as exc:
         return {"erro": str(exc).splitlines()[0]}
     try:
         import pyarrow.compute as pc
 
-        arrow = tabela.scan().to_arrow()
-        proveniencia = {}
+        arrow = table.scan().to_arrow()
+        provenance = {}
         if arrow.num_rows and "written_by" in arrow.column_names:
-            contagem = pc.value_counts(arrow.column("written_by").combine_chunks())
-            proveniencia = {
-                str(entrada["values"]): int(entrada["counts"])
-                for entrada in contagem.to_pylist()
+            counts = pc.value_counts(arrow.column("written_by").combine_chunks())
+            provenance = {
+                str(entry["values"]): int(entry["counts"])
+                for entry in counts.to_pylist()
             }
-        estados = {}
+        statuses = {}
         if arrow.num_rows and "status" in arrow.column_names:
-            contagem = pc.value_counts(arrow.column("status").combine_chunks())
-            estados = {
-                str(entrada["values"]): int(entrada["counts"])
-                for entrada in contagem.to_pylist()
+            counts = pc.value_counts(arrow.column("status").combine_chunks())
+            statuses = {
+                str(entry["values"]): int(entry["counts"])
+                for entry in counts.to_pylist()
             }
-        snapshots = list(tabela.metadata.snapshots)
+        snapshots = list(table.metadata.snapshots)
         return {
             "table": orders_projection.TABLE_NAME,
             "metadata_location": orders_projection.metadata_location(cat),
             "rows": arrow.num_rows,
             "snapshots": len(snapshots),
-            "current_snapshot_id": tabela.metadata.current_snapshot_id,
-            "written_by": proveniencia,
-            "by_status": estados,
+            "current_snapshot_id": table.metadata.current_snapshot_id,
+            "written_by": provenance,
+            "by_status": statuses,
         }
     except Exception as exc:
         return {"erro": str(exc).splitlines()[0]}
 
 
-def _observar_reconciliacao(config, dsn=None) -> dict:
+def _observe_reconciliation(config, dsn=None) -> dict:
     from . import orders_projection
     try:
         return orders_projection.reconcile(config, dsn=dsn)
@@ -151,16 +151,16 @@ def collect(config=None, *, bootstrap=None, topic=None, groups=None, dsn=None) -
     config = config or from_env()
     bootstrap = bootstrap or orders_stream.DEFAULT_BOOTSTRAP
     topic = topic or orders_stream.DEFAULT_TOPIC
-    # Os DOIS grupos, e a diferenca entre eles e o ponto do par lambda: cada sink consome o
-    # mesmo topico no seu proprio ritmo, com offset proprio. Um grupo so esconderia isso.
+    # BOTH groups, and the difference between them is the point of the lambda pair: each
+    # sink consumes the same topic at its own pace, with its own offset. One group would hide that.
     groups = groups or [orders_stream.DEFAULT_GROUP, f"{orders_stream.DEFAULT_GROUP}-iceberg"]
 
     return {
         "capturado_em": _utc_now(),
-        "oltp": _observar_oltp(dsn),
-        "broker": _observar_broker(bootstrap, topic, groups),
-        "projecao": _observar_projecao(config, dsn),
-        "reconciliacao": _observar_reconciliacao(config, dsn),
+        "oltp": _observe_oltp(dsn),
+        "broker": _observe_broker(bootstrap, topic, groups),
+        "projecao": _observe_projection(config, dsn),
+        "reconciliacao": _observe_reconciliation(config, dsn),
     }
 
 
@@ -168,9 +168,9 @@ def collect(config=None, *, bootstrap=None, topic=None, groups=None, dsn=None) -
 # Report
 # --------------------------------------------------------------------------------------
 
-def _secao_ausente(nome: str, erro: str) -> list[str]:
+def _absent_section(name: str, error: str) -> list[str]:
     return [
-        f"> **{nome} not observed.** `{erro}`",
+        f"> **{name} not observed.** `{error}`",
         ">",
         "> The section is absent, not estimated. Bring the plane up with `make stream-up`",
         "> and regenerate with `make stream-evidence`.",
@@ -178,9 +178,9 @@ def _secao_ausente(nome: str, erro: str) -> list[str]:
     ]
 
 
-def render(dados: dict) -> str:
+def render(data: dict) -> str:
     """Markdown. No number written by hand: everything comes from what was observed."""
-    linhas = [
+    lines = [
         "# Stream plane evidence",
         "",
         "Generated by `make stream-evidence` against the OLTP, the broker and the projection",
@@ -194,13 +194,13 @@ def render(dados: dict) -> str:
         "Kafka preserves order by key, that Postgres really does undo, that Iceberg refuses a",
         "commit over a stale snapshot. This is the record that it was exercised against them.",
         "",
-        f"| captured at | {dados['capturado_em']} |",
+        f"| captured at | {data['capturado_em']} |",
         "|---|---|",
         "",
     ]
 
     # ---- OLTP -------------------------------------------------------------------------
-    linhas += [
+    lines += [
         "## Transactional plane — OLTP and outbox",
         "",
         "The event is born **inside the same transaction** that changes `orders` and",
@@ -211,11 +211,11 @@ def render(dados: dict) -> str:
         "rolled back.",
         "",
     ]
-    oltp = dados["oltp"]
+    oltp = data["oltp"]
     if "erro" in oltp:
-        linhas += _secao_ausente("OLTP", oltp["erro"])
+        lines += _absent_section("OLTP", oltp["erro"])
     else:
-        linhas += _tabela(["", ""], [
+        lines += _table(["", ""], [
             ("orders in `orders`", f"{oltp['orders']:,}"),
             ("rows in `order_line`", f"{oltp['order_lines']:,}"),
             ("events in `outbox`", f"{oltp['outbox_rows']:,}"),
@@ -224,19 +224,19 @@ def render(dados: dict) -> str:
             ("first publication", oltp["published_from"]),
             ("last publication", oltp["published_to"]),
         ])
-        linhas += ["", "### Events in the outbox, by type", ""]
-        linhas += _tabela(["event_type", "events"],
+        lines += ["", "### Events in the outbox, by type", ""]
+        lines += _table(["event_type", "events"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["by_event_type"].items())])
-        linhas += ["", "### Replicated state, by OLTP fold", ""]
-        linhas += _tabela(["order status", "orders"],
+        lines += ["", "### Replicated state, by OLTP fold", ""]
+        lines += _table(["order status", "orders"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["orders_by_status"].items())])
-        linhas += [""]
-        linhas += _tabela(["line status", "lines"],
+        lines += [""]
+        lines += _table(["line status", "lines"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(oltp["lines_by_status"].items())])
-        linhas += [""]
+        lines += [""]
 
     # ---- Broker -----------------------------------------------------------------------
-    linhas += [
+    lines += [
         "## Transport — Kafka",
         "",
         "`key = order_id`, and the key is **loadable**: Kafka guarantees order within the",
@@ -247,21 +247,21 @@ def render(dados: dict) -> str:
         "**effectively-once** because the offset is only committed after the write.",
         "",
     ]
-    broker = dados["broker"]
+    broker = data["broker"]
     if "erro" in broker:
-        linhas += _secao_ausente("Broker", broker["erro"])
+        lines += _absent_section("Broker", broker["erro"])
     else:
-        linhas += [f"Topic `{broker['topic']}` on `{broker['bootstrap']}`.", ""]
-        linhas += ["### Watermarks by partition", ""]
-        marcas = broker["watermarks"]
-        linhas += _tabela(
+        lines += [f"Topic `{broker['topic']}` on `{broker['bootstrap']}`.", ""]
+        lines += ["### Watermarks by partition", ""]
+        watermarks = broker["watermarks"]
+        lines += _table(
             ["partition", "low", "high", "messages"],
             [(p, m["low"], m["high"], f"{m['high'] - m['low']:,}")
-             for p, m in sorted(marcas.items())],
+             for p, m in sorted(watermarks.items())],
         )
-        total = sum(m["high"] - m["low"] for m in marcas.values())
-        linhas += ["", f"Total in the topic: **{total:,} messages**.", ""]
-        linhas += [
+        total = sum(m["high"] - m["low"] for m in watermarks.values())
+        lines += ["", f"Total in the topic: **{total:,} messages**.", ""]
+        lines += [
             "The sum can exceed the log's event count, and that is **correct**: delivery",
             "from the outbox to the broker is at-least-once by design, so a crash between",
             "the ack and marking `published_at` republishes the batch. What makes that",
@@ -284,19 +284,19 @@ def render(dados: dict) -> str:
             "paths converge is `make orders-reconcile`, not a consumer's offset.",
             "",
         ]
-        for grupo, lag in broker["lags"].items():
-            linhas += [f"**`{grupo}`**", ""]
+        for group, lag in broker["lags"].items():
+            lines += [f"**`{group}`**", ""]
             if "erro" in lag:
-                linhas += [f"- not observed: `{lag['erro']}`", ""]
+                lines += [f"- not observed: `{lag['erro']}`", ""]
                 continue
-            linhas += _tabela(
+            lines += _table(
                 ["partition", "committed offset", "high", "lag"],
                 [(p, d["committed"], d["high"], d["lag"]) for p, d in sorted(lag.items())],
             )
-            linhas += ["", f"Total lag: **{sum(d['lag'] for d in lag.values()):,}**.", ""]
+            lines += ["", f"Total lag: **{sum(d['lag'] for d in lag.values()):,}**.", ""]
 
-    # ---- Projecao ---------------------------------------------------------------------
-    linhas += [
+    # ---- Projection -------------------------------------------------------------------
+    lines += [
         "## Projection — Iceberg",
         "",
         "The trigger written for Iceberg was *\"a second engine needing to write the same",
@@ -308,18 +308,18 @@ def render(dados: dict) -> str:
         "**queryable** rather than anecdotal.",
         "",
     ]
-    projecao = dados["projecao"]
-    if "erro" in projecao:
-        linhas += _secao_ausente("Projection", projecao["erro"])
+    projection = data["projecao"]
+    if "erro" in projection:
+        lines += _absent_section("Projection", projection["erro"])
     else:
-        linhas += _tabela(["", ""], [
-            ("table", f"`{projecao['table']}`"),
-            ("rows", f"{projecao['rows']:,}"),
-            ("snapshots", f"{projecao['snapshots']:,}"),
-            ("current snapshot", projecao["current_snapshot_id"]),
-            ("current metadata", f"`{projecao['metadata_location']}`"),
+        lines += _table(["", ""], [
+            ("table", f"`{projection['table']}`"),
+            ("rows", f"{projection['rows']:,}"),
+            ("snapshots", f"{projection['snapshots']:,}"),
+            ("current snapshot", projection["current_snapshot_id"]),
+            ("current metadata", f"`{projection['metadata_location']}`"),
         ])
-        linhas += [
+        lines += [
             "",
             "The metadata path comes from the **catalog**, never from a storage scan. DuckDB",
             "refuses to guess which metadata is current — *\"globbing the filesystem…",
@@ -330,15 +330,15 @@ def render(dados: dict) -> str:
             "### Provenance: who wrote each row",
             "",
         ]
-        linhas += _tabela(["written_by", "rows"],
-                          [(f"`{k}`", f"{v:,}") for k, v in sorted(projecao["written_by"].items())])
-        linhas += ["", "### State in the live projection", ""]
-        linhas += _tabela(["status", "orders"],
-                          [(f"`{k}`", f"{v:,}") for k, v in sorted(projecao["by_status"].items())])
-        linhas += [""]
+        lines += _table(["written_by", "rows"],
+                          [(f"`{k}`", f"{v:,}") for k, v in sorted(projection["written_by"].items())])
+        lines += ["", "### State in the live projection", ""]
+        lines += _table(["status", "orders"],
+                          [(f"`{k}`", f"{v:,}") for k, v in sorted(projection["by_status"].items())])
+        lines += [""]
 
-    # ---- Reconciliacao ----------------------------------------------------------------
-    linhas += [
+    # ---- Reconciliation ---------------------------------------------------------------
+    lines += [
         "## The three folds",
         "",
         "The same order state is computed by three paths, and `make orders-reconcile`",
@@ -354,44 +354,44 @@ def render(dados: dict) -> str:
         "fold.",
         "",
     ]
-    rec = dados["reconciliacao"]
+    rec = data["reconciliacao"]
     if "erro" in rec:
-        linhas += _secao_ausente("Reconciliation", rec["erro"])
+        lines += _absent_section("Reconciliation", rec["erro"])
     else:
-        linhas += _tabela(["source", "orders"],
+        lines += _table(["source", "orders"],
                           [(f"`{k}`", f"{v:,}") for k, v in sorted(rec["orders"].items())])
-        linhas += ["", f"Compared: **{rec['compared']:,} orders**.", ""]
+        lines += ["", f"Compared: **{rec['compared']:,} orders**.", ""]
         if rec["ok"]:
-            linhas += ["Result: **all three agree on every order compared** — "
+            lines += ["Result: **all three agree on every order compared** — "
                        "zero divergences, zero absences.", ""]
         else:
-            linhas += [f"**Divergences: {rec['divergence_count']}.**", ""]
+            lines += [f"**Divergences: {rec['divergence_count']}.**", ""]
             if rec["divergences"]:
-                colunas = list(rec["divergences"][0].keys())
-                linhas += _tabela(colunas,
-                                  [tuple(d[c] for c in colunas) for d in rec["divergences"]])
-                linhas += [""]
-            for nome, ausentes in rec.get("missing", {}).items():
-                linhas += [f"- missing from `{nome}`: {', '.join(map(str, ausentes))}", ""]
+                columns = list(rec["divergences"][0].keys())
+                lines += _table(columns,
+                                  [tuple(d[c] for c in columns) for d in rec["divergences"]])
+                lines += [""]
+            for name, absent in rec.get("missing", {}).items():
+                lines += [f"- missing from `{name}`: {', '.join(map(str, absent))}", ""]
 
-    linhas += [
+    lines += [
         "---",
         "",
         "Regenerate with `make stream-evidence` after any run worth recording. The proofs",
         "that back each claim above run separately:",
         "`make orders-prove-atomicity`, `make orders-prove-stream`, `make orders-prove-projection`.",
     ]
-    return "\n".join(linhas) + "\n"
+    return "\n".join(lines) + "\n"
 
 
-def write(dados: dict, out: str = DEFAULT_OUT) -> str:
+def write(data: dict, out: str = DEFAULT_OUT) -> str:
     """Writes the report. Creates the directory; returns the path."""
-    destino = os.path.abspath(out)
-    os.makedirs(os.path.dirname(destino), exist_ok=True)
-    # Escrita atomica pelo mesmo motivo do resto do repo: um relatorio truncado por
-    # interrupcao nao pode parecer completo para quem o le depois.
-    temporario = destino + ".tmp"
-    with open(temporario, "w", encoding="utf-8") as handle:
-        handle.write(render(dados))
-    os.replace(temporario, destino)
-    return destino
+    target = os.path.abspath(out)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    # Atomic write for the same reason as the rest of the repo: a report truncated by an
+    # interruption must not look complete to whoever reads it later.
+    tmp_path = target + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(render(data))
+    os.replace(tmp_path, target)
+    return target

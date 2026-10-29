@@ -1,31 +1,31 @@
--- Restricoes 2 e 3 das cinco do FAQ, num teste so porque falham juntas:
---   2. so produtos do catalogo de W naquela data;
---   3. preco = o preco de W naquela data.
+-- Constraints 2 and 3 of the FAQ's five, in a single test because they fail together:
+--   2. only products from W's catalog on that date;
+--   3. price = W's price on that date.
 --
--- POR QUE AS DUAS NO MESMO TESTE. Um produto ausente do catalogo e um preco divergente sao a
--- mesma pergunta feita ao mesmo join: "esta linha corresponde a uma linha real de
--- silver_product_price?". Separa-las obrigaria a repetir o join e a dedup, e faria um produto
--- ausente aparecer como duas falhas.
+-- WHY BOTH IN THE SAME TEST. A product missing from the catalog and a divergent price are the
+-- same question asked of the same join: "does this line correspond to a real row of
+-- silver_product_price?". Separating them would force repeating the join and the dedup, and would make a
+-- missing product show up as two failures.
 --
--- 187 PRODUTOS DIVERGEM DE PRECO ENTRE ARMAZENS no mesmo dia — medido na Fase 2. Por isso o
--- join carrega `warehouse` E `ingestion_date`: casar so por produto passaria com o preco do
--- armazem errado.
+-- 187 PRODUCTS DIVERGE IN PRICE ACROSS WAREHOUSES on the same day — measured in Phase 2. That is why the
+-- join carries `warehouse` AND `ingestion_date`: matching by product alone would pass with the price of the
+-- wrong warehouse.
 --
--- DEDUP ANTES DO JOIN. `silver_product_price` tem mais linhas que produtos por particao
--- (4.581 linhas para 4.311 produtos em mad1/2026-08-24): um produto aparece em mais de uma
--- categoria, e isso e semantica da fonte. Sem `distinct` o join multiplicaria a linha do
--- pedido e o teste reprovaria por fanout, nao por defeito. O preco e identico entre as
--- aparicoes — garantia que ja tem teste proprio (assert_price_is_consistent_across_appearances).
+-- DEDUP BEFORE THE JOIN. `silver_product_price` has more rows than products per partition
+-- (4,581 rows for 4,311 products in mad1/2026-08-24): a product appears in more than one
+-- category, and that is source semantics. Without `distinct` the join would multiply the order
+-- line and the test would fail from fanout, not from a defect. The price is identical across
+-- appearances — a guarantee that already has its own test (assert_price_is_consistent_across_appearances).
 --
--- LINHA REMOVIDA tambem entra: o produto PEDIDO tinha de existir mesmo que nao tenha sido
--- entregue. O que nao se confere para ela e o `fulfilled_*`, que e nulo por contrato.
+-- A REMOVED LINE also comes in: the ORDERED product had to exist even if it was not
+-- delivered. What is not checked for it is `fulfilled_*`, which is null by contract.
 --
--- A COMPARACAO E CONTRA `purchasable_unit_price`, NAO CONTRA `unit_price`. Medido em
--- 2026-08-31: quando `selling_method = 1` e `unit_size` e nulo, a fonte devolve
--- `unit_price = reference_price * 99` — o teto do seletor de peso (obrigacao 5 do contrato
--- da Mercadona). Sao 10 combinacoes produto x armazem, e casar contra `unit_price` faria
--- este teste EXIGIR que o pedido cobrasse 1.084,05 EUR por 150 g de langostino. O valor cru
--- viaja no relatorio de falha ao lado, para que a diferenca seja visivel quando houver.
+-- THE COMPARISON IS AGAINST `purchasable_unit_price`, NOT AGAINST `unit_price`. Measured on
+-- 2026-08-31: when `selling_method = 1` and `unit_size` is null, the source returns
+-- `unit_price = reference_price * 99` — the weight selector's ceiling (obligation 5 of the
+-- Mercadona contract). There are 10 product x warehouse combinations, and matching against `unit_price` would make
+-- this test DEMAND that the order charge 1,084.05 EUR for 150 g of prawns. The raw value
+-- travels in the failure report alongside, so the difference is visible when there is one.
 with catalogo as (
 
     select distinct

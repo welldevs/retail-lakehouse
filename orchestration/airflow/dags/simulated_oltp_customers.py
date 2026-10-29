@@ -1,38 +1,38 @@
-"""DAG sob demanda: base de clientes sinteticos ancorados em geografia real.
+"""On-demand DAG: synthetic customer base anchored in real geography.
 
-Quarta source, e a UNICA DERIVADA: as outras tres sao upstream de dado externo, esta
-consome o Silver que elas produziram. Isso muda a forma do DAG em dois pontos que nao tem
-paralelo nas outras:
+Fourth source, and the ONLY DERIVED one: the other three are upstream external data, this
+one consumes the Silver they produced. That changes the shape of the DAG in two places that
+have no parallel in the others:
 
-  1. `export_reference` roda UMA VEZ e alimenta os quatro armazens. A Source e FROZEN
-     (dependencies = []) e nao pode abrir conexao com o Lakehouse, entao a plataforma
-     materializa antes o que ela precisa em tres JSON planos. Poe-lo dentro do ramo de
-     cada armazem repetiria quatro vezes a mesma consulta pesada (216 mil candidatos de
-     endereco) para produzir o mesmo arquivo.
-  2. NAO HA REDE em passo nenhum — nem pool, nem throttle, nem guard_date. `extract` le
-     JSON local e escreve JSON local; o unico I/O externo e o `land` para o object
-     storage. A extracao inteira dos quatro armazens leva ~6 s.
+  1. `export_reference` runs ONCE and feeds all four warehouses. The Source is FROZEN
+     (dependencies = []) and cannot open a connection to the Lakehouse, so the platform
+     first materializes what it needs into three flat JSON files. Putting it inside each
+     warehouse's branch would repeat the same heavy query (216 thousand address
+     candidates) four times to produce the same file.
+  2. There is NO NETWORK in any step — no pool, no throttle, no guard_date. `extract` reads
+     local JSON and writes local JSON; the only external I/O is `land` to object storage.
+     The whole extraction for the four warehouses takes ~6 s.
 
-schedule=None pelo mesmo motivo estrutural do Callejero: nao ha "dado novo" para buscar.
-A base de clientes muda quando ALGUEM decide muda-la — mais clientes, outra seed, ou
-porque o Callejero/populacao a montante foram reingeridos. Disparo manual, com os
-parametros abaixo.
+schedule=None for the same structural reason as the Callejero: there is no "new data" to
+fetch. The customer base changes when SOMEONE decides to change it — more customers,
+another seed, or because the upstream Callejero/population were re-ingested. Manual
+trigger, with the parameters below.
 
-REGERAR A BASE E ADITIVO. O gerador consome uma unica random.Random(seed) em ordem fixa e
-nada antes do laco depende de `count`, entao os primeiros N clientes de uma geracao maior
-sao byte a byte os mesmos de antes — verificado ponta a ponta (200 -> 5.000 preservou os
-200). Por isso `overwrite` existe como parametro em vez de ser proibido: aumentar
-`customers_per_wh` nao invalida os clientes que ja existem. Condicoes: mesma seed, mesma
-referencia, mesma ingestion_date, e o MESMO ESCOPO DE CADASTRO — desde a Fase 6, a idade
-minima, a taxa de penetracao e a regra de alocacao entram na lista, porque as tres trocam as
-pessoas por tras dos mesmos ids tanto quanto a seed troca. O manifesto guarda todas em
-`config`/`reference`, e o `history` acumula as execucoes anteriores, para que uma regeracao
-deixe rastro.
+REGENERATING THE BASE IS ADDITIVE. The generator consumes a single random.Random(seed) in a
+fixed order and nothing before the loop depends on `count`, so the first N customers of a
+larger generation are byte-for-byte the same as before — verified end to end (200 -> 5,000
+preserved the 200). That is why `overwrite` exists as a parameter instead of being
+forbidden: raising `customers_per_wh` does not invalidate the customers that already exist.
+Conditions: same seed, same reference, same ingestion_date, and the SAME REGISTRATION
+SCOPE — since Phase 6, the minimum age, the penetration rate and the allocation rule are on
+that list, because all three swap the people behind the same ids just as much as the seed
+does. The manifest stores all of them in `config`/`reference`, and `history` accumulates
+the previous runs, so a regeneration leaves a trail.
 
-O TAMANHO DA BASE, POREM, NAO VEM MAIS DAQUI por padrao. `customers_per_wh` e nulo, e nesse
-caso o `extract` usa o alvo que `export-oltp-reference` derivou da populacao adulta de cada
-armazem. Preencher o parametro e override explicito, e o manifesto registra
-`count_source: "cli"`.
+THE SIZE OF THE BASE, HOWEVER, NO LONGER COMES FROM HERE by default. `customers_per_wh` is
+null, and in that case `extract` uses the target that `export-oltp-reference` derived from
+each warehouse's adult population. Filling in the parameter is an explicit override, and
+the manifest records `count_source: "cli"`.
 """
 
 from __future__ import annotations
@@ -64,18 +64,18 @@ PLATFORM_SRC = f"{REPO}/platform/src"
 SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 
-# Os mesmos quatro armazens da Mercadona, e nao por coincidencia: a AUF de cada um vem de
-# warehouse_service_area, derivada em torno do municipio-sede de cada `wh`.
+# The same four warehouses as Mercadona, and not by coincidence: each one's service area
+# (AUF) comes from warehouse_service_area, derived around each `wh`'s home municipality.
 WAREHOUSES = os.environ.get("RETAIL_OLTP_WAREHOUSES", "mad1,bcn1,svq1,vlc1").split(",")
 
-# Codigos de saida do CONTRACT.md secao 7 da source.
+# Exit codes from the source's CONTRACT.md section 7.
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_FATAL = 2
 
 
 def _run(argv: list[str], env_extra: dict | None = None) -> int:
-    """Executa e ENCAMINHA a saida linha a linha para o log da tarefa."""
+    """Run and FORWARD the output, line by line, to the task log."""
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
@@ -91,21 +91,21 @@ def _run(argv: list[str], env_extra: dict | None = None) -> int:
 
 
 def _run_source(argv: list[str]) -> int:
-    """Invoca a Source no interpretador do Airflow. Seguro porque dependencies = []."""
+    """Invoke the Source on Airflow's interpreter. Safe because dependencies = []."""
     return _run([SOURCE_PYTHON, "-m", "simulated_oltp_source", *argv],
                 {"PYTHONPATH": OLTP_SOURCE_SRC})
 
 
 def _run_platform(argv: list[str]) -> int:
-    """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
+    """Invoke the platform in its separate venv, with code from the mounted repo."""
     return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
                 {"PYTHONPATH": PLATFORM_SRC})
 
 
 def _log_task_failure(context: dict) -> None:
-    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
-    interno do scheduler. Usa o logger que a propria task ja escreve
-    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """CR-005: the only structured record a task failure leaves, besides the scheduler's
+    internal state. Uses the logger the task already writes to
+    (`logging.getLogger("airflow.task")`) — no new file, no new service.
     """
     ti = context.get("task_instance")
     exc = context.get("exception")
@@ -130,32 +130,33 @@ def reference_path(ingestion_date: str) -> str:
 
 
 def export_reference(ds: str, **_) -> None:
-    """A ponte entre o Lakehouse e a Source FROZEN. Roda uma vez, cobre os quatro wh.
+    """The bridge between the Lakehouse and the FROZEN Source. Runs once, covers all four wh.
 
-    `export-oltp-reference` ja recusa com mensagem acionavel se o Callejero ou a populacao
-    nao tiverem aterrissado — nao ha gate a duplicar aqui.
+    `export-oltp-reference` already refuses with an actionable message if the Callejero or
+    the population have not landed — there is no gate to duplicate here.
     """
     code = _run_platform(["export-oltp-reference", "--out", REFERENCE_ROOT, "--date", ds])
     if code != EXIT_OK:
-        raise RuntimeError(f"export-oltp-reference falhou (exit {code})")
+        raise RuntimeError(f"export-oltp-reference failed (exit {code})")
 
 
 def already_landed(warehouse: str, ds: str, params: dict, **_) -> bool:
-    """Short-circuit olhando o DESTINO, mesmo raciocinio das outras tres sources.
+    """Short-circuit that looks at the DESTINATION, same reasoning as the other three sources.
 
-    Com `overwrite`, o gate se DESLIGA. Sem isto o parametro seria inerte: quem dispara
-    para regerar a base pede exatamente o caso que o gate considera "nada a fazer" — a
-    particao ja esta aterrissada — e o ramo inteiro seria pulado antes do extract.
+    With `overwrite`, the gate switches OFF. Without this the parameter would be inert:
+    whoever triggers a regeneration asks for exactly the case the gate considers "nothing
+    to do" — the partition has already landed — and the whole branch would be skipped
+    before extract.
     """
     if params.get("overwrite"):
-        print("overwrite pedido: gate desligado, o ramo segue mesmo ja aterrissado.")
+        print("overwrite requested: gate off, the branch runs even though already landed.")
         return True
 
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code == EXIT_OK:
-        print("particao ja aterrissada e verificada no destino: nada a fazer.")
+        print("partition already landed and verified at the destination: nothing to do.")
         return False
-    print(f"verify-landing retornou {code}: seguindo o pipeline.")
+    print(f"verify-landing returned {code}: continuing the pipeline.")
     return True
 
 
@@ -164,15 +165,15 @@ def extract(warehouse: str, ds: str, params: dict, **_) -> None:
     overwrite = bool(params.get("overwrite"))
 
     if os.path.exists(os.path.join(partition, "_SUCCESS")) and not overwrite:
-        print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
-        print("Dispare com overwrite=true para regerar a base.")
+        print("partition already complete and immutable on disk: extract skipped (not a failure).")
+        print("Trigger with overwrite=true to regenerate the base.")
         return
 
     reference = reference_path(ds)
     if not os.path.isdir(reference):
         raise RuntimeError(
-            f"referencia ausente: {reference}. A tarefa export_reference deveria te-la "
-            f"produzido — verifique o log dela."
+            f"missing reference: {reference}. The export_reference task should have "
+            f"produced it — check its log."
         )
 
     argv = [
@@ -183,10 +184,10 @@ def extract(warehouse: str, ds: str, params: dict, **_) -> None:
         "--date", ds,
         "--seed", str(params["seed"]),
     ]
-    # --count SO quando alguem pede explicitamente. Omitido, a Source usa o alvo que
-    # `export-oltp-reference` derivou da populacao adulta daquele armazem — ver a docstring
-    # do parametro. Passar um numero aqui por padrao era o que fazia os quatro armazens
-    # nascerem do mesmo tamanho.
+    # --count ONLY when someone asks for it explicitly. When omitted, the Source uses the
+    # target `export-oltp-reference` derived from that warehouse's adult population — see
+    # the parameter's docstring. Passing a number here by default is what made all four
+    # warehouses come out the same size.
     if params.get("customers_per_wh"):
         argv.extend(["--count", str(params["customers_per_wh"])])
     if overwrite:
@@ -194,51 +195,52 @@ def extract(warehouse: str, ds: str, params: dict, **_) -> None:
 
     code = _run_source(argv)
     if code == EXIT_FATAL:
-        raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
+        raise RuntimeError(f"extract failed fatally (exit {code}); retrying will not fix it")
     if code == EXIT_PARTIAL:
-        raise RuntimeError(f"extract parcial (exit {code}): ha entradas em failures[]")
+        raise RuntimeError(f"partial extract (exit {code}): there are entries in failures[]")
     if code != EXIT_OK:
-        raise RuntimeError(f"extract retornou exit {code}")
+        raise RuntimeError(f"extract returned exit {code}")
 
 
 def validate(warehouse: str, ds: str, **_) -> None:
-    """--reference NAO e opcional aqui, diferente das outras tres sources.
+    """--reference is NOT optional here, unlike the other three sources.
 
-    A garantia central — todo cliente mora num endereco real da AUF do seu armazem — so
-    pode ser reconferida relendo a mesma referencia que gerou a particao.
+    The central guarantee — every customer lives at a real address in its warehouse's
+    service area — can only be re-checked by rereading the same reference that generated
+    the partition.
     """
     code = _run_source([
         "validate", partition_path(ds, warehouse),
         "--reference", reference_path(ds), "--strict",
     ])
     if code != EXIT_OK:
-        raise RuntimeError(f"validate reprovou a particao (exit {code})")
+        raise RuntimeError(f"validate rejected the partition (exit {code})")
 
 
 def land(warehouse: str, ds: str, **_) -> None:
     code = _run_platform(["land", partition_path(ds, warehouse)])
     if code != EXIT_OK:
-        raise RuntimeError(f"land falhou (exit {code})")
+        raise RuntimeError(f"land failed (exit {code})")
 
 
 def verify_landing(warehouse: str, ds: str, **_) -> None:
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code != EXIT_OK:
-        raise RuntimeError(f"verify-landing reprovou o destino (exit {code})")
+        raise RuntimeError(f"verify-landing rejected the destination (exit {code})")
 
 
 def silver(**_) -> None:
-    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+    """Silver `dbt build`, with the gate applied by the platform.
 
-    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
-    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
-    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
-    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
-    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
-    source desta DAG.
+    THE GATE DOES NOT LIVE HERE, and it used to — that was the defect. Each DAG carried its
+    own partial copy of the decision (excluding its OWN source, and nothing else), the
+    Makefile carried the full version, and all six diverged. This DAG had no gate at all and
+    failed every day from the moment `silver_live_order_state` was born, because the Iceberg
+    projection can only be read when the catalog responds — and the catalog has nothing to
+    do with this DAG's source.
 
-    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
-    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    Now there is one verb: `retail_platform silver-build` observes what has landed and
+    whether the catalog responds, and builds `--exclude`/`--vars` itself. See silver_gate.py.
     """
     code = _run_platform([
         "silver-build",
@@ -246,27 +248,27 @@ def silver(**_) -> None:
         "--profiles-dir", f"{REPO}/platform/dbt",
     ])
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build falhou (exit {code})")
+        raise RuntimeError(f"dbt build failed (exit {code})")
 
 
 with DAG(
     dag_id="simulated_oltp_customers",
-    description="Base de clientes sinteticos com endereco real do Callejero (RAW + Silver)",
+    description="Synthetic customer base with real Callejero addresses (RAW + Silver)",
     schedule=None,
     start_date=datetime(2026, 8, 27),
     catchup=False,
     max_active_runs=1,
     params={
-        # NULO, e nao um numero. O tamanho da base e derivado da populacao adulta de cada
-        # armazem pela taxa de penetracao declarada em customer_premises_seed, e vem no
-        # cabecalho da referencia. Preencher aqui e OVERRIDE explicito, registrado como
-        # `count_source: cli` no manifesto — nao o caminho normal.
+        # NULL, not a number. The size of the base is derived from each warehouse's adult
+        # population by the penetration rate declared in customer_premises_seed, and comes
+        # in the reference header. Filling it in here is an explicit OVERRIDE, recorded as
+        # `count_source: cli` in the manifest — not the normal path.
         "customers_per_wh": None,
         "seed": 20260827,
-        # Regerar deliberadamente. Aumentar customers_per_wh com a MESMA seed e a MESMA
-        # data e aditivo: os clientes existentes sao preservados byte a byte. Trocar a
-        # seed troca as pessoas por tras dos mesmos ids — e trocar a idade minima, a taxa
-        # ou a regra de alocacao tambem. O manifesto registra tudo isso em `history`.
+        # Deliberate regeneration. Raising customers_per_wh with the SAME seed and the SAME
+        # date is additive: existing customers are preserved byte for byte. Changing the
+        # seed swaps the people behind the same ids — and so does changing the minimum age,
+        # the rate or the allocation rule. The manifest records all of that in `history`.
         "overwrite": False,
     },
     default_args={
@@ -289,9 +291,9 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
-        # Mesma regra do DAG da Mercadona, e pelo mesmo defeito medido la: com
-        # all_success, um unico armazem curto-circuitado arrastaria o silver para
-        # `skipped` e o dado recem-aterrissado dos outros tres nunca seria transformado.
+        # Same rule as the Mercadona DAG, and for the same defect measured there: with
+        # all_success, a single short-circuited warehouse would drag silver into `skipped`
+        # and the freshly landed data of the other three would never be transformed.
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 
@@ -300,9 +302,9 @@ with DAG(
             task_id=f"skip_if_landed_{warehouse}",
             python_callable=already_landed,
             op_kwargs={"warehouse": warehouse},
-            # Com mais de um armazem o padrao True esta ERRADO: o short-circuit pularia
-            # TODO o downstream ignorando a trigger_rule de cada tarefa, inclusive a do
-            # `silver`, que e compartilhado. Ver mercadona_catalog_daily.
+            # With more than one warehouse the default True is WRONG: the short-circuit
+            # would skip ALL of the downstream, ignoring each task's trigger_rule, including
+            # that of `silver`, which is shared. See mercadona_catalog_daily.
             ignore_downstream_trigger_rules=False,
         )
 
@@ -324,8 +326,8 @@ with DAG(
             task_id=f"land_{warehouse}",
             python_callable=land,
             op_kwargs={"warehouse": warehouse},
-            # Rede E retentavel, e `land` e idempotente: objeto com o checksum esperado
-            # e pulado, nao reenviado.
+            # The network IS retryable, and `land` is idempotent: an object with the
+            # expected checksum is skipped, not re-uploaded.
             retries=2,
         )
 

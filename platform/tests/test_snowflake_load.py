@@ -1,17 +1,18 @@
-"""O TRANSPORTE, conferido sem Snowflake e sem credencial.
+"""The TRANSPORT, checked without Snowflake and without a credential.
 
-Estes testes existem por causa de dois defeitos que so apareceram rodando contra a conta
-de verdade, e que a suite do recorte nao tinha como pegar porque nao geram SQL invalido —
-geram SQL VALIDO apontando para o lugar errado:
+These tests exist because of two defects that only showed up running against the real
+account, and that the cut's suite had no way to catch because they do not generate invalid
+SQL — they generate VALID SQL pointing at the wrong place:
 
-  1. `@%TABELA` resolve contra o schema CORRENTE da sessao, e `create schema` do Snowflake
-     TROCA o schema corrente. Como ensure_schemas cria STAGE, GOLD e MART nessa ordem, a
-     sessao terminava em MART e o PUT procurava RETAIL.MART.%STG_PRODUCT_PRICE.
-  2. Sem OVERWRITE no PUT, o stage de tabela guarda o arquivo entre execucoes e o COPY
-     seguinte leria o antigo junto do novo — as contagens dobrariam na segunda carga, nao
-     na primeira, que e o pior momento possivel para descobrir.
+  1. `@%TABLE` resolves against the session's CURRENT schema, and Snowflake's `create
+     schema` CHANGES the current schema. Since ensure_schemas creates STAGE, GOLD and MART
+     in that order, the session ended up in MART and the PUT looked for
+     RETAIL.MART.%STG_PRODUCT_PRICE.
+  2. Without OVERWRITE on the PUT, the table stage keeps the file between runs and the next
+     COPY would read the old one along with the new one — counts would double on the second
+     load, not the first, which is the worst possible moment to find out.
 
-Nenhum dos dois falha de forma obvia se voltar atras, e por isso viraram teste.
+Neither fails in an obvious way if it regresses, and that is why they became tests.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from retail_platform.snowflake_export import SPECS  # noqa: E402
+from retail_platform.warehouse_cut import SPECS  # noqa: E402
 from retail_platform.snowflake_load import (  # noqa: E402
     DEFAULT_LOAD_ROLE,
     ROLES,
@@ -37,75 +38,76 @@ from retail_platform.snowflake_load import (  # noqa: E402
 )
 
 
-class QualificacaoTest(unittest.TestCase):
+class QualificationTest(unittest.TestCase):
     def setUp(self):
         self.put, self.copy = transfer_statements(
             "STG_PRODUCT_PRICE", "/tmp/STG_PRODUCT_PRICE.parquet", "RETAIL"
         )
 
-    def test_o_stage_de_tabela_e_qualificado_com_database_e_schema(self):
-        """Sem isto, o PUT segue o schema corrente da sessao — que `create schema` acabou
-        de mudar para MART."""
+    def test_the_table_stage_is_qualified_with_database_and_schema(self):
+        """Without this, the PUT follows the session's current schema — which `create
+        schema` has just changed to MART."""
         self.assertIn("@RETAIL.STAGE.%STG_PRODUCT_PRICE", self.put)
         self.assertIn("@RETAIL.STAGE.%STG_PRODUCT_PRICE", self.copy)
 
-    def test_nunca_usa_a_forma_relativa(self):
-        for comando in (self.put, self.copy):
-            self.assertNotIn("@%STG", comando, "forma relativa ao schema corrente voltou")
+    def test_never_uses_the_relative_form(self):
+        for statement in (self.put, self.copy):
+            self.assertNotIn("@%STG", statement, "the form relative to the current schema came back")
 
-    def test_a_tabela_alvo_tambem_e_qualificada(self):
+    def test_the_target_table_is_also_qualified(self):
         self.assertIn("copy into RETAIL.STAGE.STG_PRODUCT_PRICE", self.copy)
 
-    def test_respeita_um_database_diferente(self):
-        put, copy = transfer_statements("STG_CUSTOMER", "/tmp/x.parquet", "OUTRO_DB")
-        self.assertIn("@OUTRO_DB.STAGE.%STG_CUSTOMER", put)
-        self.assertIn("copy into OUTRO_DB.STAGE.STG_CUSTOMER", copy)
+    def test_honours_a_different_database(self):
+        put, copy = transfer_statements("STG_CUSTOMER", "/tmp/x.parquet", "OTHER_DB")
+        self.assertIn("@OTHER_DB.STAGE.%STG_CUSTOMER", put)
+        self.assertIn("copy into OTHER_DB.STAGE.STG_CUSTOMER", copy)
 
-    def test_qualified_e_a_mesma_forma_usada_na_reconferencia(self):
+    def test_qualified_is_the_same_form_used_in_the_recheck(self):
         self.assertEqual(qualified("STG_CUSTOMER", "RETAIL"), "RETAIL.STAGE.STG_CUSTOMER")
 
 
-class TransporteTest(unittest.TestCase):
-    def test_o_put_sobrescreve_o_arquivo_anterior_no_stage(self):
-        """Sem overwrite, a SEGUNDA carga dobraria as contagens — nao a primeira."""
+class TransportTest(unittest.TestCase):
+    def test_the_put_overwrites_the_previous_file_in_the_stage(self):
+        """Without overwrite, the SECOND load would double the counts — not the first."""
         put, _ = transfer_statements("STG_CATEGORY", "/tmp/a.parquet", "RETAIL")
         self.assertIn("overwrite = true", put)
 
-    def test_o_put_nao_recomprime_o_parquet(self):
+    def test_the_put_does_not_recompress_the_parquet(self):
         put, _ = transfer_statements("STG_CATEGORY", "/tmp/a.parquet", "RETAIL")
         self.assertIn("auto_compress = false", put)
 
-    def test_o_copy_manda_o_snowflake_ler_o_logical_type_do_parquet(self):
-        """Sem isto, TODO timestamp chega 56 milhoes de anos no futuro — e nada reprova.
+    def test_the_copy_tells_snowflake_to_read_the_parquet_logical_type(self):
+        """Without this, EVERY timestamp arrives 56 million years in the future — and nothing fails.
 
-        O DuckDB anota a unidade so no LogicalType moderno e deixa o ConvertedType legado
-        em NONE; o leitor do Snowflake, por padrao, ignora o primeiro, cai no segundo e
-        assume MILISSEGUNDOS. 1,787e15 microssegundos viram o ano 56.648.666.
+        DuckDB annotates the unit only in the modern LogicalType and leaves the legacy
+        ConvertedType as NONE; Snowflake's reader, by default, ignores the former, falls back
+        to the latter and assumes MILLISECONDS. 1.787e15 microseconds become the year
+        56,648,666.
 
-        A carga nao reprova (a contagem de linhas esta certa), o dbt constroi tudo em verde
-        (as duracoes viram numeros grandes, nao erros) e um funil de `count_if(x is not
-        null)` continua exato. Este teste e barato justamente porque o defeito nao e.
+        The load does not fail (the row count is right), dbt builds everything green (the
+        durations become big numbers, not errors) and a `count_if(x is not null)` funnel stays
+        exact. This test is cheap precisely because the defect is not.
         """
         _, copy = transfer_statements("STG_ORDER", "/tmp/a.parquet", "RETAIL")
         self.assertIn("use_logical_type = true", copy)
 
-    def test_o_copy_casa_por_NOME_de_coluna_e_nao_por_posicao(self):
-        """Acrescentar uma coluna no meio do recorte carregaria dado na coluna errada em
-        silencio se o casamento fosse posicional — e o resultado continuaria plausivel."""
+    def test_the_copy_matches_by_column_NAME_not_by_position(self):
+        """Adding a column in the middle of the cut would silently load data into the wrong
+        column if matching were positional — and the result would still look plausible."""
         _, copy = transfer_statements("STG_CATEGORY", "/tmp/a.parquet", "RETAIL")
         self.assertIn("match_by_column_name = case_insensitive", copy)
 
-    def test_o_copy_aborta_no_primeiro_erro(self):
+    def test_the_copy_aborts_on_the_first_error(self):
         _, copy = transfer_statements("STG_CATEGORY", "/tmp/a.parquet", "RETAIL")
         self.assertIn("on_error = abort_statement", copy)
 
-    def test_o_caminho_do_arquivo_e_absoluto(self):
-        """PUT com caminho relativo depende do cwd do processo — numa DAG isso e outro
-        diretorio."""
-        put, _ = transfer_statements("STG_CATEGORY", "relativo/a.parquet", "RETAIL")
-        self.assertIn(f"file://{os.path.abspath('relativo/a.parquet')}", put)
+    def test_the_file_path_is_absolute(self):
+        """A PUT with a relative path depends on the process cwd — in a DAG that is another
+        directory."""
+        put, _ = transfer_statements("STG_CATEGORY", "relative/a.parquet", "RETAIL")
+        self.assertIn(f"file://{os.path.abspath('relative/a.parquet')}", put)
 
-    def test_ha_comando_para_toda_spec_do_recorte(self):
+    def test_there_is_a_statement_for_every_spec_of_the_cut(self):
         for spec in SPECS:
             put, copy = transfer_statements(spec["name"], f"/tmp/{spec['name']}.parquet", "RETAIL")
             self.assertIn(spec["name"], put)
@@ -113,38 +115,38 @@ class TransporteTest(unittest.TestCase):
 
 
 class SchemasTest(unittest.TestCase):
-    def test_as_tres_camadas_sao_criadas_com_comentario(self):
+    def test_the_three_layers_are_created_with_a_comment(self):
         self.assertEqual(set(SCHEMAS), {"STAGE", "GOLD", "MART"})
-        for nome, comentario in SCHEMAS.items():
-            self.assertTrue(comentario.strip(), f"{nome} sem comentario")
-            self.assertNotIn("'", comentario, f"{nome}: aspa quebraria o DDL")
+        for name, comment in SCHEMAS.items():
+            self.assertTrue(comment.strip(), f"{name} without a comment")
+            self.assertNotIn("'", comment, f"{name}: a quote would break the DDL")
 
 
-class _CursorFalso:
-    """Devolve contagens combinadas, para exercitar `verify` sem rede."""
+class _FakeCursor:
+    """Returns agreed counts, to exercise `verify` without a network."""
 
-    def __init__(self, contagens):
-        self.contagens = contagens
-        self.ultimo = None
+    def __init__(self, counts):
+        self.counts = counts
+        self.last = None
 
     def execute(self, sql):
-        self.ultimo = sql
-        for nome, valor in self.contagens.items():
-            if nome in sql:
-                if isinstance(valor, Exception):
-                    raise valor
-                self._valor = valor
+        self.last = sql
+        for name, value in self.counts.items():
+            if name in sql:
+                if isinstance(value, Exception):
+                    raise value
+                self._value = value
                 return self
-        raise AssertionError(f"consulta inesperada: {sql}")
+        raise AssertionError(f"unexpected query: {sql}")
 
     def fetchone(self):
-        return (self._valor,)
+        return (self._value,)
 
     def close(self):
         pass
 
 
-class _ConexaoFalsa:
+class _FakeConnection:
     def __init__(self, cursor):
         self._cursor = cursor
 
@@ -152,178 +154,188 @@ class _ConexaoFalsa:
         return self._cursor
 
 
-class ReconferenciaTest(unittest.TestCase):
-    """Carregar sem reconferir e confiar no transporte — a mesma disciplina de
-    verify-landing, um nivel acima."""
+class RecheckTest(unittest.TestCase):
+    """Loading without rechecking is trusting the transport — the same discipline as
+    verify-landing, one level up."""
 
-    def contagens(self, override=None):
+    def counts(self, override=None):
         base = {spec["name"]: 10 for spec in SPECS}
         base.update(override or {})
         return base
 
-    def test_silencio_quando_tudo_bate(self):
-        con = _ConexaoFalsa(_CursorFalso(self.contagens()))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        self.assertEqual(verify(con, "/tmp", esperado, "RETAIL"), [])
+    def test_silence_when_everything_matches(self):
+        con = _FakeConnection(_FakeCursor(self.counts()))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        self.assertEqual(verify(con, "/tmp", expected, "RETAIL"), [])
 
-    def test_acusa_divergencia_de_contagem(self):
-        con = _ConexaoFalsa(_CursorFalso(self.contagens({"STG_CUSTOMER": 9})))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        problemas = verify(con, "/tmp", esperado, "RETAIL")
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_CUSTOMER", problemas[0])
-        self.assertIn("10", problemas[0])
-        self.assertIn("9", problemas[0])
+    def test_flags_a_count_mismatch(self):
+        con = _FakeConnection(_FakeCursor(self.counts({"STG_CUSTOMER": 9})))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        problems = verify(con, "/tmp", expected, "RETAIL")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_CUSTOMER", problems[0])
+        self.assertIn("10", problems[0])
+        self.assertIn("9", problems[0])
 
-    def test_acusa_tabela_que_o_export_nao_declarou(self):
-        """Uma spec nova que ninguem exportou nao pode passar como se estivesse certa."""
-        con = _ConexaoFalsa(_CursorFalso(self.contagens()))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS if spec["name"] != "STG_WAREHOUSE"}
-        problemas = verify(con, "/tmp", esperado, "RETAIL")
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_WAREHOUSE", problemas[0])
+    def test_flags_a_table_the_export_did_not_declare(self):
+        """A new spec that nobody exported cannot pass as if it were right."""
+        con = _FakeConnection(_FakeCursor(self.counts()))
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS if spec["name"] != "STG_WAREHOUSE"}
+        problems = verify(con, "/tmp", expected, "RETAIL")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_WAREHOUSE", problems[0])
 
-    def test_acusa_tabela_ausente_no_destino_em_vez_de_estourar(self):
-        con = _ConexaoFalsa(_CursorFalso(
-            self.contagens({"STG_GEOGRAPHY": RuntimeError("does not exist")})
+    def test_flags_a_table_missing_at_the_destination_instead_of_blowing_up(self):
+        con = _FakeConnection(_FakeCursor(
+            self.counts({"STG_GEOGRAPHY": RuntimeError("does not exist")})
         ))
-        esperado = {spec["name"]: {"rows": 10} for spec in SPECS}
-        problemas = verify(con, "/tmp", esperado, "RETAIL")
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("STG_GEOGRAPHY", problemas[0])
+        expected = {spec["name"]: {"rows": 10} for spec in SPECS}
+        problems = verify(con, "/tmp", expected, "RETAIL")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("STG_GEOGRAPHY", problems[0])
 
 
-class _CursorGravador:
-    """Guarda todo SQL executado, para conferir o bootstrap sem tocar no Snowflake."""
+class _RecordingCursor:
+    """Keeps every SQL statement executed, to check bootstrap without touching Snowflake."""
 
-    def __init__(self, respostas=None):
+    def __init__(self, responses=None):
         self.sqls = []
-        self.respostas = respostas or {}
+        self.responses = responses or {}
 
     def execute(self, sql):
         self.sqls.append(sql)
-        self._linhas = []
-        for chave, valor in self.respostas.items():
-            if chave in sql:
-                self._linhas = valor
+        self._rows = []
+        for key, value in self.responses.items():
+            if key in sql:
+                self._rows = value
         return self
 
     def fetchall(self):
-        return self._linhas
+        return self._rows
 
     def fetchone(self):
-        return self._linhas[0] if self._linhas else (None,)
+        return self._rows[0] if self._rows else (None,)
 
     def close(self):
         pass
 
-    def emitiu(self, *fragmentos):
-        return [s for s in self.sqls if all(f in s for f in fragmentos)]
+    def emitted(self, *fragments):
+        return [s for s in self.sqls if all(f in s for f in fragments)]
 
 
-class GovernancaTest(unittest.TestCase):
-    """Os quatro defeitos que so apareceram ao VESTIR os papeis.
+class GovernanceTest(unittest.TestCase):
+    """The four defects that only showed up when WEARING the roles.
 
-    Enquanto o pipeline rodava como ACCOUNTADMIN nenhum deles existia — administrador tem
-    tudo. Nenhum falha de forma obvia se voltar atras: os tres primeiros dao erro de
-    privilegio longe da causa, e o quarto nao da erro nenhum, so apaga os objetos da vista
-    de quem administra a conta.
+    While the pipeline ran as ACCOUNTADMIN none of them existed — the administrator has
+    everything. None fails in an obvious way if it regresses: the first three give a
+    privilege error far from the cause, and the fourth gives no error at all, it just hides
+    the objects from whoever administers the account.
     """
 
     def setUp(self):
-        self.cursor = _CursorGravador()
-        bootstrap(self.cursor, "RETAIL", grant_to_user="ALGUEM", warehouse="COMPUTE_WH")
+        self.cursor = _RecordingCursor()
+        bootstrap(self.cursor, "RETAIL", grant_to_user="SOMEONE", warehouse="COMPUTE_WH")
 
-    def test_os_tres_papeis_recebem_usage_no_warehouse(self):
-        """Dado sem compute nao se move. Sem este grant, a carga morre com 'No active
-        warehouse selected' — erro que aponta para a sessao, nao para o grant que falta."""
-        for papel in ROLES:
+    def test_the_three_roles_get_usage_on_the_warehouse(self):
+        """Data does not move without compute. Without this grant, the load dies with 'No
+        active warehouse selected' — an error that points at the session, not at the
+        missing grant."""
+        for role in ROLES:
             self.assertTrue(
-                self.cursor.emitiu("grant usage on warehouse COMPUTE_WH", papel),
-                f"{papel} ficou sem usage no warehouse",
+                self.cursor.emitted("grant usage on warehouse COMPUTE_WH", role),
+                f"{role} was left without usage on the warehouse",
             )
 
-    def test_a_posse_das_tabelas_vai_para_o_papel_que_as_reescreve(self):
-        """`grant all` concede os privilegios APLICAVEIS, e posse nao e um deles. Sem
-        ownership, `create or replace table` reprova — medido: 8 modelos de uma vez."""
-        self.assertTrue(self.cursor.emitiu(
+    def test_table_ownership_goes_to_the_role_that_rewrites_them(self):
+        """`grant all` grants the APPLICABLE privileges, and ownership is not one of them.
+        Without ownership, `create or replace table` fails — measured: 8 models at once."""
+        self.assertTrue(self.cursor.emitted(
             "grant ownership on all tables in schema RETAIL.STAGE", "RETAIL_LOADER"))
-        for camada in ("GOLD", "MART"):
-            self.assertTrue(self.cursor.emitiu(
-                f"grant ownership on all tables in schema RETAIL.{camada}",
-                "RETAIL_TRANSFORMER"), f"{camada} sem transferencia de posse")
+        for layer in ("GOLD", "MART"):
+            self.assertTrue(self.cursor.emitted(
+                f"grant ownership on all tables in schema RETAIL.{layer}",
+                "RETAIL_TRANSFORMER"), f"{layer} without ownership transfer")
 
-    def test_a_transferencia_de_posse_preserva_os_grants_existentes(self):
-        """Sem `copy current grants`, mover a posse de MART revogaria o select do READER —
-        vestir o papel silenciaria o consumidor, sem erro nenhum no caminho."""
-        for comando in self.cursor.emitiu("grant ownership"):
-            self.assertIn("copy current grants", comando)
+    def test_the_ownership_transfer_keeps_existing_grants(self):
+        """Without `copy current grants`, moving MART's ownership would revoke the READER's
+        select — wearing the role would silence the consumer, with no error along the way."""
+        for statement in self.cursor.emitted("grant ownership"):
+            self.assertIn("copy current grants", statement)
 
-    def test_os_papeis_ficam_pendurados_em_sysadmin(self):
-        """Depois que a posse saiu de ACCOUNTADMIN e os papeis secundarios foram
-        desligados, o administrador parou de enxergar os objetos: nao herdava esses papeis.
-        Heranca sobe, nunca desce — o isolamento nao muda."""
-        for papel in ROLES:
+    def test_the_roles_hang_under_sysadmin(self):
+        """After ownership left ACCOUNTADMIN and secondary roles were turned off, the
+        administrator stopped seeing the objects: it did not inherit those roles.
+        Inheritance goes up, never down — isolation does not change."""
+        for role in ROLES:
             self.assertTrue(
-                self.cursor.emitiu(f"grant role {papel} to role SYSADMIN"),
-                f"{papel} fora da hierarquia administrativa",
+                self.cursor.emitted(f"grant role {role} to role SYSADMIN"),
+                f"{role} outside the administrative hierarchy",
             )
 
-    def test_os_papeis_secundarios_do_usuario_sao_desligados(self):
-        """DEFAULT_SECONDARY_ROLES = ('ALL') e o default de contas modernas, e com ele a
-        sessao ativa TODOS os papeis do usuario alem do primario. Sem desligar, vestir o
-        papel e decorativo — e o dbt nao tem onde rodar `use secondary roles none`."""
-        self.assertTrue(self.cursor.emitiu(
-            "alter user ALGUEM set default_secondary_roles = ()"))
+    def test_the_users_secondary_roles_are_turned_off(self):
+        """DEFAULT_SECONDARY_ROLES = ('ALL') is the default on modern accounts, and with it
+        the session activates ALL of the user's roles besides the primary one. Without
+        turning it off, wearing the role is decorative — and dbt has nowhere to run
+        `use secondary roles none`."""
+        self.assertTrue(self.cursor.emitted(
+            "alter user SOMEONE set default_secondary_roles = ()"))
 
-    def test_sem_usuario_nao_mexe_em_usuario_nenhum(self):
-        cursor = _CursorGravador()
+    def test_without_a_user_no_user_is_touched(self):
+        cursor = _RecordingCursor()
         bootstrap(cursor, "RETAIL")
-        self.assertEqual(cursor.emitiu("alter user"), [])
-        self.assertEqual(cursor.emitiu("grant role RETAIL_LOADER to user"), [])
+        self.assertEqual(cursor.emitted("alter user"), [])
+        self.assertEqual(cursor.emitted("grant role RETAIL_LOADER to user"), [])
 
-    def test_o_bootstrap_e_o_unico_que_cria_infraestrutura(self):
-        self.assertTrue(self.cursor.emitiu("create database if not exists RETAIL"))
-        for nome in SCHEMAS:
-            self.assertTrue(self.cursor.emitiu(f"create schema if not exists RETAIL.{nome}"))
+    def test_a_comment_with_an_apostrophe_does_not_break_the_ddl(self):
+        """"dbt's role" interpolated raw closed the literal: bootstrap died after the first
+        role and the load failed for lack of a grant."""
+        statements = self.cursor.emitted("create role if not exists RETAIL_TRANSFORMER")
+        self.assertTrue(statements)
+        for statement in statements:
+            self.assertIn("dbt''s role", statement)
+
+    def test_bootstrap_is_the_only_one_that_creates_infrastructure(self):
+        self.assertTrue(self.cursor.emitted("create database if not exists RETAIL"))
+        for name in SCHEMAS:
+            self.assertTrue(self.cursor.emitted(f"create schema if not exists RETAIL.{name}"))
 
 
-class PapelDaCargaTest(unittest.TestCase):
-    def test_a_carga_nao_roda_como_administrador(self):
-        """O papel da carga sobrescreve o da conexao — a conexao aponta para o
-        administrativo porque e ela que roda o bootstrap."""
+class LoadRoleTest(unittest.TestCase):
+    def test_the_load_does_not_run_as_administrator(self):
+        """The load role overrides the connection's — the connection points at the
+        administrative one because it is the one that runs bootstrap."""
         self.assertEqual(DEFAULT_LOAD_ROLE, "RETAIL_LOADER")
 
-    def test_sessao_sem_compute_e_acusada_antes_de_tocar_em_dado(self):
-        cursor = _CursorGravador({"current_warehouse": [(None,)]})
-        with self.assertRaises(SnowflakeLoadError) as erro:
+    def test_a_session_without_compute_is_flagged_before_touching_data(self):
+        cursor = _RecordingCursor({"current_warehouse": [(None,)]})
+        with self.assertRaises(SnowflakeLoadError) as error:
             require_warehouse(cursor)
-        self.assertIn("warehouse", str(erro.exception))
+        self.assertIn("warehouse", str(error.exception))
 
-    def test_sessao_com_compute_passa(self):
-        cursor = _CursorGravador({"current_warehouse": [("COMPUTE_WH",)]})
+    def test_a_session_with_compute_passes(self):
+        cursor = _RecordingCursor({"current_warehouse": [("COMPUTE_WH",)]})
         require_warehouse(cursor)
 
-    def test_a_carga_confere_apenas_o_stage(self):
-        """Conferir os tres schemas reprovaria a carga por um motivo CERTO: o
-        information_schema devolve so o que o papel enxerga, e RETAIL_LOADER nao enxerga
-        GOLD nem MART. Uma verificacao mais ampla que a necessidade transforma o controle
-        funcionando em falha de execucao."""
-        cursor = _CursorGravador({"information_schema.schemata": [("STAGE",)]})
+    def test_the_load_checks_only_stage(self):
+        """Checking all three schemas would fail the load for a RIGHT reason:
+        information_schema returns only what the role can see, and RETAIL_LOADER does not
+        see GOLD or MART. A check broader than the need turns a working control into a run
+        failure."""
+        cursor = _RecordingCursor({"information_schema.schemata": [("STAGE",)]})
         require_schemas(cursor, "RETAIL")
 
-    def test_stage_ausente_manda_rodar_o_bootstrap(self):
-        cursor = _CursorGravador({"information_schema.schemata": [("GOLD",), ("MART",)]})
-        with self.assertRaises(SnowflakeLoadError) as erro:
+    def test_missing_stage_says_to_run_bootstrap(self):
+        cursor = _RecordingCursor({"information_schema.schemata": [("GOLD",), ("MART",)]})
+        with self.assertRaises(SnowflakeLoadError) as error:
             require_schemas(cursor, "RETAIL")
-        self.assertIn("STAGE", str(erro.exception))
-        self.assertIn("warehouse-bootstrap", str(erro.exception))
+        self.assertIn("STAGE", str(error.exception))
+        self.assertIn("warehouse-bootstrap", str(error.exception))
 
-    def test_a_carga_nunca_cria_database_nem_schema(self):
-        """Poder criar database era o sintoma de estar rodando como administrador."""
-        cursor = _CursorGravador({"information_schema.schemata": [("STAGE",)]})
+    def test_the_load_never_creates_a_database_or_schema(self):
+        """Being able to create a database was the symptom of running as administrator."""
+        cursor = _RecordingCursor({"information_schema.schemata": [("STAGE",)]})
         require_schemas(cursor, "RETAIL")
-        self.assertEqual(cursor.emitiu("create"), [])
+        self.assertEqual(cursor.emitted("create"), [])
 
 
 if __name__ == "__main__":

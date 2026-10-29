@@ -1,12 +1,12 @@
--- GRAO de silver_customer: (ingestion_date, customer_id).
+-- GRAIN of silver_customer: (ingestion_date, customer_id).
 --
--- Nao e customer_id sozinho — os mesmos ids reaparecem em cada regeracao da base, e isso
--- e deliberado (CONTRACT.md secao 3: unicidade vale dentro da ingestion_date, nao entre
--- elas). Nao e (ingestion_date, wh, customer_id) tampouco: o wh ja esta embutido no
--- proprio id, entao cust_mad1_000042 e cust_vlc1_000042 nunca colidem e acrescentar wh a
--- chave esconderia um id duplicado dentro do mesmo armazem.
+-- It is not customer_id alone — the same ids reappear in each regeneration of the base, and that
+-- is deliberate (CONTRACT.md section 3: uniqueness holds within the ingestion_date, not across
+-- them). Nor is it (ingestion_date, wh, customer_id): the wh is already embedded in the
+-- id itself, so cust_mad1_000042 and cust_vlc1_000042 never collide, and adding wh to the
+-- key would hide a duplicated id within the same warehouse.
 --
--- Falha com uma linha por chave repetida.
+-- Fails with one row per repeated key.
 select
     ingestion_date,
     customer_id,

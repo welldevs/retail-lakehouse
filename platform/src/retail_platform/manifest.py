@@ -1,16 +1,16 @@
-"""Leitura do _manifest.json de uma particao, tratado como CONTRATO.
+"""Reading of a partition's _manifest.json, treated as a CONTRACT.
 
-Este modulo implementa as obrigacoes do consumidor de CONTRACT.md secao 4. Ele
-deliberadamente NAO importa mercadona_catalog_source: a plataforma consome o contrato
-fisico (JSON canonico + manifesto), do mesmo modo que um consumidor de fora faria. Se
-o pacote da Source mudasse de forma interna, esta leitura continuaria valida.
+This module implements the consumer obligations of CONTRACT.md section 4. It
+deliberately does NOT import mercadona_catalog_source: the platform consumes the physical
+contract (canonical JSON + manifest), the same way an outside consumer would. If the
+Source package changed internally, this reading would remain valid.
 
-Regras impostas aqui, e nao apenas documentadas:
-  - _SUCCESS e complete: true, os DOIS (garantia 10: a incoerencia e erro);
-  - manifest_version suportada, em vez de adivinhacao (secao 8);
-  - files[].path e relativo a RAIZ do snapshot, nao a particao (obrigacao 4.1);
-  - caminho que escapa da raiz do snapshot e recusado;
-  - ingestion_date/wh do manifesto conferidos contra o caminho em disco.
+Rules enforced here, not just documented:
+  - _SUCCESS and complete: true, BOTH (guarantee 10: inconsistency is an error);
+  - a supported manifest_version, instead of guesswork (section 8);
+  - files[].path is relative to the snapshot ROOT, not the partition (obligation 4.1);
+  - a path escaping the snapshot root is refused;
+  - the manifest's ingestion_date/wh checked against the path on disk.
 """
 
 from __future__ import annotations
@@ -26,19 +26,19 @@ MANIFEST_NAME = "_manifest.json"
 SUCCESS_NAME = "_SUCCESS"
 RUN_LOG_NAME = "_run.log"
 
-# Arquivos que existem na particao e NAO sao declarados em files[]. validate.py da Source
-# os trata do mesmo modo ao varrer orfaos; a plataforma precisa da mesma lista para nao
-# acusar de orfao um arquivo que o contrato preve.
+# Files that exist in the partition and are NOT declared in files[]. The Source's
+# validate.py treats them the same way when scanning for orphans; the platform needs the
+# same list so it does not flag as orphan a file the contract expects.
 UNDECLARED_FILES = (MANIFEST_NAME, RUN_LOG_NAME, SUCCESS_NAME)
 
 
 class ManifestError(Exception):
-    """Particao que nao satisfaz o contrato de leitura."""
+    """Partition that does not satisfy the reading contract."""
 
 
 @dataclass(frozen=True)
 class FileEntry:
-    """Uma entrada de files[]. `path` e relativo a raiz do snapshot."""
+    """One entry of files[]. `path` is relative to the snapshot root."""
 
     path: str
     sha256: str
@@ -49,7 +49,7 @@ class FileEntry:
     local_path: str
 
     def digest_on_disk(self) -> tuple[str, int]:
-        """Recalcula sha256 e tamanho do arquivo local. Nao confia no manifesto."""
+        """Recomputes sha256 and size of the local file. Does not trust the manifest."""
         with open(self.local_path, "rb") as handle:
             blob = handle.read()
         return hashlib.sha256(blob).hexdigest(), len(blob)
@@ -60,10 +60,10 @@ class Partition:
     path: str
     root: str
     ingestion_date: str
-    # Segundo eixo de particao, alem de ingestion_date. Duas formas conhecidas hoje: com
-    # eixo (Mercadona: axis_name="wh") e sem eixo nenhum (INE: os dois None, a fonte
-    # devolve todas as provincias num unico payload). Nao ha um terceiro caso a
-    # generalizar por enquanto.
+    # Second partition axis, besides ingestion_date. Two shapes known today: with an axis
+    # (Mercadona: axis_name="wh") and with no axis at all (INE: both None, the source
+    # returns every province in a single payload). There is no third case to generalize
+    # for now.
     axis_name: str | None
     axis_value: str | None
     run_id: str
@@ -77,20 +77,20 @@ class Partition:
 
     @property
     def warehouse(self) -> str | None:
-        """Compatibilidade com consumidores da Mercadona. None para uma source sem esse
-        eixo (ex.: INE) — use axis_name/axis_value para o caso geral."""
+        """Compatibility with Mercadona consumers. None for a source without that axis
+        (e.g. INE) — use axis_name/axis_value for the general case."""
         return self.axis_value if self.axis_name == "wh" else None
 
     @property
     def prefix_suffix(self) -> str:
-        """Sufixo hive da particao, como aparece em files[].path e na chave do objeto."""
+        """Hive suffix of the partition, as it appears in files[].path and in the object key."""
         suffix = f"ingestion_date={self.ingestion_date}"
         if self.axis_name is not None:
             suffix += f"/{self.axis_name}={self.axis_value}"
         return suffix
 
     def undeclared_paths(self) -> list[tuple[str, str]]:
-        """(caminho local, nome) dos arquivos previstos e nao declarados que existem."""
+        """(local path, name) of the expected-but-undeclared files that exist."""
         found = []
         for name in UNDECLARED_FILES:
             candidate = os.path.join(self.path, name)
@@ -106,75 +106,76 @@ def _inside(root: str, path: str) -> bool:
 
 
 def read(partition_path: str) -> Partition:
-    """Le e valida o manifesto de uma particao. Levanta ManifestError se nao servir."""
+    """Reads and validates a partition's manifest. Raises ManifestError if unusable."""
     manifest_file = os.path.join(partition_path, MANIFEST_NAME)
     if not os.path.exists(manifest_file):
-        raise ManifestError(f"manifesto nao encontrado: {manifest_file}")
+        raise ManifestError(f"manifest not found: {manifest_file}")
     try:
         with open(manifest_file, encoding="utf-8") as handle:
             manifest = json.load(handle)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise ManifestError(f"manifesto ilegivel: {manifest_file}: {exc}") from exc
+        raise ManifestError(f"unreadable manifest: {manifest_file}: {exc}") from exc
     if not isinstance(manifest, dict):
-        raise ManifestError(f"manifesto nao e um objeto JSON: {manifest_file}")
+        raise ManifestError(f"manifest is not a JSON object: {manifest_file}")
 
     source_name = (manifest.get("source") or {}).get("name", "")
     if source_name not in SUPPORTED_MANIFEST_VERSIONS:
         raise ManifestError(
-            f"source.name {source_name!r} desconhecida desta plataforma "
-            f"(esperado um de {sorted(SUPPORTED_MANIFEST_VERSIONS)})"
+            f"source.name {source_name!r} unknown to this platform "
+            f"(expected one of {sorted(SUPPORTED_MANIFEST_VERSIONS)})"
         )
     expected_version = SUPPORTED_MANIFEST_VERSIONS[source_name]
     version = manifest.get("manifest_version")
     if version != expected_version:
         raise ManifestError(
-            f"manifest_version {version!r} nao suportada para {source_name!r} "
-            f"(esta plataforma le {expected_version})"
+            f"manifest_version {version!r} not supported for {source_name!r} "
+            f"(this platform reads {expected_version})"
         )
 
     entries = manifest.get("files")
     if not isinstance(entries, list):
-        raise ManifestError("manifesto sem a lista 'files'")
+        raise ManifestError("manifest without the 'files' list")
 
-    # Garantia 10: _SUCCESS existe se e somente se complete. Exigimos os dois, porque
-    # confiar num deles isolado aceitaria uma particao que a Source considera invalida.
+    # Guarantee 10: _SUCCESS exists if and only if complete. We require both, because
+    # trusting either one alone would accept a partition the Source considers invalid.
     complete = bool(manifest.get("complete"))
     has_success = os.path.exists(os.path.join(partition_path, SUCCESS_NAME))
     if complete != has_success:
         raise ManifestError(
-            f"_SUCCESS {'presente' if has_success else 'ausente'} contradiz "
+            f"_SUCCESS {'present' if has_success else 'missing'} contradicts "
             f"complete={complete}"
         )
     if not complete:
         raise ManifestError(
-            "particao incompleta (complete: false). A plataforma so consome particao "
-            "completa: complete-a com um novo extract antes de aterrissar."
+            "incomplete partition (complete: false). The platform only consumes complete "
+            "partitions: complete it with a new extract before landing."
         )
     if manifest.get("failures"):
         raise ManifestError(
-            f"{len(manifest['failures'])} categoria(s) em failures[]: particao reprovada "
-            f"pelo proprio contrato da Source (garantia 16)"
+            f"{len(manifest['failures'])} category(ies) in failures[]: partition failed "
+            f"by the Source's own contract (guarantee 16)"
         )
 
     partition_block = manifest.get("partition") or {}
     ingestion_date = partition_block.get("ingestion_date")
     warehouse = partition_block.get("warehouse")
     if not ingestion_date:
-        raise ManifestError("manifesto sem partition.ingestion_date")
+        raise ManifestError("manifest without partition.ingestion_date")
 
-    # axis_name e sempre "wh" quando ha um armazem declarado: e o unico eixo conhecido
-    # hoje alem de ingestion_date. Sem ele (ex.: INE), a particao tem so ingestion_date.
+    # axis_name is always "wh" when a warehouse is declared: it is the only axis known
+    # today besides ingestion_date. Without it (e.g. INE), the partition has only
+    # ingestion_date.
     axis_name = "wh" if warehouse else None
     axis_value = warehouse
 
-    # Obrigacao 4.1: files[].path comeca na RAIZ do snapshot, nao na particao. Sobe um
-    # nivel por eixo de particao presente, alem do proprio ingestion_date.
+    # Obligation 4.1: files[].path starts at the snapshot ROOT, not at the partition. Go up
+    # one level per partition axis present, plus ingestion_date itself.
     levels_up = 2 if axis_name is not None else 1
     root = os.path.abspath(os.path.join(partition_path, *([".."] * levels_up)))
 
-    # O caminho em disco e o manifesto tem de concordar. Divergencia significa particao
-    # movida ou renomeada, e o eixo so existe no caminho e no manifesto (obrigacao 4.3):
-    # aceitar a divergencia perderia a identidade de forma irrecuperavel.
+    # The path on disk and the manifest must agree. A mismatch means a moved or renamed
+    # partition, and the axis only exists in the path and the manifest (obligation 4.3):
+    # accepting the mismatch would lose the identity irrecoverably.
     if axis_name is not None:
         expected_tail = os.path.join(
             f"ingestion_date={ingestion_date}", f"{axis_name}={axis_value}"
@@ -183,17 +184,17 @@ def read(partition_path: str) -> Partition:
         expected_tail = f"ingestion_date={ingestion_date}"
     if not os.path.abspath(partition_path).endswith(expected_tail):
         raise ManifestError(
-            f"caminho da particao ({partition_path}) nao corresponde ao manifesto "
+            f"partition path ({partition_path}) does not match the manifest "
             f"({expected_tail})"
         )
 
     files: list[FileEntry] = []
     for entry in entries:
         if not isinstance(entry, dict) or "path" not in entry:
-            raise ManifestError(f"entrada de manifesto malformada: {entry!r}")
+            raise ManifestError(f"malformed manifest entry: {entry!r}")
         target = os.path.join(root, entry["path"])
         if not _inside(root, target):
-            raise ManifestError(f"caminho fora da raiz do snapshot: {entry['path']}")
+            raise ManifestError(f"path outside the snapshot root: {entry['path']}")
         files.append(
             FileEntry(
                 path=entry["path"],

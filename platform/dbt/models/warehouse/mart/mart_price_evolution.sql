@@ -1,22 +1,22 @@
--- GRAO: (snapshot_date, wh, source_product_id) — uma linha por produto, armazem e dia
---        OBSERVADO. Nunca por dia de calendario: ver days_since_previous_snapshot.
+-- GRAIN: (snapshot_date, wh, source_product_id) — one row per product, warehouse and
+--        OBSERVED day. Never per calendar day: see days_since_previous_snapshot.
 --
--- PERGUNTA QUE RESPONDE: como o preco de cada produto se moveu, em cada armazem, e quanto
--- tempo se passou desde a observacao anterior.
+-- QUESTION IT ANSWERS: how each product's price moved, in each warehouse, and how much
+-- time passed since the previous observation.
 --
--- A COLUNA QUE IMPEDE A LEITURA ERRADA e days_since_previous_snapshot. Uma variacao de
--- 0,10 EUR ao longo de 8 dias (o vao real entre 08-16 e 08-24) nao e comparavel a uma de
--- 0,10 EUR em 1 dia. Sem essa coluna, qualquer media de variacao diaria misturaria as
--- duas e ninguem notaria.
+-- THE COLUMN THAT PREVENTS THE WRONG READING is days_since_previous_snapshot. A change of
+-- 0.10 EUR over 8 days (the real gap between 08-16 and 08-24) is not comparable to one of
+-- 0.10 EUR in 1 day. Without that column, any average of daily change would mix the
+-- two and nobody would notice.
 --
--- DUAS FAMILIAS DE PRECO/VARIACAO, DE PROPOSITO. unit_price/price_delta/price_delta_pct
--- sao CRUS, herdados de fact_price_snapshot/fact_price_change por fidelidade. Em ~10
--- combinacoes produto x armazem (selling_method a granel sem unit_size), unit_price e o
--- TETO do seletor de peso (reference_price * 99) — 3.663,00 EUR para 150 g de langostino,
--- nao um preco que um domicilio paga (ver silver_product_price.sql e DECISIONS.md, "Demand
--- calibration against MAPA 2025"). purchasable_unit_price/purchasable_price_delta/_pct sao
--- o preco comparavel, e e contra ELES que change_type ja classifica "mudou". QUEM MEDE
--- OSCILACAO OU OFERTA DEVE USAR AS COLUNAS purchasable_*, nunca as cruas.
+-- TWO FAMILIES OF PRICE/CHANGE, ON PURPOSE. unit_price/price_delta/price_delta_pct
+-- are RAW, inherited from fact_price_snapshot/fact_price_change for fidelity. In ~10
+-- product x warehouse combinations (selling_method loose without unit_size), unit_price is the
+-- CEILING of the weight selector (reference_price * 99) — 3,663.00 EUR for 150 g of prawns,
+-- not a price a household pays (see silver_product_price.sql and DECISIONS.md, "Demand
+-- calibration against MAPA 2025"). purchasable_unit_price/purchasable_price_delta/_pct are
+-- the comparable price, and it is against THEM that change_type already classifies "changed". WHOEVER
+-- MEASURES PRICE MOVEMENT OR PROMOTIONS MUST USE THE purchasable_* COLUMNS, never the raw ones.
 {{ config(materialized = 'table') }}
 
 select
@@ -47,8 +47,8 @@ select
     ch.change_type,
     ch.days_between_snapshots                               as days_since_previous_snapshot,
 
-    -- Id novo com nome que ja existia: nao e "produto novo" ate alguem decidir que e.
-    -- A flag viaja ate o mart para que a decisao seja de quem consulta.
+    -- New id with a name that already existed: it is not a "new product" until someone decides it is.
+    -- The flag travels to the mart so that the decision belongs to whoever queries.
     coalesce(ch.name_seen_before, false)                    as identity_review_needed
 from {{ ref('fact_price_snapshot') }} f
 join {{ ref('dim_date') }} d       on d.date_key = f.date_key

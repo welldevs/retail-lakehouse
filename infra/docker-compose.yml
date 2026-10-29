@@ -1,12 +1,13 @@
-# Infra local da plataforma: object storage + Airflow com LocalExecutor.
+# Local platform infra: object storage + Airflow (LocalExecutor) and, by profile, the stream
+# plane (OLTP + Kafka), the Postgres warehouse and Spark.
 #
-# O MinIO e o Postgres sao os unicos servicos com estado. O container `mc` cria os
-# buckets e sai: o host nao tem o binario `mc`, e depender de uma instalacao local para
-# preparar o bucket tornaria `make up` nao reproduzivel.
+# MinIO and Postgres are the only stateful services. The `mc` container creates the
+# buckets and exits: the host has no `mc` binary, and depending on a local install to
+# prepare the bucket would make `make up` non-reproducible.
 #
-# NENHUM CODIGO VAI PARA A IMAGEM. O repositorio e montado em /opt/retail-lakehouse e
-# alcancado por PYTHONPATH, para que editar um modelo dbt ou um modulo da plataforma nao
-# exija rebuild. Ver infra/Dockerfile.airflow.
+# NO CODE GOES INTO THE IMAGE. The repository is mounted at /opt/retail-lakehouse and
+# reached through PYTHONPATH, so that editing a dbt model or a platform module does not
+# require a rebuild. See infra/Dockerfile.airflow.
 
 name: retail-lakehouse
 
@@ -15,109 +16,109 @@ x-airflow-common: &airflow-common
     context: ..
     dockerfile: infra/Dockerfile.airflow
   image: retail-lakehouse/airflow:2.10.5
-  # Roda com o UID do host para que os arquivos que o DAG escreve em data/ nao fiquem
-  # com dono 50000 no checkout. AIRFLOW_UID vem do .env.
+  # Runs with the host UID so that files the DAG writes under data/ are not owned
+  # by 50000 in the checkout. AIRFLOW_UID comes from .env.
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
     AIRFLOW__CORE__DAGS_FOLDER: /opt/retail-lakehouse/orchestration/airflow/dags
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?defina AIRFLOW_SECRET_KEY no .env — rode `make secrets`}
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?defina AIRFLOW_FERNET_KEY no .env — rode `make secrets`}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?set AIRFLOW_SECRET_KEY in .env — run `make secrets`}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env — run `make secrets`}
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
     AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
 
-    # Onde o DAG encontra as duas runtimes. A Source roda no interpretador do Airflow
-    # (dependencies = [], nada para conflitar); a plataforma no venv isolado da imagem.
+    # Where the DAG finds the two runtimes. The Source runs on the Airflow interpreter
+    # (dependencies = [], nothing to conflict); the platform on the image's isolated venv.
     RETAIL_REPO_ROOT: /opt/retail-lakehouse
     RETAIL_SOURCE_PYTHON: python3
     RETAIL_PLATFORM_PYTHON: /opt/platform-venv/bin/python
     RETAIL_DBT: /opt/platform-venv/bin/dbt
-    # Mesma lista do INE_TABLES do Makefile raiz — sem isto o DAG cairia no default do
-    # proprio arquivo (so 31304) e divergiria silenciosamente de `make ine-refresh`.
+    # Same list as INE_TABLES in the root Makefile — without it the DAG would fall back to
+    # the file's own default (only 31304) and silently diverge from `make ine-refresh`.
     RETAIL_INE_TABLES: "31304,29005"
-    # Idem para o timeout: 31304 devolve 264 MB e 29005 outros 125 MB num unico GET, e o
-    # default generico da Source (30s) estola nesse volume. Mesmos valores do Makefile.
+    # Same for the timeout: 31304 returns 264 MB and 29005 another 125 MB in a single GET, and
+    # the Source's generic default (30s) stalls at that volume. Same values as the Makefile.
     RETAIL_INE_TIMEOUT: "240"
     RETAIL_INE_MAX_RETRIES: "3"
 
-    # DENTRO DA REDE DO COMPOSE O ENDPOINT E `minio`, NAO `localhost`. Estas variaveis
-    # sobrescrevem o .env montado — config.load_dotenv() nao sobrepoe o que ja esta no
-    # ambiente, exatamente para que este caso funcione.
+    # INSIDE THE COMPOSE NETWORK THE ENDPOINT IS `minio`, NOT `localhost`. These variables
+    # override the mounted .env — config.load_dotenv() does not override what is already in
+    # the environment, precisely so that this case works.
     S3_ENDPOINT: http://minio:9000
     S3_ENDPOINT_HOST: minio:9000
-    # Mesmo motivo, para o OLTP de pedidos: dentro da rede o host e `oltp-postgres`, e o
-    # servico so existe sob o profile `stream`. Uma DAG que dependa dele falha na conexao
-    # com mensagem acionavel — nao com timeout — quando `make stream-up` nao rodou.
+    # Same reason, for the orders OLTP: inside the network the host is `oltp-postgres`, and the
+    # service only exists under the `stream` profile. A DAG that depends on it fails to connect
+    # with an actionable message — not a timeout — when `make stream-up` has not run.
     OLTP_DSN: postgresql://oltp:oltp@oltp-postgres:5432/oltp
     PROJECTION_DSN: postgresql://oltp:oltp@oltp-postgres:5432/projection
-    # O CATALOGO ICEBERG PRECISA DO SEU PROPRIO ENDERECO, e a falta dele foi silenciosa por
-    # tres dias. `orders_projection.catalog()` cai num default `localhost:5433` que so vale
-    # para quem roda no host; dentro do container `localhost` e o proprio container, entao a
-    # conexao falhava e `silver_live_order_state` ficava permanentemente fora do build.
+    # THE ICEBERG CATALOG NEEDS ITS OWN ADDRESS, and its absence was silent for
+    # three days. `orders_projection.catalog()` falls back to a default `localhost:5433` that is
+    # only valid on the host; inside the container `localhost` is the container itself, so the
+    # connection failed and `silver_live_order_state` stayed permanently out of the build.
     #
-    # Sem esta linha nada REPROVA — o portao apenas exclui o modelo e o build fica verde com
-    # uma tabela a menos, que e o pior tipo de sucesso. Com ela, o Airflow constroi a
-    # projecao quando `make stream-up` esta de pe e a exclui quando nao esta, que e a
-    # diferenca entre "nao pode" e "nao tentou".
+    # Without this line nothing FAILS — the gate just excludes the model and the build goes green
+    # with one table fewer, which is the worst kind of success. With it, Airflow builds the
+    # projection when `make stream-up` is running and excludes it when it is not, which is the
+    # difference between "cannot" and "did not try".
     #
-    # `postgresql+psycopg://` e nao `postgresql://`: o SqlCatalog usa SQLAlchemy, e sem o
-    # driver explicito ele procura psycopg2, que nao esta instalado (a plataforma usa
+    # `postgresql+psycopg://` and not `postgresql://`: SqlCatalog uses SQLAlchemy, and without
+    # the explicit driver it looks for psycopg2, which is not installed (the platform uses
     # psycopg 3).
     ICEBERG_CATALOG_URI: postgresql+psycopg://oltp:oltp@oltp-postgres:5432/iceberg_catalog
     KAFKA_BOOTSTRAP: kafka:19092
-    # MESMO MOTIVO do OLTP acima: dentro da rede o host do warehouse Postgres e
-    # `warehouse-postgres`, na porta INTERNA 5432 — o :5434 do .env e o mapeamento do
-    # host, e so vale para quem roda fora do compose. `warehouse_load` (a DAG) e o unico
-    # consumidor deste endereco de dentro do container; ver DECISIONS.md CR-007.
+    # SAME REASON as the OLTP above: inside the network the Postgres warehouse host is
+    # `warehouse-postgres`, on INTERNAL port 5432 — the :5434 in .env is the host mapping,
+    # and is only valid outside compose. `warehouse_load` (the DAG) is the only
+    # consumer of this address from inside the container; see DECISIONS.md CR-007.
     WAREHOUSE_PG_HOST: warehouse-postgres
     WAREHOUSE_PG_PORT: "5432"
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     RAW_BUCKET: ${RAW_BUCKET:-retail-raw}
     LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-retail-lakehouse}
-    # DENTRO do container, NAO no repositorio montado. O DuckDB e single-writer: se o
-    # orquestrador usasse o mesmo arquivo que uma pessoa abre no DBeaver, uma janela
-    # esquecida derrubaria o `silver` do DAG. O arquivo e estado descartavel — o dado e o
-    # parquet no object storage — entao viver na camada efemera do container e correto.
+    # INSIDE the container, NOT in the mounted repository. DuckDB is single-writer: if the
+    # orchestrator used the same file a person opens in DBeaver, a forgotten window
+    # would bring down the DAG's `silver`. The file is disposable state — the data is the
+    # parquet in object storage — so living in the container's ephemeral layer is correct.
     DUCKDB_PATH: /opt/airflow/retail.duckdb
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
 
-    # Onde o conector do Snowflake procura config.toml. Apontado para o MESMO caminho do
-    # host (ver o mount abaixo), e nao para /home/airflow/.snowflake, para que
-    # `private_key_file` do config.toml e `SNOWFLAKE_PRIVATE_KEY_PATH` do .env.snowflake
-    # resolvam identicos dentro e fora do container — nenhum caminho precisa ser reescrito
-    # em lugar nenhum.
+    # Where the Snowflake connector looks for config.toml. Pointed at the SAME path as the
+    # host (see the mount below), not at /home/airflow/.snowflake, so that
+    # `private_key_file` in config.toml and `SNOWFLAKE_PRIVATE_KEY_PATH` in .env.snowflake
+    # resolve identically inside and outside the container — no path needs to be rewritten
+    # anywhere.
     SNOWFLAKE_HOME: ${HOME}/.snowflake
 
-  # A identidade da conta Snowflake, se o arquivo existir. `required: false` e o que mantem
-  # a metade Lakehouse independente: sem conta Snowflake, `make up` e as DAGs das quatro
-  # sources sobem igual — so `warehouse_load` e que nao teria como autenticar.
+  # The Snowflake account identity, if the file exists. `required: false` is what keeps
+  # the Lakehouse half independent: with no Snowflake account, `make up` and the DAGs of the
+  # five sources start just the same — only `warehouse_load` would have no way to authenticate.
   #
-  # Por que env_file e nao `environment:`: no bloco de mapa, uma variavel ausente vira
-  # PRESENTE E VAZIA no container, e `env_var('SNOWFLAKE_ACCOUNT')` sem default devolve o
-  # vazio em vez de abortar — o dbt morreria com "'account' is a required property" em vez
-  # de dizer qual variavel falta. E a mesma armadilha documentada no Makefile.
+  # Why env_file and not `environment:`: in the map block, a missing variable becomes
+  # PRESENT AND EMPTY in the container, and `env_var('SNOWFLAKE_ACCOUNT')` without a default
+  # returns the empty value instead of aborting — dbt would die with "'account' is a required
+  # property" instead of saying which variable is missing. Same trap documented in the Makefile.
   env_file:
     - path: ../.env.snowflake
       required: false
 
   volumes:
-    # Repositorio montado read-write: o DAG escreve os snapshots em data/.
+    # Repository mounted read-write: the DAG writes the snapshots to data/.
     - ../:/opt/retail-lakehouse
     - airflow-logs:/opt/airflow/logs
-    # A CHAVE PRIVADA, SO LEITURA, NO MESMO CAMINHO DO HOST. A autenticacao e por par de
-    # chaves — o unico metodo que serve para uma DAG, que nao tem como abrir navegador nem
-    # digitar senha. Sem este mount, `load_stage` e `build_gold_and_mart` nao tem como
-    # autenticar, por mais dependencia que a imagem tenha.
+    # THE PRIVATE KEY, READ-ONLY, AT THE SAME PATH AS THE HOST. Authentication is by key
+    # pair — the only method that works for a DAG, which can neither open a browser nor
+    # type a password. Without this mount, `load_stage` and `build_gold_and_mart` have no way
+    # to authenticate, however many dependencies the image has.
     #
-    # `:ro` e deliberado: o orquestrador le a chave e nunca a reescreve. O container roda
-    # com AIRFLOW_UID (o uid do host), que e o dono do arquivo modo 600 — nenhuma
-    # permissao precisa ser afrouxada para isto funcionar.
+    # `:ro` is deliberate: the orchestrator reads the key and never rewrites it. The container
+    # runs as AIRFLOW_UID (the host uid), which owns the mode-600 file — no permission
+    # needs to be loosened for this to work.
     - ${HOME}/.snowflake:${HOME}/.snowflake:ro
   depends_on:
-    postgres:
+    airflow-postgres:
       condition: service_healthy
 
 services:
@@ -128,17 +129,17 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    # BIND_ADDR=127.0.0.1 por padrao: o stack tem credencial de desenvolvimento
-    # (minioadmin/minioadmin) e NAO pode ficar escutando na rede. Para expor
-    # deliberadamente, defina BIND_ADDR=0.0.0.0 e troque as credenciais antes.
+    # BIND_ADDR=127.0.0.1 by default: the stack has development credentials
+    # (minioadmin/minioadmin) and must NOT listen on the network. To expose it
+    # deliberately, set BIND_ADDR=0.0.0.0 and change the credentials first.
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
       - "${BIND_ADDR:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
-      # `mc` vem embutido na imagem do server (verificado); `mc ready` e a checagem
-      # oficial e cobre disco+quorum, nao apenas o processo estar de pe.
+      # `mc` ships inside the server image (verified); `mc ready` is the official
+      # check and covers disk+quorum, not just the process being up.
       test: ["CMD", "mc", "ready", "local"]
       interval: 3s
       timeout: 3s
@@ -146,8 +147,8 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Cria os buckets e sai. `versioning` no bucket RAW: uma particao aterrissada nunca
-  # e sobrescrita em silencio, espelhando a imutabilidade que a Source garante em disco.
+  # Creates the buckets and exits. `versioning` on the RAW bucket: a landed partition is never
+  # silently overwritten, mirroring the immutability the Source guarantees on disk.
   mc:
     image: minio/mc:latest
     container_name: retail-mc
@@ -168,12 +169,13 @@ services:
         mc mb --ignore-existing "local/$$RAW_BUCKET"
         mc mb --ignore-existing "local/$$LAKEHOUSE_BUCKET"
         mc version enable "local/$$RAW_BUCKET"
-        echo "buckets prontos:"
+        echo "buckets ready:"
         mc ls local
 
-  postgres:
+  # Airflow metadata — only that. The other two Postgres are the simulated OLTP and the warehouse.
+  airflow-postgres:
     image: postgres:16-alpine
-    container_name: retail-postgres
+    container_name: retail-airflow-postgres
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -187,16 +189,16 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # O OLTP DE PEDIDOS. Banco SEPARADO do metadado do Airflow, e nao por organizacao:
+  # THE ORDERS OLTP. A database SEPARATE from the Airflow metadata, and not for tidiness:
   #
-  #   - e um componente MODELADO da simulacao, nao infraestrutura do orquestrador. Reiniciar
-  #     o OLTP para exercitar uma falha nao pode significar reiniciar o cerebro do Airflow;
-  #   - precisa de `wal_level=logical` proprio, que exige restart e afeta o servidor inteiro;
-  #   - o outbox e o unico dado desta plataforma que NAO e derivavel de outro lugar em
-  #     segundos, entao ele merece um volume com nome proprio e um ciclo de vida proprio.
+  #   - it is a MODELED component of the simulation, not orchestrator infrastructure. Restarting
+  #     the OLTP to exercise a failure must not mean restarting Airflow's brain;
+  #   - it needs its own `wal_level=logical`, which requires a restart and affects the whole server;
+  #   - the outbox is the only data in this platform that is NOT derivable from elsewhere in
+  #     seconds, so it deserves a volume with its own name and its own lifecycle.
   #
-  # `profiles: [stream]` mantem a promessa do README: `make up` sobe so o plano de dados.
-  # Este servico so existe depois de `make stream-up`.
+  # `profiles: [stream]` keeps the README promise: `make up` starts only the data plane.
+  # This service only exists after `make stream-up`.
   oltp-postgres:
     image: postgres:16-alpine
     container_name: retail-oltp-postgres
@@ -205,10 +207,11 @@ services:
       POSTGRES_USER: oltp
       POSTGRES_PASSWORD: oltp
       POSTGRES_DB: oltp
-    # `wal_level=logical` nao e usado pelo outbox — o poller le a tabela, nao o WAL. Esta
-    # aqui porque e a UNICA configuracao que exige restart do servidor: deixa-la ligada
-    # desde o inicio e o que permite plugar Debezium (Marco 4b) sem derrubar o banco e sem
-    # perder o que ja estiver no outbox. Custo: alguns bytes a mais por escrita no WAL.
+    # `wal_level=logical` is not used by the outbox — the poller reads the table, not the WAL. It
+    # is here because it is the ONLY setting that requires a server restart: leaving it on
+    # from the start is what allows plugging in Debezium (Milestone 4b) without taking the
+    # database down and without losing what is already in the outbox. Cost: a few more bytes
+    # per write in the WAL.
     command:
       - postgres
       - -c
@@ -228,19 +231,18 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # SEGUNDO ALVO DE WAREHOUSE, ao lado do Snowflake (externo, fora deste compose). Existe
-  # porque a conta Snowflake em uso e um TRIAL, com prazo — este container prova, com um
-  # motor que nao expira, que a arvore models/warehouse/ tambem troca de MOTOR e nao so de
-  # conta. Ver DECISIONS.md e platform/src/retail_platform/postgres_load.py.
+  # DEFAULT WAREHOUSE since CR-007. It was born as a second target, when the Snowflake account
+  # was a trial with a deadline, to prove that the models/warehouse/ tree switches ENGINE and
+  # not just account; Snowflake (external, outside this compose) remains optional. See DECISIONS.md.
   #
-  # SERVICO DEDICADO, e nao um banco a mais dentro de `oltp-postgres`: aquele e o OLTP
-  # SIMULADO (mais o catalogo Iceberg), um componente MODELADO da simulacao. Misturar o
-  # papel de warehouse analitico ali confundiria dois ciclos de vida diferentes e um dia
-  # exigiria reiniciar um para mexer no outro.
+  # A DEDICATED SERVICE, not one more database inside `oltp-postgres`: that one is the
+  # SIMULATED OLTP (plus the Iceberg catalog), a MODELED component of the simulation. Mixing the
+  # analytical warehouse role in there would conflate two different lifecycles and one day
+  # would require restarting one to work on the other.
   #
-  # PROFILE PROPRIO (`warehouse-postgres`), nao `stream`: `make up` continua subindo so o
-  # plano de dados, e este container so existe quando alguem pedir o fallback
-  # explicitamente — mesmo precedente de `spark`.
+  # ITS OWN PROFILE (`warehouse-postgres`), not `stream`: `make up` still starts only the
+  # data plane, and this container starts with `make warehouse-postgres-up` — the warehouse
+  # is a stage after Silver, not part of the data plane.
   warehouse-postgres:
     image: postgres:16-alpine
     container_name: retail-warehouse-postgres
@@ -260,13 +262,13 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # O BROKER. KRaft, sem ZooKeeper: um processo, nao dois.
+  # THE BROKER. KRaft, no ZooKeeper: one process, not two.
   #
-  # DUAS LISTENERS DE PROPOSITO. A plataforma roda NO HOST (o venv da plataforma), e o
-  # Airflow roda DENTRO da rede do compose. Um `advertised.listeners` unico serviria a um
-  # dos dois e quebraria o outro em silencio — o cliente conecta no bootstrap, recebe o
-  # endereco anunciado e vai falar com ele. E a mesma armadilha do S3_ENDPOINT: `localhost`
-  # de fora, nome de servico de dentro.
+  # TWO LISTENERS ON PURPOSE. The platform runs ON THE HOST (the platform venv), and
+  # Airflow runs INSIDE the compose network. A single `advertised.listeners` would serve one
+  # of the two and silently break the other — the client connects to the bootstrap, receives
+  # the advertised address and goes to talk to it. Same trap as S3_ENDPOINT: `localhost`
+  # from outside, service name from inside.
   kafka:
     image: apache/kafka:3.8.1
     container_name: retail-kafka
@@ -280,8 +282,8 @@ services:
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      # Broker unico: todo fator de replicacao tem de ser 1, ou os topicos internos nunca
-      # ficam prontos e o primeiro `subscribe` trava sem erro visivel.
+      # Single broker: every replication factor must be 1, or the internal topics never
+      # become ready and the first `subscribe` hangs with no visible error.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
@@ -301,17 +303,18 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # Cria o topico e sai. Mesmo precedente do servico `mc`: o host nao tem as ferramentas do
-  # Kafka, e depender de uma instalacao local tornaria `make stream-up` nao reproduzivel.
+  # Creates the topic and exits. Same precedent as the `mc` service: the host has no Kafka
+  # tools, and depending on a local install would make `make stream-up` non-reproducible.
   #
-  # `auto.create.topics.enable=false` no broker e o que da sentido a este servico: um topico
-  # criado por acidente na primeira producao nasceria com 1 particao e a garantia de ordem
-  # viraria global POR ACASO — e uma garantia acidental e a que quebra quando o volume cresce.
+  # `auto.create.topics.enable=false` on the broker is what gives this service its meaning: a
+  # topic created by accident on the first produce would be born with 1 partition and the
+  # ordering guarantee would become global BY ACCIDENT — and an accidental guarantee is the
+  # one that breaks when volume grows.
   #
-  # QUATRO PARTICOES, e nao uma. Com uma particao a ordem seria global sem ninguem pedir, e a
-  # afirmacao "a ordem e por chave" nunca seria exercida. Quatro e o menor numero que torna a
-  # afirmacao OBSERVAVEL — e a chave e `order_id`, nao `wh`, para que os pedidos de um mesmo
-  # armazem se espalhem e o paralelismo seja real.
+  # FOUR PARTITIONS, not one. With one partition ordering would be global without anyone
+  # asking, and the claim "ordering is per key" would never be exercised. Four is the smallest
+  # number that makes the claim OBSERVABLE — and the key is `order_id`, not `wh`, so that the
+  # orders of a single warehouse spread out and the parallelism is real.
   kafka-init:
     image: apache/kafka:3.8.1
     container_name: retail-kafka-init
@@ -330,82 +333,82 @@ services:
           --config compression.type=zstd \
           --config retention.ms=604800000 \
           --config min.insync.replicas=1
-        echo "topicos:"
+        echo "topics:"
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --describe \
           --topic retail.orders.events.v1
     restart: "no"
 
-  # O SPARK. PERFIL PROPRIO, e nao `stream`, e a razao e uma decisao de arquitetura:
+  # SPARK. ITS OWN PROFILE, not `stream`, and the reason is an architecture decision:
   #
-  # O Spark e OPCIONAL neste projeto. `make silver`, `make warehouse`, o painel e as cinco
-  # DAGs rodam sem ele e continuam rodando sem ele — quem garante isso e o portao de
-  # `silver_gate.py`, que tira do build o que depende de uma tabela que nao existe. Um
-  # perfil separado torna essa promessa uma propriedade do compose, e nao um paragrafo de
-  # README: `make up` nao sobe Spark, e `make stream-up` tambem nao.
+  # Spark is OPTIONAL in this project. `make silver`, `make warehouse`, the panel and the five
+  # DAGs run without it and keep running without it — what guarantees that is the gate in
+  # `silver_gate.py`, which drops from the build whatever depends on a table that does not
+  # exist. A separate profile makes that promise a property of compose, not a README
+  # paragraph: `make up` does not start Spark, and neither does `make stream-up`.
   #
-  # Ele PRECISA dos dois servicos do plano de stream, e por isso `make spark-*` cobra que
-  # `make stream-up` tenha rodado: o catalogo Iceberg mora no `oltp-postgres`, e os dados
-  # da tabela moram no MinIO.
+  # It NEEDS both stream-plane services, which is why `make spark-*` requires that
+  # `make stream-up` has run: the Iceberg catalog lives in `oltp-postgres`, and the table
+  # data lives in MinIO.
   #
-  # SERVICO DE UMA EXECUCAO SO (`docker compose run --rm`), sem `sleep infinity`: um
-  # container Spark parado no `docker ps` sugere um cluster que nao existe. Aqui o Spark
-  # roda `local[*]` — um processo, driver e executor no mesmo JVM. O que se demonstra e
-  # interoperabilidade e forma do job, nao um cluster.
+  # A ONE-SHOT SERVICE (`docker compose run --rm`), no `sleep infinity`: a Spark container
+  # idling in `docker ps` suggests a cluster that does not exist. Here Spark runs
+  # `local[*]` — one process, driver and executor in the same JVM. What is demonstrated is
+  # interoperability and the shape of the job, not a cluster.
   spark:
     build:
       context: ..
       dockerfile: infra/Dockerfile.spark
     image: retail-lakehouse/spark:3.5.3
     profiles: ["spark"]
-    # SEM `depends_on`, e isso e uma consequencia de os perfis serem independentes: o
-    # `oltp-postgres` mora no perfil `stream`, entao com `--profile spark` sozinho ele nem
-    # existe no projeto, e o compose recusa a referencia. Quem cobra o pre-requisito e o
-    # Makefile, com a mensagem que diz o que fazer — como a trava do DuckDB em `make
-    # silver`. Trocar isso por `profiles: [spark, stream]` faria `--profile spark` subir um
-    # broker Kafka que o Spark nao usa.
+    # NO `depends_on`, and that is a consequence of the profiles being independent:
+    # `oltp-postgres` lives in the `stream` profile, so with `--profile spark` alone it does not
+    # even exist in the project, and compose refuses the reference. The Makefile enforces the
+    # prerequisite, with a message that says what to do — like the DuckDB lock check in `make
+    # silver`. Replacing that with `profiles: [spark, stream]` would make `--profile spark`
+    # start a Kafka broker that Spark does not use.
     environment:
-      # DENTRO da rede do compose os enderecos sao nomes de SERVICO. E a mesma armadilha
-      # ja documentada nas duas listeners do Kafka: `localhost:9000` serve ao venv da
-      # plataforma, que roda no host, e nao resolve aqui.
+      # INSIDE the compose network addresses are SERVICE names. Same trap
+      # already documented in the two Kafka listeners: `localhost:9000` serves the platform
+      # venv, which runs on the host, and does not resolve here.
       S3_ENDPOINT: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      # O catalogo e o MESMO que o pyiceberg escreve — a URI muda de dialeto (JDBC em vez
-      # de SQLAlchemy) porque o cliente e Java, mas aponta para o mesmo banco e as mesmas
-      # duas tabelas. Se apontasse para outro lugar, nao haveria interop a demonstrar.
+      # The catalog is the SAME one pyiceberg writes — the URI changes dialect (JDBC instead
+      # of SQLAlchemy) because the client is Java, but it points to the same database and the
+      # same two tables. If it pointed elsewhere, there would be no interop to demonstrate.
       ICEBERG_CATALOG_JDBC: jdbc:postgresql://oltp-postgres:5432/${ICEBERG_CATALOG_DB:-iceberg_catalog}
       ICEBERG_CATALOG_USER: oltp
       ICEBERG_CATALOG_PASSWORD: oltp
       ICEBERG_CATALOG_NAME: ${ICEBERG_CATALOG_NAME:-retail}
       ICEBERG_NAMESPACE: ${ICEBERG_NAMESPACE:-projection}
       ICEBERG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://retail-lakehouse/iceberg}
-      # PYTHONPATH NAO vem daqui, de proposito: ver Dockerfile.spark. Defini-lo aqui
-      # apaga o caminho do proprio pyspark, porque a imagem o deixa vazio.
+      # PYTHONPATH does NOT come from here, on purpose: see Dockerfile.spark. Setting it here
+      # wipes pyspark's own path, because the image leaves it empty.
     volumes:
-      # READ-ONLY, ao contrario do mount do Airflow: o Spark escreve em Iceberg, no MinIO.
-      # Se algum dia ele precisar escrever no checkout, isso e um defeito a investigar e
-      # nao uma permissao a afrouxar.
+      # READ-ONLY, unlike the Airflow mount: Spark writes to Iceberg, in MinIO.
+      # If it ever needs to write to the checkout, that is a defect to investigate and
+      # not a permission to loosen.
       - ../:/repo:ro
     working_dir: /repo
     restart: "no"
 
-  # Migra o schema, cria o usuario da UI e — o que importa para a arquitetura — cria o
-  # POOL de 1 slot. Sem ele o LocalExecutor rodaria varios `extract` em paralelo e
-  # dobraria a taxa de requisicao contra a fonte, porque o throttle da Source e por
-  # processo. Roda uma vez e sai.
+  # Migrates the schema, creates the UI user and — what matters for the architecture — creates
+  # the 1-slot POOL. Without it the LocalExecutor would run several `extract`s in parallel and
+  # double the request rate against the source, because the Source throttle is per
+  # process. Runs once and exits.
   airflow-init:
     <<: *airflow-common
     container_name: retail-airflow-init
-    # ROOT de proposito, e o unico servico que roda assim: o volume airflow-logs nasce
-    # com dono root, e scheduler/webserver rodam como AIRFLOW_UID. Sem o chown abaixo, o
-    # scheduler morre com PermissionError ao escrever o log de parse — e o sintoma e
-    # enganoso, porque `airflow dags list` (que le arquivo) funciona enquanto o DAG nunca
-    # chega ao banco.
+    # ROOT on purpose, and the only service that runs that way: the airflow-logs volume is born
+    # owned by root, and scheduler/webserver run as AIRFLOW_UID. Without the chown below, the
+    # scheduler dies with PermissionError when writing the parse log — and the symptom is
+    # misleading, because `airflow dags list` (which reads files) works while the DAG never
+    # reaches the database.
     user: "0:0"
-    # `command`, NAO `entrypoint`: sobrescrever o entrypoint pularia o /entrypoint da
-    # imagem, que e quem cria a entrada em /etc/passwd para o AIRFLOW_UID do host. Sem
-    # ela o Airflow morre em getpass.getuser() com "no username".
+    # `command`, NOT `entrypoint`: overriding the entrypoint would skip the image's
+    # /entrypoint, which is what creates the /etc/passwd entry for the host AIRFLOW_UID.
+    # Without it Airflow dies in getpass.getuser() with "no username".
     command:
       - bash
       - -c
@@ -418,8 +421,8 @@ services:
         airflow users create --role Admin --username admin --password admin \
           --firstname admin --lastname admin --email admin@example.com || true
         airflow pools set mercadona_api 1 \
-          "Serializa requisicoes contra a API: o throttle da Source e por processo"
-        echo "airflow-init concluido"
+          "Serializes requests against the API: the Source throttle is per process"
+        echo "airflow-init done"
     restart: "no"
 
   airflow-scheduler:
@@ -427,7 +430,7 @@ services:
     container_name: retail-airflow-scheduler
     command: scheduler
     depends_on:
-      postgres:
+      airflow-postgres:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
@@ -443,11 +446,11 @@ services:
     <<: *airflow-common
     container_name: retail-airflow-webserver
     command: webserver
-    # Mesma razao do MinIO: a UI sobe com admin/admin.
+    # Same reason as MinIO: the UI starts with admin/admin.
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${AIRFLOW_PORT:-8080}:8080"
     depends_on:
-      postgres:
+      airflow-postgres:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully

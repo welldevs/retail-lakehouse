@@ -3,46 +3,46 @@ version: 2
 models:
   - name: silver_ine_population_series
     description: >
-      Serie de populacao por provincia do INE (Tempus3, table_id 31304), projetada sem
-      interpretacao alem de separar territorio/idade/sexo, que a fonte concatena em
-      "Nombre". GRAO: (ingestion_date, table_id, series_code, year, fk_periodo) — cada
-      serie tem 2 pontos por ano (fk_periodo 26 e 27), nao 1. Sem teste de reconciliacao
-      de manifesto (paralelo a assert_silver_reconciles_with_manifest): a extracao desta
-      source e um punhado de GETs deterministicos, nao um scrape sujeito a falha parcial
-      sob rate-limit como a Mercadona — desproporcional agora.
+      INE population series by province (Tempus3, table_id 31304), projected with no
+      interpretation beyond splitting territory/age/sex, which the source concatenates in
+      "Nombre". GRAIN: (ingestion_date, table_id, series_code, year, fk_periodo) — each
+      series has 2 points per year (fk_periodo 26 and 27), not 1. No manifest reconciliation
+      test (parallel to assert_silver_reconciles_with_manifest): this source's extraction
+      is a handful of deterministic GETs, not a scrape prone to partial failure
+      under rate limiting like Mercadona — disproportionate for now.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: table_id
-        description: Extraido do nome do arquivo (tables/table_id=<id>.json), nao de particao hive.
+        description: Extracted from the file name (tables/table_id=<id>.json), not from a hive partition.
         tests: [not_null]
       - name: series_code
-        description: "'COD' da fonte. Estavel dentro de um table_id."
+        description: "The source's 'COD'. Stable within a table_id."
         tests: [not_null]
       - name: series_name
         tests: [not_null]
       - name: province_name
         description: >
-          Territorio identificado em series_name por VOCABULARIO (lista fechada de 52
-          provincias, ou o valor literal "Total Nacional" para a agregacao pais inteiro)
-          — nao por posicao fixa dentro de series_name, que varia (ver comentario do
-          modelo). "Total Nacional" nao e uma provincia real: um join futuro por nome de
-          provincia o ignora sozinho, sem precisar de filtro explicito.
+          Territory identified in series_name by VOCABULARY (a closed list of 52
+          provinces, or the literal value "Total Nacional" for the whole-country aggregate)
+          — not by a fixed position within series_name, which varies (see the model
+          comment). "Total Nacional" is not a real province: a future join by province
+          name ignores it on its own, without needing an explicit filter.
         tests: [not_null]
       - name: age_label
         description: >
-          Faixa etaria identificada em series_name por eliminacao (o segmento que nao e
-          province_name nem sex_label). "Total" significa todas as idades agregadas.
+          Age band identified in series_name by elimination (the segment that is neither
+          province_name nor sex_label). "Total" means all ages aggregated.
         tests: [not_null]
       - name: sex_label
-        description: "Um de 'Ambos sexos', 'Hombres', 'Mujeres', identificado em series_name por vocabulario."
+        description: "One of 'Ambos sexos', 'Hombres', 'Mujeres', identified in series_name by vocabulary."
         tests:
           - not_null
           - accepted_values:
@@ -52,67 +52,67 @@ models:
         tests: [not_null]
       - name: fk_periodo
         description: >
-          Codigo de periodo da fonte. Medido: 27 = referencia 30/06, 26 = referencia
-          31/12 — o INE publica duas estimativas de populacao por ano. Parte do grao:
-          sem ele, (series_code, year) se repete.
+          The source's period code. Measured: 27 = reference 30/06, 26 = reference
+          31/12 — INE publishes two population estimates per year. Part of the grain:
+          without it, (series_code, year) repeats.
         tests: [not_null]
       - name: reference_date
-        description: "Data de referencia do ponto, derivada de 'Fecha' (epoch ms) da fonte."
+        description: "Reference date of the point, derived from the source's 'Fecha' (epoch ms)."
         tests: [not_null]
       - name: fk_tipo_dato
         description: >
-          Codigo de tipo de dado da fonte (ex.: definitivo vs. provisorio). Exposto tal
-          como a fonte declara — o significado exato de cada valor nao esta documentado
-          na API publica, entao nao e decodificado aqui.
+          The source's data type code (e.g. final vs. provisional). Exposed as
+          the source declares it — the exact meaning of each value is not documented
+          in the public API, so it is not decoded here.
       - name: population_value
-        description: "'Valor' da fonte. Pode ser nulo — CONTRACT.md da source nao garante ponto preenchido."
+        description: "The source's 'Valor'. May be null — the source's CONTRACT.md does not guarantee a filled point."
 
   - name: silver_ine_population_by_municipality
     description: >
-      Serie de populacao por municipio do INE (Tempus3, table_id 29005), projetada sem
-      interpretacao alem de separar municipio/sexo (que a fonte concatena em "Nombre")
-      e resolver o codigo do municipio via ine_municipality_codes_seed. GRAO:
-      (ingestion_date, series_code, year, fk_periodo). Escopado as 4 provincias desta
-      plataforma (08/28/41/46) por INNER JOIN com o seed — ver comentario do modelo.
-      O nome do municipio NAO e chave segura: o lado RAW e nacional e tem homonimos em
-      outras provincias com "Nombre" identico. Series de nome ambiguo sao desambiguadas
-      pelo codigo oficial do INE em ine_ambiguous_series_seed; o invariante "uma serie
-      por (municipio, sexo, ano)" e garantido por
+      INE population series by municipality (Tempus3, table_id 29005), projected with no
+      interpretation beyond splitting municipality/sex (which the source concatenates in "Nombre")
+      and resolving the municipality code via ine_municipality_codes_seed. GRAIN:
+      (ingestion_date, series_code, year, fk_periodo). Scoped to this platform's 4 provinces
+      (08/28/41/46) by INNER JOIN with the seed — see the model comment.
+      The municipality name is NOT a safe key: the RAW side is national and has homonyms in
+      other provinces with identical "Nombre". Series with ambiguous names are disambiguated
+      by INE's official code in ine_ambiguous_series_seed; the invariant "one series
+      per (municipality, sex, year)" is guaranteed by
       assert_ine_population_by_municipality_has_one_series_per_municipality.
-      Sem idade: esta tabela so tem sexo. Faixa etaria continua so em
-      silver_ine_population_series (nivel de provincia) — ver ARCHITECTURE.md para a
-      decisao de nao perseguir uma tabela municipio+idade nesta fase.
+      No age: this table only has sex. The age band remains only in
+      silver_ine_population_series (province level) — see ARCHITECTURE.md for the
+      decision not to pursue a municipality+age table in this phase.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente deste modelo. O historico de todas as
-          extracoes e preservado de proposito, entao uma reextracao da MESMA publicacao
-          do INE empilha linhas equivalentes — `where is_latest_ingestion` le o estado
-          atual; sem o filtro, le-se o historico inteiro e a contagem dobra.
+          true on this model's most recent ingestion_date. The history of all
+          extractions is preserved on purpose, so a re-extraction of the SAME INE
+          publication stacks equivalent rows — `where is_latest_ingestion` reads the current
+          state; without the filter, the whole history is read and the count doubles.
         tests: [not_null]
       - name: series_code
-        description: "'COD' da fonte. Estavel dentro do table_id."
+        description: "The source's 'COD'. Stable within the table_id."
         tests: [not_null]
       - name: series_name
         tests: [not_null]
       - name: province_code
-        description: Resolvido via ine_municipality_codes_seed — nao vem da fonte.
+        description: Resolved via ine_municipality_codes_seed — it does not come from the source.
         tests: [not_null]
       - name: municipality_code
-        description: Resolvido via ine_municipality_codes_seed — nao vem da fonte.
+        description: Resolved via ine_municipality_codes_seed — it does not come from the source.
         tests: [not_null]
       - name: municipality_name
         description: >
-          Segmento 1 de series_name, grafia Tempus3 — NAO bate com a grafia do
-          Callejero (ver ine_municipality_codes_seed).
+          Segment 1 of series_name, Tempus3 spelling — it does NOT match the
+          Callejero spelling (see ine_municipality_codes_seed).
         tests: [not_null]
       - name: sex_label
         description: >
-          Segmento 2 de series_name. Vocabulario da fonte: 'Total'/'Hombres'/'Mujeres'
-          — diferente de 'Ambos sexos' usado em silver_ine_population_series (fonte
-          distinta, nao normalizado entre as duas).
+          Segment 2 of series_name. The source's vocabulary: 'Total'/'Hombres'/'Mujeres'
+          — different from 'Ambos sexos' used in silver_ine_population_series (a distinct
+          source, not normalized between the two).
         tests:
           - not_null
           - accepted_values:
@@ -121,17 +121,17 @@ models:
       - name: year
         tests: [not_null]
       - name: fk_periodo
-        description: "Codigo de periodo da fonte. Unico valor medido nesta tabela: 28."
+        description: "The source's period code. The only value measured in this table: 28."
         tests: [not_null]
       - name: reference_date
-        description: "Data de referencia do ponto, derivada de 'Fecha' (epoch ms) da fonte."
+        description: "Reference date of the point, derived from the source's 'Fecha' (epoch ms)."
         tests: [not_null]
       - name: is_secret
         description: >
-          'Secreto' da fonte, exposto sem transformacao. Nao observado como true em
-          nenhum ponto da amostra medida (nao e uma amostra exaustiva dos ~8.200
-          municipios) — se aparecer true, o consumidor deve tratar population_value com
-          cautela; este modelo nao decide isso por ele.
+          The source's 'Secreto', exposed without transformation. Not observed as true in
+          any point of the measured sample (not an exhaustive sample of the ~8,200
+          municipalities) — if true shows up, the consumer should treat population_value with
+          caution; this model does not decide that for them.
         tests: [not_null]
       - name: population_value
-        description: "'Valor' da fonte, sem transformacao."
+        description: "The source's 'Valor', without transformation."

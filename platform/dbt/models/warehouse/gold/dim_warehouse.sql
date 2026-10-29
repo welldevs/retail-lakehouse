@@ -1,20 +1,19 @@
--- OS QUATRO ARMAZENS e sua area de atuacao.
+-- THE FOUR WAREHOUSES and their service area.
 --
--- GRAO: um armazem. CHAVE: wh.
--- TIPO: a chave e OBSERVED (`wh` e parametro real da API da Mercadona, nao um rotulo que
--- este projeto inventou); o vinculo com provincia e DERIVED — foi construido a partir das
--- Areas Urbanas Funcionais do INE em scripts/derive_warehouse_province_map.py.
+-- GRAIN: one warehouse. KEY: wh.
+-- TYPE: the key is OBSERVED (`wh` is a real Mercadona API parameter, not a label this
+-- project invented); the link to a province is DERIVED — it was built from INE's
+-- Functional Urban Areas in scripts/derive_warehouse_province_map.py.
 --
--- Os quatro nao foram escolhidos por tamanho de mercado, e sim por DIVERGENCIA DE
--- SORTIMENTO medida contra a fonte: armazens da mesma cidade tem catalogos identicos e
--- divergem so em preco, entao um segundo Madrid pagaria 152 requisicoes para agregar um
--- eixo. Ver ARCHITECTURE.md secao 2.1.
+-- The four were not chosen by market size, but by ASSORTMENT DIVERGENCE measured against
+-- the source: warehouses in the same city have identical catalogs and differ only in
+-- price, so a second Madrid would pay 152 requests to add one axis. See ARCHITECTURE.md
+-- section 2.1.
 --
--- ARMADILHA DA FONTE, registrada aqui porque e onde alguem viria procurar: um `wh`
--- invalido NAO falha na origem. A API devolve 200 caindo em vlc1, entao um erro de
--- digitacao produz uma particao rotulada com o codigo errado contendo dados de Valencia —
--- errada e internamente consistente. Por isso o accepted_values em schema.yml nao e
--- burocracia.
+-- SOURCE TRAP, recorded here because it is where someone would come looking: an invalid
+-- `wh` does NOT fail at the origin. The API returns 200 falling back to vlc1, so a typo
+-- produces a partition labeled with the wrong code containing Valencia data — wrong and
+-- internally consistent. That is why the accepted_values in schema.yml is not bureaucracy.
 {{ config(materialized = 'table') }}
 
 with area as (
@@ -36,10 +35,11 @@ cobertura as (
 
 ),
 
--- POPULACAO NAO PODE SER SOMADA SOBRE O GRAO DE STG_GEOGRAPHY. Aquela tabela e
--- (municipio, CEP), e municipality_population e um atributo do MUNICIPIO repetido em cada
--- CEP dele: somar direto contaria Valencia 12 vezes. Reduz-se ao municipio distinto ANTES
--- de somar. E o mesmo erro de classe do agregado 'Total' — um numero plausivel e errado.
+-- POPULATION CANNOT BE SUMMED OVER THE STG_GEOGRAPHY GRAIN. That table is
+-- (municipality, postcode), and municipality_population is a MUNICIPALITY attribute
+-- repeated on each of its postcodes: summing directly would count Valencia 12 times. It is
+-- reduced to the distinct municipality BEFORE summing. It is the same class of error as the
+-- 'Total' aggregate — a plausible and wrong number.
 populacao as (
 
     select wh, sum(municipality_population) as population_served

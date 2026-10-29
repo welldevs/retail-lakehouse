@@ -1,48 +1,50 @@
-"""Recorta o Silver para o Snowflake: parquet local, PUT em stage interno, COPY INTO.
+"""Cuts Silver down for the warehouse (Postgres or Snowflake): local parquet that both
+loaders transport — COPY FROM STDIN on Postgres, PUT + COPY INTO on Snowflake.
 
-POR QUE ESTE MODULO EXISTE
---------------------------
-O Snowflake e o QUARTO consumidor que nao alcanca o Lakehouse — os outros tres sao as
-Sources FROZEN. Duas razoes independentes, e ambas ja tem precedente no repo:
+WHY THIS MODULE EXISTS
+----------------------
+Snowflake is the FOURTH consumer that cannot reach the Lakehouse — the other three are the
+FROZEN Sources. Two independent reasons, and both already have precedent in the repo:
 
-  1. Rede: um Snowflake gerenciado nao enxerga um MinIO em localhost. `COPY INTO` a partir
-     de um external stage exigiria S3 real e uma storage integration; o stage INTERNO
-     (`PUT file://...`) resolve sem nada disso, porque quem empurra os bytes e este
-     processo, que enxerga os dois lados.
-  2. Volume: nao faz sentido copiar o Silver inteiro. Medido em 2026-08-27 —
-     3.796.213 linhas no Silver, das quais 3.094.992 (81,5%) sao
-     `silver_ine_population_series`, nacional, com 57.072 linhas (1,8%) no escopo real das
-     4 provincias. Carregar isso seria pagar armazenamento por 27x o dado util.
+  1. Network: a managed Snowflake cannot see a MinIO on localhost. `COPY INTO` from an
+     external stage would require real S3 and a storage integration; the INTERNAL stage
+     (`PUT file://...`) works without any of that, because the one pushing the bytes is
+     this process, which sees both sides.
+  2. Volume: copying all of Silver makes no sense. Measured on 2026-08-27 —
+     3,796,213 rows in Silver, of which 3,094,992 (81.5%) are
+     `silver_ine_population_series`, national, with 57,072 rows (1.8%) in the real scope
+     of the 4 provinces. Loading that would mean paying storage for 27x the useful data.
 
-Por isso este modulo e irmao direto de `oltp_reference.py`: materializa um RECORTE do
-Silver para quem nao pode falar DuckDB. A diferenca e so o formato de saida (parquet em
-vez de JSON) e o destino (uma tabela em vez de um arquivo lido pela stdlib).
+That is why this module is a direct sibling of `customers_reference.py`: it materializes a
+CUT of Silver for whoever cannot speak DuckDB. The only differences are the output format
+(parquet instead of JSON) and the destination (a table instead of a file read by the
+stdlib).
 
-O RECORTE E DELIBERADAMENTE BURRO
-----------------------------------
-Filtro de escopo geografico, filtro de ultima ingestao, deduplicacao de grao. NENHUMA
-regra de negocio. Se aparecer um `case when` de dominio aqui, esta no lugar errado: a
-modelagem e do dbt, do lado do Snowflake. E o que impede a mesma logica existir em dois
-motores e divergir em silencio.
+THE CUT IS DELIBERATELY DUMB
+----------------------------
+Geographic scope filter, latest-ingestion filter, grain deduplication. NO business rule.
+If a domain `case when` shows up here, it is in the wrong place: modeling belongs to dbt,
+on the Snowflake side. That is what prevents the same logic from existing in two engines
+and silently diverging.
 
-A UNICA EXCECAO DECLARADA e excluir agregados que a fonte mistura com o detalhe
-(`sex_label = 'Total'`). Nao e regra de negocio, e evitar dupla contagem: somar os tres
-rotulos da o dobro da populacao. E exatamente a armadilha que ja custou 2,03x de inflacao
-na piramide etaria da Fase 1, com `age_label`. Um agregado carregado junto do detalhe nao
-e "dado a mais": e um fato errado esperando alguem somar.
+THE ONLY DECLARED EXCEPTION is excluding aggregates that the source mixes with the detail
+(`sex_label = 'Total'`). It is not a business rule, it is avoiding double counting: summing
+the three labels gives twice the population. It is exactly the trap that already cost a
+2.03x inflation in the Phase 1 age pyramid, with `age_label`. An aggregate loaded next to
+the detail is not "extra data": it is a wrong fact waiting for someone to sum it.
 
-O SCHEMA DAS TABELAS STAGE VEM DA PROPRIA QUERY
-------------------------------------------------
-O DDL e gerado a partir do tipo que o DuckDB devolve, nao escrito a mao num arquivo ao
-lado. Um DDL manual e um segundo lugar onde o schema vive, e os dois divergem no primeiro
-dia em que alguem acrescenta uma coluna ao recorte. Como STAGE e espelho 1:1, seu schema E
-o resultado da query — deriva-lo e o que mantem os dois em sincronia por construcao. O DDL
-gerado pode ser inspecionado sem conexao nenhuma (`dump_ddl`), entao continua revisavel.
+THE SCHEMA OF THE STAGE TABLES COMES FROM THE QUERY ITSELF
+----------------------------------------------------------
+The DDL is generated from the type DuckDB returns, not hand-written in a file next to it.
+A manual DDL is a second place where the schema lives, and the two diverge on the first day
+someone adds a column to the cut. Since STAGE is a 1:1 mirror, its schema IS the query
+result — deriving it is what keeps both in sync by construction. The generated DDL can be
+inspected without any connection (`dump_ddl`), so it stays reviewable.
 
-STAGE E FULL REFRESH (`create or replace` + `COPY INTO`). Nao ha merge nem incremental
-aqui de proposito: sao ~407 mil linhas, e historico/versionamento sao responsabilidade das
-dimensoes SCD2 do GOLD, nao do espelho. Gatilho para revisar: a carga inteira deixar de
-caber numa janela em que refaze-la seja mais barato que raciocinar sobre estado parcial.
+STAGE IS FULL REFRESH (`create or replace` + `COPY INTO`). There is no merge or incremental
+here on purpose: it is ~407 thousand rows, and history/versioning are the responsibility
+of the GOLD SCD2 dimensions, not of the mirror. Trigger to revisit: the full load no longer
+fitting in a window where redoing it is cheaper than reasoning about partial state.
 """
 
 from __future__ import annotations
@@ -51,14 +53,14 @@ import os
 import tempfile
 from datetime import datetime, timezone
 
-# Schemas do lado do Snowflake. STAGE e o unico que este modulo escreve.
+# Snowflake-side schemas. STAGE is the only one this module writes.
 STAGE_SCHEMA = "STAGE"
 
-DEFAULT_OUT = os.path.join("data", "snowflake-stage")
+DEFAULT_OUT = os.path.join("data", "warehouse-cut")
 
 
-class SnowflakeExportError(Exception):
-    """O recorte nao pode ser produzido, ou o destino recusou."""
+class WarehouseCutError(Exception):
+    """The cut cannot be produced, or the destination refused it."""
 
 
 def _utc_now() -> str:
@@ -66,48 +68,48 @@ def _utc_now() -> str:
 
 
 # --------------------------------------------------------------------------------
-# O recorte, tabela a tabela
+# The cut, table by table
 # --------------------------------------------------------------------------------
-# Cada entrada e (nome da tabela STAGE, o que o recorte faz e por que, SQL). Os
-# comentarios de "por que" ficam no proprio SQL, junto da linha que impoem.
+# Each entry is (STAGE table name, what the cut does and why, SQL). The "why" comments
+# live in the SQL itself, next to the line they enforce.
 
 SPECS: list[dict] = [
     {
         "name": "STG_PRODUCT_PRICE",
         "grain": "(ingestion_date, warehouse, source_product_id)",
         "sql": """
-            -- DEDUP DO EIXO DE CATEGORIA. O grao do Silver e
-            -- (data, wh, category_id, subgroup_id, produto): um produto aparece em mais de
-            -- uma categoria e a fonte repete a linha inteira. Medido: o PRECO nao diverge
-            -- entre essas aparicoes (0 casos), entao reduzir por produto e seguro e nao
-            -- esconde conflito — a mesma premissa que silver_price_change ja assume e que
-            -- assert_price_is_consistent_across_appearances protege.
+            -- CATEGORY-AXIS DEDUP. The Silver grain is
+            -- (date, wh, category_id, subgroup_id, product): a product appears in more than
+            -- one category and the source repeats the whole row. Measured: the PRICE does not
+            -- diverge across those appearances (0 cases), so reducing by product is safe and
+            -- hides no conflict — the same premise silver_price_change already assumes and
+            -- that assert_price_is_consistent_across_appearances protects.
             --
-            -- O eixo `warehouse` FICA no grao, e isso e medido, nao convencao: 187 produtos
-            -- tem unit_price diferente entre os 4 armazens no mesmo dia, e 0 divergem
-            -- dentro do mesmo armazem. Um fato de preco sem `wh` mediria uma media que nao
-            -- existe em lugar nenhum.
+            -- The `warehouse` axis STAYS in the grain, and that is measured, not convention:
+            -- 187 products have a different unit_price across the 4 warehouses on the same
+            -- day, and 0 diverge within the same warehouse. A price fact without `wh` would
+            -- measure an average that exists nowhere.
             select
                 ingestion_date,
                 warehouse,
                 source_product_id,
                 any_value(display_name)                     as display_name,
 
-                -- Categoria primaria escolhida por MIN, que e determinista, e a contagem ao
-                -- lado para que o caso multi-categoria seja um numero visivel e nao um
-                -- detalhe apagado pela reducao (medido: max 2, media 1,06).
+                -- Primary category chosen by MIN, which is deterministic, with the count
+                -- next to it so the multi-category case is a visible number and not a
+                -- detail erased by the reduction (measured: max 2, mean 1.06).
                 min(category_id)                            as primary_category_id,
                 count(distinct category_id)                 as category_appearances,
                 any_value(product_level1_category_id)       as product_level1_category_id,
 
                 any_value(unit_price)                       as unit_price,
 
-                -- O PRECO DE UNIDADE COMPRAVEL, ao lado do valor cru da fonte. Difere
-                -- apenas nas linhas `bunch`, onde a API devolve reference_price * 99 — o
-                -- teto do seletor de peso, e nao um preco de consumo (obrigacao 5 do
-                -- contrato da Mercadona; 10 combinacoes produto x armazem, medidas).
-                -- Atravessam OS DOIS: FACT_ORDER_ITEM fecha contra o primeiro, e o segundo
-                -- e a evidencia de que a correcao existe e do tamanho dela.
+                -- THE PURCHASABLE-UNIT PRICE, next to the raw source value. It differs
+                -- only on `bunch` rows, where the API returns reference_price * 99 — the
+                -- ceiling of the weight selector, not a consumer price (obligation 5 of
+                -- the Mercadona contract; 10 product x warehouse combinations, measured).
+                -- BOTH cross over: FACT_ORDER_ITEM reconciles against the first, and the
+                -- second is the evidence that the correction exists and how big it is.
                 any_value(purchasable_unit_price)           as purchasable_unit_price,
                 any_value(price_basis)                      as price_basis,
                 any_value(net_content_kg_l)                 as net_content_kg_l,
@@ -137,14 +139,14 @@ SPECS: list[dict] = [
         "name": "STG_PRICE_CHANGE",
         "grain": "(ingestion_date, previous_ingestion_date, warehouse, source_product_id)",
         "sql": """
-            -- CARREGADO, NAO REDERIVADO. Seria derivavel de STG_PRODUCT_PRICE com uma window
-            -- function, mas isso criaria uma segunda implementacao do mesmo lag() ciente-de-
-            -- lacuna que o Silver ja tem testado — e as duas divergiriam no primeiro ajuste.
-            -- Duplicar 43 mil linhas custa menos que duplicar logica.
+            -- LOADED, NOT RE-DERIVED. It could be derived from STG_PRODUCT_PRICE with a window
+            -- function, but that would create a second implementation of the same gap-aware
+            -- lag() that Silver already has tested — and the two would diverge on the first
+            -- tweak. Duplicating 43 thousand rows costs less than duplicating logic.
             --
-            -- name_seen_before vem junto porque e o insumo da decisao de SCD2 do
-            -- DIM_PRODUCT: id novo com nome que ja existia e ambiguidade de identidade, nao
-            -- "produto novo".
+            -- name_seen_before comes along because it is the input to the SCD2 decision of
+            -- DIM_PRODUCT: a new id with a name that already existed is identity ambiguity,
+            -- not "new product".
             select *
             from silver_price_change
             order by ingestion_date, warehouse, source_product_id
@@ -154,13 +156,13 @@ SPECS: list[dict] = [
         "name": "STG_POPULATION_MUNICIPALITY",
         "grain": "(province_code, municipality_code, sex_label, year)",
         "sql": """
-            -- SEM sex_label = 'Total'. A fonte mistura o agregado com o detalhe na mesma
-            -- coluna: carregar os tres rotulos faz qualquer soma dar o dobro da populacao.
-            -- Mesma armadilha do age_label na Fase 1 (2,03x de inflacao, medida). Um teste
-            -- do lado do Snowflake reconfere Hombres + Mujeres = Total da fonte.
+            -- WITHOUT sex_label = 'Total'. The source mixes the aggregate with the detail in
+            -- the same column: loading the three labels makes any sum give twice the
+            -- population. Same trap as age_label in Phase 1 (2.03x inflation, measured). A
+            -- test on the Snowflake side rechecks Hombres + Mujeres = source Total.
             --
-            -- Escopo: so os 370 municipios das AUFs. O Silver e nacional (74.898 linhas);
-            -- fora das AUFs nao ha cliente, nem armazem, nem pergunta.
+            -- Scope: only the 370 municipalities of the AUFs. Silver is national (74,898
+            -- rows); outside the AUFs there is no customer, no warehouse, no question.
             select
                 p.province_code,
                 p.municipality_code,
@@ -184,11 +186,11 @@ SPECS: list[dict] = [
         "name": "STG_CATEGORY",
         "grain": "(category_id)",
         "sql": """
-            -- GLOBAL, sem eixo de armazem nem de data. Medido: a arvore tem 151 categorias
-            -- de nivel 2 em CADA um dos 4 armazens, identicas. Carregar 2.114 linhas
-            -- (14 particoes x 151) para servir uma dimensao de 151 seria duplicacao pura.
-            -- Recorte pela ultima ingestao para que a escolha seja determinista, nao um
-            -- any_value sobre datas diferentes.
+            -- GLOBAL, with no warehouse or date axis. Measured: the tree has 151 level-2
+            -- categories in EACH of the 4 warehouses, identical. Loading 2,114 rows
+            -- (14 partitions x 151) to serve a dimension of 151 would be pure duplication.
+            -- Cut by the latest ingestion so the choice is deterministic, not an
+            -- any_value over different dates.
             select
                 category_id,
                 any_value(category_name)            as category_name,
@@ -206,9 +208,9 @@ SPECS: list[dict] = [
         "name": "STG_CUSTOMER",
         "grain": "(ingestion_date, customer_id)",
         "sql": """
-            -- TODAS as ingestion_date, nao so a corrente: DIM_CUSTOMER e SCD2 e precisa do
-            -- historico para versionar. `is_latest_ingestion` viaja junto para que o lado
-            -- do Snowflake saiba qual e a base vigente sem recalcular um max().
+            -- ALL ingestion_dates, not just the current one: DIM_CUSTOMER is SCD2 and needs
+            -- the history to version. `is_latest_ingestion` travels along so the Snowflake
+            -- side knows which base is current without recomputing a max().
             select *
             from silver_customer
             order by ingestion_date, customer_id
@@ -218,18 +220,19 @@ SPECS: list[dict] = [
         "name": "STG_GEOGRAPHY",
         "grain": "(province_code, municipality_code, postal_code)",
         "sql": """
-            -- O ROLLUP QUE SOBREVIVE DOS 304.952 TRAMOS: 699 linhas.
+            -- THE ROLLUP THAT SURVIVES FROM THE 304,952 TRAMOS: 699 rows.
             --
-            -- postal_code SOZINHO NAO E CHAVE — medido: 29 CEPs cruzam fronteira de
-            -- municipio. O par (municipio, CEP) e o menor grao que responde tanto "onde o
-            -- cliente mora" quanto "para onde se entrega". Medido tambem: 0 CEPs cruzam
-            -- armazem, entao `wh` e funcao do par e a roteirizacao por CEP e inequivoca.
+            -- postal_code ALONE IS NOT A KEY — measured: 29 postal codes cross a municipality
+            -- boundary. The pair (municipality, postal code) is the smallest grain that
+            -- answers both "where the customer lives" and "where delivery goes". Also
+            -- measured: 0 postal codes cross warehouses, so `wh` is a function of the pair
+            -- and routing by postal code is unambiguous.
             --
-            -- OS DOIS NOMES DE MUNICIPIO viajam juntos, com rotulos distintos, porque os
-            -- dois produtos do INE grafam o mesmo municipio de forma diferente em 370 de
-            -- 370 casos ("BRUC (EL)" contra "Bruc, El"). Deixar so um esconderia a
-            -- divergencia; deixar os dois com o mesmo rotulo seria uma armadilha. O que se
-            -- compara entre fontes e sempre o CODIGO.
+            -- THE TWO MUNICIPALITY NAMES travel together, with distinct labels, because the
+            -- two INE products spell the same municipality differently in 370 of 370 cases
+            -- ("BRUC (EL)" versus "Bruc, El"). Keeping only one would hide the divergence;
+            -- keeping both under the same label would be a trap. What is compared across
+            -- sources is always the CODE.
             with tramos as (
                 select * from silver_callejero_tramos where is_latest_ingestion
             ),
@@ -240,9 +243,9 @@ SPECS: list[dict] = [
                 where is_latest_ingestion and is_municipality_aggregate
                 group by 1, 2
             ),
-            -- Populacao do ANO CORRENTE como atributo de tamanho da dimensao. A serie
-            -- inteira (1996-2025) vive em STG_POPULATION_MUNICIPALITY, que e fato: isto
-            -- aqui e conveniencia de recorte, nao a serie.
+            -- CURRENT-YEAR population as a size attribute of the dimension. The whole
+            -- series (1996-2025) lives in STG_POPULATION_MUNICIPALITY, which is a fact:
+            -- this is a convenience of the cut, not the series.
             population as (
                 select province_code, municipality_code,
                        max(municipality_name) as municipality_name,
@@ -285,8 +288,9 @@ SPECS: list[dict] = [
         "name": "STG_SERVICE_AREA",
         "grain": "(wh, province_code, municipality_code)",
         "sql": """
-            -- 370 linhas. A AUF (Area Urbana Funcional do INE) de cada armazem: quais
-            -- municipios ele atende. E o que impede um pedido futuro nascer fora da area.
+            -- 370 rows. The AUF (INE Functional Urban Area) of each warehouse: which
+            -- municipalities it serves. It is what prevents a future order from being born
+            -- outside the area.
             select * from warehouse_service_area
             order by wh, province_code, municipality_code
         """,
@@ -302,14 +306,14 @@ SPECS: list[dict] = [
         "name": "STG_INGESTION_RUN",
         "grain": "(source_name, ingestion_date, wh)",
         "sql": """
-            -- 18 LINHAS QUE IMPEDEM UM MART MENTIR. Distinguem "nao houve preco" de "nao
-            -- houve observacao": os dias 2026-08-17 a 08-23 nao existem no catalogo e NAO
-            -- podem ser recuperados (a API so serve o preco de hoje). Sem esta tabela, um
-            -- fato de preco com lacuna e indistinguivel de um produto que sumiu, e qualquer
-            -- serie temporal interpola em silencio.
+            -- 18 ROWS THAT KEEP A MART FROM LYING. They distinguish "there was no price" from
+            -- "there was no observation": the days 2026-08-17 to 08-23 do not exist in the
+            -- catalog and CANNOT be recovered (the API only serves today's price). Without
+            -- this table, a price fact with a gap is indistinguishable from a product that
+            -- disappeared, and any time series silently interpolates.
             --
-            -- As duas sources com eixo de armazem entram na mesma forma; o union e por
-            -- COLUNA NOMEADA, nao por posicao.
+            -- The sources with a warehouse axis enter in the same shape; the union is by
+            -- NAMED COLUMN, not by position.
             select
                 source_name,
                 ingestion_date,
@@ -342,11 +346,11 @@ SPECS: list[dict] = [
 
             union all by name
 
-            -- ORDERS DECLARA EVENTOS, NAO LINHAS, e o mapeamento e para `declared_rows`
-            -- porque e isso que o arquivo da particao contem: uma linha NDJSON por evento.
-            -- Mapear `declared_order_rows` aqui faria a reconciliacao "linhas do arquivo x
-            -- linhas declaradas" comparar duas grandezas diferentes e passar por engano
-            -- em 6.400 contra 44.456.
+            -- ORDERS DECLARES EVENTS, NOT ROWS, and the mapping is to `declared_rows`
+            -- because that is what the partition file contains: one NDJSON line per event.
+            -- Mapping `declared_order_rows` here would make the "file rows x declared rows"
+            -- reconciliation compare two different quantities and pass by mistake at
+            -- 6,400 versus 44,456.
             select
                 source_name,
                 ingestion_date,
@@ -368,14 +372,14 @@ SPECS: list[dict] = [
         "name": "STG_ORDER",
         "grain": "(order_id)",
         "sql": """
-            -- O FOLD JA DOBRADO, carregado inteiro. `select *` de proposito: silver_order
-            -- e o unico modelo do Silver cujo grao ja e exatamente o que o warehouse quer,
-            -- entao projetar coluna a coluna aqui so criaria um segundo lugar para
-            -- esquecer de acrescentar uma.
+            -- THE ALREADY-FOLDED FOLD, loaded whole. `select *` on purpose: silver_order is
+            -- the only Silver model whose grain is already exactly what the warehouse wants,
+            -- so projecting column by column here would only create a second place to
+            -- forget to add one.
             --
-            -- SEM `is_latest_ingestion`, e nao por esquecimento: cada ingestion_date e um
-            -- DIA DE OPERACAO, nao uma reingestao do mesmo dia. Filtrar pela ultima
-            -- deixaria 4.800 dos 6.400 pedidos fora do warehouse.
+            -- WITHOUT `is_latest_ingestion`, and not by oversight: each ingestion_date is an
+            -- OPERATING DAY, not a re-ingestion of the same day. Filtering by the latest
+            -- would leave 4,800 of the 6,400 orders out of the warehouse.
             select *
             from silver_order
             order by ingestion_date, wh, order_id
@@ -385,10 +389,11 @@ SPECS: list[dict] = [
         "name": "STG_ORDER_LINE",
         "grain": "(order_id, line_no)",
         "sql": """
-            -- A LINHA COLOCADA E A LINHA CUMPRIDA NA MESMA LINHA FISICA. `source_product_id`
-            -- e o que o cliente pediu, `fulfilled_source_product_id` e o que ele recebeu, e
-            -- os dois atravessam a fronteira: carregar so o segundo apagaria a substituicao,
-            -- que e o unico fato que o modelo de eventos existe para registrar.
+            -- THE PLACED LINE AND THE FULFILLED LINE IN THE SAME PHYSICAL ROW.
+            -- `source_product_id` is what the customer ordered, `fulfilled_source_product_id`
+            -- is what they received, and both cross the boundary: loading only the second
+            -- would erase the substitution, which is the one fact the event model exists to
+            -- record.
             select *
             from silver_order_line
             order by order_id, line_no
@@ -398,28 +403,28 @@ SPECS: list[dict] = [
         "name": "STG_ORDER_EVENT",
         "grain": "(event_id)",
         "sql": """
-            -- O LOG INTEIRO, 44.456 linhas. E a unica tabela do STAGE que carrega um corpo
-            -- semiestruturado, e a decisao merece estar escrita.
+            -- THE WHOLE LOG, 44,456 rows. It is the only STAGE table that carries a
+            -- semi-structured body, and the decision deserves to be written down.
             --
-            -- POR QUE O PAYLOAD ATRAVESSA. Todo campo tipado dele ja foi dobrado em
-            -- STG_ORDER e STG_ORDER_LINE — decline_reason, cancelled_by, picked_amount.
-            -- Sem o payload, este fato responde apenas "um evento do tipo X ocorreu no
-            -- instante T", e nao ha pergunta que so ele responda. Com o payload, ele e o
-            -- log auditavel dentro do warehouse: quem quiser conferir o fold contra a
-            -- origem consegue, sem voltar ao RAW. Custa 17,5 MB de texto antes da
-            -- compressao. NAO e uma segunda derivacao do fold — e a ORIGEM dele, o que e
-            -- exatamente a diferenca entre auditoria e duplicacao de verdade.
+            -- WHY THE PAYLOAD CROSSES OVER. Every typed field in it has already been folded
+            -- into STG_ORDER and STG_ORDER_LINE — decline_reason, cancelled_by, picked_amount.
+            -- Without the payload, this fact only answers "an event of type X occurred at
+            -- instant T", and there is no question only it answers. With the payload, it is
+            -- the auditable log inside the warehouse: anyone who wants to check the fold
+            -- against its origin can, without going back to RAW. It costs 17.5 MB of text
+            -- before compression. It is NOT a second derivation of the fold — it is its
+            -- ORIGIN, which is exactly the difference between audit and true duplication.
             --
-            -- CAST EXPLICITO PARA VARCHAR, e nao um JSON caindo no mapa de tipos. O
-            -- _TYPE_MAP recusa o que nao conhece justamente para nao adivinhar VARCHAR em
-            -- silencio; aqui a escolha e visivel na propria consulta, e o nome da coluna
-            -- carrega o tipo. Quem quiser VARIANT faz o parse do lado do Snowflake, onde
-            -- ha um motor que o entende.
+            -- EXPLICIT CAST TO VARCHAR, not a JSON falling into the type map. _TYPE_MAP
+            -- refuses what it does not know precisely so as not to silently guess VARCHAR;
+            -- here the choice is visible in the query itself, and the column name carries
+            -- the type. Whoever wants VARIANT parses it on the Snowflake side, where there
+            -- is an engine that understands it.
             --
-            -- `partition_wh` FICA DE FORA. E coluna de auditoria do Silver — existe para
-            -- que assert_order_partition_axis_matches_record possa comparar o caminho do
-            -- arquivo com o conteudo do registro. Atravessar a fronteira com ela seria
-            -- carregar uma PROVA, nao um fato, e a prova ja foi executada do outro lado.
+            -- `partition_wh` IS LEFT OUT. It is a Silver audit column — it exists so that
+            -- assert_order_partition_axis_matches_record can compare the file path with the
+            -- record content. Carrying it across the boundary would be loading a PROOF, not
+            -- a fact, and the proof has already run on the other side.
             select
                 ingestion_date,
                 wh,
@@ -441,16 +446,17 @@ SPECS: list[dict] = [
         "name": "STG_ORDER_PREMISE",
         "grain": "(premise_key)",
         "sql": """
-            -- AS PREMISSAS DECLARADAS, QUE IMPEDEM UM MART MEDIR CONTRA UM LIMIAR QUE
-            -- NINGUEM USOU. Sem contagem nesta linha de proposito: o seed cresce.
-            -- Irma direta de STG_INGESTION_RUN: metadado, nao medida, promovido porque sem
-            -- ele o mart a jusante nao tem como ser honesto.
+            -- THE DECLARED PREMISES, WHICH KEEP A MART FROM MEASURING AGAINST A THRESHOLD
+            -- NOBODY USED. No count on this line on purpose: the seed grows.
+            -- Direct sibling of STG_INGESTION_RUN: metadata, not a measure, promoted because
+            -- without it the downstream mart has no way to be honest.
             --
-            -- MART_FULFILLMENT_SLA conta violacoes de `sla_minutes_picking`. Esse numero
-            -- tem dono: o seed que o gerador leu, cujo sha256 esta no manifesto de cada
-            -- particao. Reescreve-lo como var do dbt criaria a segunda copia que diverge
-            -- na primeira edicao — e nada reprovaria, porque contar zero violacao contra o
-            -- limiar errado tem exatamente a aparencia de contar zero contra o certo.
+            -- MART_FULFILLMENT_SLA counts violations of `sla_minutes_picking`. That number
+            -- has an owner: the seed the generator read, whose sha256 is in the manifest of
+            -- each partition. Rewriting it as a dbt var would create the second copy that
+            -- diverges on the first edit — and nothing would fail, because counting zero
+            -- violations against the wrong threshold looks exactly like counting zero
+            -- against the right one.
             select *
             from order_premises
             order by premise_key
@@ -460,10 +466,10 @@ SPECS: list[dict] = [
         "name": "STG_STOCK_PREMISE",
         "grain": "(premise_key)",
         "sql": """
-            -- A POLITICA DE ESTOQUE, separada das premissas de pedido de proposito: aquelas
-            -- governam o que um cliente FAZ, estas o que o armazem TEM. MART_STOCK_HEALTH
-            -- compara cobertura contra `reorder_point_days`, e o numero tem de ser o MESMO
-            -- que o job Spark usou — nao uma copia dele numa var do dbt.
+            -- THE STOCK POLICY, kept apart from the order premises on purpose: those govern
+            -- what a customer DOES, these what the warehouse HAS. MART_STOCK_HEALTH compares
+            -- cover against `reorder_point_days`, and the number has to be the SAME one the
+            -- Spark job used — not a copy of it in a dbt var.
             select *
             from stock_premises
             order by premise_key
@@ -473,15 +479,15 @@ SPECS: list[dict] = [
         "name": "STG_STOCK_LEDGER",
         "grain": "(wh, source_product_id, stock_date)",
         "sql": """
-            -- O UNICO RECORTE QUE NAO VEM DE UMA SOURCE. Estoque nao e observado em lugar
-            -- nenhum deste projeto: este ledger e CALCULADO pelo job Spark a partir do
-            -- consumo medido nos pedidos mais a politica declarada. `written_by` viaja para
-            -- que quem consultar o warehouse descubra isso sem abrir documentacao —
-            -- a mesma disciplina que faz o Silver nunca inventar moeda.
+            -- THE ONLY CUT THAT DOES NOT COME FROM A SOURCE. Stock is not observed anywhere
+            -- in this project: this ledger is COMPUTED by the Spark job from the consumption
+            -- measured in the orders plus the declared policy. `written_by` travels along so
+            -- that whoever queries the warehouse finds that out without opening the docs —
+            -- the same discipline that makes Silver never invent a currency.
             --
-            -- NAO E FILTRADO POR JANELA aqui: o ledger ja nasce com o recorte dos pedidos,
-            -- porque o consumo que o alimenta veio deles. Um filtro a mais criaria dois
-            -- lugares onde a janela mora.
+            -- IT IS NOT FILTERED BY WINDOW here: the ledger is already born with the orders'
+            -- cut, because the consumption feeding it came from them. One more filter would
+            -- create two places where the window lives.
             select
                 wh,
                 source_product_id,
@@ -508,8 +514,8 @@ SPECS: list[dict] = [
 # DuckDB -> parquet local
 # --------------------------------------------------------------------------------
 
-# Mapeamento de tipo. Deliberadamente curto: se o recorte produzir um tipo que nao esta
-# aqui, e para FALHAR, nao para adivinhar um VARCHAR e perder precisao em silencio.
+# Type mapping. Deliberately short: if the cut produces a type that is not here, it must
+# FAIL, not guess a VARCHAR and silently lose precision.
 _TYPE_MAP = {
     "BOOLEAN": "BOOLEAN",
     "TINYINT": "NUMBER(38,0)",
@@ -529,96 +535,96 @@ _TYPE_MAP = {
 
 
 def _snowflake_type(duckdb_type: str) -> str:
-    tipo = duckdb_type.upper().strip()
-    if tipo.startswith("DECIMAL"):
-        # DECIMAL(10,2) -> NUMBER(10,2). Precisao decimal em moeda nao vira FLOAT.
-        return "NUMBER" + tipo[len("DECIMAL"):]
-    if tipo in _TYPE_MAP:
-        return _TYPE_MAP[tipo]
-    raise SnowflakeExportError(
-        f"tipo do DuckDB sem mapeamento para Snowflake: {duckdb_type!r}. "
-        f"Acrescente-o a _TYPE_MAP em vez de deixar o recorte cair num VARCHAR."
+    type_name = duckdb_type.upper().strip()
+    if type_name.startswith("DECIMAL"):
+        # DECIMAL(10,2) -> NUMBER(10,2). Decimal precision in currency does not become FLOAT.
+        return "NUMBER" + type_name[len("DECIMAL"):]
+    if type_name in _TYPE_MAP:
+        return _TYPE_MAP[type_name]
+    raise WarehouseCutError(
+        f"DuckDB type with no Snowflake mapping: {duckdb_type!r}. "
+        f"Add it to _TYPE_MAP instead of letting the cut fall into a VARCHAR."
     )
 
 
-def _describe(connection, sql: str) -> list[tuple[str, str]]:
-    """Colunas e tipos do recorte, sem materializar nenhuma linha."""
+def describe(connection, sql: str) -> list[tuple[str, str]]:
+    """Columns and types of the cut, without materializing any row."""
     rows = connection.execute(f"describe {sql}").fetchall()
     return [(r[0], r[1]) for r in rows]
 
 
 def ddl_for(spec: dict, columns: list[tuple[str, str]], database: str) -> str:
-    """`create or replace table` derivado do schema do proprio recorte."""
-    corpo = ",\n".join(
-        f"    {nome} {_snowflake_type(tipo)}" for nome, tipo in columns
+    """`create or replace table` derived from the cut's own schema."""
+    body = ",\n".join(
+        f"    {name} {_snowflake_type(type_name)}" for name, type_name in columns
     )
     return (
         f"create or replace table {database}.{STAGE_SCHEMA}.{spec['name']} (\n"
-        f"{corpo}\n"
-        f")\ncomment = 'Espelho 1:1 do recorte do Silver. Grao {spec['grain']}.'"
+        f"{body}\n"
+        f")\ncomment = '1:1 mirror of the Silver cut. Grain {spec['grain']}.'"
     )
 
 
 def build(connection, out_dir: str) -> dict:
-    """Escreve um parquet por spec em out_dir. Devolve o resumo de cada um.
+    """Writes one parquet per spec into out_dir. Returns the summary of each.
 
-    Separado de `load` para que a suite exercite todos os recortes contra fixtures DuckDB
-    reais, sem Snowflake e sem rede — as consultas sao onde os erros silenciosos moram
-    (o agregado 'Total' somado junto do detalhe, o escopo geografico esquecido), nao no
-    transporte.
+    Separate from `load` so the suite exercises every cut against real DuckDB fixtures,
+    without Snowflake and without network — the queries are where silent errors live
+    (the 'Total' aggregate summed with the detail, the forgotten geographic scope), not
+    the transport.
     """
     os.makedirs(out_dir, exist_ok=True)
-    resumo = {}
+    summary = {}
     for spec in SPECS:
         sql = spec["sql"].strip()
-        columns = _describe(connection, sql)
-        destino = os.path.join(out_dir, f"{spec['name']}.parquet")
+        columns = describe(connection, sql)
+        target = os.path.join(out_dir, f"{spec['name']}.parquet")
 
-        # Escrita atomica pelo mesmo motivo do resto do repo: um arquivo truncado por
-        # interrupcao nao pode parecer completo para o PUT que vem depois.
+        # Atomic write for the same reason as the rest of the repo: a file truncated by an
+        # interruption must not look complete to the PUT that comes after.
         handle, temp_path = tempfile.mkstemp(dir=out_dir, prefix=".tmp-", suffix=".parquet")
         os.close(handle)
         try:
             connection.execute(
                 f"copy ({sql}) to '{temp_path}' (format parquet, compression zstd)"
             )
-            os.replace(temp_path, destino)
+            os.replace(temp_path, target)
         except BaseException:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
             raise
 
-        linhas = connection.execute(f"select count(*) from ({sql})").fetchone()[0]
-        resumo[spec["name"]] = {
-            "rows": linhas,
+        row_count = connection.execute(f"select count(*) from ({sql})").fetchone()[0]
+        summary[spec["name"]] = {
+            "rows": row_count,
             "columns": len(columns),
-            "bytes": os.path.getsize(destino),
-            "path": destino,
+            "bytes": os.path.getsize(target),
+            "path": target,
             "grain": spec["grain"],
         }
-    return resumo
+    return summary
 
 
 def dump_ddl(connection, database: str) -> str:
-    """Todo o DDL do STAGE, sem conexao com o Snowflake. Para revisao e versionamento."""
-    partes = [
-        f"-- Gerado por retail_platform.snowflake_export em {_utc_now()}.",
-        "-- NAO editar a mao: o schema do STAGE e derivado do recorte em SPECS, e um DDL",
-        "-- editado passa a ser um segundo lugar onde o schema vive.",
+    """All of the STAGE DDL, with no Snowflake connection. For review and versioning."""
+    parts = [
+        f"-- Generated by retail_platform.warehouse_cut at {_utc_now()}.",
+        "-- DO NOT edit by hand: the STAGE schema is derived from the cut in SPECS, and an",
+        "-- edited DDL becomes a second place where the schema lives.",
         "",
         f"create database if not exists {database};",
         f"create schema if not exists {database}.{STAGE_SCHEMA};",
         "",
     ]
     for spec in SPECS:
-        columns = _describe(connection, spec["sql"].strip())
-        partes.append(ddl_for(spec, columns, database) + ";")
-        partes.append("")
-    return "\n".join(partes)
+        columns = describe(connection, spec["sql"].strip())
+        parts.append(ddl_for(spec, columns, database) + ";")
+        parts.append("")
+    return "\n".join(parts)
 
 
 def export(config, out_dir: str) -> dict:
-    """Recorta o Silver para parquet local. Nao fala com o Snowflake."""
+    """Cuts Silver to local parquet. Does not talk to Snowflake."""
     from .query import connect_lakehouse
 
     connection = connect_lakehouse(config)

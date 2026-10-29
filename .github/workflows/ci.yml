@@ -1,9 +1,9 @@
 name: CI
 
 # The two jobs ARCHITECTURE.md already promised, once the repository gained a remote
-# (DECISIONS.md § "CR-004"): one for the five zero-dependency Sources, one for the
+# (DECISIONS.md § "CR-005"): one for the five zero-dependency Sources, one for the
 # platform's offline boundary (venv + make silver against a local MinIO). Never the
-# Snowflake half — no secret for a trial account is configured here, and it was never
+# warehouse or Snowflake half — no account secret is configured here, and it was never
 # part of the promised scope.
 
 on:

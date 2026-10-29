@@ -1,38 +1,38 @@
--- CLIENTE, SCD2 — e o SCD2 aqui existe por um motivo diferente do de DIM_PRODUCT.
+-- CUSTOMER, SCD2 — and the SCD2 here exists for a different reason than DIM_PRODUCT's.
 --
--- GRAO: uma versao de cliente, (customer_id, valid_from).
--- CHAVE: customer_sk. Chave natural: customer_id.
--- TIPO: a PESSOA e synthetic; o ENDERECO e observed. Os dois convivem na mesma linha e a
--- distincao importa: municipio, via, CEP e faixa de numeracao vem sempre de uma linha real
--- do Callejero. O cliente e inventado; o lugar onde ele mora nao.
+-- GRAIN: one customer version, (customer_id, valid_from).
+-- KEY: customer_sk. Natural key: customer_id.
+-- TYPE: the PERSON is synthetic; the ADDRESS is observed. Both live in the same row and the
+-- distinction matters: municipality, street, postcode and numbering range always come from
+-- a real Callejero row. The customer is invented; the place where they live is not.
 --
--- POR QUE SCD2 E NAO UMA TABELA FIXA. A base de clientes e RECARREGAVEL de proposito — vai
--- crescer para dar densidade real. Cada regeracao cria uma ingestion_date nova, e o
--- comportamento do gerador tem duas consequencias que a dimensao precisa representar:
+-- WHY SCD2 AND NOT A FIXED TABLE. The customer base is RELOADABLE on purpose — it will
+-- grow to provide real density. Each regeneration creates a new ingestion_date, and the
+-- generator's behavior has two consequences the dimension needs to represent:
 --
---   * AUMENTAR A BASE E ADITIVO. O gerador consome uma unica random.Random(seed) em ordem
---     fixa e nada antes do laco depende de `count`, entao os primeiros N clientes de uma
---     geracao maior sao byte a byte os mesmos de antes. Verificado ponta a ponta: 200 ->
---     5.000 preservou os 200 (test_aumentar_count_e_aditivo_nao_reembaralha, e os sha256
---     conferidos no dado real). Crescer NAO invalida quem ja existe.
---   * TROCAR A DATA OU A SEED NAO E ADITIVO. Outra ingestion_date preserva a IDADE e
---     desloca birth_year — a mesma pessoa, mais velha. Outra seed troca as pessoas por
---     tras dos mesmos ids. O manifesto registra as duas coisas em `history`.
+--   * GROWING THE BASE IS ADDITIVE. The generator consumes a single random.Random(seed) in
+--     fixed order and nothing before the loop depends on `count`, so the first N customers
+--     of a larger generation are byte for byte the same as before. Verified end to end:
+--     200 -> 5,000 preserved the 200 (test_aumentar_count_e_aditivo_nao_reembaralha, and
+--     the sha256s checked on the real data). Growing does NOT invalidate who already exists.
+--   * CHANGING THE DATE OR THE SEED IS NOT ADDITIVE. Another ingestion_date preserves the
+--     AGE and shifts birth_year — the same person, older. Another seed swaps the people
+--     behind the same ids. The manifest records both in `history`.
 --
--- Uma tabela fixa nao teria como representar isso; o SCD2 tem. valid_from = a
--- ingestion_date da geracao. Fatos de pedido devem apontar para customer_sk (a versao
--- vigente na data do pedido) e carregar customer_id como chave de negocio.
+-- A fixed table would have no way to represent that; SCD2 does. valid_from = the
+-- generation's ingestion_date. Order facts must point to customer_sk (the version in
+-- effect on the order date) and carry customer_id as the business key.
 --
--- O ENDERECO E ATRIBUICAO, NAO IDENTIDADE. Dois clientes podem receber o mesmo tramo E o
--- mesmo numero — endereco identico — e isso nao e colisao nem bug: e a consequencia de o
--- endereco ser sorteado entre os candidatos reais do municipio. Por isso o endereco e
--- ATRIBUTO desta dimensao e nao um DIM_ADDRESS: nao ha entidade "endereco" com vida
--- propria no modelo. Gatilho para criar uma: um pedido poder ser entregue num endereco
--- diferente do cadastro.
+-- THE ADDRESS IS AN ASSIGNMENT, NOT AN IDENTITY. Two customers can receive the same
+-- segment AND the same number — an identical address — and that is neither a collision
+-- nor a bug: it is the consequence of the address being drawn among the municipality's
+-- real candidates. That is why the address is an ATTRIBUTE of this dimension and not a
+-- DIM_ADDRESS: there is no "address" entity with a life of its own in the model. Trigger to
+-- create one: an order being deliverable to an address different from the registered one.
 --
--- age_at_ingestion, NAO idade calculada contra hoje. A idade e o atributo que o gerador
--- realmente sorteou; calcula-la contra a data corrente faria a dimensao mudar sozinha a
--- cada aniversario sem nenhuma nova observacao.
+-- age_at_ingestion, NOT age computed against today. Age is the attribute the generator
+-- actually drew; computing it against the current date would make the dimension change on
+-- its own at every birthday without any new observation.
 {{ config(materialized = 'table') }}
 
 with versoes as (
@@ -65,20 +65,20 @@ select
 
     customer_id,
     valid_from,
-    -- Fechado-aberto [valid_from, valid_to), pelo mesmo motivo de DIM_PRODUCT: as
-    -- geracoes nao sao diarias e subtrair um dia inventaria uma data sem observacao.
+    -- Closed-open [valid_from, valid_to), for the same reason as DIM_PRODUCT: the
+    -- generations are not daily and subtracting a day would invent a date with no observation.
     --
-    -- A janela e repetida em vez de nomeada por `window w as (...)`: o Snowflake nao
-    -- suporta a clausula WINDOW. O DuckDB suporta, e foi assim que isto passou no parse
-    -- local e so falhou no motor de verdade.
+    -- The window is repeated instead of named via `window w as (...)`: Snowflake does not
+    -- support the WINDOW clause. DuckDB does, and that is how this passed the local parse and
+    -- only failed on the real engine.
     lead(valid_from) over (partition by customer_id order by valid_from) as valid_to,
     lead(valid_from) over (partition by customer_id order by valid_from) is null
                                                             as is_current,
 
     wh,
 
-    -- Geografia. Junta-se a DIM_GEOGRAPHY pelo mesmo hash natural, e nao por nome: os dois
-    -- produtos do INE grafam municipio de forma diferente em 370 de 370 casos.
+    -- Geography. Joins DIM_GEOGRAPHY by the same natural hash, and not by name: the two INE
+    -- products spell the municipality differently in 370 of 370 cases.
     md5(concat_ws('|', province_code, municipality_code, postal_code)) as geography_sk,
     province_code,
     province_name,
@@ -86,13 +86,13 @@ select
     municipality_name,
     postal_code,
 
-    -- Endereco: atribuicao sintetica derivada de um tramo real.
+    -- Address: synthetic assignment derived from a real segment.
     street_name,
     numbering_type,
     house_number,
     (house_number is null)                                  as address_is_street_level,
-    -- Auditoria: aponta a linha exata do address_candidates.json usado na geracao. So tem
-    -- significado contra a referencia identificada no manifesto daquela particao.
+    -- Audit: points to the exact row of the address_candidates.json used in the generation.
+    -- It only has meaning against the reference identified in that partition's manifest.
     candidate_index,
 
     first_name,
@@ -102,8 +102,8 @@ select
     birth_year,
     age_at_ingestion,
 
-    -- Faixas etarias para slicing. Rotulos declarados aqui e nao herdados de nenhuma
-    -- fonte: sao decisao deste modelo, nao vocabulario do INE.
+    -- Age bands for slicing. Labels declared here and not inherited from any source: they are
+    -- a decision of this model, not INE vocabulary.
     case
         when age_at_ingestion < 18 then '00-17'
         when age_at_ingestion < 30 then '18-29'

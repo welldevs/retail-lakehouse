@@ -1,49 +1,50 @@
-"""Transporte do recorte para o Postgres local: DDL, COPY FROM STDIN, papeis nativos.
+"""Transport of the cut into the local Postgres: DDL, COPY FROM STDIN, native roles.
 
-Segundo alvo do warehouse, ao lado de `snowflake_load.py` — mesmo criterio de separacao
-produtor/transportador (testar o recorte nao deveria exigir credencial, e mover bytes nao
-deveria exigir DuckDB). Existe porque a conta Snowflake usada neste projeto e um TRIAL, com
-prazo: um Postgres local prova que a fronteira fisica em L2->L3 (COPY/`source()`, nunca
-`ref()`) tambem troca de MOTOR, e nao so de conta. Ver DECISIONS.md.
+Second warehouse target, next to `snowflake_load.py` — same producer/transporter split
+(testing the cut should not require a credential, and moving bytes should not require
+DuckDB). It exists because the Snowflake account used in this project is a TRIAL, with an
+expiry date: a local Postgres proves that the physical boundary at L2->L3 (COPY/`source()`,
+never `ref()`) also changes ENGINE, not just account. See DECISIONS.md.
 
-SEM STAGE INTERNO. O stage de tabela do Snowflake resolve um problema que aqui nao existe —
-um Postgres gerenciado nao enxergaria o MinIO local, mas ESTE Postgres roda no mesmo host
-que o parquet ja foi escrito. O transporte e direto: ler o parquet com o DuckDB e mandar
-`COPY ... FROM STDIN`, linha a linha, sem arquivo intermediario nem PUT.
+NO INTERNAL STAGE. Snowflake's table stage solves a problem that does not exist here — a
+managed Postgres would not see the local MinIO, but THIS Postgres runs on the same host
+where the parquet was already written. The transport is direct: read the parquet with
+DuckDB and send `COPY ... FROM STDIN`, row by row, with no intermediate file and no PUT.
 
-FULL REFRESH POR DROP + CREATE, e nao `create or replace table`: Postgres nao tem essa
-sintaxe para tabela. Como quem recria e sempre o mesmo papel (`retail_loader` no STAGE,
-`retail_transformer` no GOLD/MART via dbt), a posse nunca precisa ser transferida — ao
-contrario do Snowflake, onde `copy current grants` existe justamente para isso.
+FULL REFRESH BY DROP + CREATE, not `create or replace table`: Postgres has no such syntax
+for tables. Since whoever recreates is always the same role (`retail_loader` in STAGE,
+`retail_transformer` in GOLD/MART via dbt), ownership never needs to be transferred —
+unlike Snowflake, where `copy current grants` exists precisely for that.
 
-CREDENCIAL: dev local, sem segredo real — mesmo criterio do MinIO e do OLTP simulado
-(usuario/senha fixos, documentados em .env.example). Nao ha par de chaves nem arquivo fora
-do repo: e um Postgres que o proprio compose sobe, sob profile opt-in.
+CREDENTIAL: local dev, no real secret — same criterion as MinIO and the simulated OLTP
+(fixed user/password, documented in .env.example). There is no key pair and no file outside
+the repo: it is a Postgres that the compose itself brings up, under an opt-in profile.
 
-PAPEIS SEM A ARMADILHA DOS SECUNDARIOS. O Snowflake precisou de `use secondary roles none`
-porque toda conta moderna nasce com `DEFAULT_SECONDARY_ROLES = ('ALL')` e ativa todos os
-papeis do usuario por baixo do primario. Postgres nao tem esse conceito: um papel concedido
-e herdado automaticamente (INHERIT e o default), e `set role` troca o papel ATIVO da sessao
-sem qualquer papel "escondido" continuar valendo por tras. `connect(..., role=...)` aqui
-conecta como o usuario administrativo do container e faz `set role` — o mesmo padrao do
-`connect(connection_name, role=...)` do Snowflake, sem a ressalva.
+ROLES WITHOUT THE SECONDARY-ROLES TRAP. Snowflake needed `use secondary roles none`
+because every modern account is born with `DEFAULT_SECONDARY_ROLES = ('ALL')` and activates
+all of the user's roles underneath the primary one. Postgres has no such concept: a granted
+role is inherited automatically (INHERIT is the default), and `set role` switches the
+session's ACTIVE role without any "hidden" role still applying behind it.
+`connect(..., role=...)` here connects as the container's administrative user and does
+`set role` — the same pattern as Snowflake's `connect(connection_name, role=...)`, without
+the caveat.
 """
 
 from __future__ import annotations
 
 import os
 
-from .snowflake_export import SPECS, STAGE_SCHEMA, _describe
+from .warehouse_cut import SPECS, STAGE_SCHEMA, describe
 
 DEFAULT_HOST = os.environ.get("WAREHOUSE_PG_HOST", "localhost")
 DEFAULT_PORT = int(os.environ.get("WAREHOUSE_PG_PORT", "5434"))
 DEFAULT_DBNAME = os.environ.get("WAREHOUSE_PG_DB", "retail")
-# Usuario ADMINISTRATIVO do container (POSTGRES_USER) — quem roda bootstrap e quem o `set
-# role` usa como base. Os tres papeis de negocio (retail_loader/transformer/reader) nao tem
-# LOGIN proprio nesta rodada: sao papeis para GRANT e para `set role`, nao contas separadas.
-# Diferente do Snowflake, que precisa de um usuario de servico por papel para isolamento de
-# producao — aqui a fronteira que importa e a mesma provada pelo dbt (STAGE/GOLD/MART), e
-# duplicar contas de login so para um Postgres de desenvolvimento nao paga o proprio custo.
+# The container's ADMINISTRATIVE user (POSTGRES_USER) — who runs bootstrap and what `set
+# role` uses as its base. The three business roles (retail_loader/transformer/reader) have
+# no LOGIN of their own in this round: they are roles for GRANT and for `set role`, not
+# separate accounts. Unlike Snowflake, which needs one service user per role for production
+# isolation — here the boundary that matters is the same one dbt proves (STAGE/GOLD/MART),
+# and duplicating login accounts just for a development Postgres does not pay for itself.
 DEFAULT_USER = os.environ.get("WAREHOUSE_PG_USER", "retail")
 DEFAULT_PASSWORD = os.environ.get("WAREHOUSE_PG_PASSWORD", "retail")
 DEFAULT_LOAD_ROLE = os.environ.get("RETAIL_WAREHOUSE_PG_LOAD_ROLE", "retail_loader")
@@ -52,28 +53,28 @@ STAGE = STAGE_SCHEMA
 GOLD = "GOLD"
 MART = "MART"
 
-# MAIUSCULO E CITADO, como no Snowflake — nao minusculo. `sources.yml` (schema: STAGE) e
-# `dbt_project.yml` (+schema: GOLD / MART) sao COMPARTILHADOS pelos dois alvos dbt e usam
-# esses tres nomes literais; dbt sempre cita o identificador (`"GOLD"`), entao um schema
-# criado aqui como `gold` minusculo nunca seria encontrado ("schema GOLD does not exist",
-# medido). Citar em toda query e o preco de nao duplicar as duas arvores compartilhadas.
+# UPPERCASE AND QUOTED, as in Snowflake — not lowercase. `sources.yml` (schema: STAGE) and
+# `dbt_project.yml` (+schema: GOLD / MART) are SHARED by both dbt targets and use these
+# three literal names; dbt always quotes the identifier (`"GOLD"`), so a schema created here
+# as lowercase `gold` would never be found ("schema GOLD does not exist", measured). Quoting
+# in every query is the price of not duplicating the two shared trees.
 SCHEMAS = {
-    STAGE: "Espelho 1:1 do recorte do Silver. Sem regra de negocio. Full refresh.",
-    GOLD: "Modelo dimensional conformado: dim_* e fact_*. Escrito por dbt-postgres.",
-    MART: "Tabelas por pergunta, com o grao declarado no cabecalho de cada modelo.",
+    STAGE: "1:1 mirror of the Silver cut. No business rule. Full refresh.",
+    GOLD: "Conformed dimensional model: dim_* and fact_*. Written by dbt-postgres.",
+    MART: "One table per question, with the grain declared in each model header.",
 }
 
-# Mesmos tres verbos do Snowflake — carrega STAGE / le STAGE e escreve GOLD+MART / so le
-# MART — modelados como papeis Postgres nativos.
+# The same three verbs as Snowflake — loads STAGE / reads STAGE and writes GOLD+MART / only
+# reads MART — modelled as native Postgres roles.
 ROLES = {
-    "retail_loader": "Carrega o recorte do Silver em stage. Nao le gold nem mart.",
-    "retail_transformer": "Le stage e escreve gold e mart. E o papel do dbt.",
-    "retail_reader": "So leitura em mart. E o papel do painel e de terceiros.",
+    "retail_loader": "Loads the Silver cut into stage. Does not read gold or mart.",
+    "retail_transformer": "Reads stage and writes gold and mart. It is the dbt role.",
+    "retail_reader": "Read-only on mart. It is the role of the panel and of third parties.",
 }
 
 
 class PostgresLoadError(Exception):
-    """O destino recusou o DDL, a copia, ou a conexao nao existe."""
+    """The destination refused the DDL or the copy, or the connection does not exist."""
 
 
 def connect(
@@ -84,41 +85,42 @@ def connect(
     password: str = DEFAULT_PASSWORD,
     role: str | None = None,
 ):
-    """Conexao ao Postgres local. Importa `psycopg` sob demanda, como `snowflake_load.connect`.
+    """Connection to the local Postgres. Imports `psycopg` on demand, like `snowflake_load.connect`.
 
-    `role` faz `set role` depois de conectar — troca o papel ATIVO da sessao sem exigir uma
-    conta de login separada por papel. Validado contra ROLES antes de entrar no SQL: `set
-    role` nao aceita parametro ligado, e o nome nunca deveria vir de entrada nao confiavel.
+    `role` runs `set role` after connecting — it switches the session's ACTIVE role without
+    requiring a separate login account per role. Validated against ROLES before reaching the
+    SQL: `set role` does not accept a bound parameter, and the name should never come from
+    untrusted input.
     """
     try:
         import psycopg
-    except ImportError as exc:  # pragma: no cover - depende do ambiente
+    except ImportError as exc:  # pragma: no cover - depends on the environment
         raise PostgresLoadError(
-            "psycopg nao esta instalado neste venv. Rode `make venv` para reinstalar as "
-            "dependencias da plataforma."
+            "psycopg is not installed in this venv. Run `make venv` to reinstall the "
+            "platform dependencies."
         ) from exc
 
     if role is not None and role not in ROLES:
-        raise PostgresLoadError(f"papel desconhecido: {role!r}. Esperado um de {sorted(ROLES)}.")
+        raise PostgresLoadError(f"unknown role: {role!r}. Expected one of {sorted(ROLES)}.")
 
     try:
-        conexao = psycopg.connect(host=host, port=port, dbname=dbname, user=user, password=password)
+        connection = psycopg.connect(host=host, port=port, dbname=dbname, user=user, password=password)
     except Exception as exc:
         raise PostgresLoadError(
-            f"nao foi possivel conectar em {host}:{port}/{dbname} como {user!r}: {exc}"
+            f"could not connect to {host}:{port}/{dbname} as {user!r}: {exc}"
         ) from exc
 
     if role is not None:
-        with conexao.cursor() as cursor:
+        with connection.cursor() as cursor:
             cursor.execute(f"set role {role}")
 
-    return conexao
+    return connection
 
 
-def _qi(nome: str) -> str:
-    """Identificador citado. Toda referencia a schema/tabela passa por aqui: sem aspas,
-    Postgres dobraria STAGE/GOLD/MART para minusculo e nao acharia o que o bootstrap criou."""
-    return f'"{nome}"'
+def _qi(name: str) -> str:
+    """Quoted identifier. Every schema/table reference goes through here: without quotes,
+    Postgres would fold STAGE/GOLD/MART to lowercase and not find what bootstrap created."""
+    return f'"{name}"'
 
 
 def qualified(table: str, schema: str = STAGE) -> str:
@@ -126,23 +128,23 @@ def qualified(table: str, schema: str = STAGE) -> str:
 
 
 def require_schemas(cursor, schemas: tuple[str, ...] = (STAGE,)) -> None:
-    """Confere que o bootstrap ja rodou. NAO cria nada — mesma razao do Snowflake:
-    reprovar aqui e mais legivel que um erro de privilegio vindo do meio do DDL."""
+    """Checks that bootstrap has already run. Creates NOTHING — same reason as Snowflake:
+    failing here is more readable than a privilege error coming from the middle of the DDL."""
     cursor.execute(
         "select schema_name from information_schema.schemata where schema_name = any(%s)",
         (list(schemas),),
     )
-    existentes = {linha[0] for linha in cursor.fetchall()}
-    faltando = [nome for nome in schemas if nome not in existentes]
-    if faltando:
+    existing = {row[0] for row in cursor.fetchall()}
+    missing = [name for name in schemas if name not in existing]
+    if missing:
         raise PostgresLoadError(
-            f"schema ausente: {', '.join(faltando)}. Rode "
-            f"`make warehouse-postgres-bootstrap` uma vez antes de carregar."
+            f"missing schema: {', '.join(missing)}. Run "
+            f"`make warehouse-bootstrap` once before loading."
         )
 
 
-# Mapeamento de tipo, deliberadamente curto pelo mesmo motivo do `_TYPE_MAP` do Snowflake:
-# um tipo sem entrada aqui deve FALHAR, nao virar `text` por adivinhacao.
+# Type mapping, deliberately short for the same reason as Snowflake's `_TYPE_MAP`: a type
+# with no entry here must FAIL, not become `text` by guesswork.
 _TYPE_MAP = {
     "BOOLEAN": "boolean",
     "TINYINT": "bigint",
@@ -162,147 +164,147 @@ _TYPE_MAP = {
 
 
 def _postgres_type(duckdb_type: str) -> str:
-    tipo = duckdb_type.upper().strip()
-    if tipo.startswith("DECIMAL"):
-        # DECIMAL(10,2) -> numeric(10,2). Mesma razao do Snowflake: precisao decimal nao
-        # vira ponto flutuante.
-        return "numeric" + tipo[len("DECIMAL"):]
-    if tipo in _TYPE_MAP:
-        return _TYPE_MAP[tipo]
+    kind = duckdb_type.upper().strip()
+    if kind.startswith("DECIMAL"):
+        # DECIMAL(10,2) -> numeric(10,2). Same reason as Snowflake: decimal precision does
+        # not become floating point.
+        return "numeric" + kind[len("DECIMAL"):]
+    if kind in _TYPE_MAP:
+        return _TYPE_MAP[kind]
     raise PostgresLoadError(
-        f"tipo do DuckDB sem mapeamento para Postgres: {duckdb_type!r}. "
-        f"Acrescente-o a _TYPE_MAP em vez de deixar o recorte cair num text."
+        f"DuckDB type with no Postgres mapping: {duckdb_type!r}. "
+        f"Add it to _TYPE_MAP instead of letting the cut fall into a text."
     )
 
 
 def ddl_for(spec: dict, columns: list[tuple[str, str]], schema: str = STAGE) -> str:
-    """`create table` derivado do schema do proprio recorte — mesma disciplina do
-    Snowflake: o DDL nunca e escrito a mao ao lado."""
-    corpo = ",\n".join(f"    {nome} {_postgres_type(tipo)}" for nome, tipo in columns)
-    return f"create table {qualified(spec['name'], schema)} (\n{corpo}\n)"
+    """`create table` derived from the cut's own schema — same discipline as Snowflake:
+    the DDL is never hand-written alongside."""
+    body = ",\n".join(f"    {name} {_postgres_type(kind)}" for name, kind in columns)
+    return f"create table {qualified(spec['name'], schema)} (\n{body}\n)"
 
 
 def bootstrap(cursor, grant_to_user: str | None = None) -> list[str]:
-    """Schemas, papeis e grants (incl. `default privileges` para tabelas futuras).
-    Idempotente, e separado de `load` de proposito — mesmo motivo do Snowflake: criar
-    infraestrutura e trabalho de uma vez so, a carga diaria nao deveria repeti-lo.
+    """Schemas, roles and grants (incl. `default privileges` for future tables).
+    Idempotent, and separate from `load` on purpose — same reason as Snowflake: creating
+    infrastructure is one-off work, and the daily load should not repeat it.
     """
-    feito = []
+    done = []
 
-    def executa(sql, descricao):
+    def run(sql, description):
         cursor.execute(sql)
-        feito.append(descricao)
+        done.append(description)
 
-    for nome, comentario in SCHEMAS.items():
-        executa(f"create schema if not exists {_qi(nome)}", f"schema {nome}")
-        # `comment on schema` e DDL de utilitario: o protocolo estendido do Postgres nao
-        # aceita `$1` nessa posicao ("syntax error at or near $1"), ao contrario de um
-        # `select`/`insert` comum. Inline direto, como o Snowflake ja faz em `ddl_for` —
-        # seguro porque SCHEMAS e constante do modulo, nunca entrada externa.
-        executa(f"comment on schema {_qi(nome)} is '{comentario}'", f"comentario {nome}")
+    for name, comment in SCHEMAS.items():
+        run(f"create schema if not exists {_qi(name)}", f"schema {name}")
+        # `comment on schema` is utility DDL: Postgres's extended protocol does not accept
+        # `$1` in that position ("syntax error at or near $1"), unlike a plain
+        # `select`/`insert`. Inlined directly, as Snowflake already does in `ddl_for` —
+        # safe because SCHEMAS is a module constant, never external input.
+        run(f"comment on schema {_qi(name)} is '{comment}'", f"comment {name}")
 
-    for nome in ROLES:
-        cursor.execute("select 1 from pg_roles where rolname = %s", (nome,))
+    for name in ROLES:
+        cursor.execute("select 1 from pg_roles where rolname = %s", (name,))
         if cursor.fetchone() is None:
-            executa(f"create role {nome}", f"role {nome}")
+            run(f"create role {name}", f"role {name}")
         else:
-            feito.append(f"role {nome} ja existia")
+            done.append(f"role {name} already existed")
 
-    # LOADER: cria e le STAGE, e so.
-    executa(f"grant usage, create on schema {_qi(STAGE)} to retail_loader", "loader: usage+create stage")
+    # LOADER: creates and reads STAGE, and that is all.
+    run(f"grant usage, create on schema {_qi(STAGE)} to retail_loader", "loader: usage+create stage")
 
-    # TRANSFORMER: LE o stage (nunca escreve nele) e escreve GOLD e MART.
-    executa(f"grant usage on schema {_qi(STAGE)} to retail_transformer", "transformer: usage stage")
-    # ALTER DEFAULT PRIVILEGES e o equivalente Postgres do "grant on future tables" do
-    # Snowflake: toda tabela que retail_loader criar em STAGE dali em diante ja nasce
-    # visivel ao TRANSFORMER, mesmo depois do full-refresh (drop + create) do proximo dia.
-    executa(
+    # TRANSFORMER: READS stage (never writes to it) and writes GOLD and MART.
+    run(f"grant usage on schema {_qi(STAGE)} to retail_transformer", "transformer: usage stage")
+    # ALTER DEFAULT PRIVILEGES is the Postgres equivalent of Snowflake's "grant on future
+    # tables": every table retail_loader creates in STAGE from then on is born visible to
+    # the TRANSFORMER, even after the next day's full refresh (drop + create).
+    run(
         f"alter default privileges for role retail_loader in schema {_qi(STAGE)} "
         f"grant select on tables to retail_transformer",
-        "transformer: select automatico em tabela futura do stage",
+        "transformer: automatic select on future stage tables",
     )
-    for camada in (GOLD, MART):
-        executa(f"grant usage, create on schema {_qi(camada)} to retail_transformer",
-                f"transformer: usage+create {camada}")
+    for layer in (GOLD, MART):
+        run(f"grant usage, create on schema {_qi(layer)} to retail_transformer",
+            f"transformer: usage+create {layer}")
 
-    # READER: so MART, so leitura — inclusive o que ainda nao existe, pelo mesmo mecanismo.
-    executa(f"grant usage on schema {_qi(MART)} to retail_reader", "reader: usage mart")
-    executa(
+    # READER: only MART, read-only — including what does not exist yet, by the same mechanism.
+    run(f"grant usage on schema {_qi(MART)} to retail_reader", "reader: usage mart")
+    run(
         f"alter default privileges for role retail_transformer in schema {_qi(MART)} "
         f"grant select on tables to retail_reader",
-        "reader: select automatico em tabela futura do mart",
+        "reader: automatic select on future mart tables",
     )
 
     if grant_to_user:
-        for nome in ROLES:
-            executa(f"grant {nome} to {grant_to_user}", f"{nome} -> {grant_to_user}")
+        for name in ROLES:
+            run(f"grant {name} to {grant_to_user}", f"{name} -> {grant_to_user}")
 
-    return feito
+    return done
 
 
 def load(connection, duck_connection, stage_dir: str, schema: str = STAGE) -> dict:
-    """Recria as tabelas STAGE (drop + create) e carrega via COPY FROM STDIN.
+    """Recreates the STAGE tables (drop + create) and loads them via COPY FROM STDIN.
 
-    `duck_connection` serve para DESCREVER o recorte (schema da tabela) e para LER o
-    parquet linha a linha — nenhuma credencial do Postgres passa por ele. Mesmo contrato de
-    retorno de `snowflake_load.load`: um dict por spec com `rows` e `bytes`.
+    `duck_connection` is used to DESCRIBE the cut (the table schema) and to READ the parquet
+    row by row — no Postgres credential goes through it. Same return contract as
+    `snowflake_load.load`: one dict per spec with `rows` and `bytes`.
     """
     cursor = connection.cursor()
     require_schemas(cursor, (schema,))
 
-    resumo = {}
+    summary = {}
     for spec in SPECS:
-        nome_spec = spec["name"]
-        alvo = qualified(nome_spec, schema)
-        caminho = os.path.join(stage_dir, f"{nome_spec}.parquet")
-        if not os.path.exists(caminho):
+        spec_name = spec["name"]
+        target = qualified(spec_name, schema)
+        path = os.path.join(stage_dir, f"{spec_name}.parquet")
+        if not os.path.exists(path):
             raise PostgresLoadError(
-                f"parquet ausente: {caminho}. Rode `make warehouse-export` antes de carregar."
+                f"missing parquet: {path}. Run `make warehouse-export` before loading."
             )
 
-        colunas = _describe(duck_connection, spec["sql"].strip())
-        nomes_coluna = [nome for nome, _ in colunas]
+        columns = describe(duck_connection, spec["sql"].strip())
+        column_names = [name for name, _ in columns]
 
-        # DROP + CREATE, nao `create or replace`: Postgres nao tem essa sintaxe para
-        # tabela. CASCADE derruba dependencias (views/FKs) — nao ha nenhuma esperada aqui,
-        # STAGE e espelho isolado por desenho.
-        cursor.execute(f"drop table if exists {alvo} cascade")
-        cursor.execute(ddl_for(spec, colunas, schema))
+        # DROP + CREATE, not `create or replace`: Postgres has no such syntax for tables.
+        # CASCADE drops dependencies (views/FKs) — none are expected here, STAGE is an
+        # isolated mirror by design.
+        cursor.execute(f"drop table if exists {target} cascade")
+        cursor.execute(ddl_for(spec, columns, schema))
 
-        colunas_sql = ", ".join(nomes_coluna)
-        linhas = duck_connection.execute(
-            f"select {colunas_sql} from read_parquet('{caminho}')"
+        columns_sql = ", ".join(column_names)
+        rows = duck_connection.execute(
+            f"select {columns_sql} from read_parquet('{path}')"
         ).fetchall()
-        with cursor.copy(f"copy {alvo} ({colunas_sql}) from stdin") as copy:
-            for linha in linhas:
-                copy.write_row(linha)
+        with cursor.copy(f"copy {target} ({columns_sql}) from stdin") as copy:
+            for row in rows:
+                copy.write_row(row)
 
-        cursor.execute(f"select count(*) from {alvo}")
-        carregadas = cursor.fetchone()[0]
-        resumo[nome_spec] = {"rows": carregadas, "bytes": os.path.getsize(caminho)}
+        cursor.execute(f"select count(*) from {target}")
+        loaded = cursor.fetchone()[0]
+        summary[spec_name] = {"rows": loaded, "bytes": os.path.getsize(path)}
 
     connection.commit()
     cursor.close()
-    return resumo
+    return summary
 
 
 def verify(connection, stage_dir: str, expected: dict, schema: str = STAGE) -> list[str]:
-    """Reconfere a contagem de cada tabela contra o que o export declarou. Mesma disciplina
-    de `snowflake_load.verify` — devolve a lista de divergencias, vazia quando tudo bate."""
+    """Rechecks each table's count against what the export declared. Same discipline as
+    `snowflake_load.verify` — returns the list of mismatches, empty when everything matches."""
     cursor = connection.cursor()
-    problemas = []
+    problems = []
     for spec in SPECS:
-        nome_spec = spec["name"]
+        spec_name = spec["name"]
         try:
-            cursor.execute(f"select count(*) from {qualified(nome_spec, schema)}")
-            destino = cursor.fetchone()[0]
+            cursor.execute(f"select count(*) from {qualified(spec_name, schema)}")
+            destination = cursor.fetchone()[0]
         except Exception as exc:
-            problemas.append(f"{nome_spec}: nao foi possivel contar no destino ({exc})")
+            problems.append(f"{spec_name}: could not count at the destination ({exc})")
             continue
-        origem = expected.get(nome_spec, {}).get("rows")
-        if origem is None:
-            problemas.append(f"{nome_spec}: o export nao declarou contagem")
-        elif origem != destino:
-            problemas.append(f"{nome_spec}: origem {origem} != destino {destino}")
+        source = expected.get(spec_name, {}).get("rows")
+        if source is None:
+            problems.append(f"{spec_name}: the export did not declare a count")
+        elif source != destination:
+            problems.append(f"{spec_name}: source {source} != destination {destination}")
     cursor.close()
-    return problemas
+    return problems

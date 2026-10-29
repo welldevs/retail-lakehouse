@@ -1,30 +1,30 @@
--- GRAO: (order_date, wh, category_id) — uma linha por categoria de nivel 2, armazem e dia.
+-- GRAIN: (order_date, wh, category_id) — one row per level-2 category, warehouse and day.
 --
--- PERGUNTA QUE RESPONDE: o que entra na cesta, em que categoria, a que valor — e quanto
--- disso nao sobrevive a separacao.
+-- QUESTION IT ANSWERS: what goes into the basket, in which category, at what value — and how
+-- much of it does not survive picking.
 --
--- CONVERSA COM MART_ASSORTMENT_DAILY PELO MESMO EIXO. La e o lado da oferta (quantos
--- produtos cada armazem lista por categoria, a que preco); aqui e o lado da demanda
--- (quantos foram pedidos e quantos foram entregues). Os dois tem grao
--- (data, wh, category_id) exatamente para poderem ser postos lado a lado sem reagregacao.
+-- IT TALKS TO MART_ASSORTMENT_DAILY ALONG THE SAME AXIS. That one is the supply side (how many
+-- products each warehouse lists per category, at what price); this one is the demand side
+-- (how many were ordered and how many were delivered). Both have the grain
+-- (date, wh, category_id) precisely so they can be put side by side without re-aggregation.
 --
--- ATENCAO AO QUE E ADITIVO E AO QUE NAO E — e o nome de cada coluna diz qual.
--- `orders_touching_category` NAO SOMA entre categorias: um pedido com leite e pao conta
--- uma vez em cada, e somar as categorias de um dia daria muito mais que os pedidos
--- daquele dia. Por isso o nome nao e `orders`. Linhas, unidades e valor SAO
--- aditivos: cada linha pertence a exatamente uma categoria. Quem quiser contagem de
--- pedidos por dia usa MART_ORDER_FUNNEL, que tem o grao certo para isso.
+-- MIND WHAT IS ADDITIVE AND WHAT IS NOT — each column's name says which.
+-- `orders_touching_category` does NOT SUM across categories: an order with milk and bread counts
+-- once in each, and summing a day's categories would give far more than that day's
+-- orders. That is why the name is not `orders`. Lines, units and value ARE
+-- additive: each line belongs to exactly one category. Whoever wants an order count
+-- per day uses MART_ORDER_FUNNEL, which has the right grain for that.
 --
--- REVENUE E O QUE FOI ENTREGUE, NAO O QUE FOI PEDIDO. `line_amount` e zero para linha
--- removida e para linha de pedido que nunca chegou a separacao; `line_amount_placed`
--- guarda o valor pedido ao lado. As duas colunas convivem porque a diferenca entre elas e
--- o unico numero que mede o quanto a separacao muda a cesta, e ela e real: 2.321 linhas
--- removidas e 5.508 de pedidos que morreram antes de alguem tocar neles.
+-- REVENUE IS WHAT WAS DELIVERED, NOT WHAT WAS ORDERED. `line_amount` is zero for a removed
+-- line and for a line of an order that never reached picking; `line_amount_placed`
+-- keeps the ordered value alongside. The two columns coexist because the difference between them
+-- is the only number that measures how much picking changes the basket, and it is real: 2,321
+-- removed lines and 5,508 from orders that died before anyone touched them.
 --
--- A CATEGORIA E A DO MOMENTO DO PEDIDO, gravada no proprio evento order_placed, e nao a
--- que o produto tem hoje. Medido: as 120.693 linhas casam com a arvore de nivel 2 (151
--- categorias), zero orfas. DIM_CATEGORY entra por left join mesmo assim — se um dia uma
--- categoria sair da arvore, a receita nao pode desaparecer junto com o nome dela.
+-- THE CATEGORY IS THE ONE AT ORDER TIME, stamped on the order_placed event itself, not the
+-- one the product has today. Measured: all 120,693 lines match the level-2 tree (151
+-- categories), zero orphans. DIM_CATEGORY comes in by left join anyway — if a category ever
+-- leaves the tree, the revenue must not disappear along with its name.
 {{ config(materialized = 'table') }}
 
 select
@@ -38,10 +38,10 @@ select
     c.parent_category_id,
     c.parent_category_name,
 
-    -- NAO ADITIVO entre categorias. Ver o cabecalho.
+    -- NOT ADDITIVE across categories. See the header.
     count(distinct i.order_id)                              as orders_touching_category,
 
-    -- Aditivos: cada linha pertence a exatamente uma categoria.
+    -- Additive: each line belongs to exactly one category.
     count(*)                                                as lines_placed,
     {{ count_if("i.line_status in ('fulfilled', 'substituted')") }} as lines_fulfilled,
     {{ count_if("i.line_status = 'substituted'") }}           as lines_substituted,

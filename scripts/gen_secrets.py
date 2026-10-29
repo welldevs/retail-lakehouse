@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Gera as chaves do Airflow no .env, que esta fora do versionamento.
+"""Generates the Airflow keys in .env, which is outside version control.
 
-O compose recusa subir sem AIRFLOW_SECRET_KEY e AIRFLOW_FERNET_KEY (interpolacao com
-`:?`), de modo que nao existe caminho em que um valor de exemplo vire a chave real por
-esquecimento. Valor ja definido nao e sobrescrito: rodar duas vezes nao invalida sessoes
-abertas nem torna ilegivel uma Connection ja criptografada com a chave anterior.
+Compose refuses to start without AIRFLOW_SECRET_KEY and AIRFLOW_FERNET_KEY (`:?`
+interpolation), so there is no path where an example value becomes the real key by
+oversight. An already-set value is not overwritten: running twice neither invalidates open
+sessions nor makes a Connection already encrypted with the previous key unreadable.
 
-Sem dependencia de terceiros: a chave Fernet e exatamente 32 bytes aleatorios em base64
-urlsafe, que e o que `cryptography.fernet.Fernet.generate_key()` produz.
+No third-party dependency: a Fernet key is exactly 32 random bytes in urlsafe
+base64, which is what `cryptography.fernet.Fernet.generate_key()` produces.
 """
 
 import base64
@@ -22,7 +22,7 @@ KEYS = ("AIRFLOW_SECRET_KEY", "AIRFLOW_FERNET_KEY")
 
 def main() -> int:
     if not os.path.exists(ENV_PATH):
-        print(f"ERRO: {ENV_PATH} nao existe. Copie de .env.example primeiro:")
+        print(f"ERROR: {ENV_PATH} does not exist. Copy it from .env.example first:")
         print("    cp .env.example .env")
         return 2
 
@@ -33,7 +33,7 @@ def main() -> int:
     for key in KEYS:
         found = re.search(rf"^{key}=(.*)$", text, re.M)
         if found and found.group(1).strip():
-            print(f"  {key}: ja definido, mantido")
+            print(f"  {key}: already set, kept")
             continue
         value = base64.urlsafe_b64encode(os.urandom(32)).decode()
         if found:
@@ -41,14 +41,14 @@ def main() -> int:
         else:
             text = text.rstrip("\n") + f"\n{key}={value}\n"
         changed = True
-        print(f"  {key}: gerado")
+        print(f"  {key}: generated")
 
     if changed:
         with open(ENV_PATH, "w", encoding="utf-8") as handle:
             handle.write(text)
-        # O arquivo passa a conter chave real; 600 e o modo adequado.
+        # The file now holds a real key; 600 is the right mode.
         os.chmod(ENV_PATH, 0o600)
-        print(f"  .env gravado com modo 600")
+        print(f"  .env written with mode 600")
     return 0
 
 

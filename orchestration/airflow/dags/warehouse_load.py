@@ -1,36 +1,35 @@
-"""DAG do warehouse analitico: recorte do Silver -> Postgres local -> GOLD -> MART.
+"""Analytical warehouse DAG: Silver cut -> local Postgres -> GOLD -> MART.
 
-E A PRIMEIRA DAG deste repo que atravessa a fronteira entre dois motores. As outras tres
-ficam inteiras do lado do lakehouse (fonte externa -> RAW -> Silver, tudo DuckDB); esta
-pega o Silver que qualquer uma delas produziu e o leva para outro banco, com outra
-credencial, em outra rede. E exatamente onde retry e codigo de saida importam, e por isso
-a aresta e do Airflow e nao de um script solto.
+This is THE FIRST DAG in this repo that crosses the boundary between two engines. The other
+five stay entirely on the lakehouse side (external source -> RAW -> Silver, all DuckDB);
+this one takes the Silver any of them produced and carries it to another database, with
+another credential, on another network. That is exactly where retries and exit codes
+matter, which is why this edge belongs to Airflow and not to a loose script.
 
-MOTOR: Postgres local, nao Snowflake. Esta DAG apontava para o Snowflake ate 2026-09, quando
-o trial usado por este projeto venceu — a task `load_stage` passou a falhar de autenticacao
-("Your free trial has ended... virtual warehouses have been suspended"). O destino trocou
-(ver DECISIONS.md, CR-007); as tres decisoes abaixo, e a separacao export/load, continuam
-as mesmas, porque a arvore models/warehouse/ e neutra quanto ao motor.
+ENGINE: local Postgres, not Snowflake. This DAG pointed at Snowflake until 2026-09, when the
+trial used by this project expired — the `load_stage` task started failing authentication
+("Your free trial has ended... virtual warehouses have been suspended"). The destination
+changed (see DECISIONS.md, CR-007); the three decisions below, and the export/load split,
+stay the same, because the models/warehouse/ tree is engine-neutral.
 
-TRES DECISOES, cada uma com o motivo no ponto onde e imposta:
+THREE DECISIONS, each with its reason where it is enforced:
 
-  1. DAG PROPRIA, e nao um TaskGroup no fim de mercadona_catalog_daily. O recorte le o
-     Silver de TODAS as sources — catalogo, populacao, Callejero e clientes sinteticos —
-     entao pendura-lo numa delas faria a atualizacao do warehouse depender de qual source
-     rodou por ultimo. Quem quiser encadear usa TriggerDagRunOperator; quem quiser rodar
-     sozinho dispara esta.
+  1. ITS OWN DAG, not a TaskGroup at the end of mercadona_catalog_daily. The cut reads the
+     Silver of ALL sources — catalog, population, Callejero and synthetic customers — so
+     hanging it off one of them would make the warehouse refresh depend on whichever source
+     ran last. To chain it, use TriggerDagRunOperator; to run it alone, trigger this one.
 
-  2. NAO RECEBE `wh`. Diferente das DAGs de source, aqui nao ha eixo de armazem: o recorte
-     cobre os quatro de uma consulta so, e o modelo dimensional e global.
+  2. IT TAKES NO `wh`. Unlike the source DAGs, there is no warehouse axis here: the cut
+     covers all four in a single query, and the dimensional model is global.
 
-  3. `export` E `load` SAO TAREFAS SEPARADAS, pelo mesmo motivo que `land` e
-     `verify-landing` sao. O recorte falha por dado (uma query errada, um Silver vazio); o
-     load falha por rede ou credencial. Juntar os dois faria "o recorte esta errado" chegar
-     como falha de conexao, e o retry insistiria numa coisa que retry nao conserta — por
-     isso `export` tem retries=0 e `load` tem 2.
+  3. `export` AND `load` ARE SEPARATE TASKS, for the same reason `land` and
+     `verify-landing` are. The cut fails on data (a wrong query, an empty Silver); the load
+     fails on network or credentials. Merging them would make "the cut is wrong" arrive as
+     a connection failure, and the retry would insist on something retrying cannot fix —
+     hence `export` has retries=0 and `load` has 2.
 
-O `bootstrap` (schemas, papeis, grants) NAO esta aqui de proposito: roda uma vez por
-container, nao todo dia. Ver `make warehouse-bootstrap`.
+The `bootstrap` (schemas, roles, grants) is NOT here on purpose: it runs once per
+container, not every day. See `make warehouse-bootstrap`.
 """
 
 from __future__ import annotations
@@ -51,26 +50,26 @@ except ImportError:  # Airflow 2.x
     from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
 REPO = os.environ.get("RETAIL_REPO_ROOT", "/opt/retail-lakehouse")
-STAGE_DIR = f"{REPO}/data/snowflake-stage"
+STAGE_DIR = f"{REPO}/data/warehouse-cut"
 
 PLATFORM_SRC = f"{REPO}/platform/src"
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 DBT = os.environ.get("RETAIL_DBT", f"{REPO}/platform/.venv/bin/dbt")
 
-# Os tres com default: ao contrario da conta Snowflake, `warehouse-postgres` e convencao do
-# proprio projeto (compose sobe o container, sem segredo real) — ver docker-compose.yml, que
-# sobrescreve HOST/PORT para o endereco DENTRO da rede do compose (o :5434 do .env so vale
-# para quem roda no host).
+# All three have defaults: unlike the Snowflake account, `warehouse-postgres` is the
+# project's own convention (compose starts the container, no real secret) — see
+# docker-compose.yml, which overrides HOST/PORT with the address INSIDE the compose network
+# (the :5434 in .env only applies to whoever runs on the host).
 WAREHOUSE_PG_HOST = os.environ.get("WAREHOUSE_PG_HOST", "localhost")
 WAREHOUSE_PG_PORT = os.environ.get("WAREHOUSE_PG_PORT", "5434")
 WAREHOUSE_PG_DB = os.environ.get("WAREHOUSE_PG_DB", "retail")
-# EXPLICITO na DAG, embora seja o default do carregador: e aqui que se le qual papel a
-# automacao usa. A carga sobrescreve, e nao pode criar schema nem ler GOLD/MART — mesmo
-# motivo do RETAIL_LOADER que este campo substituiu.
+# EXPLICIT in the DAG, even though it is the loader's default: this is where one reads
+# which role the automation uses. The load overwrites, and must not be able to create
+# schemas or read GOLD/MART — same reason as the RETAIL_LOADER this field replaced.
 WAREHOUSE_PG_LOAD_ROLE = os.environ.get("RETAIL_WAREHOUSE_PG_LOAD_ROLE", "retail_loader")
 
-# As sources cujo Silver o recorte le. Se nenhuma aterrissou, nao ha o que carregar e a DAG
-# curto-circuita em vez de falhar — mesmo criterio de `has-data` das outras tres.
+# The sources whose Silver the cut reads. If none has landed, there is nothing to load and
+# the DAG short-circuits instead of failing — same `has-data` criterion as the other three.
 SOURCES = ["mercadona_catalog_api", "ine_callejero", "ine_population_api", "simulated_oltp", "simulated_orders"]
 
 EXIT_OK = 0
@@ -98,9 +97,9 @@ def _run_platform(argv: list[str]) -> int:
 
 
 def _log_task_failure(context: dict) -> None:
-    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
-    interno do scheduler. Usa o logger que a propria task ja escreve
-    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """CR-005: the only structured record a task failure leaves, besides the scheduler's
+    internal state. Uses the logger the task already writes to
+    (`logging.getLogger("airflow.task")`) — no new file, no new service.
     """
     ti = context.get("task_instance")
     exc = context.get("exception")
@@ -117,58 +116,58 @@ def _log_task_failure(context: dict) -> None:
 
 
 def silver_has_data(**_) -> bool:
-    """Sem nenhuma source aterrissada nao existe Silver para recortar.
+    """With no source landed, there is no Silver to cut.
 
-    Curto-circuito, nao falha: um repositorio recem-clonado antes da primeira ingestao nao
-    esta com defeito — so nao tem o que carregar ainda.
+    Short-circuit, not failure: a freshly cloned repository before the first ingestion is
+    not broken — it just has nothing to load yet.
     """
-    presentes = [s for s in SOURCES if _run_platform(["has-data", s]) == EXIT_OK]
-    if not presentes:
-        print("nenhuma source aterrissada: nada a recortar.")
+    present = [s for s in SOURCES if _run_platform(["has-data", s]) == EXIT_OK]
+    if not present:
+        print("no source has landed: nothing to cut.")
         return False
-    print(f"sources com dado: {', '.join(presentes)}")
+    print(f"sources with data: {', '.join(present)}")
     return True
 
 
 def export_recorte(**_) -> None:
-    """Le o Silver e escreve parquet local. NAO fala com o Snowflake.
+    """Read the Silver and write local parquet. Does NOT talk to the warehouse.
 
-    retries=0 na tarefa: falha aqui e falha de DADO (query errada, Silver vazio, tipo sem
-    mapeamento). Repetir a mesma consulta sobre o mesmo dado da o mesmo erro.
+    retries=0 on the task: a failure here is a DATA failure (wrong query, empty Silver,
+    unmapped type). Repeating the same query on the same data gives the same error.
     """
-    code = _run_platform(["export-snowflake", "--out", STAGE_DIR])
+    code = _run_platform(["export-cut", "--out", STAGE_DIR])
     if code != EXIT_OK:
-        raise RuntimeError(f"export-snowflake falhou (exit {code}); retry nao resolve")
+        raise RuntimeError(f"export-cut failed (exit {code}); retrying will not fix it")
 
 
 def load_stage(**_) -> None:
-    """Drop+create das tabelas STAGE + COPY FROM STDIN + reconferencia contagem a contagem."""
+    """Drop+create the STAGE tables + COPY FROM STDIN + row-count re-check, table by table."""
     code = _run_platform([
         "load-postgres", "--stage-dir", STAGE_DIR,
         "--host", WAREHOUSE_PG_HOST, "--port", WAREHOUSE_PG_PORT, "--dbname", WAREHOUSE_PG_DB,
         "--role", WAREHOUSE_PG_LOAD_ROLE,
     ])
     if code == EXIT_FATAL:
-        raise RuntimeError(f"load-postgres falhou de forma fatal (exit {code})")
+        raise RuntimeError(f"load-postgres failed fatally (exit {code})")
     if code != EXIT_OK:
-        raise RuntimeError(f"load-postgres reprovou a reconferencia (exit {code})")
+        raise RuntimeError(f"load-postgres failed the row-count re-check (exit {code})")
 
 
 def build_gold(**_) -> None:
-    """`--target postgres` desliga a arvore inteira do Silver pelo guard do dbt_project."""
+    """`--target postgres` switches off the whole Silver tree via the dbt_project guard."""
     code = _run([DBT, "build", "--project-dir", f"{REPO}/platform/dbt",
                  "--profiles-dir", f"{REPO}/platform/dbt", "--target", "postgres"],
                 {"PYTHONPATH": PLATFORM_SRC})
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build --target postgres falhou (exit {code})")
+        raise RuntimeError(f"dbt build --target postgres failed (exit {code})")
 
 
 with DAG(
     dag_id="warehouse_load",
-    description="Recorte do Silver para o Postgres local e reconstrucao de GOLD e MART",
-    # Sem cron: o warehouse deve ser atualizado DEPOIS de uma ingestao, nao num horario
-    # fixo que pode cair no meio de uma. Encadeie com TriggerDagRunOperator a partir da
-    # DAG de source, ou dispare a mao (`make warehouse-trigger`).
+    description="Silver cut into local Postgres and rebuild of GOLD and MART",
+    # No cron: the warehouse should be refreshed AFTER an ingestion, not at a fixed time
+    # that might land in the middle of one. Chain it with TriggerDagRunOperator from the
+    # source DAG, or trigger it by hand (`make warehouse-trigger`).
     schedule=None,
     start_date=datetime(2026, 8, 27),
     catchup=False,
@@ -190,17 +189,19 @@ with DAG(
     )
 
     do_export = PythonOperator(
+        # task_id and callable keep their historical name (`recorte` = cut); renaming the
+        # task_id would orphan the task's run history in Airflow.
         task_id="export_recorte",
         python_callable=export_recorte,
-        # Falha de dado nao e retentavel: a mesma query sobre o mesmo Silver erra igual.
+        # A data failure is not retryable: the same query on the same Silver fails the same way.
         retries=0,
     )
 
     do_load = PythonOperator(
         task_id="load_stage",
         python_callable=load_stage,
-        # Rede E retentavel, e a carga e idempotente: as tabelas STAGE sao full refresh e o
-        # PUT usa OVERWRITE, entao repetir nao duplica linha.
+        # The network IS retryable, and the load is idempotent: STAGE tables are a full
+        # refresh (drop+create), so repeating does not duplicate rows.
         retries=2,
     )
 

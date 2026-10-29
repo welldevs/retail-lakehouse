@@ -1,29 +1,31 @@
--- LINHA DE PEDIDO — e o `unit_price_paid` e MEDIDA DEGENERADA, nao atributo de dimensao.
+-- ORDER LINE — and `unit_price_paid` is a DEGENERATE MEASURE, not a dimension attribute.
 --
--- GRAO: (order_id, line_no). 120.693 linhas. TIPO: synthetic (a linha) sobre observed
---       (produto, preco e data de catalogo, todos copiados da fonte real).
+-- GRAIN: (order_id, line_no). 120,693 rows. TYPE: synthetic (the line) over observed
+--       (product, price and catalog date, all copied from the real source).
 --
--- POR QUE O PRECO PAGO E MEDIDA E NAO ATRIBUTO DE DIM_PRODUCT. Preco varia por armazem e
--- por dia (187 produtos divergem entre armazens no mesmo dia, medido), entao ele nunca
--- poderia ser atributo de uma dimensao global de produto — dim_product.sql ja registra
--- isso: "rastrear preco aqui criaria uma versao nova de produto a cada oscilacao e a
--- dimensao viraria o fato". O preco vive em FACT_PRICE_SNAPSHOT, e o que esta linha
--- carrega e o preco que ESTE pedido pagou, que pode diferir por substituicao.
+-- WHY THE PRICE PAID IS A MEASURE AND NOT A DIM_PRODUCT ATTRIBUTE. Price varies by
+-- warehouse and by day (187 products diverge across warehouses on the same day, measured),
+-- so it could never be an attribute of a global product dimension — dim_product.sql already
+-- records this: "tracking price here would create a new product version at every
+-- fluctuation and the dimension would become the fact". The price lives in
+-- FACT_PRICE_SNAPSHOT, and what this line carries is the price THIS order paid, which may
+-- differ due to substitution.
 --
--- MEDIDO: `unit_price_paid` bate com o catalogo de (wh, price_as_of, produto CUMPRIDO) em
--- 112.864 de 112.864 linhas cumpridas ou substituidas — zero divergencias, zero ausencias.
--- O fecho contra FACT_PRICE_SNAPSHOT e um teste, e ele junta pelo produto CUMPRIDO: numa
--- linha substituida o cliente pagou o preco do SUBSTITUTO, e conferir contra o produto
--- pedido faria o teste reprovar por estar comparando a coisa errada.
+-- MEASURED: `unit_price_paid` matches the catalog of (wh, price_as_of, FULFILLED product)
+-- in 112,864 of 112,864 fulfilled or substituted lines — zero divergences, zero misses.
+-- The closure against FACT_PRICE_SNAPSHOT is a test, and it joins on the FULFILLED product:
+-- on a substituted line the customer paid the SUBSTITUTE's price, and checking against the
+-- ordered product would make the test fail for comparing the wrong thing.
 --
--- DOIS product_sk, DE PROPOSITO. `product_sk` e o que foi pedido; `fulfilled_product_sk` e
--- o que foi entregue. Nas 4.670 linhas substituidas eles diferem, e essa diferenca e o
--- unico registro de que houve substituicao — carregar so um dos dois apagaria o fato que o
--- modelo de eventos existe para guardar.
+-- TWO product_sk, ON PURPOSE. `product_sk` is what was ordered; `fulfilled_product_sk` is
+-- what was delivered. In the 4,670 substituted lines they differ, and that difference is
+-- the only record that there was a substitution — carrying only one of the two would erase
+-- the fact the event model exists to keep.
 --
--- line_amount E ZERO, NAO NULO, para linha removida ou de pedido nunca separado. Zero e o
--- que a linha contribuiu; somar a coluna por pedido fecha com net_amount sem nenhum filtro
--- do consumidor, e um consumidor que precise filtrar e um consumidor que vai esquecer.
+-- line_amount IS ZERO, NOT NULL, for a removed line or one of an order never picked. Zero
+-- is what the line contributed; summing the column per order closes with net_amount
+-- without any consumer-side filter, and a consumer that needs to filter is a consumer that
+-- will forget.
 {{ config(materialized = 'table') }}
 
 with linhas as (
@@ -49,37 +51,38 @@ select
 
     l.line_status,
 
-    -- O QUE FOI PEDIDO. A versao da dimensao vigente em price_as_of, e nao a corrente:
-    -- e o que liga a linha ao nome que o produto tinha no dia em que foi comprado.
+    -- WHAT WAS ORDERED. The dimension version in effect at price_as_of, and not the current
+    -- one: it is what links the line to the name the product had on the day it was bought.
     l.source_product_id,
     ped.product_sk,
     l.category_id,
     l.subgroup_id,
-    -- GRUPO DE DEMANDA carimbado no evento pela Source. Atravessa a fronteira porque e o
-    -- eixo em que a cesta foi CALIBRADA: agrupar por category_id no mart mede a arvore da
-    -- Mercadona, e agrupar por aqui mede a decisao de demanda.
+    -- DEMAND GROUP stamped on the event by the Source. It crosses the boundary because it is
+    -- the axis on which the basket was CALIBRATED: grouping by category_id in the mart measures
+    -- Mercadona's tree, and grouping by this measures the demand decision.
     l.demand_group,
 
-    -- O QUE FOI ENTREGUE. Nulo quando a linha foi removida ou o pedido nunca chegou a
-    -- separacao: nulo aqui significa "nao existe", nao "desconhecido".
+    -- WHAT WAS DELIVERED. Null when the line was removed or the order never reached picking:
+    -- null here means "does not exist", not "unknown".
     l.fulfilled_source_product_id,
     cum.product_sk                                          as fulfilled_product_sk,
     (l.fulfilled_source_product_id is distinct from l.source_product_id
         and l.fulfilled_source_product_id is not null)      as was_substituted,
 
     l.quantity,
-    -- Preco de catalogo do produto PEDIDO, na data do pedido.
+    -- Catalog price of the ORDERED product, on the order date.
     l.unit_price,
-    -- MEDIDA DEGENERADA: o preco efetivamente pago pela linha. Igual a unit_price em linha
-    -- cumprida; o preco do substituto em linha substituida; nulo quando nada foi entregue.
+    -- DEGENERATE MEASURE: the price actually paid for the line. Equal to unit_price on a
+    -- fulfilled line; the substitute's price on a substituted line; null when nothing was
+    -- delivered.
     l.fulfilled_unit_price                                  as unit_price_paid,
     l.line_amount,
     l.line_amount_placed,
     l.line_amount_placed - l.line_amount                    as line_amount_delta,
     '{{ var("currency") }}'                                 as currency,
 
-    -- A PREMISSA VIAJA JUNTO DO NUMERO. Sem price_as_of e price_source, comparar receita
-    -- entre dias compararia precos de vintages diferentes sem aviso.
+    -- THE PREMISE TRAVELS WITH THE NUMBER. Without price_as_of and price_source, comparing
+    -- revenue across days would compare prices of different vintages without warning.
     l.price_as_of,
     l.price_source,
 

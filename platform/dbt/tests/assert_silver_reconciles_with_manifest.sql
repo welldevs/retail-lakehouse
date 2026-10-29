@@ -1,11 +1,11 @@
--- O TESTE QUE FECHA O CICLO manifesto -> RAW -> Silver.
+-- THE TEST THAT CLOSES THE manifest -> RAW -> Silver LOOP.
 --
--- A Source declara totals.product_rows e totals.unique_product_ids no manifesto. O
--- Silver derivou suas linhas lendo os arquivos de catalogo do object storage, por um
--- caminho completamente diferente. Se os dois numeros divergem, alguma coisa se perdeu
--- entre a extracao e o parquet — e melhor descobrir aqui do que num dashboard.
+-- The Source declares totals.product_rows and totals.unique_product_ids in the manifest.
+-- Silver derived its rows by reading the catalog files from object storage, along a
+-- completely different path. If the two numbers diverge, something got lost
+-- between extraction and parquet — and it is better to find out here than on a dashboard.
 --
--- Falha se qualquer particao divergir.
+-- Fails if any partition diverges.
 with derived as (
     select
         ingestion_date,

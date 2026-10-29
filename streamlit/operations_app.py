@@ -5,8 +5,9 @@ day to day. Holds no state, writes nothing, exposes no SQL and no layer metadata
 
 This dashboard's technical counterpart (the question each indicator answers, the source
 grain, what's observed vs. synthetic, and the gotchas of rebuilding it in another tool)
-still exists — in `indicators.py`, versioned alongside the same SQL, and published in
-`streamlit/CONTRACT.md`. It just doesn't show up on this screen.
+still exists — in the shared catalog (`retail_platform/indicators/operations.py`), versioned
+alongside the same SQL, and published in `docs/indicators/operations.md`. It just doesn't
+show up on this screen.
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import indicators as I  # noqa: E402
+# `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
+from retail_platform.indicators import operations as I  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
 
@@ -78,7 +80,7 @@ with st.sidebar:
 
     st.divider()
 
-    window = query(I.JANELA)
+    window = query(I.WINDOW)
     start_min = pd.to_datetime(window.iloc[0, 0]).date()
     end_max = pd.to_datetime(window.iloc[0, 1]).date()
 
@@ -91,16 +93,16 @@ with st.sidebar:
     else:
         start, end = start_min, end_max
 
-    warehouse_list = query(I.ARMAZENS).iloc[:, 0].tolist()
+    warehouse_list = query(I.WAREHOUSES).iloc[:, 0].tolist()
     warehouses = st.multiselect("Warehouses", warehouse_list, default=warehouse_list)
     if not warehouses:
         st.warning("Select at least one warehouse.")
         st.stop()
 
-    P = {"inicio": str(start), "fim": str(end), "armazens": ",".join(warehouses)}
+    P = {"start": str(start), "end": str(end), "warehouses": ",".join(warehouses)}
 
     st.divider()
-    freshness = query(I.FRESCOR)
+    freshness = query(I.FRESHNESS)
     latest_date = pd.to_datetime(freshness["FIM"], errors="coerce").max()
     st.caption(
         f"Data through {latest_date:%Y-%m-%d}" if pd.notna(latest_date)
@@ -114,7 +116,7 @@ with st.sidebar:
 st.title("Operations Dashboard")
 st.caption(f"{start} to {end} · {len(warehouses)} warehouse(s)")
 
-ind = {i.chave: i for i in I.INDICADORES}
+ind = {i.key: i for i in I.INDICATORS}
 summary = query(ind["resumo_comercial"].sql, P)
 if summary.empty or pd.isna(summary.iloc[0]["PEDIDOS_COLOCADOS"]):
     st.warning("No orders in the selected period. Widen the range.")

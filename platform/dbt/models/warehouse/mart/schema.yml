@@ -3,8 +3,8 @@ version: 2
 models:
   - name: mart_price_evolution
     description: >
-      GRAO (snapshot_date, wh, source_product_id) — por dia OBSERVADO, nunca por dia de
-      calendario. Como o preco de cada produto se moveu em cada armazem.
+      GRAIN (snapshot_date, wh, source_product_id) — per OBSERVED day, never per calendar
+      day. How each product's price moved in each warehouse.
     columns:
       - name: snapshot_date
         tests: [not_null]
@@ -16,25 +16,25 @@ models:
         tests: [not_null]
       - name: purchasable_unit_price
         description: >
-          O preco a usar para oscilacao ou oferta, nao `unit_price`. Em ~10 combinacoes
-          produto x armazem (venda a granel sem unit_size), unit_price e o teto do seletor
-          de peso da fonte, nao um preco de consumo — ver DECISIONS.md, "Demand
+          The price to use for price movement or promotions, not `unit_price`. In ~10 product x
+          warehouse combinations (loose items without unit_size), unit_price is the source's weight
+          selector ceiling, not a consumer price — see DECISIONS.md, "Demand
           calibration against MAPA 2025".
         tests: [not_null]
       - name: days_since_previous_snapshot
         description: >
-          Nulo na primeira observacao de cada produto. Onde nao e nulo, e a distancia real
-          ate a observacao anterior — comparar variacoes sem olhar esta coluna mistura uma
-          mudanca de 8 dias com uma de 1.
+          Null on each product's first observation. Where it is not null, it is the real distance
+          to the previous observation — comparing changes without looking at this column mixes an
+          8-day change with a 1-day one.
       - name: identity_review_needed
-        description: "Id novo com nome que ja existia. A decisao e de quem consulta."
+        description: "A new id with a name that already existed. The decision belongs to whoever queries."
         tests: [not_null]
 
   - name: mart_assortment_daily
     description: >
-      GRAO (snapshot_date, wh, category_id) — quanto de catalogo cada armazem tem por
-      categoria, a que preco, e quanto disso e exclusivo dele. min/max/avg/median_unit_price
-      sao sobre purchasable_unit_price, nunca sobre unit_price cru — ver
+      GRAIN (snapshot_date, wh, category_id) — how much catalog each warehouse has per
+      category, at what price, and how much of it is exclusive to it. min/max/avg/median_unit_price
+      are over purchasable_unit_price, never over the raw unit_price — see
       assert_mart_assortment_daily_price_stats_use_purchasable_price.sql.
     columns:
       - name: snapshot_date
@@ -47,15 +47,15 @@ models:
         tests: [not_null]
       - name: products_in_all_warehouses
         description: >
-          Denominador honesto de qualquer comparacao entre armazens: comparar preco medio
-          de catalogos diferentes mede diferenca de catalogo, nao de preco. Calculado por
-          DIA, porque o catalogo muda.
+          The honest denominator for any comparison across warehouses: comparing the average price
+          of different catalogs measures a catalog difference, not a price difference. Computed per
+          DAY, because the catalog changes.
         tests: [not_null]
 
   - name: mart_customer_base
     description: >
-      GRAO (customer_id) — a base VIGENTE. A PESSOA e sintetica, o ENDERECO e real, e a
-      populacao do municipio da o contexto sem o qual "3 clientes em Ajalvir" nao diz nada.
+      GRAIN (customer_id) — the CURRENT base. The PERSON is synthetic, the ADDRESS is real, and the
+      municipality population gives the context without which "3 customers in Ajalvir" says nothing.
     columns:
       - name: customer_id
         tests: [not_null, unique]
@@ -70,34 +70,34 @@ models:
 
   - name: mart_market_coverage
     description: >
-      GRAO (wh, province_code, municipality_code) — TODOS os 370 municipios da AUF,
-      inclusive os que ainda nao receberam nenhum cliente. E o LEFT JOIN que faz este mart
-      valer: partir dos clientes mostraria 100% de cobertura por construcao, sempre.
+      GRAIN (wh, province_code, municipality_code) — ALL 370 AUF municipalities,
+      including those that have not received any customer yet. It is the LEFT JOIN that makes this mart
+      worthwhile: starting from the customers would show 100% coverage by construction, always.
     columns:
       - name: wh
         tests: [not_null]
       - name: municipality_code
         tests: [not_null]
       - name: municipality_population
-        description: "Do INE, observado. Denominador de customers_per_10k_inhabitants."
+        description: "From INE, observed. Denominator of customers_per_10k_inhabitants."
       - name: customers
-        description: "Sintetico. Zero e um valor legitimo e informativo aqui."
+        description: "Synthetic. Zero is a legitimate and informative value here."
         tests: [not_null]
       - name: customers_per_10k_inhabitants
         description: >
-          Numerador sintetico sobre denominador observado. Serve para comparar a DENSIDADE
-          DA SIMULACAO entre municipios — nunca como estimativa de penetracao de mercado.
+          A synthetic numerator over an observed denominator. It serves to compare the SIMULATION'S
+          DENSITY across municipalities — never as an estimate of market penetration.
       - name: has_no_customers
         tests: [not_null]
 
   - name: mart_order_funnel
     description: >
-      GRAO (order_date, wh) — uma linha por armazem por dia. O funil se apoia em MARCO
-      ALCANCADO, nunca em order_status, e a diferenca foi medida em 2026-06: contar
-      order_status = 'DELIVERED' dava 5.985 entregas, contar delivered_at is not null dava
-      6.046. Eram os 61 pedidos devolvidos daquela captura,
-      que tambem foram entregues. Marco e monotonico; status nao e. As colunas de SAIDA
-      (cancelados, devolvidos) nao somam com as etapas — elas vivem num bloco proprio.
+      GRAIN (order_date, wh) — one row per warehouse per day. The funnel rests on the MILESTONE
+      REACHED, never on order_status, and the difference was measured in 2026-06: counting
+      order_status = 'DELIVERED' gave 5,985 deliveries, counting delivered_at is not null gave
+      6,046. They were the 61 returned orders of that capture,
+      which were also delivered. A milestone is monotonic; status is not. The EXIT columns
+      (cancelled, returned) do not add up with the stages — they live in their own block.
     columns:
       - name: order_date
         tests: [not_null]
@@ -106,7 +106,7 @@ models:
       - name: orders_placed
         tests: [not_null]
       - name: orders_delivered
-        description: "Por marco, nao por status. Ver assert_order_funnel_totals_match_fact_order."
+        description: "By milestone, not by status. See assert_order_funnel_totals_match_fact_order."
         tests: [not_null]
       - name: delivery_rate
         tests: [not_null]
@@ -115,14 +115,14 @@ models:
 
   - name: mart_fulfillment_sla
     description: >
-      GRAO (order_date, wh) — uma linha por armazem por dia. p50/p90 por etapa, sobre os
-      pedidos que ALCANCARAM cada marco (percentile_cont ignora nulo, e nulo aqui significa
-      "a etapa nao aconteceu"). ACHADO CORRIGIDO NA FASE 7: sla_minutes_picking valia 90 e
-      era inalcancavel por construcao — basket_lines_max (40) x minutes_per_line_picked (2)
-      da teto de 80. Zero violacoes, e nao porque a operacao fosse boa. Agora o limiar e
-      DERIVADO de sla_picking_percentile sobre a triangular declarada da cesta. sla_minutes,
-      max_picking_minutes e orders_breaching_sla continuam viajando lado a lado, porque uma
-      contagem de violacoes sem o limiar ao lado nao e conferivel.
+      GRAIN (order_date, wh) — one row per warehouse per day. p50/p90 per stage, over the
+      orders that REACHED each milestone (percentile_cont ignores nulls, and null here means
+      "the stage did not happen"). FINDING FIXED IN PHASE 7: sla_minutes_picking was 90 and
+      was unreachable by construction — basket_lines_max (40) x minutes_per_line_picked (2)
+      gives a ceiling of 80. Zero breaches, and not because the operation was good. Now the threshold is
+      DERIVED from sla_picking_percentile over the basket's declared triangular. sla_minutes,
+      max_picking_minutes and orders_breaching_sla still travel side by side, because a
+      breach count without the threshold next to it cannot be checked.
     columns:
       - name: order_date
         tests: [not_null]
@@ -130,40 +130,40 @@ models:
         tests: [not_null]
       - name: sla_minutes
         description: >
-          Vem de FACT_ORDER_PREMISE, nao de uma constante deste modelo. Se a premissa
-          sumir do seed, esta coluna vira nula e ESTE not_null reprova — que e a unica
-          razao de a CTE usar max(case when...) em vez de um where que esvaziaria o mart.
+          It comes from FACT_ORDER_PREMISE, not from a constant of this model. If the premise
+          disappears from the seed, this column becomes null and THIS not_null fails — which is the only
+          reason the CTE uses max(case when...) instead of a where that would empty the mart.
         tests: [not_null]
       - name: orders_breaching_sla
         tests: [not_null]
       - name: max_picking_minutes
-        description: "Medido 80 na janela. Lido junto de sla_minutes, explica o zero."
+        description: "Measured 80 on the window. Read together with sla_minutes, it explains the zero."
       - name: orders_placed
         tests: [not_null]
       - name: slot_adherence_rate
         description: >
-          Fracao das entregas dentro da janela prometida. NAO leia esta taxa sozinha:
-          chegar cedo e chegar tarde sao problemas opostos e ela colapsa os dois. Medido em
-          2026-09-01, antes da correcao da Fase 7: 84% das entregas chegavam ANTES de a
-          janela abrir, porque slot_lead_hours sorteava 2-24h contra um ciclo de no maximo
-          8,5h. Era defeito de modelo, nao de operacao. Com as premissas conciliadas a taxa
-          passou a VARIAR; o numero que sair e reportado, nunca alvo.
+          Fraction of deliveries within the promised window. Do NOT read this rate on its own:
+          arriving early and arriving late are opposite problems and it collapses both. Measured on
+          2026-09-01, before the Phase 7 fix: 84% of deliveries arrived BEFORE the
+          window opened, because slot_lead_hours drew 2-24h against a cycle of at most
+          8.5h. It was a model defect, not an operational one. With the premises reconciled the rate
+          started to VARY; whatever number comes out is reported, never a target.
         tests: [not_null]
       - name: orders_delivered_before_slot
         description: >
-          Chegar cedo e chegar tarde sao problemas OPOSTOS. Colapsar os dois em "fora da
-          janela" apagaria qual deles esta acontecendo — aqui sao 5.166 contra 409.
+          Arriving early and arriving late are OPPOSITE problems. Collapsing both into "outside the
+          window" would erase which one is happening — here it is 5,166 against 409.
         tests: [not_null]
       - name: orders_delivered_after_slot
         tests: [not_null]
 
   - name: mart_basket_daily
     description: >
-      GRAO (order_date, wh, category_id). Lado da DEMANDA, no mesmo eixo que
-      MART_ASSORTMENT_DAILY tem o lado da oferta — os dois podem ser postos lado a lado
-      sem reagregacao. ATENCAO: orders_touching_category NAO e aditivo entre categorias
-      (um pedido com leite e pao conta uma vez em cada); linhas, unidades e valor sao.
-      Quem quiser pedidos por dia usa MART_ORDER_FUNNEL, que tem o grao certo.
+      GRAIN (order_date, wh, category_id). The DEMAND side, on the same axis on which
+      MART_ASSORTMENT_DAILY has the supply side — the two can be put side by side
+      without re-aggregation. CAUTION: orders_touching_category is NOT additive across categories
+      (an order with milk and bread counts once in each); lines, units and value are.
+      Whoever wants orders per day uses MART_ORDER_FUNNEL, which has the right grain.
     columns:
       - name: order_date
         tests: [not_null]
@@ -172,70 +172,71 @@ models:
       - name: category_id
         tests: [not_null]
       - name: orders_touching_category
-        description: "NAO SOMA entre categorias. O nome diz isso de proposito."
+        description: "Does NOT SUM across categories. The name says so on purpose."
         tests: [not_null]
       - name: lines_placed
         tests: [not_null]
       - name: revenue_fulfilled
-        description: "O que foi ENTREGUE. revenue_placed guarda o que foi pedido, ao lado."
+        description: "What was DELIVERED. revenue_placed keeps what was ordered, alongside."
         tests: [not_null]
       - name: currency
         tests: [not_null]
 
   - name: mart_demand_cohort
     description: >
-      GRAO (order_date, wh, buyer_age_band, demand_group). O que cada coorte de comprador
-      leva de cada grupo de demanda. O AGREGADO NAO MUDA em relacao a MART_BASKET_DAILY —
-      esse e o criterio de aceitacao do IPF que calibra o perfil por coorte — entao o valor
-      deste mart esta inteiramente na CONDICIONAL: comparar `share_within_band` da mesma
-      linha entre duas faixas etarias. ATENCAO: orders_in_cohort NAO e aditivo entre faixas
-      nem entre grupos, pelo mesmo motivo de orders_touching_category; linhas, unidades e
-      valor sao. A faixa vem carimbada no evento order_placed, e nao de dim_customer: e a
-      faixa que valia no momento do pedido, e foi ela que escolheu o vetor de pesos.
+      GRAIN (order_date, wh, buyer_age_band, demand_group). What each buyer cohort
+      takes from each demand group. THE AGGREGATE DOES NOT CHANGE relative to MART_BASKET_DAILY —
+      that is the acceptance criterion of the IPF that calibrates the per-cohort profile — so the value
+      of this mart lies entirely in the CONDITIONAL: comparing `share_within_band` of the same
+      row across two age bands. CAUTION: orders_in_cohort is NOT additive across bands
+      nor across groups, for the same reason as orders_touching_category; lines, units and
+      value are. The band comes stamped on the order_placed event, not from dim_customer: it is the
+      band that held at the time of the order, and it is what chose the weight vector.
     columns:
       - name: order_date
         tests: [not_null]
       - name: wh
         tests: [not_null]
       - name: buyer_age_band
-        description: "LT35 | 35_49 | 50_64 | GE65 — as quatro faixas do informe do MAPA."
+        description: "LT35 | 35_49 | 50_64 | GE65 — the four bands of the MAPA report."
         tests:
           - not_null
           - accepted_values:
-              values: ['LT35', '35_49', '50_64', 'GE65']
+              arguments:
+                values: ['LT35', '35_49', '50_64', 'GE65']
       - name: demand_group
         tests: [not_null]
       - name: orders_in_cohort
-        description: "NAO SOMA entre faixas nem entre grupos."
+        description: "Does NOT SUM across bands nor across groups."
         tests: [not_null]
       - name: share_within_band
         description: >
-          Fatia do grupo DENTRO da coorte naquele (dia, armazem). Denominador e a propria
-          coorte, e nao o total: e assim que a comparacao entre faixas isola a propensao do
-          tamanho da coorte.
+          The group's slice WITHIN the cohort in that (day, warehouse). The denominator is the cohort
+          itself, not the total: that is how the comparison across bands isolates propensity from
+          cohort size.
         tests: [not_null]
       - name: currency
         tests: [not_null]
 
   - name: mart_stock_health
     description: >
-      GRAO (stock_date, wh, category_id) — categoria de nivel 2, o mesmo eixo de
-      MART_ASSORTMENT_DAILY e MART_BASKET_DAILY, para que as tres se comparem sem conversao.
-      Por produto seriam ~17 mil linhas por armazem por dia, o que nao e painel.
+      GRAIN (stock_date, wh, category_id) — level-2 category, the same axis as
+      MART_ASSORTMENT_DAILY and MART_BASKET_DAILY, so the three compare without conversion.
+      Per product it would be ~17 thousand rows per warehouse per day, which is not a panel.
 
-      TIRA QUATRO ITENS DE "FORA DE ALCANCE" — ruptura, giro, cobertura e reposicao — e o
-      gatilho declarado la ("uma fonte de saldo ou movimento de estoque") NAO foi cumprido.
-      Continua nao existindo fonte de estoque; o que mudou e que o saldo passou a ser
-      CALCULADO. Por isso a coluna `stock_label` viaja com valor 'synthetic' em toda linha:
-      ler ruptura daqui como medicao de campo e o mesmo erro de ler densidade de simulacao
-      como penetracao de mercado.
+      IT TAKES FOUR ITEMS OFF "OUT OF REACH" — stockout, turnover, cover and replenishment — and the
+      trigger declared there ("a source of stock balance or movement") was NOT met.
+      There is still no stock source; what changed is that the balance is now
+      COMPUTED. That is why the `stock_label` column travels with the value 'synthetic' on every row:
+      reading stockout from here as a field measurement is the same mistake as reading simulation density
+      as market penetration.
 
-      ADITIVIDADE E A ARMADILHA DESTE MART, e maior aqui que nos outros: saldo nao soma entre
-      dias, cobertura e razao e nao se media, e ruptura tem duas unidades que nao se
-      substituem. Cada coluna diz qual e o caso.
+      ADDITIVITY IS THIS MART'S TRAP, and bigger here than in the others: balance does not sum across
+      days, cover is a ratio and is not averaged, and stockout has two units that do not
+      replace each other. Each column says which case applies.
 
-      LIMITE DECLARADO: a ruptura aqui e INDEPENDENTE das linhas `unavailable` do pedido — o
-      gerador remove linha a taxa fixa sorteada, sem olhar saldo. Uma nao causa a outra.
+      DECLARED LIMIT: the stockout here is INDEPENDENT of the order's `unavailable` lines — the
+      generator removes lines at a fixed drawn rate, without looking at the balance. Neither causes the other.
     columns:
       - name: stock_date
         tests: [not_null]
@@ -243,44 +244,44 @@ models:
         tests: [not_null]
       - name: product_days
         description: >
-          Quantos pares (produto, dia) a linha agrega. E o denominador de qualquer leitura por
-          produto — sem ele, series_with_shortfall nao tem escala.
+          How many (product, day) pairs the row aggregates. It is the denominator of any per-product
+          reading — without it, series_with_shortfall has no scale.
         tests: [not_null]
       - name: units_short
-        description: "Aditiva. Quanto faltou, em unidades."
+        description: "Additive. How much was short, in units."
         tests: [not_null]
       - name: series_with_shortfall
         description: >
-          Em quantos (produto, dia) faltou alguma coisa. NAO substitui units_short: um produto
-          popular faltando 500 unidades e 500 produtos faltando 1 sao problemas operacionais
-          diferentes com o mesmo units_short.
+          In how many (product, day) something was short. It does NOT replace units_short: a popular
+          product short by 500 units and 500 products short by 1 are different operational problems
+          with the same units_short.
         tests: [not_null]
       - name: fill_rate
         description: >
-          NULO quando nao houve demanda, e nao 1. "Nada foi pedido" nao e "tudo foi atendido",
-          e a diferenca some se o zero virar 100%.
+          NULL when there was no demand, not 1. "Nothing was ordered" is not "everything was served",
+          and the difference disappears if zero becomes 100%.
       - name: closing_units
         description: >
-          SEMI-ADITIVO: nao some entre dias. E a primeira coisa que um BI vai tentar num eixo
-          de tempo, e o resultado e o mesmo estoque contado varias vezes.
+          SEMI-ADDITIVE: do not sum across days. It is the first thing a BI will try on a time
+          axis, and the result is the same stock counted several times.
         tests: [not_null]
       - name: days_of_cover
         description: >
-          A RAZAO DAS SOMAS: quantos dias o estoque da categoria cobre a demanda dela.
-          Diferente de days_of_cover_typical_product, que e a media das razoes.
+          THE RATIO OF THE SUMS: how many days the category's stock covers its demand.
+          Different from days_of_cover_typical_product, which is the average of the ratios.
       - name: days_of_cover_typical_product
         description: >
-          A MEDIA DAS RAZOES: quantos dias o produto TIPICO cobre. Sempre maior que
-          days_of_cover, porque produto de giro baixo tem cobertura enorme e domina a media.
-          As duas estao publicadas porque respondem perguntas diferentes.
+          THE AVERAGE OF THE RATIOS: how many days the TYPICAL product covers. Always greater than
+          days_of_cover, because low-turnover products have huge cover and dominate the average.
+          Both are published because they answer different questions.
       - name: turnover_daily
         description: >
-          Saidas sobre saldo MEDIO do dia, nao sobre o fechamento — com o fechamento o giro
-          explode para infinito no dia em que a prateleira zera, que e o dia mais
-          interessante. NAO e anualizado: a janela tem poucos dias e anualizar projetaria
-          sazonalidade que ninguem observou.
+          Outflows over the day's AVERAGE balance, not over the closing — with the closing, turnover
+          explodes to infinity on the day the shelf hits zero, which is the most
+          interesting day. It is NOT annualized: the window has few days and annualizing would project
+          seasonality nobody observed.
       - name: stock_label
-        description: "Sempre 'synthetic'. O rotulo viaja com o numero, como no Silver."
+        description: "Always 'synthetic'. The label travels with the number, as in Silver."
         tests:
           - not_null
           - accepted_values: {arguments: {values: [synthetic]}}

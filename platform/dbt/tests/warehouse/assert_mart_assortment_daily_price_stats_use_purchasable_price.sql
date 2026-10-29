@@ -1,20 +1,20 @@
--- MART_ASSORTMENT_DAILY.min/max_unit_price BATEM COM O MINIMO/MAXIMO DE
--- fact_price_snapshot.purchasable_unit_price NO MESMO GRAO — nunca com unit_price CRU.
+-- MART_ASSORTMENT_DAILY.min/max_unit_price MATCH THE MINIMUM/MAXIMUM OF
+-- fact_price_snapshot.purchasable_unit_price AT THE SAME GRAIN — never the RAW unit_price.
 --
--- POR QUE ESTE TESTE EXISTE. Ate esta correcao, mart_assortment_daily agregava
--- fact_price_snapshot.unit_price cru. Em ~10 combinacoes produto x armazem vendidas a
--- granel sem unit_size, a API devolve unit_price = reference_price * 99 — o TETO do
--- seletor de peso (ver assert_purchasable_price_is_anchored_in_the_bunch_amount.sql e
--- DECISIONS.md, "Demand calibration against MAPA 2025"), nao um preco de consumo. Isso
--- inflava o maximo da categoria "Marisco y pescado" para 3.663,00 EUR — um numero
--- internamente consistente, e por isso nenhum dos testes existentes reprovava: o defeito
--- so apareceu ao ler o mart num painel, nao ao rodar `dbt build`.
+-- WHY THIS TEST EXISTS. Until this fix, mart_assortment_daily aggregated the raw
+-- fact_price_snapshot.unit_price. In ~10 product x warehouse combinations sold
+-- loose without unit_size, the API returns unit_price = reference_price * 99 — the CEILING of the
+-- weight selector (see assert_purchasable_price_is_anchored_in_the_bunch_amount.sql and
+-- DECISIONS.md, "Demand calibration against MAPA 2025"), not a consumer price. That
+-- inflated the maximum of the "Marisco y pescado" category to 3,663.00 EUR — an internally
+-- consistent number, which is why none of the existing tests failed: the defect
+-- only showed up when reading the mart on a panel, not when running `dbt build`.
 --
--- Reconstroi o minimo/maximo POR FORA, direto de fact_price_snapshot com a coluna certa,
--- e reprova se o mart nao bater — a mesma disciplina de
--- assert_order_funnel_totals_match_fact_order.sql, so que para preco em vez de contagem.
+-- Rebuilds the minimum/maximum FROM OUTSIDE, straight from fact_price_snapshot with the right column,
+-- and fails if the mart does not match — the same discipline as
+-- assert_order_funnel_totals_match_fact_order.sql, only for price instead of counts.
 --
--- Falha com uma linha por (snapshot_date, wh, category_id) divergente.
+-- Fails with one row per divergent (snapshot_date, wh, category_id).
 with esperado as (
 
     select

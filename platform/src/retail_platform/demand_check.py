@@ -5,7 +5,7 @@ WHY THREE DIMENSIONS, AND NOT JUST REVENUE
 Revenue alone is the worst indicator of realism that exists for this problem, because it
 mixes two things that need to be judged separately: HOW MUCH is bought and HOW MUCH what
 is bought COSTS. The case that opened this phase is exactly that — seafood showed up with
-22,8% of revenue and 3,4% of units, and the correct reading ("the price on 10 lines is
+22.8% of revenue and 3.4% of units, and the correct reading ("the price on 10 lines is
 wrong by three orders of magnitude") was invisible in the revenue column.
 
     units         how many unit-lines of each group go out
@@ -21,7 +21,7 @@ THE CONTENT IS DERIVED FROM THE LINE'S PRICE, NOT FROM TODAY'S CATALOG
 
 It looks like a detail and it is not. If the content came from today's catalog's
 `net_content_kg_l` column, the BEFORE would be retroactively corrected: the bulk lines the
-simulator charged at 1.084,05 would show up with 0,15 kg instead of the 99 kg that price
+simulator charged at 1,084.05 would show up with 0.15 kg instead of the 99 kg that price
 implies. The BEFORE has to describe the world as it was, defects included — otherwise the
 comparison hides exactly what it exists to show.
 
@@ -41,10 +41,10 @@ from . import demand_profile
 DEFAULT_OUT = os.path.join("docs", "demand-evidence", "README.md")
 DEFAULT_SNAPSHOT_DIR = os.path.join("docs", "demand-evidence")
 
-# Consulta unica dos dois lados. O join carrega (wh, price_as_of, produto, categoria,
-# subgrupo) — a mesma chave composta que o gerador usou para escolher a linha, e nao apenas
-# o id do produto: um produto vive em mais de uma categoria e o join por id sozinho
-# multiplicaria linhas.
+# A single query for both sides. The join carries (wh, price_as_of, product, category,
+# subgroup) — the same composite key the generator used to pick the line, and not just the
+# product id: a product lives in more than one category, and joining on id alone would
+# multiply rows.
 MIX_SQL = """
 with catalogo as (
     select
@@ -61,9 +61,10 @@ linhas as (
         c.l1, c.l2, c.l3,
         l.quantity,
         l.line_amount,
-        -- CONTEUDO IMPLICADO PELO PRECO DA LINHA. Nulo quando reference_format nao e massa
-        -- nem volume: converter ovos para kg exigiria um peso por ovo que nenhuma fonte
-        -- deste repo mede, e um numero inventado aqui contaminaria o denominador de EUR/kg.
+        -- CONTENT IMPLIED BY THE LINE'S PRICE. Null when reference_format is neither mass
+        -- nor volume: converting eggs to kg would need a weight per egg that no source in
+        -- this repo measures, and a number invented here would contaminate the EUR/kg
+        -- denominator.
         case
             when c.reference_format in ('kg', 'L') and c.reference_price > 0
                 then l.quantity * (l.unit_price / c.reference_price)
@@ -92,13 +93,13 @@ order by 1, 2, 3
 """
 
 
-# O MIX POR COORTE, que e a unica dimensao em que a Fase 5 se enxerga. O agregado nao se
-# move de proposito — criterio de aceitacao do IPF — entao um relatorio que mostrasse so
-# totais concluiria que a fase nao fez nada.
+# THE MIX PER COHORT, the only dimension in which Phase 5 shows itself. The aggregate does
+# not move on purpose — the IPF's acceptance criterion — so a report showing only totals
+# would conclude the phase did nothing.
 #
-# `demand_group` vem carimbado na LINHA e `buyer_age_band` no PEDIDO, os dois de dentro do
-# proprio evento. Nenhum join com o catalogo nem com o cadastro: o que se quer e o que valia
-# no momento do pedido, e e exatamente isso que os dois carimbos guardam.
+# `demand_group` is stamped on the LINE and `buyer_age_band` on the ORDER, both from inside
+# the event itself. No join with the catalog or the customer registry: what we want is what
+# held at the time of the order, and that is exactly what the two stamps keep.
 COHORT_SQL = """
 select
     o.buyer_age_band,
@@ -114,8 +115,8 @@ group by 1, 2, 3
 order by 1, 2, 3
 """
 
-# Quantos pedidos cada armazem colocou. E aqui que a inclinacao regional de FREQUENCIA se
-# enxerga: antes desta fase os quatro armazens tinham a mesma contagem por construcao.
+# How many orders each warehouse placed. This is where the regional FREQUENCY tilt shows:
+# before this phase the four warehouses had the same count by construction.
 WAREHOUSE_SQL = """
 select wh, count(*) as pedidos, count(distinct customer_id) as clientes
 from silver_order
@@ -123,10 +124,11 @@ group by 1
 order by 1
 """
 
-# A POPULACAO QUE CADA ARMAZEM SERVE, e a janela em dias. Sao os dois numeros que faltam para
-# fechar o canal: o modelo produziu tanto volume; o informe diz quanto uma populacao daquele
-# tamanho consome por ano; a taxa diz que fracao disso e online. Sem medi-los aqui eles
-# teriam de ser escritos a mao nesta pagina, que e o que ela existe para nao fazer.
+# THE POPULATION EACH WAREHOUSE SERVES, and the window in days. These are the two numbers
+# missing to close the channel: the model produced so much volume; the report says how much
+# a population of that size consumes per year; the rate says what fraction of that is
+# online. Without measuring them here they would have to be written by hand on this page,
+# which is what the page exists to avoid.
 CHANNEL_SQL = """
 with servida as (
     select
@@ -174,40 +176,40 @@ def _decimal(value) -> Decimal:
 
 def measure(connection, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> dict:
     """Observed mix across the three dimensions, aggregated by demand group."""
-    resultado = connection.execute(MIX_SQL)
-    colunas = [d[0] for d in resultado.description]
-    trincas = [dict(zip(colunas, linha)) for linha in resultado.fetchall()]
-    if not trincas:
+    result = connection.execute(MIX_SQL)
+    columns = [d[0] for d in result.description]
+    triples = [dict(zip(columns, values)) for values in result.fetchall()]
+    if not triples:
         raise DemandCheckError(
             "no order line to measure. Was `silver_order_line` built?"
         )
 
     mapping = demand_profile.load_mapping(seeds_dir)
-    grupos: dict[str, dict] = {}
-    for row in trincas:
+    groups: dict[str, dict] = {}
+    for row in triples:
         key = demand_profile.resolve(mapping, row["l1"], row["l2"], row["l3"])
-        alvo = grupos.setdefault(
+        bucket = groups.setdefault(
             key,
             {"linhas": 0, "unidades": Decimal("0"), "receita": Decimal("0"),
              "kg_l": Decimal("0"), "linhas_sem_kg": 0},
         )
-        alvo["linhas"] += int(row["linhas"])
-        alvo["unidades"] += _decimal(row["unidades"])
-        alvo["receita"] += _decimal(row["receita"])
-        alvo["kg_l"] += _decimal(row["kg_l"])
-        alvo["linhas_sem_kg"] += int(row["linhas_sem_kg"])
+        bucket["linhas"] += int(row["linhas"])
+        bucket["unidades"] += _decimal(row["unidades"])
+        bucket["receita"] += _decimal(row["receita"])
+        bucket["kg_l"] += _decimal(row["kg_l"])
+        bucket["linhas_sem_kg"] += int(row["linhas_sem_kg"])
 
     return {
         "measured_at_utc": _utc_now(),
         "groups": {
             key: {
-                "linhas": valor["linhas"],
-                "unidades": str(valor["unidades"]),
-                "receita": str(valor["receita"]),
-                "kg_l": str(valor["kg_l"]),
-                "linhas_sem_kg": valor["linhas_sem_kg"],
+                "linhas": value["linhas"],
+                "unidades": str(value["unidades"]),
+                "receita": str(value["receita"]),
+                "kg_l": str(value["kg_l"]),
+                "linhas_sem_kg": value["linhas_sem_kg"],
             }
-            for key, valor in sorted(grupos.items())
+            for key, value in sorted(groups.items())
         },
         **_measure_cohorts(connection),
         **_measure_channel(connection),
@@ -223,25 +225,25 @@ def _measure_channel(connection) -> dict:
     from "I measured, and the population served is zero".
     """
     try:
-        resultado = connection.execute(CHANNEL_SQL)
-    except Exception:  # noqa: BLE001 - modelo ausente numa janela anterior a esta fase
+        result = connection.execute(CHANNEL_SQL)
+    except Exception:  # noqa: BLE001 - model absent in a window older than this phase
         return {"channel": None}
-    colunas = [d[0] for d in resultado.description]
-    linhas = [dict(zip(colunas, linha)) for linha in resultado.fetchall()]
-    if not linhas:
+    columns = [d[0] for d in result.description]
+    lines = [dict(zip(columns, values)) for values in result.fetchall()]
+    if not lines:
         return {"channel": None}
     return {
         "channel": {
-            "dias": int(linhas[0]["dias"]),
-            "primeiro_dia": linhas[0]["primeiro"],
-            "ultimo_dia": linhas[0]["ultimo"],
+            "dias": int(lines[0]["dias"]),
+            "primeiro_dia": lines[0]["primeiro"],
+            "ultimo_dia": lines[0]["ultimo"],
             "warehouses": [
                 {
                     "wh": row["wh"],
                     "province_code": row["province_code"],
                     "population_total": int(row["population_total"]),
                 }
-                for row in linhas
+                for row in lines
             ],
         }
     }
@@ -261,62 +263,62 @@ def _measure_cohorts(connection) -> dict:
     empty would be indistinguishable from "I measured, and there was nothing".
     """
     try:
-        resultado = connection.execute(COHORT_SQL)
-    except Exception:  # noqa: BLE001 - coluna ausente na janela anterior a esta fase
+        result = connection.execute(COHORT_SQL)
+    except Exception:  # noqa: BLE001 - column absent in a window older than this phase
         return {"cohorts": None, "warehouses": None}
 
-    colunas = [d[0] for d in resultado.description]
-    linhas = [dict(zip(colunas, linha)) for linha in resultado.fetchall()]
-    coortes: dict[str, dict] = {}
-    for row in linhas:
-        banda = row["buyer_age_band"]
-        if banda is None:
+    columns = [d[0] for d in result.description]
+    lines = [dict(zip(columns, values)) for values in result.fetchall()]
+    cohorts: dict[str, dict] = {}
+    for row in lines:
+        band = row["buyer_age_band"]
+        if band is None:
             continue
-        alvo = coortes.setdefault(banda, {})
-        grupo = alvo.setdefault(
+        bucket = cohorts.setdefault(band, {})
+        group = bucket.setdefault(
             row["demand_group"],
             {"linhas": 0, "unidades": Decimal("0"), "receita": Decimal("0")},
         )
-        grupo["linhas"] += int(row["linhas"])
-        grupo["unidades"] += _decimal(row["unidades"])
-        grupo["receita"] += _decimal(row["receita"])
+        group["linhas"] += int(row["linhas"])
+        group["unidades"] += _decimal(row["unidades"])
+        group["receita"] += _decimal(row["receita"])
 
-    if not coortes:
+    if not cohorts:
         return {"cohorts": None, "warehouses": None}
 
-    resultado = connection.execute(WAREHOUSE_SQL)
-    colunas = [d[0] for d in resultado.description]
-    armazens = {
+    result = connection.execute(WAREHOUSE_SQL)
+    columns = [d[0] for d in result.description]
+    warehouses = {
         row["wh"]: {"pedidos": int(row["pedidos"]), "clientes": int(row["clientes"])}
-        for row in (dict(zip(colunas, linha)) for linha in resultado.fetchall())
+        for row in (dict(zip(columns, values)) for values in result.fetchall())
     }
 
     return {
         "cohorts": {
-            banda: {
-                grupo: {
-                    "linhas": valor["linhas"],
-                    "unidades": str(valor["unidades"]),
-                    "receita": str(valor["receita"]),
+            band: {
+                group: {
+                    "linhas": value["linhas"],
+                    "unidades": str(value["unidades"]),
+                    "receita": str(value["receita"]),
                 }
-                for grupo, valor in sorted(grupos.items())
+                for group, value in sorted(groups.items())
             }
-            for banda, grupos in sorted(coortes.items())
+            for band, groups in sorted(cohorts.items())
         },
-        "warehouses": armazens,
+        "warehouses": warehouses,
     }
 
 
 def _shares(snapshot: dict) -> dict:
     """Percentage shares per group, across the three dimensions, plus EUR/kg."""
-    grupos = snapshot["groups"]
-    total_un = sum(_decimal(g["unidades"]) for g in grupos.values())
-    total_kg = sum(_decimal(g["kg_l"]) for g in grupos.values())
-    total_eur = sum(_decimal(g["receita"]) for g in grupos.values())
-    saida = {}
-    for key, g in grupos.items():
+    groups = snapshot["groups"]
+    total_un = sum(_decimal(g["unidades"]) for g in groups.values())
+    total_kg = sum(_decimal(g["kg_l"]) for g in groups.values())
+    total_eur = sum(_decimal(g["receita"]) for g in groups.values())
+    out = {}
+    for key, g in groups.items():
         un, kg, eur = _decimal(g["unidades"]), _decimal(g["kg_l"]), _decimal(g["receita"])
-        saida[key] = {
+        out[key] = {
             "unidades": un,
             "kg_l": kg,
             "receita": eur,
@@ -326,11 +328,11 @@ def _shares(snapshot: dict) -> dict:
             "eur_por_kg": (eur / kg) if kg else None,
             "linhas_sem_kg": g["linhas_sem_kg"],
         }
-    saida["__total__"] = {
+    out["__total__"] = {
         "unidades": total_un, "kg_l": total_kg, "receita": total_eur,
         "eur_por_kg": (total_eur / total_kg) if total_kg else None,
     }
-    return saida
+    return out
 
 
 def save_snapshot(snapshot: dict, path: str) -> str:
@@ -352,10 +354,10 @@ def load_snapshot(path: str) -> dict:
         return json.load(handle)
 
 
-def _fmt(value, casas: int = 2) -> str:
+def _fmt(value, places: int = 2) -> str:
     if value is None:
         return "—"
-    return f"{Decimal(value):,.{casas}f}".replace(",", " ").replace(".", ",")
+    return f"{Decimal(value):,.{places}f}"
 
 
 def _targets(benchmark: dict, params: dict) -> dict:
@@ -363,137 +365,137 @@ def _targets(benchmark: dict, params: dict) -> dict:
 
     THIS IS THE COLUMN THE MODEL MUST BE JUDGED AGAINST, and not MAPA's raw share.
     The report measures domestic consumption; the simulator represents e-commerce, and
-    e-commerce does NOT consume in the same proportion — 1,1% of fresh volume against
-    2,8% of the rest, over an average of 2,2%. Comparing the simulator to the raw share
+    e-commerce does NOT consume in the same proportion — 1.1% of fresh volume against
+    2.8% of the rest, over an average of 2.2%. Comparing the simulator to the raw share
     would flag as an error precisely the channel correction this entire phase exists to
-    apply: fresh fruit MUST show up below the domestic 14,13% in an online basket.
+    apply: fresh fruit MUST show up below the domestic 14.13% in an online basket.
     """
-    pesaveis = [k for k, v in benchmark.items() if v["use_as_weight"]]
-    bruto = {}
-    for key in pesaveis:
+    weighable = [k for k, v in benchmark.items() if v["use_as_weight"]]
+    raw = {}
+    for key in weighable:
         tilt, _base = demand_profile.channel_tilt(benchmark[key], params)
-        bruto[key] = benchmark[key]["volume_share_pct"] * tilt
-    total = sum(bruto.values())
-    return {k: (v / total * 100 if total else None) for k, v in bruto.items()}
+        raw[key] = benchmark[key]["volume_share_pct"] * tilt
+    total = sum(raw.values())
+    return {k: (v / total * 100 if total else None) for k, v in raw.items()}
 
 
-def _block_shares(shares: dict, chaves: list) -> dict:
+def _block_shares(shares: dict, keys: list) -> dict:
     """Renormalizes shares within a subset of groups.
 
     Without this, AFTER would be over the total (including non-food) and the target over
     the calibrated block: two different bases in the same table, which is how you end up
     comparing wrong without noticing.
     """
-    total = sum(Decimal(shares[k]["kg_l"]) for k in chaves if k in shares)
+    total = sum(Decimal(shares[k]["kg_l"]) for k in keys if k in shares)
     return {
         k: (Decimal(shares[k]["kg_l"]) / total * 100 if total else None)
-        for k in chaves if k in shares
+        for k in keys if k in shares
     }
 
 
 def render(
-    depois: dict,
-    antes: dict | None,
+    after: dict,
+    before: dict | None,
     seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR,
     antes_nome: str | None = None,
 ) -> str:
     """Markdown for the reality check. No number written by hand."""
     benchmark = demand_profile.load_benchmark(seeds_dir)
     params = demand_profile.load_params(seeds_dir)
-    sd = _shares(depois)
-    sa = _shares(antes) if antes else None
-    alvos = _targets(benchmark, params)
-    pesaveis = sorted(alvos, key=lambda k: -(alvos[k] or 0))
+    sd = _shares(after)
+    sa = _shares(before) if before else None
+    targets = _targets(benchmark, params)
+    weighable = sorted(targets, key=lambda k: -(targets[k] or 0))
 
-    dep_bloco = _block_shares(sd, pesaveis)
-    ant_bloco = _block_shares(sa, pesaveis) if sa else {}
+    after_block = _block_shares(sd, weighable)
+    before_block = _block_shares(sa, weighable) if sa else {}
 
-    linhas: list[str] = []
-    linhas.append("# Reality check of synthetic demand")
-    linhas.append("")
-    linhas.append(
+    lines: list[str] = []
+    lines.append("# Reality check of synthetic demand")
+    lines.append("")
+    lines.append(
         "GENERATED by `make demand-reality-check`. No number on this page was written by "
         "hand; regenerate it instead of editing it."
     )
-    linhas.append("")
-    linhas.append(f"- demand model: **{params['demand_model_version']}**")
-    linhas.append(f"- benchmark: MAPA, Informe del Consumo Alimentario en Espana 2025")
-    linhas.append(f"- measured at: {depois['measured_at_utc']}")
-    if antes:
-        rotulo = f" (`{antes_nome}`)" if antes_nome else ""
-        linhas.append(
-            f"- BEFORE frozen at: {antes['measured_at_utc']}{rotulo} — the state "
-            f"IMMEDIATELY prior to this model version, not the oldest one that "
+    lines.append("")
+    lines.append(f"- demand model: **{params['demand_model_version']}**")
+    lines.append(f"- benchmark: MAPA, Informe del Consumo Alimentario en Espana 2025")
+    lines.append(f"- measured at: {after['measured_at_utc']}")
+    if before:
+        label = f" (`{antes_nome}`)" if antes_nome else ""
+        lines.append(
+            f"- BEFORE frozen at: {before['measured_at_utc']}{label} — the state "
+            f"**immediately** prior to this model version, not the oldest one that "
             f"exists. `before_mapa_2025_v1` keeps the uniform mix from before the "
             f"aggregate calibration and stays on disk; mixing the two into one column "
             f"would just make the effects of two phases get read as one."
         )
     else:
-        linhas.append(
+        lines.append(
             "- BEFORE: **absent**. Without it this page shows only the current state "
             "against MAPA, and the model-effect column does not exist."
         )
-    linhas.append("")
-    linhas.append("## How to read the columns")
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append("## How to read the columns")
+    lines.append("")
+    lines.append(
         "**MAPA %** is gross domestic consumption. **TARGET %** is the same number "
         "tilted by e-commerce participation and renormalized — it is against this that "
         "the model must be judged. The two differ on purpose: the report measures what "
         "the resident consumes, and the online basket does not have the same "
-        "composition (1,1% of fresh volume arrives via e-commerce against 2,8% of the "
-        "rest). Fresh fruit MUST show up below the domestic 14,13% in an online store; "
-        "if it showed up at 14,13% the model would be confusing total consumption with "
+        "composition (1.1% of fresh volume arrives via e-commerce against 2.8% of the "
+        "rest). Fresh fruit **must** show up below the domestic 14.13% in an online store; "
+        "if it showed up at 14.13% the model would be confusing total consumption with "
         "channel."
     )
-    linhas.append("")
-    linhas.append(
-        "Revenue alone does not work as an indicator of realism: it mixes HOW MUCH is "
-        "bought with HOW MUCH IT COSTS. That is how 10 catalog lines with an API price "
-        "ceiling accounted for 16,6% of all simulated revenue without any total closing "
+    lines.append("")
+    lines.append(
+        "Revenue alone does not work as an indicator of realism: it mixes **how much** is "
+        "bought with **how much it costs**. That is how 10 catalog lines with an API price "
+        "ceiling accounted for 16.6% of all simulated revenue without any total closing "
         "wrong."
     )
-    linhas.append("")
+    lines.append("")
 
-    # --- totais ------------------------------------------------------------------
+    # --- totals ------------------------------------------------------------------
     td, ta = sd["__total__"], (sa["__total__"] if sa else None)
-    linhas.append("## Totals")
-    linhas.append("")
-    linhas.append("| dimension | BEFORE | AFTER | change |")
-    linhas.append("|---|---:|---:|---:|")
-    for rotulo, chave, casas in (
+    lines.append("## Totals")
+    lines.append("")
+    lines.append("| dimension | BEFORE | AFTER | change |")
+    lines.append("|---|---:|---:|---:|")
+    for label, key, places in (
         ("units", "unidades", 0), ("kg or liter", "kg_l", 1),
         ("revenue (EUR)", "receita", 2), ("EUR per kg", "eur_por_kg", 2),
     ):
-        atual = td[chave]
-        anterior = ta[chave] if ta else None
-        if anterior and atual is not None and anterior != 0:
-            var = f"{(Decimal(atual) / Decimal(anterior) - 1) * 100:+.1f} %".replace(".", ",")
+        current = td[key]
+        previous = ta[key] if ta else None
+        if previous and current is not None and previous != 0:
+            change = f"{(Decimal(current) / Decimal(previous) - 1) * 100:+.1f} %"
         else:
-            var = "—"
-        linhas.append(f"| {rotulo} | {_fmt(anterior, casas)} | {_fmt(atual, casas)} | {var} |")
-    linhas.append("")
-    linhas.append(
-        "MAPA's EUR/kg for total domestic food consumption in 2025 is **3,25**. Ours "
+            change = "—"
+        lines.append(f"| {label} | {_fmt(previous, places)} | {_fmt(current, places)} | {change} |")
+    lines.append("")
+    lines.append(
+        "MAPA's EUR/kg for total domestic food consumption in 2025 is **3.25**. Ours "
         "also covers the non-food third of the catalog, which the report does not "
         "measure, so the two are not directly comparable — the useful comparison is "
         "group by group, further below."
     )
-    linhas.append("")
+    lines.append("")
 
-    # --- blocos -------------------------------------------------------------------
-    linhas.append("## The three blocks")
-    linhas.append("")
-    linhas.append(
+    # --- blocks -------------------------------------------------------------------
+    lines.append("## The three blocks")
+    lines.append("")
+    lines.append(
         "The food share is a declared premise; the split between calibrated and "
         "uncalibrated comes from the benchmark's own coverage, not from a new number."
     )
-    linhas.append("")
-    linhas.append("| block | declared weight | % of observed volume | weight origin |")
-    linhas.append("|---|---:|---:|---|")
+    lines.append("")
+    lines.append("| block | declared weight | % of observed volume | weight origin |")
+    lines.append("|---|---:|---:|---|")
     total_kg = td["kg_l"]
-    blocos = (
-        ("calibrated by MAPA", "benchmark_block", pesaveis,
+    blocks = (
+        ("calibrated by MAPA", "benchmark_block", weighable,
          f"food_line_share x benchmark coverage ({params['benchmark_volume_coverage_pct']}%)"),
         ("food without benchmark", "sin_benchmark_block", [demand_profile.SIN_BENCHMARK],
          "complement, divided by assortment size"),
@@ -501,206 +503,170 @@ def render(
          "1 - food_line_share; outside MAPA's universe"),
     )
     food = Decimal(params["food_line_share"])
-    cob = Decimal(params["benchmark_volume_coverage_pct"]) / 100
-    declarado = {
-        "benchmark_block": food * cob,
-        "sin_benchmark_block": food * (1 - cob),
+    coverage = Decimal(params["benchmark_volume_coverage_pct"]) / 100
+    declared = {
+        "benchmark_block": food * coverage,
+        "sin_benchmark_block": food * (1 - coverage),
         "no_food_block": 1 - food,
     }
-    for rotulo, chave, membros, origem in blocos:
-        obtido = sum(Decimal(sd[k]["kg_l"]) for k in membros if k in sd)
-        pct = (obtido / total_kg * 100) if total_kg else None
-        linhas.append(
-            f"| {rotulo} | {_fmt(declarado[chave] * 100)} % (lines) | {_fmt(pct)} % (kg) | {origem} |"
+    for label, key, members, origin in blocks:
+        observed = sum(Decimal(sd[k]["kg_l"]) for k in members if k in sd)
+        pct = (observed / total_kg * 100) if total_kg else None
+        lines.append(
+            f"| {label} | {_fmt(declared[key] * 100)} % (lines) | {_fmt(pct)} % (kg) | {origin} |"
         )
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append(
         "Declared weight is a share of LINES; the observed column is a share of "
-        "VOLUME. They should not coincide: a pack of water weighs 3,5 kg and a spice "
+        "VOLUME. They should not coincide: a pack of water weighs 3.5 kg and a spice "
         "sachet weighs 30 g."
     )
-    linhas.append("")
+    lines.append("")
 
-    # --- volume, dentro do bloco calibrado -----------------------------------------
-    linhas.append("## Volume (kg or liter) — within the calibrated block")
-    linhas.append("")
-    linhas.append(
+    # --- volume, within the calibrated block -----------------------------------
+    lines.append("## Volume (kg or liter) — within the calibrated block")
+    lines.append("")
+    lines.append(
         "All columns sum to 100 over the same groups. This is the dimension MAPA "
         "publishes and where calibration acts."
     )
-    linhas.append("")
-    linhas.append("| group | BEFORE % | MAPA % | TARGET % | AFTER % | error | channel |")
-    linhas.append("|---|---:|---:|---:|---:|---:|---|")
-    erros = []
-    for key in pesaveis:
+    lines.append("")
+    lines.append("| group | BEFORE % | MAPA % | TARGET % | AFTER % | error | channel |")
+    lines.append("|---|---:|---:|---:|---:|---:|---|")
+    errors = []
+    for key in weighable:
         b = benchmark[key]
         _tilt, base = demand_profile.channel_tilt(b, params)
-        alvo, obtido = alvos[key], dep_bloco.get(key)
-        if alvo is not None and obtido is not None:
-            erro = obtido - alvo
-            erros.append(abs(erro))
-            erro_txt = f"{erro:+.2f}".replace(".", ",")
+        target, observed = targets[key], after_block.get(key)
+        if target is not None and observed is not None:
+            error = observed - target
+            errors.append(abs(error))
+            error_txt = f"{error:+.2f}"
         else:
-            erro_txt = "—"
-        linhas.append(
-            f"| {key} | {_fmt(ant_bloco.get(key))} | {_fmt(b['volume_share_pct'])} "
-            f"| {_fmt(alvo)} | {_fmt(obtido)} | {erro_txt} | {base} |"
+            error_txt = "—"
+        lines.append(
+            f"| {key} | {_fmt(before_block.get(key))} | {_fmt(b['volume_share_pct'])} "
+            f"| {_fmt(target)} | {_fmt(observed)} | {error_txt} | {base} |"
         )
-    linhas.append("")
-    if erros:
-        medio = sum(erros) / len(erros)
-        pior = max(erros)
-        linhas.append(
-            f"Mean absolute error against the TARGET: **{_fmt(medio, 3)}** points; "
-            f"largest deviation: **{_fmt(pior, 3)}** points."
+    lines.append("")
+    if errors:
+        mean = sum(errors) / len(errors)
+        worst = max(errors)
+        lines.append(
+            f"Mean absolute error against the TARGET: **{_fmt(mean, 3)}** points; "
+            f"largest deviation: **{_fmt(worst, 3)}** points."
         )
-        linhas.append("")
-        linhas.append(
-            "The goal is NOT to minimize this number. It is here so that a large "
+        lines.append("")
+        lines.append(
+            "The goal is **not** to minimize this number. It is here so that a large "
             "deviation is explainable, not to be chased — an error of zero would mean "
             "the catalog's assortment matches the Spanish basket perfectly, which "
             "would be suspicious, not good."
         )
-        linhas.append("")
+        lines.append("")
     fallback = [
-        k for k in pesaveis
+        k for k in weighable
         if sd.get(k, {}).get("linhas_sem_kg", 0) > 0
     ]
     if fallback:
-        linhas.append(
+        lines.append(
             "Groups with lines that have no kg conversion (their deviation against the "
             "TARGET does not measure calibration, it measures conversion coverage): "
             + ", ".join(f"`{k}` ({sd[k]['linhas_sem_kg']} lines)" for k in fallback)
         )
-        linhas.append("")
+        lines.append("")
 
-    # --- unidades e receita ---------------------------------------------------------
-    chaves_todas = [k for k in sorted(sd, key=lambda k: -(float(sd[k].get("pct_kg") or 0)))
-                    if k != "__total__"]
-
-    linhas.append("## Units — over the total, including non-food")
-    linhas.append("")
-    linhas.append(
-        "Not comparable to MAPA: the report measures weight and volume, never piece "
-        "count. This table exists to show how many LINES each group occupies in the "
-        "basket."
+    # --- the other three views ---------------------------------------------------------
+    # Units, revenue and EUR/kg were measured like the shares above, but do not become
+    # tables: they would be three more near-identical tables that confirm the calibration
+    # argument instead of adding to it. What they caught stays in prose.
+    n_categories = sum(1 for k in sd if k != "__total__"
+                       and k not in demand_profile.SCOPE_LABELS)
+    lines.append("## Other dimensions checked the same way")
+    lines.append("")
+    lines.append(
+        f"The same {n_categories} categories were also measured BEFORE/AFTER across three more views —\n"
+        "**units** (share of lines, not comparable to MAPA since the report never counts\n"
+        "pieces), **revenue** (share of value, deliberately NOT a target), and **EUR/kg**\n"
+        "(the only column needing no conversion at all). They are not reproduced row by row\n"
+        f"here — a fourth near-identical {n_categories}-row table would confirm the calibration argument\n"
+        "above, not add to it. Two things they caught are worth keeping in prose:"
     )
-    linhas.append("")
-    linhas.append("| group | BEFORE % | AFTER % |")
-    linhas.append("|---|---:|---:|")
-    for key in chaves_todas:
-        linhas.append(
-            f"| {key} | {_fmt(sa.get(key, {}).get('pct_unidades') if sa else None)} "
-            f"| {_fmt(sd[key].get('pct_unidades'))} |"
-        )
-    linhas.append("")
-
-    linhas.append("## Revenue — over the total")
-    linhas.append("")
-    linhas.append(
-        "The MAPA column is the domestic VALUE share, with no channel tilt. It is NOT "
-        "a target: revenue is a consequence of volume and Mercadona's observed price, "
-        "and converges with MAPA only to the extent that Spanish prices and Mercadona's "
-        "prices look alike. Volume and value should DIVERGE from each other — seafood is "
-        "0,81% of volume and 2,88% of domestic value, and a simulator that made them "
-        "equal would be wrong."
+    lines.append("")
+    lines.append(
+        "- **Volume and value are expected to diverge, not match.** In the revenue view,\n"
+        "  `MARISCOS_MOLUSCOS_CRUSTACEOS` is 0.81% of volume against 2.88% of domestic\n"
+        "  value — a simulator that forced the two to be equal would be wrong, not right.\n"
+        "- **EUR/kg needs no unit conversion, so it was the column that caught the\n"
+        "  bulk-pricing defect before calibration existed** — a healthy observed price\n"
+        "  shows up there regardless of how many lines of a group go out."
     )
-    linhas.append("")
-    linhas.append("| group | BEFORE % | MAPA value % | AFTER % |")
-    linhas.append("|---|---:|---:|---:|")
-    for key in chaves_todas:
-        b = benchmark.get(key, {})
-        linhas.append(
-            f"| {key} | {_fmt(sa.get(key, {}).get('pct_receita') if sa else None)} "
-            f"| {_fmt(b.get('value_share_pct'))} | {_fmt(sd[key].get('pct_receita'))} |"
-        )
-    linhas.append("")
+    lines.append("")
 
-    # --- preco medio ------------------------------------------------------------------
-    linhas.append("## Average price per kg — the column comparable with no conversion at all")
-    linhas.append("")
-    linhas.append(
-        "Share requires converting volume into lines and tilting by channel; EUR/kg "
-        "requires nothing. A group whose EUR/kg matches the report has a healthy "
-        "observed price, regardless of how many lines of it go out — and it was this "
-        "column that flagged the bulk-pricing defect before calibration existed."
-    )
-    linhas.append("")
-    linhas.append("| group | BEFORE EUR/kg | MAPA EUR/kg | AFTER EUR/kg | lines without kg |")
-    linhas.append("|---|---:|---:|---:|---:|")
-    for key in chaves_todas:
-        b = benchmark.get(key, {})
-        linhas.append(
-            f"| {key} | {_fmt(sa.get(key, {}).get('eur_por_kg') if sa else None)} "
-            f"| {_fmt(b.get('avg_price_eur_kg'))} | {_fmt(sd[key].get('eur_por_kg'))} "
-            f"| {sd[key].get('linhas_sem_kg', 0)} |"
-        )
-    linhas.append("")
-
-    # --- o que o benchmark nao alcanca -------------------------------------------------
-    linhas.append("## What the benchmark does not reach")
-    linhas.append("")
-    sem_alvo = sorted(
+    # --- what the benchmark does not reach -------------------------------------------------
+    lines.append("## What the benchmark does not reach")
+    lines.append("")
+    no_target = sorted(
         k for k, v in benchmark.items()
         if not v["use_as_weight"] and v["provenance"] in ("informe_prose", "none")
         and k not in demand_profile.SCOPE_LABELS
     )
-    linhas.append(
+    lines.append(
         f"- **{demand_profile.NO_FOOD}** and **{demand_profile.SIN_BENCHMARK}** have no "
         f"MAPA target and are never added to the calibrated block. The report measures "
         f"food and beverages; drugstore, cleaning, makeup and pet items are outside its "
         f"universe."
     )
-    linhas.append(
+    lines.append(
         f"- declared food share: **{params['food_line_share']}** — `synthetic` premise, "
         f"with no benchmark. No source in this repo measures the food composition of an "
         f"online basket, and MAPA does not measure drugstore items."
     )
-    linhas.append(
+    lines.append(
         f"- benchmark coverage: **{params['benchmark_volume_coverage_pct']}%** of "
         f"Spanish domestic volume, summing the weighable leaves. The complement goes "
         f"to `SIN_BENCHMARK`, divided by assortment size."
     )
-    for key in sem_alvo:
+    for key in no_target:
         b = benchmark[key]
-        secao = b["informe_section"] or "no section"
-        linhas.append(f"- `{key}` ({b['mapa_label']}): no published share — section {secao}")
-    linhas.append("")
-    linhas.append("### Seasonality")
-    linhas.append("")
-    linhas.append(
-        "NEUTRAL profile across the 12 months, for lack of numeric evidence: the "
+        section = b["informe_section"] or "no section"
+        lines.append(f"- `{key}` ({b['mapa_label']}): no published share — section {section}")
+    lines.append("")
+    lines.append("### Seasonality")
+    lines.append("")
+    lines.append(
+        "**Neutral** profile across the 12 months, for lack of numeric evidence: the "
         "report's monthly charts are images, and there are only five monthly numbers "
-        "in prose — all for the food TOTAL, never by category. Besides that, the "
+        "in prose — all for the food **total**, never by category. Besides that, the "
         "simulator's window covers only August, so there is no monthly axis to "
         "exercise. The mechanism exists, applies to the order rate, and has a test "
         "proving that a non-neutral profile changes the output; the trigger for "
         "proposing a profile is the window covering November and December."
     )
-    linhas.extend(_cohort_section(depois, antes))
-    linhas.extend(_channel_section(depois, seeds_dir, params))
-    linhas.append("")
-    linhas.append("## Boundary the calibration does not cross")
-    linhas.append("")
-    linhas.append(
-        "MAPA measures the resident's domestic consumption. It does NOT measure "
+    lines.extend(_cohort_section(after, before))
+    lines.extend(_channel_section(after, seeds_dir, params))
+    lines.append("")
+    lines.append("## Boundary the calibration does not cross")
+    lines.append("")
+    lines.append(
+        "MAPA measures the resident's domestic consumption. It does **not** measure "
         "online-store orders, basket, purchase cadence, or ticket per channel. That is "
         "why `daily_order_rate`, `basket_lines_min/mode/max` and `quantity_max` remain "
-        "`synthetic` premises in `order_premises_seed.csv` and received NO calibration "
+        "`synthetic` premises in `order_premises_seed.csv` and received **no** calibration "
         "whatsoever in this phase. Calling the benchmark a source for those numbers "
         "would turn it into a false representation of reality."
     )
-    linhas.append("")
-    return "\n".join(linhas) + "\n"
+    lines.append("")
+    return "\n".join(lines) + "\n"
 
 
-def _channel_section(depois: dict, seeds_dir: str, params: dict) -> list[str]:
+def _channel_section(after: dict, seeds_dir: str, params: dict) -> list[str]:
     """The account that only closes once the base was sized by population.
 
-    THE CIRCULAR ARGUMENT THIS BREAKS. The customer base became 2,2% of the adults of
-    the four AUFs because 2,2% of food volume goes through e-commerce (MAPA, section
+    THE CIRCULAR ARGUMENT THIS BREAKS. The customer base became 2.2% of the adults of
+    the four AUFs because 2.2% of food volume goes through e-commerce (MAPA, section
     3). If that transposition — from volume share to people share — were coherent with
-    the rest of the model, the volume the orders produce would also have to be 2,2% of
+    the rest of the model, the volume the orders produce would also have to be 2.2% of
     the domestic consumption of those same AUFs. There is no guarantee that it is:
     `daily_order_rate` and basket size were declared in Phase 3, with no relation to
     the penetration rate, and now the three meet for the first time.
@@ -711,8 +677,8 @@ def _channel_section(depois: dict, seeds_dir: str, params: dict) -> list[str]:
     nothing to consult to decide which of the two is wrong. The number is measured,
     published, and recorded as a gap.
     """
-    canal = depois.get("channel")
-    if not canal:
+    channel = after.get("channel")
+    if not channel:
         return [
             "",
             "## Channel closure",
@@ -721,93 +687,93 @@ def _channel_section(depois: dict, seeds_dir: str, params: dict) -> list[str]:
             "the measurement.",
         ]
 
-    regioes = demand_profile.load_region_reference(seeds_dir)
+    regions = demand_profile.load_region_reference(seeds_dir)
     province_ccaa = demand_profile.load_province_ccaa(seeds_dir)
-    taxa = Decimal(str(params["channel_reference_pct"]))
-    dias = Decimal(canal["dias"])
+    rate = Decimal(str(params["channel_reference_pct"]))
+    days = Decimal(channel["dias"])
 
-    # ESCOPO ALIMENTAR, e nao o total do modelo. O per capita do informe e de "alimentacion
-    # y bebidas" e NAO cobre drogaria; somar NO_FOOD do lado do modelo compararia dois
-    # universos diferentes e inflaria a razao sem que nada estivesse errado. SIN_BENCHMARK
-    # FICA: sao grupos alimentares que o informe simplesmente nao detalha, e eles pertencem ao
-    # mesmo universo que o per capita mede.
-    kg_medido = Decimal("0")
-    eur_medido = Decimal("0")
+    # FOOD SCOPE, not the model's total. The report's per capita is for "alimentacion y
+    # bebidas" and does NOT cover drugstore items; adding NO_FOOD on the model side would
+    # compare two different universes and inflate the ratio without anything being wrong.
+    # SIN_BENCHMARK STAYS: these are food groups the report simply does not detail, and they
+    # belong to the same universe the per capita measures.
+    kg_measured = Decimal("0")
+    eur_measured = Decimal("0")
     kg_no_food = Decimal("0")
     eur_no_food = Decimal("0")
-    for chave, valor in depois["groups"].items():
-        if chave == demand_profile.NO_FOOD:
-            kg_no_food += Decimal(valor["kg_l"])
-            eur_no_food += Decimal(valor["receita"])
+    for key, value in after["groups"].items():
+        if key == demand_profile.NO_FOOD:
+            kg_no_food += Decimal(value["kg_l"])
+            eur_no_food += Decimal(value["receita"])
             continue
-        kg_medido += Decimal(valor["kg_l"])
-        eur_medido += Decimal(valor["receita"])
+        kg_measured += Decimal(value["kg_l"])
+        eur_measured += Decimal(value["receita"])
 
-    linhas = ["", "## Channel closure", ""]
-    linhas.append(
-        f"The customer base was sized as **{taxa}% of the adults** of the four AUFs, "
-        f"because {taxa}% of food volume goes through e-commerce. The question this "
-        f"section answers is whether the model, after that, produces {taxa}% of the "
+    lines = ["", "## Channel closure", ""]
+    lines.append(
+        f"The customer base was sized as **{rate}% of the adults** of the four AUFs, "
+        f"because {rate}% of food volume goes through e-commerce. The question this "
+        f"section answers is whether the model, after that, produces {rate}% of the "
         f"consumption of those same AUFs — or whether the penetration rate and the "
         f"order cadence, declared in different phases with no relation to each other, "
         f"contradict one another."
     )
-    linhas.append("")
-    linhas.append(
-        f"Measured window: **{canal['dias']} day(s)**, from {canal['primeiro_dia']} to "
-        f"{canal['ultimo_dia']}. The report's consumption is annual and is divided by 365."
+    lines.append("")
+    lines.append(
+        f"Measured window: **{channel['dias']} day(s)**, from {channel['primeiro_dia']} to "
+        f"{channel['ultimo_dia']}. The report's consumption is annual and is divided by 365."
     )
-    linhas.append("")
+    lines.append("")
 
-    linhas.append("| warehouse | population served | community | kg-L/capita/yr | EUR/capita/yr |")
-    linhas.append("|---|---:|---|---:|---:|")
-    kg_alvo = Decimal("0")
-    eur_alvo = Decimal("0")
-    populacao_total = 0
-    for entrada in canal["warehouses"]:
-        ccaa = demand_profile.ccaa_of(province_ccaa, entrada["province_code"])
-        regiao = regioes[ccaa]
-        populacao = Decimal(entrada["population_total"])
-        populacao_total += entrada["population_total"]
-        kg_alvo += populacao * regiao["per_capita_kg_l"]
-        eur_alvo += populacao * (regiao["per_capita_eur"] or Decimal("0"))
-        linhas.append(
-            f"| {entrada['wh']} | {entrada['population_total']:,} | {regiao['ccaa_label']} "
-            f"| {regiao['per_capita_kg_l']} | {regiao['per_capita_eur']} |"
+    lines.append("| warehouse | population served | community | kg-L/capita/yr | EUR/capita/yr |")
+    lines.append("|---|---:|---|---:|---:|")
+    kg_target = Decimal("0")
+    eur_target = Decimal("0")
+    population_total = 0
+    for entry in channel["warehouses"]:
+        ccaa = demand_profile.ccaa_of(province_ccaa, entry["province_code"])
+        region = regions[ccaa]
+        population = Decimal(entry["population_total"])
+        population_total += entry["population_total"]
+        kg_target += population * region["per_capita_kg_l"]
+        eur_target += population * (region["per_capita_eur"] or Decimal("0"))
+        lines.append(
+            f"| {entry['wh']} | {entry['population_total']:,} | {region['ccaa_label']} "
+            f"| {region['per_capita_kg_l']} | {region['per_capita_eur']} |"
         )
-    linhas.append(f"| **total** | **{populacao_total:,}** | | | |")
-    linhas.append("")
+    lines.append(f"| **total** | **{population_total:,}** | | | |")
+    lines.append("")
 
-    # Do consumo anual da populacao para o pedaco online da janela medida.
-    fator = taxa / Decimal("100") * dias / Decimal("365")
-    kg_alvo_janela = kg_alvo * fator
-    eur_alvo_janela = eur_alvo * fator
+    # From the population's annual consumption to the online slice of the measured window.
+    factor = rate / Decimal("100") * days / Decimal("365")
+    kg_target_window = kg_target * factor
+    eur_target_window = eur_target * factor
 
-    linhas.append("| dimension | expected channel | model | ratio |")
-    linhas.append("|---|---:|---:|---:|")
-    for rotulo, medido, alvo in (
-        ("kg or liter", kg_medido, kg_alvo_janela),
-        ("revenue (EUR)", eur_medido, eur_alvo_janela),
+    lines.append("| dimension | expected channel | model | ratio |")
+    lines.append("|---|---:|---:|---:|")
+    for label, measured, target in (
+        ("kg or liter", kg_measured, kg_target_window),
+        ("revenue (EUR)", eur_measured, eur_target_window),
     ):
-        if medido is None or not alvo:
-            linhas.append(f"| {rotulo} | — | — | — |")
+        if measured is None or not target:
+            lines.append(f"| {label} | — | — | — |")
             continue
-        razao = medido / alvo
-        linhas.append(
-            f"| {rotulo} | {_fmt(alvo, 0)} | {_fmt(medido, 0)} | **{_fmt(razao, 2)}x** |"
+        ratio = measured / target
+        lines.append(
+            f"| {label} | {_fmt(target, 0)} | {_fmt(measured, 0)} | **{_fmt(ratio, 2)}x** |"
         )
-    linhas.append("")
-    linhas.append(
-        f"The scope on both sides is FOOD. `{demand_profile.NO_FOOD}` is left out of "
+    lines.append("")
+    lines.append(
+        f"The scope on both sides is **food**. `{demand_profile.NO_FOOD}` is left out of "
         f"the numerator — {_fmt(kg_no_food, 0)} kg-L and {_fmt(eur_no_food, 2)} EUR in "
         f"the window — because the report's per capita is for food and beverages and "
         f"does not cover drugstore items. Adding it would compare two different "
         f"universes and inflate the ratio without anything being wrong. "
-        f"`SIN_BENCHMARK` STAYS: these are food groups the report does not detail, "
+        f"`SIN_BENCHMARK` **stays**: these are food groups the report does not detail, "
         f"but that belong to the same universe the per capita measures."
     )
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append(
         "**None of these numbers was adjusted to get closer to the other, and that is "
         "what makes them interesting.** The penetration rate entered in Phase 6, "
         "anchored on the report. `daily_order_rate`, `basket_lines_*` and "
@@ -815,29 +781,29 @@ def _channel_section(depois: dict, seeds_dir: str, params: dict) -> list[str]:
         "source that measured them. The two halves only meet in this table, and the "
         "rest between them is what you see above."
     )
-    linhas.append("")
-    linhas.append(
-        "The distance that remains must NOT be closed by tweaking `daily_order_rate` "
-        "until the ratio becomes 1,00: that would make a premise fit a result without "
+    lines.append("")
+    lines.append(
+        "The distance that remains must **not** be closed by tweaking `daily_order_rate` "
+        "until the ratio becomes 1.00: that would make a premise fit a result without "
         "anything having been measured, and no source in this repository measures "
         "domestic purchase cadence or online basket — there is no criterion to decide "
-        "which side is wrong. As long as that is so, this ratio is an OBSERVATION, not "
-        "a target. TRIGGER: a source that measures domestic purchase frequency or "
+        "which side is wrong. As long as that is so, this ratio is an **observation**, not "
+        "a target. **Trigger:** a source that measures domestic purchase frequency or "
         "average ticket per channel turns this line into a test."
     )
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append(
         "A caveat about the denominator, for the same reason it already exists for the "
-        "cohort: the report's per capita consumption is for the community's ENTIRE "
+        "cohort: the report's per capita consumption is for the community's **entire** "
         "population, children included, while the customers are adults. That is "
         "correct here — a household's consumption shows up in the per capita of all "
         "its members — but it means the ratio above cannot be read as 'each customer "
         "buys X% of what they should'."
     )
-    return linhas
+    return lines
 
 
-def _cohort_section(depois: dict, antes: dict | None) -> list[str]:
+def _cohort_section(after: dict, before: dict | None) -> list[str]:
     """The only dimension in which the cohort layer shows itself.
 
     THE AGGREGATE DOES NOT MOVE ON PURPOSE — that is the IPF's acceptance criterion —
@@ -845,19 +811,19 @@ def _cohort_section(depois: dict, antes: dict | None) -> list[str]:
     section exists because the effect is entirely conditional, and something that
     only shows up in the conditional needs a place of its own to be seen.
     """
-    coortes = depois.get("cohorts")
-    linhas: list[str] = ["", "## Propensity by buyer cohort", ""]
+    cohorts = after.get("cohorts")
+    lines: list[str] = ["", "## Propensity by buyer cohort", ""]
 
-    if not coortes:
-        linhas.append(
+    if not cohorts:
+        lines.append(
             "**Not present in this window.** `silver_order.buyer_age_band` is not "
             "populated — the window was generated by a model prior to the cohort "
             "layer. This is not a measurement of zero, it is the absence of the stamp."
         )
-        return linhas
+        return lines
 
-    linhas.append(
-        "The cohort has two dimensions, and they are the two ONLY ones in which an "
+    lines.append(
+        "The cohort has two dimensions, and they are the two **only** ones in which an "
         "observed customer attribute coincides with a cut published by the report: "
         "**age** (`birth_year`, from the INE's provincial distribution) and "
         "**autonomous community** (`province_code`, from the Callejero). Household "
@@ -865,8 +831,8 @@ def _cohort_section(depois: dict, antes: dict | None) -> list[str]:
         "the customer has no household composition or income, and assigning them "
         "would mean inventing the attribute."
     )
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append(
         "**The aggregate does not move, and that is the acceptance criterion.** The "
         "per-cohort weights, weighted by the real distribution of cohorts among "
         "orders, reproduce the weights of the aggregate calibration — that is what "
@@ -874,96 +840,96 @@ def _cohort_section(depois: dict, antes: dict | None) -> list[str]:
         "not find it: it lives entirely in the columns below."
     )
 
-    bandas = [b for b in ("LT35", "35_49", "50_64", "GE65") if b in coortes]
-    totais = {
-        b: sum(int(v["linhas"]) for v in coortes[b].values()) for b in bandas
+    bands = [b for b in ("LT35", "35_49", "50_64", "GE65") if b in cohorts]
+    totals = {
+        b: sum(int(v["linhas"]) for v in cohorts[b].values()) for b in bands
     }
 
-    linhas.append("")
-    linhas.append("### Each group's slice WITHIN the cohort (% of lines)")
-    linhas.append("")
-    linhas.append(
+    lines.append("")
+    lines.append("### Each group's slice WITHIN the cohort (% of lines)")
+    lines.append("")
+    lines.append(
         "The denominator is the cohort itself, not the total: that is how the "
         "comparison between bands isolates propensity from cohort size. The `x` "
         "column is the ratio between the oldest and the youngest band — the summary "
         "of an entire row."
     )
-    linhas.append("")
-    cabecalho = "| group | " + " | ".join(f"{b} %" for b in bandas) + " | x GE65/LT35 |"
-    linhas.append(cabecalho)
-    linhas.append("|---|" + "---:|" * (len(bandas) + 1))
+    lines.append("")
+    header = "| group | " + " | ".join(f"{b} %" for b in bands) + " | x GE65/LT35 |"
+    lines.append(header)
+    lines.append("|---|" + "---:|" * (len(bands) + 1))
 
-    grupos = sorted({g for b in bandas for g in coortes[b]})
-    ordenados = []
-    for grupo in grupos:
-        fatias = {}
-        for b in bandas:
-            total = totais[b] or 1
-            fatias[b] = Decimal(coortes[b].get(grupo, {}).get("linhas", 0)) * 100 / total
-        razao = None
-        if "GE65" in fatias and "LT35" in fatias and fatias["LT35"] > 0:
-            razao = fatias["GE65"] / fatias["LT35"]
-        ordenados.append((razao if razao is not None else Decimal("0"), grupo, fatias))
-    ordenados.sort(reverse=True)
+    groups = sorted({g for b in bands for g in cohorts[b]})
+    ranked = []
+    for group in groups:
+        slices = {}
+        for b in bands:
+            total = totals[b] or 1
+            slices[b] = Decimal(cohorts[b].get(group, {}).get("linhas", 0)) * 100 / total
+        ratio = None
+        if "GE65" in slices and "LT35" in slices and slices["LT35"] > 0:
+            ratio = slices["GE65"] / slices["LT35"]
+        ranked.append((ratio if ratio is not None else Decimal("0"), group, slices))
+    ranked.sort(reverse=True)
 
-    for razao, grupo, fatias in ordenados:
-        celulas = " | ".join(_fmt(fatias[b]) for b in bandas)
-        linhas.append(f"| {grupo} | {celulas} | {_fmt(razao)} |")
+    for ratio, group, slices in ranked:
+        cells = " | ".join(_fmt(slices[b]) for b in bands)
+        lines.append(f"| {group} | {cells} | {_fmt(ratio)} |")
 
-    linhas.append("")
-    linhas.append(
-        "A ratio of 1,00 means the age band does not move that group. `NO_FOOD` and "
+    lines.append("")
+    lines.append(
+        "A ratio of 1.00 means the age band does not move that group. `NO_FOOD` and "
         "`SIN_BENCHMARK` stay close to 1 by construction: the report does not measure "
-        "them, their index is neutral, and each BLOCK's slice is kept constant across "
+        "them, their index is neutral, and each **block's** slice is kept constant across "
         "cohorts on purpose. Without that boundary they would absorb the "
         "normalization's residue and the model would end up claiming that elderly "
         "people buy 40% less drugstore items — a number no source in this repo "
         "measures, and bigger than most of the effects that are measured."
     )
 
-    armazens = depois.get("warehouses") or {}
-    if armazens:
-        linhas.append("")
-        linhas.append("### Frequency by autonomous community")
-        linhas.append("")
-        linhas.append(
-            "Before this phase the four warehouses had the SAME order count by "
+    warehouses = after.get("warehouses") or {}
+    if warehouses:
+        lines.append("")
+        lines.append("### Frequency by autonomous community")
+        lines.append("")
+        lines.append(
+            "Before this phase the four warehouses had the **same** order count by "
             "construction. The report measures per capita consumption by community, "
             "and that difference now applies — as frequency, never as basket size, "
             "because the report gives kg per year and does not publish domestic "
             "purchase frequency."
         )
-        linhas.append("")
-        linhas.append("| warehouse | orders | distinct customers | orders per customer |")
-        linhas.append("|---|---:|---:|---:|")
-        for wh in sorted(armazens):
-            dados = armazens[wh]
-            por_cliente = (
-                Decimal(dados["pedidos"]) / Decimal(dados["clientes"])
-                if dados["clientes"] else Decimal("0")
+        lines.append("")
+        lines.append("| warehouse | orders | distinct customers | orders per customer |")
+        lines.append("|---|---:|---:|---:|")
+        for wh in sorted(warehouses):
+            counts = warehouses[wh]
+            per_customer = (
+                Decimal(counts["pedidos"]) / Decimal(counts["clientes"])
+                if counts["clientes"] else Decimal("0")
             )
-            linhas.append(
-                f"| {wh} | {dados['pedidos']} | {dados['clientes']} | {_fmt(por_cliente)} |"
+            lines.append(
+                f"| {wh} | {counts['pedidos']} | {counts['clientes']} | {_fmt(per_customer)} |"
             )
-        antes_wh = (antes or {}).get("warehouses")
-        if antes_wh:
-            linhas.append("")
-            linhas.append(
+        before_wh = (before or {}).get("warehouses")
+        if before_wh:
+            lines.append("")
+            lines.append(
                 "The frozen BEFORE has the count per warehouse alongside; the "
                 "difference between them is the regional tilt taking effect."
             )
         else:
-            linhas.append("")
-            linhas.append(
+            lines.append("")
+            lines.append(
                 "The frozen BEFORE does not record a count per warehouse: it predates "
                 "this measurement existing. The useful comparison is among today's "
                 "four warehouses, which used to be equal by construction."
             )
 
-    return linhas
+    return lines
 
 
-def calibration_error(depois: dict, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> dict:
+def calibration_error(after: dict, seeds_dir: str = demand_profile.DEFAULT_SEEDS_DIR) -> dict:
     """Error of the observed mix against the TARGET, ignoring groups without kg coverage.
 
     THIS IS NOT A GRADE. The declared objective was never to minimize this distance —
@@ -975,7 +941,7 @@ def calibration_error(depois: dict, seeds_dir: str = demand_profile.DEFAULT_SEED
     `demand.pick` that reverts to uniform, an export that forgets the fifth file, a
     seed that does not reload — nothing breaks loudly. Orders keep going out, totals
     keep closing, and the mix goes back to mirroring assortment size. Before this
-    phase, MARISCOS was 11,44 points from the target; inertia announces itself with
+    phase, MARISCOS was 11.44 points from the target; inertia announces itself with
     deviations of that order, not with tenths.
 
     Groups that fall into the line fallback (kg coverage below the minimum) are
@@ -985,29 +951,29 @@ def calibration_error(depois: dict, seeds_dir: str = demand_profile.DEFAULT_SEED
     """
     benchmark = demand_profile.load_benchmark(seeds_dir)
     params = demand_profile.load_params(seeds_dir)
-    sd = _shares(depois)
-    alvos = _targets(benchmark, params)
-    pesaveis = list(alvos)
-    dep = _block_shares(sd, pesaveis)
+    sd = _shares(after)
+    targets = _targets(benchmark, params)
+    weighable = list(targets)
+    after_shares = _block_shares(sd, weighable)
 
-    desvios = {}
-    for key in pesaveis:
+    deviations = {}
+    for key in weighable:
         if sd.get(key, {}).get("linhas_sem_kg", 0):
             continue
-        alvo, obtido = alvos[key], dep.get(key)
-        if alvo is None or obtido is None:
+        target, observed = targets[key], after_shares.get(key)
+        if target is None or observed is None:
             continue
-        desvios[key] = abs(obtido - alvo)
-    if not desvios:
+        deviations[key] = abs(observed - target)
+    if not deviations:
         return {"grupos": 0, "medio": None, "pior": None, "pior_grupo": None}
-    pior_grupo = max(desvios, key=desvios.get)
+    worst_group = max(deviations, key=deviations.get)
     return {
-        "grupos": len(desvios),
-        "medio": sum(desvios.values()) / len(desvios),
-        "pior": desvios[pior_grupo],
-        "pior_grupo": pior_grupo,
+        "grupos": len(deviations),
+        "medio": sum(deviations.values()) / len(deviations),
+        "pior": deviations[worst_group],
+        "pior_grupo": worst_group,
         "excluidos": sorted(
-            k for k in pesaveis if sd.get(k, {}).get("linhas_sem_kg", 0)
+            k for k in weighable if sd.get(k, {}).get("linhas_sem_kg", 0)
         ),
     }
 

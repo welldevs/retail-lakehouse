@@ -1,87 +1,87 @@
 version: 2
 
-# A FRONTEIRA ENTRE OS DOIS MOTORES E FISICA, E ESTA E A DECLARACAO DELA.
+# THE BOUNDARY BETWEEN THE TWO ENGINES IS PHYSICAL, AND THIS IS ITS DECLARATION.
 #
-# Nenhum modelo desta arvore pode `ref()` um modelo do Silver: adaptadores diferentes nao
-# se cruzam numa execucao do dbt. A ligacao e `source()` sobre as tabelas que o COPY INTO
-# carregou — exatamente o mesmo mecanismo que separa uma Source FROZEN da plataforma um
-# nivel acima, onde os dois lados so compartilham arquivos.
+# No model in this tree may `ref()` a Silver model: different adapters do not
+# cross within one dbt run. The link is `source()` over the tables COPY INTO
+# loaded — exactly the same mechanism that separates a FROZEN Source from the platform one
+# level up, where the two sides only share files.
 #
-# Consequencia pratica a nao esquecer: acrescentar uma coluna a um modelo Silver NAO a faz
-# aparecer aqui. E preciso passar pelo recorte (SPECS em snowflake_export.py) e recarregar.
-# Isso e uma feature, nao um atrito: o que atravessa a fronteira e uma decisao explicita.
+# A practical consequence not to forget: adding a column to a Silver model does NOT make it
+# show up here. It must go through the cut (SPECS in warehouse_cut.py) and be reloaded.
+# That is a feature, not friction: what crosses the boundary is an explicit decision.
 
 sources:
   - name: stage
-    # SNOWFLAKE TEM TRES NIVEIS (database.schema.table) E POSTGRES SO DOIS: uma conexao
-    # Postgres nao enxerga OUTRO banco ("cross-database references are not implemented",
-    # medido) — so o schema dentro do banco corrente. `target.database` resolve para o
-    # `dbname` do profile ativo (STAGE ja mora la, ver postgres_load.py), enquanto o
-    # Snowflake continua explicito em RETAIL. Sem este `{{ }}`, `--target postgres` falhava
-    # nos DEZ modelos de warehouse que leem STAGE — o unico que sobrava era dim_date, que
-    # nao le source nenhuma.
+    # SNOWFLAKE HAS THREE LEVELS (database.schema.table) AND POSTGRES ONLY TWO: a Postgres
+    # connection cannot see ANOTHER database ("cross-database references are not implemented",
+    # measured) — only the schema within the current database. `target.database` resolves to the
+    # active profile's `dbname` (STAGE already lives there, see postgres_load.py), while
+    # Snowflake stays explicit as RETAIL. Without this `{{ }}`, `--target postgres` failed
+    # on the TEN warehouse models that read STAGE — the only one left was dim_date, which
+    # reads no source at all.
     database: "{{ 'RETAIL' if target.type == 'snowflake' else target.database }}"
     schema: STAGE
     description: >
-      Espelho 1:1 do recorte do Silver — 406.855 linhas, 9,95% das 4.087.507 do Silver.
-      Sem regra de negocio: filtro de escopo geografico, filtro de ultima ingestao e
-      deduplicacao de grao, so. Full refresh a cada carga.
+      A 1:1 mirror of the Silver cut — 406,855 rows, 9.95% of Silver's 4,087,507.
+      No business rule: geographic scope filter, latest-ingestion filter and
+      grain deduplication, nothing else. Full refresh on every load.
     tables:
       - name: STG_PRODUCT_PRICE
-        description: "Grao (ingestion_date, warehouse, source_product_id). A presenca da linha E o sortimento."
+        description: "Grain (ingestion_date, warehouse, source_product_id). The presence of the row IS the assortment."
       - name: STG_PRICE_CHANGE
-        description: "Transicao entre snapshots EXISTENTES. Carrega name_seen_before, insumo do SCD2."
+        description: "Transition between EXISTING snapshots. Carries name_seen_before, an input to the SCD2."
       - name: STG_POPULATION_MUNICIPALITY
-        description: "Grao (municipio, sexo, ano), 1996-2025. Sem o agregado 'Total' da fonte."
+        description: "Grain (municipality, sex, year), 1996-2025. Without the source's 'Total' aggregate."
       - name: STG_CATEGORY
-        description: "Arvore de 2 niveis, global — identica nos 4 armazens (medido)."
+        description: "2-level tree, global — identical across the 4 warehouses (measured)."
       - name: STG_CUSTOMER
-        description: "Todas as ingestion_date: DIM_CUSTOMER e SCD2 e precisa do historico."
+        description: "All ingestion_dates: DIM_CUSTOMER is SCD2 and needs the history."
       - name: STG_GEOGRAPHY
-        description: "Grao (provincia, municipio, CEP). 699 linhas destiladas de 304.952 tramos."
+        description: "Grain (province, municipality, postal code). 699 rows distilled from 304,952 street segments."
       - name: STG_SERVICE_AREA
-        description: "A Area Urbana Funcional de cada armazem: 370 municipios."
+        description: "Each warehouse's Functional Urban Area: 370 municipalities."
       - name: STG_WAREHOUSE
-        description: "Os 4 armazens e sua provincia-sede."
+        description: "The 4 warehouses and their home province."
       - name: STG_INGESTION_RUN
         description: >
-          38 linhas que distinguem "nao houve preco" de "nao houve observacao". Sem elas
-          qualquer serie temporal interpola as lacunas em silencio. As tres sources com
-          eixo de armazem entram por `union all by name`; orders declara EVENTOS, e o
-          mapeamento para `declared_rows` respeita isso: o manifesto declara EVENTOS, e o
-          fold declara PEDIDOS — dois numeros diferentes para a mesma particao.
+          38 rows that distinguish "there was no price" from "there was no observation". Without them
+          any time series silently interpolates the gaps. The three sources with a
+          warehouse axis come in through `union all by name`; orders declares EVENTS, and the
+          mapping to `declared_rows` respects that: the manifest declares EVENTS, and the
+          fold declares ORDERS — two different numbers for the same partition.
       - name: STG_ORDER
         description: >
-          O fold, grao order_id — uma linha por pedido da janela. Sem filtro de ultima
-          ingestao: cada ingestion_date e um dia de operacao, nao uma reingestao.
+          The fold, grain order_id — one row per order in the window. No latest-ingestion
+          filter: each ingestion_date is a day of operation, not a re-ingestion.
       - name: STG_ORDER_LINE
         description: >
-          Grao (order_id, line_no). Carrega o produto PEDIDO e o produto
-          CUMPRIDO lado a lado; sem os dois a substituicao desapareceria.
+          Grain (order_id, line_no). Carries the ORDERED product and the
+          FULFILLED product side by side; without both the substitution would disappear.
       - name: STG_ORDER_EVENT
         description: >
-          O log inteiro, grao event_id. Unica tabela do STAGE com corpo
-          semiestruturado (`payload_json`, VARCHAR): e a ORIGEM do fold, carregada para
-          que a auditoria nao precise voltar ao RAW.
+          The whole log, grain event_id. The only STAGE table with a
+          semi-structured body (`payload_json`, VARCHAR): it is the ORIGIN of the fold, loaded so
+          that auditing does not need to go back to RAW.
       - name: STG_ORDER_PREMISE
         description: >
-          As premissas declaradas que o gerador consumiu, todas rotuladas 'synthetic'.
-          Existem aqui para que MART_FULFILLMENT_SLA meca contra o MESMO limiar que
-          produziu as duracoes, em vez de contra uma copia do numero — copia que
-          envelheceu de verdade na Fase 7, quando o limiar caiu de 90 para 60.
+          The declared premises the generator consumed, all labeled 'synthetic'.
+          They exist here so that MART_FULFILLMENT_SLA measures against the SAME threshold that
+          produced the durations, instead of against a copy of the number — a copy that
+          really went stale in Phase 7, when the threshold dropped from 90 to 60.
       - name: STG_STOCK_PREMISE
         description: >
-          A politica de estoque: cobertura inicial, ponto de reposicao, nivel alvo e prazo
-          do fornecedor. Todas 'synthetic'. Separada de STG_ORDER_PREMISE porque governa
-          outro dominio — aquelas dizem o que um cliente FAZ, estas o que o armazem TEM.
+          The stock policy: opening cover, reorder point, target level and supplier
+          lead time. All 'synthetic'. Separate from STG_ORDER_PREMISE because it governs
+          another domain — those say what a customer DOES, these what the warehouse HAS.
       - name: STG_STOCK_LEDGER
         description: >
-          O SALDO DE ESTOQUE, grao (wh, source_product_id, stock_date). Unica tabela do
-          STAGE que nao vem de uma Source: estoque nao e observado em lugar nenhum deste
-          projeto, e este ledger e CALCULADO por um job Spark a partir do consumo medido
-          nos pedidos mais a politica declarada. `written_by` = 'spark' viaja junto para
-          que quem consultar o warehouse descubra isso sem abrir documentacao.
+          THE STOCK BALANCE, grain (wh, source_product_id, stock_date). The only STAGE
+          table that does not come from a Source: stock is not observed anywhere in this
+          project, and this ledger is COMPUTED by a Spark job from the consumption measured
+          in orders plus the declared policy. `written_by` = 'spark' travels along so
+          that whoever queries the warehouse finds this out without opening documentation.
 
-          A JANELA E UM DIA MAIOR que a de STG_ORDER, e a diferenca e real: o consumo e
-          datado pela SEPARACAO, e um pedido colocado tarde no ultimo dia e separado no dia
-          seguinte. Igualar as duas exigiria descartar consumo observado.
+          THE WINDOW IS ONE DAY LONGER than STG_ORDER's, and the difference is real: consumption is
+          dated by PICKING, and an order placed late on the last day is picked the next
+          day. Making the two equal would require discarding observed consumption.

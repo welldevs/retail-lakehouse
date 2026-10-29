@@ -1,34 +1,34 @@
--- O FECHO CRUZADO ENTRE AS DUAS SOURCES: o preco pago num pedido e o preco que a Mercadona
--- publicou naquele armazem naquele dia.
+-- THE CROSS-CHECK BETWEEN THE TWO SOURCES: the price paid on an order is the price Mercadona
+-- published at that warehouse on that day.
 --
--- E O TESTE MAIS CARO DE ENGANAR DO WAREHOUSE, porque liga dois fatos produzidos por
--- caminhos que nunca se tocam: FACT_PRICE_SNAPSHOT vem da API real (observed);
--- FACT_ORDER_ITEM vem de um log de eventos sintetico gerado meses depois, que COPIOU o
--- preco da referencia exportada. Se o gerador tivesse inventado preco, arredondado, ou
--- escolhido produto de outro armazem, e aqui que aparece.
+-- IT IS THE HARDEST TEST TO FOOL IN THE WAREHOUSE, because it links two facts produced along
+-- paths that never touch: FACT_PRICE_SNAPSHOT comes from the real API (observed);
+-- FACT_ORDER_ITEM comes from a synthetic event log generated months later, which COPIED the
+-- price from the exported reference. If the generator had invented a price, rounded it, or
+-- picked a product from another warehouse, this is where it shows.
 --
--- A JUNCAO E PELO PRODUTO CUMPRIDO, NAO PELO PEDIDO — e essa e a parte que a variante
--- obvia erra. Numa linha substituida o cliente pagou o preco do SUBSTITUTO, que e outro
--- source_product_id; juntar por `source_product_id` faria o teste comparar o preco do
--- produto A com o valor pago pelo produto B e reprovar 4.670 linhas corretas. Juntar pelo
--- cumprido e o que torna a substituicao verificavel em vez de invisivel.
+-- THE JOIN IS ON THE FULFILLED PRODUCT, NOT THE ORDERED ONE — and that is the part the obvious
+-- variant gets wrong. On a substituted line the customer paid the SUBSTITUTE's price, which is another
+-- source_product_id; joining on `source_product_id` would make the test compare product A's price
+-- with the amount paid for product B and fail 4,670 correct lines. Joining on the
+-- fulfilled product is what makes substitution verifiable instead of invisible.
 --
--- (wh, price_as_of) ENTRAM NA CHAVE, e nao so o produto: 187 produtos custam diferente
--- entre os 4 armazens no mesmo dia. Um teste que ignorasse o eixo de armazem passaria
--- comparando contra o preco de outro lugar.
+-- (wh, price_as_of) GO INTO THE KEY, not just the product: 187 products cost differently
+-- across the 4 warehouses on the same day. A test that ignored the warehouse axis would pass
+-- comparing against the price somewhere else.
 --
--- LINHAS SEM PRODUTO CUMPRIDO FICAM DE FORA — removidas, e as de pedido que nunca chegou a
--- separacao. Nao ha preco pago para conferir, e exigir um seria exigir que o modelo
--- inventasse o numero que este teste existe para proibir.
+-- LINES WITHOUT A FULFILLED PRODUCT STAY OUT — removed ones, and those of orders that never reached
+-- picking. There is no paid price to check, and demanding one would be demanding that the model
+-- invent the number this test exists to forbid.
 --
--- A COMPARACAO E CONTRA `purchasable_unit_price`, e nao contra o `unit_price` cru. Nas 10
--- combinacoes produto x armazem vendidas a granel sem `unit_size`, a API devolve
--- `reference_price * 99` — o teto do seletor de peso, nao um preco de consumo. Casar contra
--- o valor cru faria este teste EXIGIR que o pedido tivesse cobrado 1.084,05 EUR por 150 g de
--- langostino, ou seja, exigir de volta o defeito. O valor cru viaja no relatorio de falha ao
--- lado, para que a diferenca seja visivel quando houver.
+-- THE COMPARISON IS AGAINST `purchasable_unit_price`, not against the raw `unit_price`. In the 10
+-- product x warehouse combinations sold loose without `unit_size`, the API returns
+-- `reference_price * 99` — the weight selector's ceiling, not a consumer price. Matching against
+-- the raw value would make this test DEMAND that the order had charged 1,084.05 EUR for 150 g of
+-- prawns, that is, demand the defect back. The raw value travels in the failure report
+-- alongside, so the difference is visible when there is one.
 --
--- Falha com uma linha por divergencia.
+-- Fails with one row per divergence.
 select
     i.order_id,
     i.line_no,

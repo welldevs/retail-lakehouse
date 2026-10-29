@@ -1,48 +1,49 @@
-"""Exporta, do Silver, as referencias planas que a Source de Orders simulados consome.
+"""Exports, from Silver, the flat references that the simulated Orders Source consumes.
 
-POR QUE ESTE MODULO EXISTE, E POR QUE ELE FICA NA PLATAFORMA
-------------------------------------------------------------
-Mesmo mecanismo de `oltp_reference.py`, um nivel adiante na cadeia. `simulated-orders-source`
-precisa de cliente, produto e preco REAIS para que o pedido seja a unica coisa inventada —
-mas toda Source deste repo e FROZEN (`dependencies = []`, verificado por AST) e
-`duckdb`/`boto3` sao dependencias exclusivas da plataforma por design. A PLATAFORMA consulta
-o Silver e escreve quatro JSON planos; o `extract` da Source os le com `json` da stdlib.
-Nenhum lado importa o codigo do outro.
+WHY THIS MODULE EXISTS, AND WHY IT LIVES IN THE PLATFORM
+--------------------------------------------------------
+Same mechanism as `customers_reference.py`, one level further down the chain.
+`simulated-orders-source` needs REAL customer, product and price so that the order is the only
+invented thing — but every Source in this repo is FROZEN (`dependencies = []`, checked by AST)
+and `duckdb`/`boto3` are platform-only dependencies by design. The PLATFORM queries Silver
+and writes four flat JSON files; the Source's `extract` reads them with the stdlib `json`.
+Neither side imports the other's code.
 
-A REGRA DE OURO, APLICADA A ORDERS
------------------------------------
-O pedido e inventado; quem compra, o que se compra, quanto custa e onde mora nao. Cliente
-vem de `silver_customer`, produto e preco vem de `silver_product_price` do MESMO armazem na
-MESMA data. Nada aqui fabrica produto, preco ou cliente.
+THE GOLDEN RULE, APPLIED TO ORDERS
+----------------------------------
+The order is invented; who buys, what is bought, how much it costs and where they live are
+not. Customer comes from `silver_customer`, product and price come from `silver_product_price`
+of the SAME warehouse on the SAME date. Nothing here fabricates product, price or customer.
 
-DE ONDE VEM CADA COISA (e o que foi medido antes de escrever isto)
-------------------------------------------------------------------
-  * `silver_product_price` tem MAIS LINHAS que produtos distintos por particao (ex.: 4.581
-    linhas para 4.311 produtos em mad1/2026-08-24): um produto aparece em mais de uma
-    categoria, e isso e semantica da fonte, nao defeito. O dedup por
-    `(warehouse, ingestion_date, source_product_id)` e SEGURO porque o preco e identico
-    entre as aparicoes — garantia que ja tem teste proprio no repo
-    (`assert_price_is_consistent_across_appearances`). A categoria escolhida e a menor
-    `(category_id, subgroup_id)`: e uma regra de DESEMPATE deterministica, nao de negocio.
-  * `unit_price` viaja como STRING, nunca float. E a obrigacao 4.4 do contrato da Mercadona
-    ("converter para float perde precisao decimal em moeda"), e o gerador faz a aritmetica
-    com `decimal.Decimal`, que e stdlib e portanto nao quebra a fronteira FROZEN.
-  * A ESCOLHA DO PRODUTO E UNIFORME, de proposito, e isso nao e "cesta realista". Nenhuma
-    fonte deste repo mede venda, giro ou cesta. Ponderar produto inventaria uma distribuicao
-    que ninguem mediu — a mesma proibicao que a Fase 1 aplicou a escolha do tramo. A
-    consequencia declarada: o mix por categoria espelha o TAMANHO do sortimento, e isso e
-    consequencia de uma premissa, nao afirmacao sobre o mercado.
-  * A JANELA E DERIVADA, NUNCA PRESUMIDA. Para cada `(wh, order_date)` o preco vem do maior
-    snapshot de catalogo daquele armazem em data <= order_date. Igual: `price_source =
-    'observed'`. Anterior: `'carried_forward'`, explicito. Medido no disco em 2026-08-28: os
-    4 armazens tem catalogo de 08-24 a 08-27; mad1 tem tambem 08-15/08-16, com buraco de
-    08-17 a 08-23. Um varejista vende todo dia; a fonte so foi observada em alguns.
-  * NENHUM PEDIDO ANTES DE O CLIENTE EXISTIR. `first_ingestion_date` por cliente e exportado
-    para que o gerador possa recusar. A base e append-only (crescer preserva os primeiros N
-    byte a byte), entao um cliente presente numa data esta presente em todas as posteriores.
-  * As PREMISSAS sao lidas do CSV do seed, e nao do Lakehouse, pelo mesmo motivo ja medido em
-    `oltp_reference.py`: seeds do dbt nao tem `location =` e nunca viram parquet sob
-    `silver/`, que e tudo que `connect_lakehouse()` enxerga.
+WHERE EACH THING COMES FROM (and what was measured before writing this)
+----------------------------------------------------------------------
+  * `silver_product_price` has MORE ROWS than distinct products per partition (e.g.: 4,581
+    rows for 4,311 products in mad1/2026-08-24): a product appears in more than one
+    category, and that is source semantics, not a defect. The dedup by
+    `(warehouse, ingestion_date, source_product_id)` is SAFE because the price is identical
+    across appearances — a guarantee that already has its own test in the repo
+    (`assert_price_is_consistent_across_appearances`). The chosen category is the smallest
+    `(category_id, subgroup_id)`: a deterministic TIE-BREAK rule, not a business one.
+  * `unit_price` travels as a STRING, never float. It is obligation 4.4 of the Mercadona
+    contract ("converting to float loses decimal precision in currency"), and the generator
+    does the arithmetic with `decimal.Decimal`, which is stdlib and so does not break the
+    FROZEN boundary.
+  * PRODUCT CHOICE IS UNIFORM, on purpose, and that is not a "realistic basket". No source
+    in this repo measures sales, turnover or baskets. Weighting products would invent a
+    distribution nobody measured — the same prohibition Phase 1 applied to the tramo choice.
+    The declared consequence: the mix per category mirrors the SIZE of the assortment, and
+    that is a consequence of a premise, not a claim about the market.
+  * THE WINDOW IS DERIVED, NEVER ASSUMED. For each `(wh, order_date)` the price comes from
+    that warehouse's latest catalog snapshot on a date <= order_date. Equal: `price_source =
+    'observed'`. Earlier: `'carried_forward'`, explicit. Measured on disk on 2026-08-28: the
+    4 warehouses have catalog from 08-24 to 08-27; mad1 also has 08-15/08-16, with a gap from
+    08-17 to 08-23. A retailer sells every day; the source was only observed on some.
+  * NO ORDER BEFORE THE CUSTOMER EXISTS. `first_ingestion_date` per customer is exported so
+    the generator can refuse. The base is append-only (growing preserves the first N
+    byte for byte), so a customer present on one date is present on all later ones.
+  * The PREMISES are read from the seed CSV, not from the Lakehouse, for the same reason
+    already measured in `customers_reference.py`: dbt seeds have no `location =` and never
+    become parquet under `silver/`, which is all `connect_lakehouse()` sees.
 """
 
 from __future__ import annotations
@@ -69,13 +70,13 @@ DEMAND_FILE = "demand_profile.json"
 PRICE_OBSERVED = "observed"
 PRICE_CARRIED_FORWARD = "carried_forward"
 
-# Rotulo unico permitido na tabela de premissas. Nao existe premissa `observed` nem `proxy`
-# aqui: nenhuma fonte deste repo mede cesta, cadencia ou disponibilidade. Um rotulo
-# diferente e erro de export, nao aviso.
+# The only label allowed in the premises table. There is no `observed` or `proxy` premise
+# here: no source in this repo measures baskets, cadence or availability. A different
+# label is an export error, not a warning.
 PREMISE_LABEL = "synthetic"
 
-# Chaves que o gerador exige. Um seed truncado ou renomeado tem de reprovar o export, nunca
-# produzir pedidos com um default escondido no gerador.
+# Keys the generator requires. A truncated or renamed seed must fail the export, never
+# produce orders with a default hidden in the generator.
 REQUIRED_PREMISES = (
     "daily_order_rate",
     "min_buyer_age",
@@ -112,7 +113,7 @@ REQUIRED_PREMISES = (
 
 
 class OrdersReferenceError(Exception):
-    """O Silver nao tem o que este export precisa, ou a cobertura regrediu."""
+    """Silver does not have what this export needs, or coverage regressed."""
 
 
 def _utc_now() -> str:
@@ -120,9 +121,9 @@ def _utc_now() -> str:
 
 
 def _sql_literal(value: str) -> str:
-    """Literal SQL. Uma aspa simples quebraria a query em silencio: melhor recusar."""
+    """SQL literal. A single quote would break the query silently: better to refuse."""
     if "'" in value:
-        raise OrdersReferenceError(f"valor com aspa simples nao suportado em SQL: {value}")
+        raise OrdersReferenceError(f"value with a single quote is not supported in SQL: {value}")
     return f"'{value}'"
 
 
@@ -130,21 +131,21 @@ def _seed(seeds_dir: str, name: str) -> str:
     path = os.path.join(seeds_dir, name)
     if not os.path.exists(path):
         raise OrdersReferenceError(
-            f"seed nao encontrado: {path}. Rode a partir da raiz do repo, ou passe "
-            f"--seeds-dir apontando para o diretorio de seeds do dbt."
+            f"seed not found: {path}. Run from the repo root, or pass "
+            f"--seeds-dir pointing to the dbt seeds directory."
         )
     return path
 
 
 def _rows(connection, sql: str) -> list[dict]:
-    """Executa e devolve linhas como dicionarios, na ordem que o SQL determinou."""
+    """Executes and returns rows as dictionaries, in the order the SQL determined."""
     result = connection.execute(sql)
     columns = [d[0] for d in result.description]
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
 
 def _write_json(path: str, payload, indent: int | None) -> int:
-    """Grava JSON atomicamente (temporario no mesmo diretorio + os.replace)."""
+    """Writes JSON atomically (temporary file in the same directory + os.replace)."""
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     blob = (
@@ -168,44 +169,44 @@ def _parse_date(value: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except (TypeError, ValueError) as exc:
-        raise OrdersReferenceError(f"data invalida: {value!r}. Formato esperado YYYY-MM-DD.") from exc
+        raise OrdersReferenceError(f"invalid date: {value!r}. Expected format YYYY-MM-DD.") from exc
 
 
 def _date_range(window_from: str, window_to: str) -> list[str]:
     start, end = _parse_date(window_from), _parse_date(window_to)
     if end < start:
-        raise OrdersReferenceError(f"janela invertida: --from {window_from} > --to {window_to}")
+        raise OrdersReferenceError(f"inverted window: --from {window_from} > --to {window_to}")
     days = (end - start).days + 1
     return [(start + timedelta(days=offset)).isoformat() for offset in range(days)]
 
 
 def _warehouses(seeds_dir: str) -> list[str]:
-    """Armazens em escopo. Vem do seed, nao do que por acaso tem catalogo.
+    """Warehouses in scope. They come from the seed, not from whatever happens to have a catalog.
 
-    O vinculo warehouse->provincia e decisao DESTA plataforma, nao propriedade do INE nem da
-    Mercadona — ja registrado no ARCHITECTURE.md. Derivar a lista do dado disponivel faria um
-    armazem sem catalogo desaparecer em silencio em vez de reprovar.
+    The warehouse->province link is a decision of THIS platform, not a property of INE or
+    Mercadona — already recorded in ARCHITECTURE.md. Deriving the list from the available data
+    would make a warehouse without a catalog disappear silently instead of failing.
     """
     path = _seed(seeds_dir, PROVINCE_MAP_SEED)
     with open(path, "r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     if not rows:
-        raise OrdersReferenceError(f"{path}: seed vazio")
+        raise OrdersReferenceError(f"{path}: empty seed")
     if "wh" not in rows[0]:
-        raise OrdersReferenceError(f"{path}: seed sem a coluna 'wh'")
+        raise OrdersReferenceError(f"{path}: seed without the 'wh' column")
     return sorted({row["wh"] for row in rows})
 
 
 # --------------------------------------------------------------------------------
-# 1. Premissas declaradas
+# 1. Declared premises
 # --------------------------------------------------------------------------------
 
 def _build_premises(seeds_dir: str) -> dict:
-    """Le a tabela de premissas do CSV e a rotula com o proprio sha256.
+    """Reads the premises table from the CSV and labels it with its own sha256.
 
-    O digest viaja ate o manifesto da particao. Sem ele, trocar uma taxa e regerar produziria
-    pedidos diferentes sob a mesma seed sem deixar rastro — a mesma classe de problema que a
-    Fase 1 resolveu guardando a seed de cada execucao em `history`.
+    The digest travels all the way to the partition manifest. Without it, changing a rate and
+    regenerating would produce different orders under the same seed without leaving a trace —
+    the same class of problem Phase 1 solved by keeping each run's seed in `history`.
     """
     path = _seed(seeds_dir, PREMISES_SEED)
     with open(path, "rb") as handle:
@@ -214,36 +215,36 @@ def _build_premises(seeds_dir: str) -> dict:
 
     rows = list(csv.DictReader(blob.decode("utf-8").splitlines()))
     if not rows:
-        raise OrdersReferenceError(f"{path}: seed de premissas vazio")
+        raise OrdersReferenceError(f"{path}: empty premises seed")
 
     values: dict[str, str] = {}
     for position, row in enumerate(rows):
         key = (row.get("premise_key") or "").strip()
         if not key:
-            raise OrdersReferenceError(f"{path}: linha {position} sem premise_key")
+            raise OrdersReferenceError(f"{path}: row {position} without premise_key")
         if key in values:
-            raise OrdersReferenceError(f"{path}: premise_key duplicada: {key!r}")
+            raise OrdersReferenceError(f"{path}: duplicated premise_key: {key!r}")
         label = (row.get("label") or "").strip()
         if label != PREMISE_LABEL:
             raise OrdersReferenceError(
-                f"{path}: premissa {key!r} rotulada {label!r}. O unico rotulo aceito e "
-                f"{PREMISE_LABEL!r}: nenhuma fonte deste repo mede cesta, cadencia ou "
-                f"disponibilidade, entao chamar qualquer uma destas de 'observed' ou 'proxy' "
-                f"prometeria um dado que nao existe."
+                f"{path}: premise {key!r} labeled {label!r}. The only accepted label is "
+                f"{PREMISE_LABEL!r}: no source in this repo measures baskets, cadence or "
+                f"availability, so calling any of these 'observed' or 'proxy' would "
+                f"promise data that does not exist."
             )
         try:
             float(row.get("value"))
         except (TypeError, ValueError) as exc:
             raise OrdersReferenceError(
-                f"{path}: premissa {key!r} com valor nao numerico: {row.get('value')!r}"
+                f"{path}: premise {key!r} with a non-numeric value: {row.get('value')!r}"
             ) from exc
         values[key] = str(row["value"]).strip()
 
     missing = sorted(set(REQUIRED_PREMISES) - set(values))
     if missing:
         raise OrdersReferenceError(
-            f"{path}: premissa(s) obrigatoria(s) ausente(s): {missing}. O gerador nao tem "
-            f"default para nenhuma delas, de proposito."
+            f"{path}: required premise(s) missing: {missing}. The generator has no "
+            f"default for any of them, on purpose."
         )
 
     return {
@@ -272,7 +273,7 @@ def _build_premises(seeds_dir: str) -> dict:
 
 
 # --------------------------------------------------------------------------------
-# 2. Calendario de preco: qual snapshot sustenta cada (wh, dia)
+# 2. Price calendar: which snapshot backs each (wh, day)
 # --------------------------------------------------------------------------------
 
 def _calendar_sql(warehouses: list[str], days: list[str]) -> str:
@@ -280,13 +281,13 @@ def _calendar_sql(warehouses: list[str], days: list[str]) -> str:
     day_values = ", ".join(f"(date {_sql_literal(d)})" for d in days)
     return f"""
     with wh_list(wh) as (values {wh_values}),
-    dias(order_date) as (values {day_values}),
+    day_list(order_date) as (values {day_values}),
     catalog_dates as (
         select distinct warehouse as wh, ingestion_date
         from silver_product_price
     ),
     grid as (
-        select w.wh, d.order_date from wh_list w cross join dias d
+        select w.wh, d.order_date from wh_list w cross join day_list d
     )
     select
         g.wh,
@@ -303,12 +304,12 @@ def _calendar_sql(warehouses: list[str], days: list[str]) -> str:
 def _build_calendar(connection, warehouses: list[str], days: list[str]) -> dict:
     rows = _rows(connection, _calendar_sql(warehouses, days))
 
-    sem_preco = [(r["wh"], r["order_date"]) for r in rows if r["price_as_of"] is None]
-    if sem_preco:
+    without_price = [(r["wh"], r["order_date"]) for r in rows if r["price_as_of"] is None]
+    if without_price:
         raise OrdersReferenceError(
-            f"{len(sem_preco)} par(es) (armazem, dia) sem NENHUM snapshot de catalogo em data "
-            f"anterior ou igual: {sem_preco[:10]}. Um pedido nesse dia teria de inventar "
-            f"preco. Estreite a janela com --from, ou extraia o catalogo daquele armazem."
+            f"{len(without_price)} (warehouse, day) pair(s) without ANY catalog snapshot on an "
+            f"earlier or equal date: {without_price[:10]}. An order on that day would have to "
+            f"invent a price. Narrow the window with --from, or extract that warehouse's catalog."
         )
 
     for row in rows:
@@ -335,7 +336,7 @@ def _build_calendar(connection, warehouses: list[str], days: list[str]) -> dict:
 
 
 # --------------------------------------------------------------------------------
-# 3. Catalogo: produto e preco reais, por armazem e por snapshot
+# 3. Catalog: real product and price, per warehouse and per snapshot
 # --------------------------------------------------------------------------------
 
 def _catalog_sql(price_dates: list[str]) -> str:
@@ -353,17 +354,17 @@ def _catalog_sql(price_dates: list[str]) -> str:
             subgroup_name,
             product_level1_category_name,
             unit_price,
-            -- O PRECO QUE O GERADOR USA. Difere de unit_price so nas linhas `bunch`, onde
-            -- a fonte devolve reference_price * 99 — o teto do seletor de peso, e nao o
-            -- preco de nada que um domicilio compre (obrigacao 5 do contrato da Mercadona).
+            -- THE PRICE THE GENERATOR USES. It differs from unit_price only on `bunch` rows,
+            -- where the source returns reference_price * 99 — the ceiling of the weight
+            -- selector, not the price of anything a household buys (obligation 5 of the Mercadona contract).
             purchasable_unit_price,
             price_basis,
             net_content_kg_l,
             tax_percentage,
-            -- Dedup de GRAO, nao regra de negocio: um produto aparece em mais de uma
-            -- categoria (semantica da fonte). O preco e identico entre as aparicoes, e isso
-            -- ja tem teste proprio no repo. Escolher a menor (category_id, subgroup_id) e
-            -- desempate deterministico.
+            -- GRAIN dedup, not a business rule: a product appears in more than one
+            -- category (source semantics). The price is identical across appearances, and that
+            -- already has its own test in the repo. Picking the smallest (category_id, subgroup_id)
+            -- is a deterministic tie-break.
             row_number() over (
                 partition by warehouse, ingestion_date, source_product_id
                 order by category_id, subgroup_id
@@ -383,12 +384,12 @@ def _catalog_sql(price_dates: list[str]) -> str:
         subgroup_id,
         subgroup_name,
         product_level1_category_name    as l1,
-        -- String, nunca float: obrigacao 4.4 do contrato da Mercadona. O gerador faz a
-        -- aritmetica com decimal.Decimal, que e stdlib.
+        -- String, never float: obligation 4.4 of the Mercadona contract. The generator does
+        -- the arithmetic with decimal.Decimal, which is stdlib.
         --
-        -- `unit_price` AQUI E O PRECO DA PORCAO COMPRAVEL. O valor cru que a API devolveu
-        -- viaja ao lado em `source_unit_price`, para que a diferenca seja auditavel em vez
-        -- de ficar so no Silver: nas 10 linhas de granel ela e de tres ordens de grandeza.
+        -- `unit_price` HERE IS THE PRICE OF THE PURCHASABLE PORTION. The raw value the API
+        -- returned travels alongside in `source_unit_price`, so the difference is auditable
+        -- instead of living only in Silver: on the 10 bulk rows it is three orders of magnitude.
         cast(purchasable_unit_price as varchar) as unit_price,
         cast(unit_price as varchar)             as source_unit_price,
         price_basis,
@@ -401,13 +402,13 @@ def _catalog_sql(price_dates: list[str]) -> str:
 
 
 def _tree_triples_sql(price_dates: list[str]) -> str:
-    """Toda trinca (nivel 1, categoria, subgrupo) da arvore, ANTES do dedup.
+    """Every (level 1, category, subgroup) triple of the tree, BEFORE the dedup.
 
-    MEDIDO, e a razao de esta query existir: o recorte do catalogo guarda UMA linha por
-    (armazem, data, produto), com desempate pela menor (category_id, subgroup_id). Um
-    produto que vive em `Congelados > Carne` e tambem em `Carne > Carne congelada` some da
-    primeira depois do dedup — e tres regras de mapeamento perfeitamente corretas pareceram
-    mortas. Conferir cobertura contra o recorte mediria o desempate, nao o mapeamento.
+    MEASURED, and the reason this query exists: the catalog cut keeps ONE row per
+    (warehouse, date, product), tie-broken by the smallest (category_id, subgroup_id). A
+    product living in `Congelados > Carne` and also in `Carne > Carne congelada` disappears
+    from the first after the dedup — and three perfectly correct mapping rules looked
+    dead. Checking coverage against the cut would measure the tie-break, not the mapping.
     """
     dates_in = ", ".join(f"date {_sql_literal(d)}" for d in price_dates)
     return f"""
@@ -422,56 +423,56 @@ def _tree_triples_sql(price_dates: list[str]) -> str:
 
 
 def _stamp_demand_group(connection, rows: list[dict], price_dates: list[str], seeds_dir: str) -> dict:
-    """Carimba `demand_group` em cada linha do catalogo e devolve a contagem por grupo.
+    """Stamps `demand_group` on every catalog row and returns the count per group.
 
-    A RESOLUCAO ACONTECE AQUI, NA PLATAFORMA, e nao no gerador. E deliberado: a Source e
-    FROZEN e nao pode carregar a tabela de-para nem a arvore de categorias; e, mais
-    importante, o recorte que atravessa a fronteira continua BURRO — uma coluna ja
-    resolvida, sem regra de negocio do outro lado.
+    THE RESOLUTION HAPPENS HERE, IN THE PLATFORM, and not in the generator. It is deliberate:
+    the Source is FROZEN and cannot carry the mapping table or the category tree; and, more
+    importantly, the cut that crosses the boundary stays DUMB — an already resolved column,
+    with no business rule on the other side.
     """
     mapping = demand_profile.load_mapping(seeds_dir)
-    contagem: dict[str, int] = {}
+    counts: dict[str, int] = {}
     cache: dict[tuple, str] = {}
     for row in rows:
-        chave = (row["l1"], row["category_name"], row["subgroup_name"])
-        grupo = cache.get(chave)
-        if grupo is None:
-            grupo = demand_profile.resolve(mapping, *chave)
-            cache[chave] = grupo
-        row["demand_group"] = grupo
-        contagem[grupo] = contagem.get(grupo, 0) + 1
+        key = (row["l1"], row["category_name"], row["subgroup_name"])
+        group = cache.get(key)
+        if group is None:
+            group = demand_profile.resolve(mapping, *key)
+            cache[key] = group
+        row["demand_group"] = group
+        counts[group] = counts.get(group, 0) + 1
 
-    # Cobertura contra a ARVORE, nao contra o recorte. Toda trinca precisa de regra mesmo
-    # que o dedup a esconda hoje: o desempate pode mudar quando a fonte reordenar as
-    # categorias de um produto, e ai a trinca escondida vira a escolhida.
-    arvore = [
+    # Coverage against the TREE, not against the cut. Every triple needs a rule even if
+    # the dedup hides it today: the tie-break may change when the source reorders a
+    # product's categories, and then the hidden triple becomes the chosen one.
+    tree = [
         (row["l1"], row["l2"], row["l3"])
         for row in _rows(connection, _tree_triples_sql(price_dates))
     ]
-    for l1, l2, l3 in arvore:
+    for l1, l2, l3 in tree:
         demand_profile.resolve(mapping, l1, l2, l3)
 
-    mortas = demand_profile.unused_rules(mapping, arvore)
-    if mortas:
+    dead = demand_profile.unused_rules(mapping, tree)
+    if dead:
         raise OrdersReferenceError(
-            f"{len(mortas)} regra(s) de {demand_profile.MAPPING_SEED} nao casam com nenhuma "
-            f"trinca da arvore de categorias: "
-            f"{[(m['l1'], m['l2'], m['l3']) for m in mortas[:5]]}. Regra morta documenta uma "
-            f"decisao que nao esta em vigor, e quem ler o seed vai acreditar nela."
+            f"{len(dead)} rule(s) of {demand_profile.MAPPING_SEED} match no triple "
+            f"of the category tree: "
+            f"{[(m['l1'], m['l2'], m['l3']) for m in dead[:5]]}. A dead rule documents a "
+            f"decision that is not in force, and whoever reads the seed will believe it."
         )
-    return contagem
+    return counts
 
 
 def _build_catalog(connection, price_dates: list[str], seeds_dir: str) -> dict:
     rows = _rows(connection, _catalog_sql(price_dates))
     if not rows:
         raise OrdersReferenceError(
-            f"nenhuma linha de catalogo para as datas {price_dates}. "
-            f"`silver_product_price` foi construido?"
+            f"no catalog rows for dates {price_dates}. "
+            f"Has `silver_product_price` been built?"
         )
-    grupos = _stamp_demand_group(connection, rows, price_dates, seeds_dir)
+    groups = _stamp_demand_group(connection, rows, price_dates, seeds_dir)
     return {
-        "demand_groups": dict(sorted(grupos.items())),
+        "demand_groups": dict(sorted(groups.items())),
         "generated_at_utc": _utc_now(),
         "catalog_ingestion_dates": sorted(price_dates),
         "dedup_rule": (
@@ -488,7 +489,7 @@ def _build_catalog(connection, price_dates: list[str], seeds_dir: str) -> dict:
 
 
 # --------------------------------------------------------------------------------
-# 4. Clientes: quem pode pedir, de qual armazem, a partir de quando
+# 4. Customers: who can order, from which warehouse, starting when
 # --------------------------------------------------------------------------------
 
 _CUSTOMERS_SQL = """
@@ -510,9 +511,9 @@ select
     v.province_code,
     v.municipality_code,
     v.postal_code,
-    -- `birth_year` e nao a faixa etaria: a faixa depende do DIA DO PEDIDO, que so o gerador
-    -- conhece. Carimba-la aqui congelaria a idade do cliente na data do export, e um
-    -- aniversario dentro da janela passaria despercebido.
+    -- `birth_year` and not the age band: the band depends on the ORDER DAY, which only the
+    -- generator knows. Stamping it here would freeze the customer's age at the export date,
+    -- and a birthday inside the window would go unnoticed.
     v.birth_year,
     cast(f.first_ingestion_date as varchar) as first_ingestion_date
 from versions v
@@ -521,9 +522,9 @@ where v.rn = 1
 order by v.wh, v.customer_id
 """
 
-# Um cliente que aparece com dois armazens quebraria a restricao central ("cliente de W so
-# pede de W") sem que nenhum teste a jusante percebesse: o pedido seria coerente com uma das
-# duas linhas. Reconferido aqui, e o export RECUSA em vez de escolher.
+# A customer that shows up with two warehouses would break the central constraint ("a customer
+# of W only orders from W") without any downstream test noticing: the order would be coherent
+# with one of the two rows. Re-checked here, and the export REFUSES instead of choosing.
 _CUSTOMER_WAREHOUSE_DRIFT_SQL = """
 select customer_id, count(distinct wh) as warehouses
 from silver_customer
@@ -538,14 +539,14 @@ def _build_customers(connection, warehouses: list[str]) -> dict:
     drift = _rows(connection, _CUSTOMER_WAREHOUSE_DRIFT_SQL)
     if drift:
         raise OrdersReferenceError(
-            f"cliente(s) com mais de um armazem em silver_customer: {drift}. A restricao "
-            f"'um cliente de W so pede de W' deixaria de ser verificavel."
+            f"customer(s) with more than one warehouse in silver_customer: {drift}. The "
+            f"constraint 'a customer of W only orders from W' would no longer be verifiable."
         )
 
     rows = _rows(connection, _CUSTOMERS_SQL)
     if not rows:
         raise OrdersReferenceError(
-            "silver_customer esta vazio. Rode `make oltp-refresh-all` antes deste export."
+            "silver_customer is empty. Run `make oltp-refresh-all` before this export."
         )
 
     dates = _rows(
@@ -569,16 +570,16 @@ def _build_customers(connection, warehouses: list[str]) -> dict:
 
 
 # --------------------------------------------------------------------------------
-# 5. Coorte do cliente: a ponte entre um atributo observado e um corte do MAPA
+# 5. Customer cohort: the bridge between an observed attribute and a MAPA cut
 # --------------------------------------------------------------------------------
 
 def _warehouse_regions(seeds_dir: str) -> dict:
-    """armazem -> comunidade autonoma, via a provincia que ja estava declarada.
+    """warehouse -> autonomous community, via the province that was already declared.
 
-    Dois seeds em cadeia e nao um: `warehouse_province_map_seed` e decisao DESTA plataforma
-    (onde ficam os armazens), e `ine_ccaa_map_seed` e geografia administrativa do INE (a
-    que comunidade uma provincia pertence). Juntar as duas num arquivo so faria uma decisao
-    nossa parecer um fato oficial.
+    Two chained seeds and not one: `warehouse_province_map_seed` is a decision of THIS
+    platform (where the warehouses are), and `ine_ccaa_map_seed` is INE administrative
+    geography (which community a province belongs to). Merging the two into a single file
+    would make a decision of ours look like an official fact.
     """
     path = _seed(seeds_dir, PROVINCE_MAP_SEED)
     with open(path, "r", encoding="utf-8", newline="") as handle:
@@ -589,11 +590,11 @@ def _warehouse_regions(seeds_dir: str) -> dict:
     for row in rows:
         wh = (row.get("wh") or "").strip()
         ccaa = demand_profile.ccaa_of(province_ccaa, row.get("province_code"))
-        anterior = regions.setdefault(wh, ccaa)
-        if anterior != ccaa:
+        previous = regions.setdefault(wh, ccaa)
+        if previous != ccaa:
             raise OrdersReferenceError(
-                f"o armazem {wh!r} aparece em duas comunidades ({anterior}, {ccaa}). A "
-                f"inclinacao regional deixaria de ser definida para ele."
+                f"warehouse {wh!r} appears in two communities ({previous}, {ccaa}). The "
+                f"regional tilt would no longer be defined for it."
             )
     return regions
 
@@ -604,54 +605,54 @@ def _cohort_counts(
     min_buyer_age: int,
     reference_date: str,
 ) -> tuple[dict, dict]:
-    """(faixa, ccaa) -> quantos clientes ELEGIVEIS, mais um resumo do que ficou de fora.
+    """(band, ccaa) -> how many ELIGIBLE customers, plus a summary of what was left out.
 
-    A IDADE E CALCULADA NA DATA DE REFERENCIA DA JANELA, e nao no relogio: o export tem de
-    ser reprodutivel no ano que vem. Um cliente pode cruzar a fronteira de uma faixa dentro
-    de uma janela longa; a massa das coortes e propriedade da JANELA, e a data usada viaja
-    no payload para que a escolha fique visivel em vez de implicita.
+    AGE IS COMPUTED ON THE WINDOW'S REFERENCE DATE, not on the clock: the export must be
+    reproducible next year. A customer may cross a band boundary within a long window; the
+    cohort mass is a property of the WINDOW, and the date used travels in the payload so
+    the choice is visible instead of implicit.
 
-    O CORTE POR IDADE MINIMA ENTRA AQUI, e nao so no gerador. Se a massa fosse contada
-    sobre a base inteira, o IPF fecharia a conta contra uma distribuicao de coortes que
-    inclui quem nunca vai colocar um pedido — e o agregado sairia do alvo por um caminho
-    que nenhum teste do gerador alcanca.
+    THE MINIMUM AGE CUT COMES IN HERE, and not only in the generator. If the mass were
+    counted over the whole base, IPF would balance the books against a cohort distribution
+    that includes people who will never place an order — and the aggregate would miss the
+    target by a path no generator test reaches.
     """
     province_ccaa = demand_profile.load_province_ccaa(seeds_dir)
-    ano = int(reference_date[:4])
+    year = int(reference_date[:4])
 
     counts: dict[tuple, int] = {}
-    menores = 0
-    sem_ano = 0
+    underage = 0
+    without_year = 0
     for row in customer_rows:
         birth_year = row.get("birth_year")
         if birth_year is None:
-            sem_ano += 1
+            without_year += 1
             continue
-        idade = ano - int(birth_year)
-        if idade < min_buyer_age:
-            menores += 1
+        age = year - int(birth_year)
+        if age < min_buyer_age:
+            underage += 1
             continue
-        banda = demand_profile.age_band_of(idade)
+        band = demand_profile.age_band_of(age)
         ccaa = demand_profile.ccaa_of(province_ccaa, row.get("province_code"))
-        chave = (banda, ccaa)
-        counts[chave] = counts.get(chave, 0) + 1
+        key = (band, ccaa)
+        counts[key] = counts.get(key, 0) + 1
 
-    if sem_ano:
+    if without_year:
         raise OrdersReferenceError(
-            f"{sem_ano} cliente(s) sem birth_year em silver_customer. Sem ano de nascimento "
-            f"nao ha faixa etaria, e um cliente sem faixa nao tem propensao definida."
+            f"{without_year} customer(s) without birth_year in silver_customer. Without a "
+            f"birth year there is no age band, and a customer without a band has no defined propensity."
         )
     if not counts:
         raise OrdersReferenceError(
-            f"nenhum cliente com {min_buyer_age} anos ou mais em {reference_date}. Com "
-            f"min_buyer_age={min_buyer_age} a base inteira ficaria inelegivel."
+            f"no customer aged {min_buyer_age} or more on {reference_date}. With "
+            f"min_buyer_age={min_buyer_age} the whole base would be ineligible."
         )
 
-    resumo = {
+    summary = {
         "reference_date": reference_date,
         "min_buyer_age": min_buyer_age,
         "eligible": sum(counts.values()),
-        "below_min_age": menores,
+        "below_min_age": underage,
         "note": (
             "Medido em 2026-08-31, antes desta fase: 18,01% da base tinha menos de 18 anos "
             "(3.602 de 20.000), com idades a partir de zero. Isso NAO e defeito da Source de "
@@ -661,11 +662,11 @@ def _cohort_counts(
             "comecou a governar a demanda."
         ),
     }
-    return counts, resumo
+    return counts, summary
 
 
 # --------------------------------------------------------------------------------
-# Coerencia entre os quatro arquivos
+# Coherence across the four files
 # --------------------------------------------------------------------------------
 
 def _assert_coverage(
@@ -676,113 +677,112 @@ def _assert_coverage(
     demand: dict,
     warehouse_regions: dict,
 ) -> None:
-    """Cobertura verificada em tempo de execucao, nunca presumida como permanente."""
+    """Coverage checked at run time, never assumed to be permanent."""
     warehouses = set(calendar["warehouses"])
 
-    com_cliente = {row["wh"] for row in customers["rows"]}
-    sem_cliente = sorted(warehouses - com_cliente)
-    if sem_cliente:
+    with_customer = {row["wh"] for row in customers["rows"]}
+    without_customer = sorted(warehouses - with_customer)
+    if without_customer:
         raise OrdersReferenceError(
-            f"armazem(ns) em escopo sem nenhum cliente: {sem_cliente}. Pedido sem cliente nao "
-            f"e pedido."
+            f"warehouse(s) in scope without any customer: {without_customer}. An order without "
+            f"a customer is not an order."
         )
-    fora_de_escopo = sorted(com_cliente - warehouses)
-    if fora_de_escopo:
+    out_of_scope = sorted(with_customer - warehouses)
+    if out_of_scope:
         raise OrdersReferenceError(
-            f"cliente(s) em armazem fora do seed de escopo: {fora_de_escopo}"
+            f"customer(s) in a warehouse outside the scope seed: {out_of_scope}"
         )
 
-    # Todo par (wh, price_as_of) que o calendario aponta precisa existir no catalogo.
-    catalogo_por_par: dict[tuple, int] = {}
+    # Every (wh, price_as_of) pair the calendar points to must exist in the catalog.
+    catalog_by_pair: dict[tuple, int] = {}
     for row in catalog["rows"]:
         key = (row["wh"], row["price_as_of"])
-        catalogo_por_par[key] = catalogo_por_par.get(key, 0) + 1
+        catalog_by_pair[key] = catalog_by_pair.get(key, 0) + 1
 
-    exigidos = {(row["wh"], row["price_as_of"]) for row in calendar["rows"]}
-    ausentes = sorted(exigidos - set(catalogo_por_par))
-    if ausentes:
+    required = {(row["wh"], row["price_as_of"]) for row in calendar["rows"]}
+    absent = sorted(required - set(catalog_by_pair))
+    if absent:
         raise OrdersReferenceError(
-            f"{len(ausentes)} par(es) (armazem, price_as_of) apontados pelo calendario e "
-            f"ausentes do catalogo: {ausentes[:10]}"
+            f"{len(absent)} (warehouse, price_as_of) pair(s) pointed to by the calendar and "
+            f"absent from the catalog: {absent[:10]}"
         )
 
-    # Uma cesta e sorteada SEM REPOSICAO: se o catalogo de um par tiver menos produtos que a
-    # maior cesta possivel, o gerador nao teria como montar a cesta e o defeito apareceria
-    # como um pedido menor, nao como erro.
-    maior_cesta = int(float(premises["values"]["basket_lines_max"]))
-    magros = sorted(
-        (par, total) for par, total in catalogo_por_par.items() if total < maior_cesta
+    # A basket is drawn WITHOUT REPLACEMENT: if a pair's catalog had fewer products than the
+    # largest possible basket, the generator could not build the basket and the defect would
+    # show up as a smaller order, not as an error.
+    largest_basket = int(float(premises["values"]["basket_lines_max"]))
+    thin = sorted(
+        (pair, total) for pair, total in catalog_by_pair.items() if total < largest_basket
     )
-    if magros:
+    if thin:
         raise OrdersReferenceError(
-            f"par(es) (armazem, price_as_of) com menos de basket_lines_max={maior_cesta} "
-            f"produtos: {magros[:10]}"
+            f"(warehouse, price_as_of) pair(s) with fewer than basket_lines_max={largest_basket} "
+            f"products: {thin[:10]}"
         )
 
-    # TODO GRUPO COM PESO PRECISA TER PRODUTO EM TODO PAR (armazem, price_as_of).
-    # Sem esta checagem, um grupo vazio num armazem seria renormalizado em silencio no
-    # sorteio e aquele armazem passaria a ter um mix diferente dos outros — plausivel, sem
-    # erro, e impossivel de notar num total. E a mesma classe de defeito que
-    # `_duplicates_sql` pega em oltp_reference.py.
-    com_peso = {
+    # EVERY WEIGHTED GROUP MUST HAVE A PRODUCT IN EVERY (warehouse, price_as_of) PAIR.
+    # Without this check, an empty group in a warehouse would be silently renormalized in the
+    # draw and that warehouse would end up with a mix different from the others — plausible,
+    # error-free, and impossible to notice in a total. It is the same class of defect that
+    # `_duplicates_sql` catches in customers_reference.py.
+    weighted = {
         g["demand_group"] for g in demand["groups"]
         if float(g["line_weight"]) > 0
     }
-    por_par: dict[tuple, set] = {}
+    by_pair: dict[tuple, set] = {}
     for row in catalog["rows"]:
-        por_par.setdefault((row["wh"], row["price_as_of"]), set()).add(row["demand_group"])
-    buracos = sorted(
-        (par, sorted(com_peso - presentes)[:5])
-        for par, presentes in por_par.items()
-        if com_peso - presentes
+        by_pair.setdefault((row["wh"], row["price_as_of"]), set()).add(row["demand_group"])
+    holes = sorted(
+        (pair, sorted(weighted - present)[:5])
+        for pair, present in by_pair.items()
+        if weighted - present
     )
-    if buracos:
+    if holes:
         raise OrdersReferenceError(
-            f"{len(buracos)} par(es) (armazem, price_as_of) sem produto em algum grupo com "
-            f"peso: {buracos[:5]}. O sorteio renormalizaria em silencio e o mix daquele "
-            f"armazem divergiria dos demais sem erro nenhum."
+            f"{len(holes)} (warehouse, price_as_of) pair(s) without a product in some weighted "
+            f"group: {holes[:5]}. The draw would renormalize silently and that warehouse's mix "
+            f"would diverge from the others without any error."
         )
 
-    # TODO ARMAZEM PRECISA DE UMA COMUNIDADE COM INDICE DE FREQUENCIA, e toda coorte
-    # precisa de um vetor de pesos que cubra os mesmos grupos do perfil agregado. Um vetor
-    # curto faria o sorteio daquela coorte ignorar um grupo inteiro — sem erro, sem nulo, e
-    # com um mix que continua somando 1.
+    # EVERY WAREHOUSE NEEDS A COMMUNITY WITH A FREQUENCY INDEX, and every cohort needs a
+    # weight vector covering the same groups as the aggregate profile. A short vector would
+    # make that cohort's draw ignore a whole group — no error, no null, and with a mix that
+    # still sums to 1.
     cohorts = demand.get("cohorts")
     if not cohorts:
         raise OrdersReferenceError(
-            "o perfil de demanda saiu sem a secao `cohorts`. Um perfil sem a camada de "
-            "coorte carimbado com a versao que a promete seria um no-op silencioso."
+            "the demand profile came out without the `cohorts` section. A profile without the "
+            "cohort layer stamped with the version that promises it would be a silent no-op."
         )
-    com_indice = {r["ccaa_code"] for r in cohorts["regions"]}
-    sem_regiao = sorted(
-        wh for wh in warehouses if warehouse_regions.get(wh) not in com_indice
+    with_index = {r["ccaa_code"] for r in cohorts["regions"]}
+    without_region = sorted(
+        wh for wh in warehouses if warehouse_regions.get(wh) not in with_index
     )
-    if sem_regiao:
+    if without_region:
         raise OrdersReferenceError(
-            f"armazem(ns) sem comunidade com indice de frequencia: {sem_regiao}"
+            f"warehouse(s) without a community with a frequency index: {without_region}"
         )
 
-    todos_grupos = {g["demand_group"] for g in demand["groups"]}
-    for vetor in cohorts["weights"]:
-        presentes = {g["demand_group"] for g in vetor["groups"]}
-        faltando = sorted(todos_grupos - presentes)
-        if faltando:
+    all_groups = {g["demand_group"] for g in demand["groups"]}
+    for vector in cohorts["weights"]:
+        present = {g["demand_group"] for g in vector["groups"]}
+        missing = sorted(all_groups - present)
+        if missing:
             raise OrdersReferenceError(
-                f"a coorte {vetor['cohort']!r} nao tem peso para {len(faltando)} grupo(s): "
-                f"{faltando[:5]}. O sorteio daquela coorte ignoraria o grupo inteiro."
+                f"cohort {vector['cohort']!r} has no weight for {len(missing)} group(s): "
+                f"{missing[:5]}. That cohort's draw would ignore the whole group."
             )
-        soma = sum(float(g["line_weight"]) for g in vetor["groups"])
-        if abs(soma - 1.0) > 1e-6:
+        total = sum(float(g["line_weight"]) for g in vector["groups"])
+        if abs(total - 1.0) > 1e-6:
             raise OrdersReferenceError(
-                f"os pesos da coorte {vetor['cohort']!r} somam {soma}, e nao 1"
+                f"the weights of cohort {vector['cohort']!r} sum to {total}, not 1"
             )
-
 
 def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """Monta os quatro payloads a partir de uma conexao DuckDB ja aberta.
+    """Builds the four payloads from an already open DuckDB connection.
 
-    Separado de `export` para que a suite exercite as queries contra fixtures DuckDB reais,
-    sem object storage e sem rede.
+    Separate from `export` so the suite exercises the queries against real DuckDB fixtures,
+    without object storage and without network.
     """
     days = _date_range(window_from, window_to)
     warehouses = _warehouses(seeds_dir)
@@ -793,9 +793,9 @@ def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT
     catalog = _build_catalog(connection, price_dates, seeds_dir)
     customers = _build_customers(connection, warehouses)
 
-    # A coorte do cliente e resolvida AQUI, num lugar so, pelo mesmo motivo que
-    # `_stamp_demand_group` resolve o mapeamento num lugar so: duas resolucoes divergem no
-    # primeiro ajuste e a divergencia seria invisivel, porque as duas dariam mix plausivel.
+    # The customer cohort is resolved HERE, in a single place, for the same reason
+    # `_stamp_demand_group` resolves the mapping in a single place: two resolutions diverge at
+    # the first tweak and the divergence would be invisible, because both would give a plausible mix.
     warehouse_regions = _warehouse_regions(seeds_dir)
     cohort_counts, cohort_summary = _cohort_counts(
         customers["rows"],
@@ -823,10 +823,10 @@ def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT
 
 
 def write(payloads: dict, out_dir: str) -> dict:
-    """Grava os quatro arquivos. Devolve o tamanho de cada um.
+    """Writes the four files. Returns the size of each.
 
-    `catalog.json` sai compacto pelo mesmo motivo de `address_candidates.json`: e insumo
-    intermediario de dezenas de milhares de linhas, nao particao pousada e hash-verificada.
+    `catalog.json` comes out compact for the same reason as `address_candidates.json`: it is
+    an intermediate input of tens of thousands of rows, not a landed, hash-verified partition.
     """
     return {
         CUSTOMERS_FILE: _write_json(
@@ -841,8 +841,8 @@ def write(payloads: dict, out_dir: str) -> dict:
         PREMISES_FILE: _write_json(
             os.path.join(out_dir, PREMISES_FILE), payloads["premises"], indent=2
         ),
-        # Indentado: sao dezenas de grupos, nao dezenas de milhares de produtos, e este e o
-        # arquivo que alguem vai abrir para conferir de onde saiu um peso.
+        # Indented: it is dozens of groups, not tens of thousands of products, and this is the
+        # file someone will open to check where a weight came from.
         DEMAND_FILE: _write_json(
             os.path.join(out_dir, DEMAND_FILE), payloads["demand"], indent=2
         ),
@@ -856,7 +856,7 @@ def export(
     window_to: str,
     seeds_dir: str = DEFAULT_SEEDS_DIR,
 ) -> dict:
-    """Escreve os quatro arquivos de referencia em out_dir. Devolve um resumo."""
+    """Writes the four reference files into out_dir. Returns a summary."""
     from .query import connect_lakehouse
 
     connection = connect_lakehouse(config)

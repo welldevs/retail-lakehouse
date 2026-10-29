@@ -1,4 +1,4 @@
-"""Construcao de particoes sinteticas em disco, para testar sem rede e sem a Source."""
+"""Building synthetic partitions on disk, to test without network and without the Source."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ CANONICAL = dict(ensure_ascii=False, sort_keys=True, indent=2)
 
 
 def canonical_bytes(payload) -> bytes:
-    """Mesma forma canonica da Source: o sha256 declarado tem de ser o deste blob."""
+    """Same canonical form as the Source: the declared sha256 must be this blob's."""
     return (json.dumps(payload, **CANONICAL) + "\n").encode("utf-8")
 
 
@@ -25,10 +25,10 @@ def write_canonical(path: str, payload) -> tuple[str, int]:
 def build_partition(root: str, ingestion_date="2026-08-24", warehouse="mad1", *,
                     complete=True, manifest_version=2, failures=None,
                     extra_manifest=None, write_success=None, category_ids=(112,)):
-    """Cria uma particao valida em disco e devolve o caminho dela.
+    """Creates a valid partition on disk and returns its path.
 
-    O manifesto declara files[].path relativo a RAIZ DO SNAPSHOT, nao a particao — e a
-    obrigacao 4.1 do contrato, e a que um consumidor erra com mais facilidade.
+    The manifest declares files[].path relative to the SNAPSHOT ROOT, not the partition —
+    it is obligation 4.1 of the contract, and the one a consumer gets wrong most easily.
     """
     partition = os.path.join(root, f"ingestion_date={ingestion_date}", f"wh={warehouse}")
     tail = f"ingestion_date={ingestion_date}/wh={warehouse}"
@@ -82,8 +82,8 @@ def build_single_axis_partition(root: str, ingestion_date="2026-08-24", *,
                                 source_name="ine_population_api", manifest_version=1,
                                 complete=True, failures=None, extra_manifest=None,
                                 write_success=None, table_ids=(31304,)):
-    """Cria uma particao sintetica SEM segundo eixo (formato de uma source como o INE,
-    que devolve todas as provincias num unico payload por table_id)."""
+    """Creates a synthetic partition WITHOUT a second axis (the shape of a source like INE,
+    which returns every province in a single payload per table_id)."""
     partition = os.path.join(root, f"ingestion_date={ingestion_date}")
     tail = f"ingestion_date={ingestion_date}"
     files = []

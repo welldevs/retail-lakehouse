@@ -1,82 +1,97 @@
 #!/usr/bin/env python3
-"""Executa o painel de ponta a ponta contra a conta viva e exige zero excecao.
+"""Runs a dashboard end to end against the live warehouse and demands zero exceptions.
 
-    make dashboard-check
+    make dashboard-check          # both panels
 
-POR QUE SEPARADO DE `make test`. A suite offline (`test_dashboard_indicators.py`) confere o
-que da para conferir sem rede: estrutura, parametro ligado, e a sincronia entre o CONTRACT e
-`indicators.py`. O que ela NAO pode conferir e se as 25 consultas rodam — isso exige conta, e
-`make test` sem rede e invariante do repositorio.
+WHY SEPARATE FROM `make test`. The offline suite checks what can be checked without a
+network: catalog structure, bound parameters, and that docs/indicators/ matches the catalog.
+What it cannot check is whether the queries RUN — that needs a live warehouse, and `make test`
+staying offline is an invariant of this repository.
 
-Este script fecha a metade que falta, e fecha do jeito honesto: roda o script do Streamlit de
-verdade, com `AppTest`, e reprova se qualquer indicador levantar excecao ou se a tela sair
-vazia. `curl` num `/health` nao serve — o Streamlit serve o esqueleto com HTTP 200 mesmo
-quando o script morre no primeiro `select`, porque a renderizacao e no cliente. Foi por isso
-que este arquivo existe em vez de uma checagem de porta.
+This closes that half honestly: it runs the real Streamlit script with `AppTest` and fails if
+any indicator raises or the screen comes out empty. `curl` on `/health` would not do —
+Streamlit serves the page skeleton with HTTP 200 even when the script dies on the first
+`select`, because rendering happens in the client.
+
+It also runs `connection.probe_isolation` once: the panel's role must read MART and be
+REFUSED on GOLD and STAGE. A panel that claims a boundary without demonstrating it is asking
+for trust.
+
+MINIMUMS are proof that the screen rendered, not business numbers; pinning exact values would
+break on every new indicator. `warning: 0` is by design: a technical caveat leaking back onto
+a production panel shows up as an `st.warning`. The prices panel's Product tab shows no table
+until someone searches, so it does not count toward its dataframe minimum.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 
-RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP = os.path.join(RAIZ, "streamlit", "app.py")
-
-# Minimos exigidos. Nao sao numeros de negocio — sao a prova de que a tela renderizou em vez
-# de morrer no meio. Cravar o valor exato quebraria a cada indicador novo, sem ganho.
-# Recalibrado em 2026-09-04, quando app.py deixou de ser bancada de conferencia (SQL na
-# tela, armadilhas por grafico, sonda de RBAC, aba "Fora de alcance") e virou painel de
-# producao: renderizado de verdade agora da 13 metricas / 7 abas / 20 tabelas / 0 avisos
-# — zero por desenho, nao por acidente, porque os avisos eram exatamente a camada de
-# metodologia que saiu da tela. Se um `st.warning` voltar a aparecer aqui, e sinal de que
-# uma ressalva tecnica vazou de volta para o painel de producao. Margem abaixo do real,
-# nao o valor exato — o proprio motivo deste dict e nao quebrar a cada indicador novo.
-MINIMOS = {"metric": 10, "tabs": 7, "dataframe": 16, "warning": 0}
+ROOT = os.path.dirname(os.path.abspath(__file__))
+PANELS = {
+    "operations": ("operations_app.py", {"metric": 10, "tabs": 7, "dataframe": 16, "warning": 0}),
+    "prices": ("prices_app.py", {"metric": 6, "tabs": 6, "dataframe": 6, "warning": 0}),
+}
 
 
-def main() -> int:
-    try:
-        from streamlit.testing.v1 import AppTest
-    except ImportError:
-        print("ERRO: streamlit nao esta instalado. Rode `make dashboard-venv`.")
-        return 1
+def check(name: str) -> list[str]:
+    from streamlit.testing.v1 import AppTest
 
-    tempo = int(os.environ.get("RETAIL_DASHBOARD_SMOKE_TIMEOUT", "600"))
-    app = AppTest.from_file(APP, default_timeout=tempo).run()
+    script, minimums = PANELS[name]
+    timeout = int(os.environ.get("RETAIL_DASHBOARD_SMOKE_TIMEOUT", "600"))
+    app = AppTest.from_file(os.path.join(ROOT, script), default_timeout=timeout).run()
 
-    problemas = []
+    problems = []
+    for exc in app.exception:
+        print(f"EXCEPTION: {str(exc.value)[:300]}")
     if app.exception:
-        for excecao in app.exception:
-            print(f"EXCECAO: {str(excecao.value)[:300]}")
-        problemas.append(f"{len(app.exception)} excecao(oes) ao renderizar")
+        problems.append(f"{len(app.exception)} exception(s) while rendering")
+    counts = {"metric": len(app.metric), "tabs": len(app.tabs),
+              "dataframe": len(app.dataframe), "warning": len(app.warning)}
+    print(f"== {name} ({script})")
+    for element, minimum in minimums.items():
+        got = counts[element]
+        state = "ok" if got >= minimum else f"BELOW MINIMUM ({minimum})"
+        if element == "warning":
+            state = "ok" if got == 0 else "MUST BE ZERO"
+        print(f"  {element:.<14} {got:>3}  {state}")
+        if (element == "warning" and got) or (element != "warning" and got < minimum):
+            problems.append(f"{name}: {element} = {got}")
+    return problems
 
-    contagens = {
-        "metric": len(app.metric), "tabs": len(app.tabs),
-        "dataframe": len(app.dataframe), "warning": len(app.warning),
-    }
-    for elemento, minimo in MINIMOS.items():
-        obtido = contagens[elemento]
-        estado = "ok" if obtido >= minimo else f"ABAIXO DO MINIMO ({minimo})"
-        print(f"{elemento:.<14} {obtido:>3}  {estado}")
-        if obtido < minimo:
-            problemas.append(f"{elemento}: {obtido} < {minimo}")
 
-    print()
-    if app.metric:
-        print("metricas do topo:")
-        for metrica in app.metric[:5]:
-            print(f"  {metrica.label:.<28} {metrica.value}")
-        print()
+def check_isolation() -> list[str]:
+    sys.path.insert(0, ROOT)
+    from connection import open_session, probe_isolation
 
-    if problemas:
-        print(f"REPROVADO — {len(problemas)} problema(s):")
-        for problema in problemas:
-            print(f"  - {problema}")
+    conn = open_session()
+    try:
+        results = probe_isolation(conn)
+    finally:
+        conn.close()
+    print("== isolation (panel role)")
+    for target, ok, detail in results:
+        print(f"  {target:.<28} {'ok' if ok else 'VIOLATION'}  {detail}")
+    return [f"isolation: {target} — {detail}" for target, ok, detail in results if not ok]
+
+
+def main(argv: list[str]) -> int:
+    try:
+        import streamlit.testing.v1  # noqa: F401
+    except ImportError:
+        print("ERROR: streamlit is not installed. Run `make dashboard-venv`.")
         return 1
-    print(f"APROVADO: o painel renderizou sem excecao, com {contagens['tabs']} abas e "
-          f"{contagens['dataframe']} tabelas lidas do MART.")
+    names = argv or list(PANELS)
+    problems = [p for name in names for p in check(name)]
+    problems += check_isolation()
+    if problems:
+        print(f"FAILED — {len(problems)} problem(s):")
+        print("\n".join(f"  - {p}" for p in problems))
+        return 1
+    print(f"PASSED: {', '.join(names)} rendered with no exception, reading only MART.")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main(sys.argv[1:]))

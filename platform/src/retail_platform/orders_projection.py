@@ -1,41 +1,41 @@
-"""A projeção viva em Iceberg: dois escritores, um leitor, e a fusão monotônica.
+"""The live projection in Iceberg: two writers, one reader, and the monotonic merge.
 
-POR QUE ICEBERG, E POR QUE SÓ AGORA.
+WHY ICEBERG, AND WHY ONLY NOW.
 
-O gatilho escrito era *"um segundo engine precisar **escrever** a mesma tabela"*. Ele não
-disparou até aqui e está registrado que não disparou. Dispara neste marco porque
-`live_order_state` passa a ter dois escritores por desenho:
+The written trigger was *"a second engine needs to **write** the same table"*. It had not
+fired until now, and it is on record that it had not. It fires at this milestone because
+`live_order_state` now has two writers by design:
 
-    orders-project              consumidor em streaming, evento a evento
-    orders-rebuild-projection   reconstrução em lote, a partir do RAW
+    orders-project              streaming consumer, event by event
+    orders-rebuild-projection   batch rebuild, from RAW
 
-e um leitor concorrente (o DuckDB, via `silver_live_order_state`). **O gatilho disparou por
-CONCORRÊNCIA, não por volume** — no volume desta fase um parquet reescrito com `os.replace`
-atômico funcionaria. O que o Iceberg compra aqui é isolamento de snapshot entre dois
-escritores e um leitor, mais time travel na projeção. Escrever isso é a diferença entre uma
-decisão e uma moda.
+and one concurrent reader (DuckDB, via `silver_live_order_state`). **The trigger fired on
+CONCURRENCY, not on volume** — at this phase's volume a parquet rewritten with an atomic
+`os.replace` would work. What Iceberg buys here is snapshot isolation between two writers
+and one reader, plus time travel on the projection. Writing this down is the difference
+between a decision and a fad.
 
-O QUE O EXPERIMENTO FECHADO (`make spike-iceberg`) MEDIU ANTES DESTE MÓDULO EXISTIR:
+WHAT THE CLOSED EXPERIMENT (removed in CR-012; see git history) MEASURED BEFORE THIS MODULE EXISTED:
 
-  - o catálogo SQL sobre o Postgres funciona, e `upsert(join_cols=["order_id"])` também;
-  - dois escritores concorrentes NÃO se sobrescrevem em silêncio: o que parte de um snapshot
-    velho leva `CommitFailedException`. Isso é o controle otimista funcionando — se passasse
-    calado, seria lost update;
-  - o DuckDB lê pelo `metadata_location`, e SÓ por ele: ele se recusa a adivinhar qual é o
-    metadado corrente varrendo o storage, porque isso pode ler metadado não commitado.
+  - the SQL catalog on top of Postgres works, and so does `upsert(join_cols=["order_id"])`;
+  - two concurrent writers do NOT silently overwrite each other: the one starting from a
+    stale snapshot gets `CommitFailedException`. That is optimistic concurrency working — if
+    it went through silently, it would be a lost update;
+  - DuckDB reads through `metadata_location`, and ONLY through it: it refuses to guess the
+    current metadata by scanning storage, because that could read uncommitted metadata.
 
-A TERCEIRA CONCLUSÃO MUDOU O DESENHO. O modelo dbt não pode apontar para um caminho fixo:
-quem sabe qual metadado é o corrente é o CATÁLOGO, e é a ele que se pergunta. `make silver`
-resolve o `metadata_location` e o passa como var. O atalho existe (`SET
-unsafe_enable_version_guessing = true`, medido e funcionando) e foi recusado: ler metadado
-não commitado é exatamente o que uma leitura concorrente não pode fazer.
+THE THIRD FINDING CHANGED THE DESIGN. The dbt model cannot point at a fixed path: the one
+that knows which metadata is current is the CATALOG, and that is who gets asked. `make silver`
+resolves the `metadata_location` and passes it as a var. The shortcut exists (`SET
+unsafe_enable_version_guessing = true`, measured and working) and was rejected: reading
+uncommitted metadata is exactly what a concurrent read must not do.
 
-RETRY NÃO BASTA — A FUSÃO PRECISA SER MONOTÔNICA. Reconciliar um conflito recarregando e
-tentando de novo resolve o conflito de COMMIT, e ainda assim perde dado: se o outro escritor
-gravou o pedido X no `sequence_no` 7 e a nossa tentativa carrega o 5, o retry cego escreve o
-5 por cima. O commit passa, a tabela regride. Por isso cada tentativa relê o estado das
-chaves afetadas e descarta as próprias linhas que não avançam — a mesma guarda de
-`last_sequence_no` que protege o OLTP e o consumidor, agora protegendo a escrita concorrente.
+RETRY IS NOT ENOUGH — THE MERGE MUST BE MONOTONIC. Reconciling a conflict by reloading and
+trying again resolves the COMMIT conflict, and still loses data: if the other writer
+stored order X at `sequence_no` 7 and our attempt carries 5, a blind retry writes 5 on top of
+it. The commit succeeds, the table regresses. That is why every attempt re-reads the state of
+the affected keys and drops its own rows that do not advance — the same
+`last_sequence_no` guard that protects the OLTP and the consumer, now protecting concurrent writes.
 """
 
 from __future__ import annotations
@@ -63,16 +63,16 @@ WRITER_REBUILD = "rebuild"
 
 
 class OrdersProjectionError(Exception):
-    """O catálogo, a tabela ou a reconciliação recusaram."""
+    """The catalog, the table or the reconciliation refused."""
 
 
 # --------------------------------------------------------------------------------------
-# Esquema
+# Schema
 # --------------------------------------------------------------------------------------
 #
-# `written_by` é PROVENIÊNCIA, não uma segunda cópia do estado: registra qual dos dois
-# escritores tocou a linha por último. Sem ela, "os dois escritores escreveram de verdade"
-# seria uma afirmação sobre logs, e não um fato consultável na própria tabela.
+# `written_by` is PROVENANCE, not a second copy of the state: it records which of the two
+# writers touched the row last. Without it, "both writers really wrote" would be a claim
+# about logs, not a fact you can query in the table itself.
 
 COLUMNS = (
     "order_id", "wh", "order_date", "customer_id", "status", "last_sequence_no",
@@ -92,69 +92,69 @@ _INTS = ("last_sequence_no", "events_applied", "line_count", "picked_line_count"
 def arrow_schema():
     import pyarrow as pa
 
-    campos = {
+    fields = {
         "order_id": pa.string(), "wh": pa.string(), "order_date": pa.date32(),
         "customer_id": pa.string(), "status": pa.string(), "written_by": pa.string(),
         "delivered_within_slot": pa.bool_(), "sla_breached": pa.bool_(),
         "picking_minutes": pa.decimal128(10, 2),
     }
-    for nome in _TIMESTAMPS:
-        campos[nome] = pa.timestamp("us", tz="UTC")
-    for nome in _MONEY:
-        campos[nome] = pa.decimal128(12, 2)
-    for nome in _INTS:
-        campos[nome] = pa.int32()
-    # `order_id` é a chave do upsert e não pode ser nula; o resto pode, e a nulidade tem
-    # significado (ver `net_amount`, que é indeterminado até a separação).
+    for name in _TIMESTAMPS:
+        fields[name] = pa.timestamp("us", tz="UTC")
+    for name in _MONEY:
+        fields[name] = pa.decimal128(12, 2)
+    for name in _INTS:
+        fields[name] = pa.int32()
+    # `order_id` is the upsert key and cannot be null; the rest can, and nullness carries
+    # meaning (see `net_amount`, which is undetermined until picking).
     return pa.schema([
-        pa.field(nome, campos[nome], nullable=(nome != "order_id")) for nome in COLUMNS
+        pa.field(name, fields[name], nullable=(name != "order_id")) for name in COLUMNS
     ])
 
 
 def _normalize(state: dict, writer: str) -> dict:
-    """Estado do fold -> tipos do Iceberg. Decimal para dinheiro, nunca float."""
-    linha = {}
-    for nome in COLUMNS:
-        valor = state.get(nome)
-        if nome == "written_by":
-            valor = writer
-        elif nome in _MONEY and valor is not None:
-            valor = Decimal(str(valor))
-        elif nome == "picking_minutes" and valor is not None:
-            valor = Decimal(str(valor))
-        elif nome in _TIMESTAMPS and isinstance(valor, str):
-            valor = datetime.fromisoformat(valor.replace("Z", "+00:00"))
-        elif nome == "order_date" and isinstance(valor, str):
-            valor = date.fromisoformat(valor)
-        linha[nome] = valor
-    return linha
+    """Fold state -> Iceberg types. Decimal for money, never float."""
+    row = {}
+    for name in COLUMNS:
+        value = state.get(name)
+        if name == "written_by":
+            value = writer
+        elif name in _MONEY and value is not None:
+            value = Decimal(str(value))
+        elif name == "picking_minutes" and value is not None:
+            value = Decimal(str(value))
+        elif name in _TIMESTAMPS and isinstance(value, str):
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elif name == "order_date" and isinstance(value, str):
+            value = date.fromisoformat(value)
+        row[name] = value
+    return row
 
 
 # --------------------------------------------------------------------------------------
-# Catálogo
+# Catalog
 # --------------------------------------------------------------------------------------
 
 def catalog(config=None, *, dsn: str = None, warehouse: str = None):
-    """Catálogo SQL sobre o Postgres do OLTP. Importa pyiceberg sob demanda.
+    """SQL catalog on top of the OLTP Postgres. Imports pyiceberg on demand.
 
-    `py-io-impl=PyArrowFileIO` e NÃO s3fs: o extra `s3fs` do pyiceberg arrasta um
-    `aiobotocore` que fixa um botocore antigo e quebra o `boto3` que a plataforma usa para o
-    RAW. O pip aceita instalar e o estrago aparece depois, noutro módulo. Medido.
+    `py-io-impl=PyArrowFileIO` and NOT s3fs: pyiceberg's `s3fs` extra drags in an
+    `aiobotocore` that pins an old botocore and breaks the `boto3` the platform uses for
+    RAW. pip accepts the install and the damage shows up later, in another module. Measured.
     """
     from .config import from_env
 
     config = config or from_env()
     try:
         from pyiceberg.catalog.sql import SqlCatalog
-    except ImportError as exc:  # pragma: no cover - depende do ambiente
+    except ImportError as exc:  # pragma: no cover - depends on the environment
         raise OrdersProjectionError(
-            "pyiceberg nao esta instalado neste venv. Rode `make venv`."
+            "pyiceberg is not installed in this venv. Run `make venv`."
         ) from exc
 
-    porta = os.environ.get("OLTP_PORT", "5433")
+    port = os.environ.get("OLTP_PORT", "5433")
     uri = dsn or os.environ.get(
         "ICEBERG_CATALOG_URI",
-        f"postgresql+psycopg://oltp:oltp@localhost:{porta}/{CATALOG_DB}",
+        f"postgresql+psycopg://oltp:oltp@localhost:{port}/{CATALOG_DB}",
     )
     try:
         return SqlCatalog(CATALOG_NAME, **{
@@ -168,19 +168,19 @@ def catalog(config=None, *, dsn: str = None, warehouse: str = None):
         })
     except Exception as exc:
         raise OrdersProjectionError(
-            f"nao foi possivel abrir o catalogo Iceberg em {uri}: {exc}\n"
-            "O plano de stream nao sobe com `make up`. Rode `make stream-up`."
+            f"could not open the Iceberg catalog at {uri}: {exc}\n"
+            "The stream plane does not come up with `make up`. Run `make stream-up`."
         ) from exc
 
 
 def ensure_catalog_database(port: str = None) -> bool:
-    """Cria o banco do catálogo se faltar. Devolve True se criou."""
+    """Creates the catalog database if missing. Returns True if it created it."""
     try:
         import psycopg
     except ImportError as exc:  # pragma: no cover
-        raise OrdersProjectionError("psycopg nao esta instalado neste venv.") from exc
-    porta = port or os.environ.get("OLTP_PORT", "5433")
-    admin = f"postgresql://oltp:oltp@localhost:{porta}/postgres"
+        raise OrdersProjectionError("psycopg is not installed in this venv.") from exc
+    port = port or os.environ.get("OLTP_PORT", "5433")
+    admin = f"postgresql://oltp:oltp@localhost:{port}/postgres"
     with psycopg.connect(admin, autocommit=True) as connection:
         with connection.cursor() as cur:
             cur.execute("select 1 from pg_database where datname = %s", (CATALOG_DB,))
@@ -199,22 +199,22 @@ def ensure_table(cat=None):
 
 
 def metadata_location(cat=None) -> str:
-    """Onde está o metadado CORRENTE, segundo o catálogo.
+    """Where the CURRENT metadata is, according to the catalog.
 
-    É esta função que o `make silver` chama. O DuckDB recusa descobrir isso sozinho — e a
-    recusa dele está certa: varrer o storage atrás do metadado mais novo pode encontrar um
-    que ainda não foi commitado. Quem sabe é o catálogo.
+    This is the function `make silver` calls. DuckDB refuses to discover this on its own —
+    and it is right to refuse: scanning storage for the newest metadata can find one that
+    has not been committed yet. The catalog is the one that knows.
     """
     cat = cat or catalog()
     if not cat.table_exists(TABLE_NAME):
         raise OrdersProjectionError(
-            f"{TABLE_NAME} nao existe no catalogo. Rode `make orders-projection-iceberg-init`."
+            f"{TABLE_NAME} does not exist in the catalog. Run `make orders-projection-iceberg-init`."
         )
     return cat.load_table(TABLE_NAME).metadata_location
 
 
 # --------------------------------------------------------------------------------------
-# O sink: a MESMA interface pequena de PostgresProjection
+# The sink: the SAME small interface as PostgresProjection
 # --------------------------------------------------------------------------------------
 
 @dataclass
@@ -226,15 +226,15 @@ class CommitStats:
 
 
 class IcebergProjection:
-    """Sink em Iceberg. `load` / `save` / `commit` / `rollback` / `count` / `digest`.
+    """Iceberg sink. `load` / `save` / `commit` / `rollback` / `count` / `digest`.
 
-    A interface é idêntica à de `PostgresProjection` de propósito: era a costura declarada no
-    Marco 5, e trocar o armazenamento não muda uma linha do consumidor. Se esta classe
-    precisasse de um método a mais para `orders-project` funcionar, a costura teria vazado.
+    The interface is identical to `PostgresProjection` on purpose: it was the seam declared in
+    Milestone 5, and swapping the storage does not change one line of the consumer. If this
+    class needed one extra method for `orders-project` to work, the seam would have leaked.
 
-    A diferença de semântica está escondida onde deve estar: no Postgres, `save` escreve e
-    `commit` fecha a transação; aqui, `save` acumula e `commit` faz o upsert — porque o
-    Iceberg não tem transação aberta, cada commit é um snapshot novo.
+    The semantic difference is hidden where it belongs: in Postgres, `save` writes and
+    `commit` closes the transaction; here, `save` buffers and `commit` does the upsert —
+    because Iceberg has no open transaction, every commit is a new snapshot.
     """
 
     def __init__(self, table, *, writer: str = WRITER_STREAM, cat=None):
@@ -244,21 +244,21 @@ class IcebergProjection:
         self._buffer: dict = {}
         self.stats = CommitStats()
 
-    # ---- leitura -----------------------------------------------------------
+    # ---- reading -----------------------------------------------------------
     def _current(self, order_ids=None) -> dict:
-        """Estado corrente, relido do snapshot mais novo.
+        """Current state, re-read from the newest snapshot.
 
-        Varre a tabela inteira e filtra em memória em vez de montar um `In(...)` com
-        milhares de valores: neste volume (~6.400 linhas) a varredura de duas colunas é
-        trivial, e um filtro gigante empurrado para o scan não é. Se a projeção crescer
-        ordens de grandeza, este é o ponto a trocar — e está dito aqui para não virar
-        descoberta.
+        Scans the whole table and filters in memory instead of building an `In(...)` with
+        thousands of values: at this volume (~6,400 rows) scanning two columns is trivial,
+        and a giant filter pushed down into the scan is not. If the projection grows by
+        orders of magnitude, this is the spot to change — and it is said here so it does
+        not become a discovery.
         """
-        linhas = self._table.scan(selected_fields=COLUMNS).to_arrow().to_pylist()
+        rows = self._table.scan(selected_fields=COLUMNS).to_arrow().to_pylist()
         if order_ids is None:
-            return {linha["order_id"]: linha for linha in linhas}
-        alvo = set(order_ids)
-        return {l["order_id"]: l for l in linhas if l["order_id"] in alvo}
+            return {row["order_id"]: row for row in rows}
+        wanted = set(order_ids)
+        return {r["order_id"]: r for r in rows if r["order_id"] in wanted}
 
     def load(self, order_ids) -> dict:
         if not order_ids:
@@ -273,13 +273,13 @@ class IcebergProjection:
         self._buffer.clear()
 
     def commit(self) -> CommitStats:
-        """Upsert com retry E FUSÃO MONOTÔNICA. Ver o cabeçalho do módulo.
+        """Upsert with retry AND MONOTONIC MERGE. See the module header.
 
-        Retry sozinho resolveria o conflito de commit e ainda assim perderia dado: se o outro
-        escritor já gravou um `sequence_no` maior para o mesmo pedido, reescrever por cima faz
-        a tabela REGREDIR — e o commit passaria, porque do ponto de vista do Iceberg nada
-        está errado. Por isso cada tentativa relê e descarta as próprias linhas que não
-        avançam.
+        Retry alone would resolve the commit conflict and still lose data: if the other
+        writer already stored a higher `sequence_no` for the same order, writing over it makes
+        the table REGRESS — and the commit would succeed, because from Iceberg's point of view
+        nothing is wrong. That is why every attempt re-reads and drops its own rows that do
+        not advance.
         """
         import pyarrow as pa
         from pyiceberg.exceptions import CommitFailedException
@@ -288,28 +288,28 @@ class IcebergProjection:
             return self.stats
 
         stats = CommitStats()
-        for tentativa in range(1, MAX_COMMIT_ATTEMPTS + 1):
-            stats.attempts = tentativa
-            correntes = self._current(self._buffer.keys())
-            candidatas = [
-                estado for order_id, estado in sorted(self._buffer.items())
-                if order_id not in correntes
-                or estado["last_sequence_no"] > correntes[order_id]["last_sequence_no"]
+        for attempt in range(1, MAX_COMMIT_ATTEMPTS + 1):
+            stats.attempts = attempt
+            current = self._current(self._buffer.keys())
+            candidates = [
+                state for order_id, state in sorted(self._buffer.items())
+                if order_id not in current
+                or state["last_sequence_no"] > current[order_id]["last_sequence_no"]
             ]
-            stats.rows_dropped_as_stale = len(self._buffer) - len(candidatas)
-            if not candidatas:
-                # Outro escritor já gravou um estado igual ou mais novo para todas as
-                # chaves. Não escrever é o resultado CORRETO, não uma falha.
+            stats.rows_dropped_as_stale = len(self._buffer) - len(candidates)
+            if not candidates:
+                # Another writer already stored an equal or newer state for every key.
+                # Not writing is the CORRECT outcome, not a failure.
                 self._buffer.clear()
                 self.stats = stats
                 return stats
-            lote = pa.Table.from_pylist(
-                [_normalize(estado, self._writer) for estado in candidatas],
+            batch = pa.Table.from_pylist(
+                [_normalize(state, self._writer) for state in candidates],
                 schema=arrow_schema(),
             )
             try:
-                self._table.upsert(lote, join_cols=["order_id"])
-                stats.rows_written = len(candidatas)
+                self._table.upsert(batch, join_cols=["order_id"])
+                stats.rows_written = len(candidates)
                 self._buffer.clear()
                 self.stats = stats
                 return stats
@@ -317,59 +317,59 @@ class IcebergProjection:
                 stats.conflicts += 1
                 self._refresh()
         raise OrdersProjectionError(
-            f"{MAX_COMMIT_ATTEMPTS} tentativas de commit sem sucesso: a tabela esta sob "
-            f"contencao acima do que este escritor sabe tratar"
+            f"{MAX_COMMIT_ATTEMPTS} commit attempts without success: the table is under "
+            f"more contention than this writer knows how to handle"
         )
 
     def _refresh(self) -> None:
-        """Recarrega A PRÓPRIA tabela, e não um nome cravado.
+        """Reloads ITS OWN table, not a hard-coded name.
 
-        A primeira versão recarregava `TABLE_NAME`. Enquanto só existiu uma tabela, isso
-        funcionou — e no primeiro teste que usou uma tabela de sonda, um conflito fez o
-        escritor da sonda recarregar a tabela de PRODUÇÃO e gravar nela. Quatro linhas
-        sintéticas entraram em `live_order_state`, e a reconciliação foi quem apontou.
+        The first version reloaded `TABLE_NAME`. While only one table existed, that worked —
+        and in the first test that used a probe table, a conflict made the probe writer
+        reload the PRODUCTION table and write into it. Four synthetic rows landed in
+        `live_order_state`, and the reconciliation was what caught it.
 
-        Um identificador cravado numa função de refresh é sempre isto: funciona até existir
-        um segundo objeto, e aí escreve no lugar errado sem erro nenhum.
+        A hard-coded identifier in a refresh function is always this: it works until a
+        second object exists, and then it writes to the wrong place without any error.
         """
         if self._catalog is not None:
             self._table = self._catalog.load_table(self._table.name())
         else:
             self._table.refresh()
 
-    # ---- observação ---------------------------------------------------------
+    # ---- observation --------------------------------------------------------
     def count(self) -> int:
         return self._table.scan(selected_fields=("order_id",)).to_arrow().num_rows
 
     def digest(self) -> str:
-        """Impressão digital, comparável com a de `PostgresProjection`.
+        """Fingerprint, comparable with the one from `PostgresProjection`.
 
-        `written_by` FICA DE FORA: ele é proveniência, não estado. Incluí-lo faria o digest
-        mudar quando o mesmo conteúdo fosse escrito pelo outro escritor — e a propriedade que
-        se quer medir é justamente que os dois produzem o mesmo estado.
+        `written_by` IS LEFT OUT: it is provenance, not state. Including it would make the
+        digest change when the same content was written by the other writer — and the
+        property being measured is precisely that both produce the same state.
         """
-        colunas = [c for c in COLUMNS if c != "written_by"]
-        linhas = self._table.scan(selected_fields=tuple(colunas)).to_arrow().to_pylist()
+        columns = [c for c in COLUMNS if c != "written_by"]
+        rows = self._table.scan(selected_fields=tuple(columns)).to_arrow().to_pylist()
         sha = hashlib.sha256()
-        for linha in sorted(linhas, key=lambda l: l["order_id"]):
-            sha.update(json.dumps([str(linha.get(c)) for c in colunas],
+        for row in sorted(rows, key=lambda r: r["order_id"]):
+            sha.update(json.dumps([str(row.get(c)) for c in columns],
                                   ensure_ascii=False).encode("utf-8"))
             sha.update(b"\n")
         return sha.hexdigest()
 
     def writers_seen(self) -> dict:
-        linhas = self._table.scan(selected_fields=("written_by",)).to_arrow().to_pylist()
-        saida: dict = {}
-        for linha in linhas:
-            saida[linha["written_by"]] = saida.get(linha["written_by"], 0) + 1
-        return saida
+        rows = self._table.scan(selected_fields=("written_by",)).to_arrow().to_pylist()
+        out: dict = {}
+        for row in rows:
+            out[row["written_by"]] = out.get(row["written_by"], 0) + 1
+        return out
 
     def snapshots(self) -> list:
         return [s.snapshot_id for s in self._table.metadata.snapshots]
 
 
 # --------------------------------------------------------------------------------------
-# O segundo escritor: reconstrução em lote a partir do RAW
+# The second writer: batch rebuild from RAW
 # --------------------------------------------------------------------------------------
 
 @dataclass
@@ -384,20 +384,21 @@ class RebuildResult:
 
 
 def reset_table(cat=None):
-    """Apaga e recria `live_order_state`. Existe por causa de UMA condicao especifica.
+    """Drops and recreates `live_order_state`. It exists because of ONE specific condition.
 
-    A fusao da projecao e MONOTONICA: uma linha com `last_sequence_no` menor que a gravada e
-    descartada como velha, e e assim que os dois escritores convivem sem se atropelar. A
-    fusao assume, sem dizer, que um `order_id` sempre se refere ao MESMO pedido.
+    The projection merge is MONOTONIC: a row with a `last_sequence_no` lower than the stored
+    one is dropped as stale, and that is how the two writers coexist without trampling each
+    other. The merge assumes, without saying so, that an `order_id` always refers to the SAME
+    order.
 
-    Essa premissa cai quando a Source e regerada com outra `seed`, outra referencia, outras
-    premissas ou outro `demand_model_version` — as quatro condicoes nao-aditivas do
-    CONTRACT. Ai o pedido `ord_mad1_20260824_000001` e um pedido DIFERENTE com o mesmo id, e
-    o merge monotonico mistura os dois: MEDIDO em 2026-08-31, um rebuild depois da
-    recalibracao descartou 4.028 linhas por "estado igual ou mais novo" e deixou a projecao
-    com uma mistura de dois universos. `orders-reconcile` pegou.
+    That premise breaks when the Source is regenerated with another `seed`, another
+    reference, other premises or another `demand_model_version` — the four non-additive
+    conditions of the CONTRACT. Then order `ord_mad1_20260824_000001` is a DIFFERENT order
+    with the same id, and the monotonic merge mixes the two: MEASURED on 2026-08-31, a
+    rebuild after the recalibration dropped 4,028 rows as "equal or newer state" and left the
+    projection with a mix of two universes. `orders-reconcile` caught it.
 
-    Reset e destrutivo de proposito e nunca acontece sozinho — so com --reset explicito.
+    Reset is destructive on purpose and never happens on its own — only with an explicit --reset.
     """
     cat = cat or catalog()
     if cat.table_exists(TABLE_NAME):
@@ -408,84 +409,85 @@ def reset_table(cat=None):
 def rebuild(cat, partitions, *, sla_minutes: int = None,
             seeds_dir: str = DEFAULT_SEEDS_DIR, batch_size: int = 500,
             reset: bool = False) -> RebuildResult:
-    """Reconstrói a projeção a partir do log em disco. É o SEGUNDO ESCRITOR.
+    """Rebuilds the projection from the on-disk log. It is the SECOND WRITER.
 
-    ELE COMPARTILHA `fold_event` COM O CONSUMIDOR, E ISSO É DELIBERADO — mas exige uma
-    ressalva, senão a leitura fica errada: o acordo entre este caminho e o streaming NÃO é
-    evidência de correção, é evidência de que os dois escritores não se atropelam. A
-    evidência de correção vem de `orders-reconcile`, que compara com `silver_order` — uma
-    implementação genuinamente independente, em window function sobre o log inteiro.
+    IT SHARES `fold_event` WITH THE CONSUMER, AND THAT IS DELIBERATE — but it needs a
+    caveat, or the reading goes wrong: agreement between this path and streaming is NOT
+    evidence of correctness, it is evidence that the two writers do not trample each other.
+    Evidence of correctness comes from `orders-reconcile`, which compares against
+    `silver_order` — a genuinely independent implementation, a window function over the
+    whole log.
 
-    Confundir as duas coisas seria o mesmo defeito que este projeto já registrou duas vezes:
-    uma verificação que compara algo consigo mesmo e passa.
+    Confusing the two would be the same defect this project has already recorded twice:
+    a check that compares something with itself and passes.
     """
     from .orders_oltp import read_log, verify_log
 
     sla = sla_minutes if sla_minutes is not None else read_sla_minutes(seeds_dir)
-    tabela = reset_table(cat) if reset else ensure_table(cat)
-    projection = IcebergProjection(tabela, writer=WRITER_REBUILD, cat=cat)
-    resultado = RebuildResult()
-    estados: dict = {}
+    table = reset_table(cat) if reset else ensure_table(cat)
+    projection = IcebergProjection(table, writer=WRITER_REBUILD, cat=cat)
+    result = RebuildResult()
+    states: dict = {}
 
-    for caminho in partitions:
-        verify_log(caminho)
-        resultado.partitions += 1
-        resultado.partitions_read.append(caminho)
-        for evento, _linha in read_log(caminho):
-            resultado.events += 1
-            atual = estados.get(evento["order_id"])
-            estados[evento["order_id"]] = fold_event(atual, evento, sla_minutes=sla)
+    for path in partitions:
+        verify_log(path)
+        result.partitions += 1
+        result.partitions_read.append(path)
+        for event, _line in read_log(path):
+            result.events += 1
+            current = states.get(event["order_id"])
+            states[event["order_id"]] = fold_event(current, event, sla_minutes=sla)
 
-    resultado.orders = len(estados)
-    ordenados = [estados[k] for k in sorted(estados)]
-    for inicio in range(0, len(ordenados), batch_size):
-        projection.save(ordenados[inicio:inicio + batch_size])
+    result.orders = len(states)
+    ordered = [states[k] for k in sorted(states)]
+    for start in range(0, len(ordered), batch_size):
+        projection.save(ordered[start:start + batch_size])
         stats = projection.commit()
-        resultado.commits += 1
-        resultado.conflicts += stats.conflicts
-        resultado.dropped_as_stale += stats.rows_dropped_as_stale
-    return resultado
+        result.commits += 1
+        result.conflicts += stats.conflicts
+        result.dropped_as_stale += stats.rows_dropped_as_stale
+    return result
 
 
 # --------------------------------------------------------------------------------------
-# Reconciliação: três folds independentes
+# Reconciliation: three independent folds
 # --------------------------------------------------------------------------------------
 
 _COMPARE = ("status", "last_sequence_no", "line_count", "picked_line_count",
             "gross_amount", "net_amount", "substituted_lines", "removed_lines")
 
 
-def _as_key(valor):
-    """Normaliza para comparar entre três motores sem confundir TIPO com DIVERGÊNCIA.
+def _as_key(value):
+    """Normalizes for comparison across three engines without confusing TYPE with DIVERGENCE.
 
-    NORMALIZA A ESCALA, NUNCA ARREDONDA. A primeira versão formatava com `f"{v:.2f}"`, e isso
-    fazia `10.001` e `10.00` compararem IGUAIS — uma reconciliação que arredonda a diferença
-    que veio verificar. Hoje as três fontes usam `decimal(12,2)` e o defeito não teria
-    aparecido; apareceria no dia em que uma delas mudasse de escala, que é o pior dia
-    possível para descobri-lo.
+    NORMALIZES THE SCALE, NEVER ROUNDS. The first version formatted with `f"{v:.2f}"`, and
+    that made `10.001` and `10.00` compare EQUAL — a reconciliation that rounds away the
+    difference it came to check. Today all three sources use `decimal(12,2)` and the defect
+    would not have shown up; it would show up the day one of them changed scale, which is
+    the worst possible day to discover it.
 
-    `Decimal.normalize()` remove zeros à direita sem tocar no valor: `10.00` e `10` viram a
-    mesma chave, `10.001` não.
+    `Decimal.normalize()` strips trailing zeros without touching the value: `10.00` and `10`
+    become the same key, `10.001` does not.
     """
-    if valor is None:
+    if value is None:
         return None
-    if isinstance(valor, bool):
-        return valor
-    if isinstance(valor, Decimal):
-        return f"num:{valor.normalize()}"
-    if isinstance(valor, float):
-        return f"num:{Decimal(str(valor)).normalize()}"
-    if isinstance(valor, int):
-        return f"num:{Decimal(valor).normalize()}"
-    if isinstance(valor, (datetime, date)):
-        return valor.isoformat()
-    return str(valor)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return f"num:{value.normalize()}"
+    if isinstance(value, float):
+        return f"num:{Decimal(str(value)).normalize()}"
+    if isinstance(value, int):
+        return f"num:{Decimal(value).normalize()}"
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
 
 
 def _rows_from_iceberg(cat) -> dict:
-    tabela = ensure_table(cat)
-    linhas = tabela.scan(selected_fields=("order_id",) + _COMPARE).to_arrow().to_pylist()
-    return {l["order_id"]: {c: _as_key(l.get(c)) for c in _COMPARE} for l in linhas}
+    table = ensure_table(cat)
+    rows = table.scan(selected_fields=("order_id",) + _COMPARE).to_arrow().to_pylist()
+    return {r["order_id"]: {c: _as_key(r.get(c)) for c in _COMPARE} for r in rows}
 
 
 def _rows_from_silver(config) -> dict:
@@ -500,10 +502,10 @@ def _rows_from_silver(config) -> dict:
           from silver_order
         """
     )
-    saida = {}
-    for linha in cursor.fetchall():
-        saida[linha[0]] = dict(zip(_COMPARE, [_as_key(v) for v in linha[1:]]))
-    return saida
+    out = {}
+    for row in cursor.fetchall():
+        out[row[0]] = dict(zip(_COMPARE, [_as_key(v) for v in row[1:]]))
+    return out
 
 
 def _rows_from_oltp(dsn=None) -> dict:
@@ -522,69 +524,71 @@ def _rows_from_oltp(dsn=None) -> dict:
                 """
             )
             return {
-                linha[0]: dict(zip(_COMPARE, [_as_key(v) for v in linha[1:]]))
-                for linha in cur.fetchall()
+                row[0]: dict(zip(_COMPARE, [_as_key(v) for v in row[1:]]))
+                for row in cur.fetchall()
             }
 
 
 def reconcile(config=None, *, cat=None, dsn=None, limit: int = 10) -> dict:
-    """Compara os TRÊS folds. Divergiu, reprova — não arredonda, não ignora.
+    """Compares the THREE folds. Any divergence fails — no rounding, no ignoring.
 
-    `silver_order` é a única das três implementações que não compartilha código com nenhuma
-    outra: window function em SQL sobre o log inteiro. É contra ela que a comparação vale
-    como verificação; o acordo entre projeção e OLTP vale como evidência de transporte.
+    `silver_order` is the only one of the three implementations that shares no code with
+    any other: a SQL window function over the whole log. It is against it that the
+    comparison counts as verification; agreement between projection and OLTP counts as
+    evidence of transport.
     """
     from .config import from_env
 
     config = config or from_env()
     cat = cat or catalog(config)
-    fontes = {
+    sources = {
         "iceberg": _rows_from_iceberg(cat),
         "silver": _rows_from_silver(config),
         "oltp": _rows_from_oltp(dsn),
     }
-    chaves = {nome: set(linhas) for nome, linhas in fontes.items()}
-    todas = set().union(*chaves.values())
+    keys = {name: set(rows) for name, rows in sources.items()}
+    every_key = set().union(*keys.values())
 
-    faltando = {
-        nome: sorted(todas - presentes)[:limit] for nome, presentes in chaves.items()
-        if todas - presentes
+    missing = {
+        name: sorted(every_key - present)[:limit] for name, present in keys.items()
+        if every_key - present
     }
-    divergencias = []
-    comuns = set.intersection(*chaves.values()) if chaves else set()
-    for order_id in sorted(comuns):
-        for coluna in _COMPARE:
-            valores = {nome: fontes[nome][order_id][coluna] for nome in fontes}
-            if len(set(map(repr, valores.values()))) > 1:
-                divergencias.append({"order_id": order_id, "coluna": coluna, **valores})
+    divergences = []
+    common = set.intersection(*keys.values()) if keys else set()
+    for order_id in sorted(common):
+        for column in _COMPARE:
+            values = {name: sources[name][order_id][column] for name in sources}
+            if len(set(map(repr, values.values()))) > 1:
+                # The "coluna" key is read by cli.py (`orders-reconcile` output): keep it.
+                divergences.append({"order_id": order_id, "coluna": column, **values})
     return {
-        "orders": {nome: len(linhas) for nome, linhas in fontes.items()},
-        "compared": len(comuns),
-        "missing": faltando,
-        "divergences": divergencias[:limit],
-        "divergence_count": len(divergencias),
-        "ok": not faltando and not divergencias,
+        "orders": {name: len(rows) for name, rows in sources.items()},
+        "compared": len(common),
+        "missing": missing,
+        "divergences": divergences[:limit],
+        "divergence_count": len(divergences),
+        "ok": not missing and not divergences,
     }
 
 
 def partitions_of(root: str = "data/orders", *, through: str = None) -> list:
-    """Partições de pedidos em disco, em ordem determinística.
+    """Order partitions on disk, in deterministic order.
 
-    `through` limita a `ingestion_date <= through`, que é o recorte natural do par lambda: a
-    camada em lote cobre a história já assentada, e o streaming cobre a cauda viva. Sem ele,
-    as duas camadas recalculam exatamente a mesma coisa — o que funciona, e desperdiça.
+    `through` limits to `ingestion_date <= through`, which is the natural cut of the lambda
+    pair: the batch layer covers settled history, and streaming covers the live tail.
+    Without it, both layers recompute exactly the same thing — which works, and is wasteful.
     """
-    saida = []
+    out = []
     if not os.path.isdir(root):
-        return saida
-    for dia in sorted(os.listdir(root)):
-        if not dia.startswith("ingestion_date="):
+        return out
+    for day in sorted(os.listdir(root)):
+        if not day.startswith("ingestion_date="):
             continue
-        if through is not None and dia.split("=", 1)[1] > through:
+        if through is not None and day.split("=", 1)[1] > through:
             continue
-        caminho_dia = os.path.join(root, dia)
-        for eixo in sorted(os.listdir(caminho_dia)):
-            caminho = os.path.join(caminho_dia, eixo)
-            if os.path.exists(os.path.join(caminho, "_SUCCESS")):
-                saida.append(caminho)
-    return saida
+        day_path = os.path.join(root, day)
+        for axis in sorted(os.listdir(day_path)):
+            path = os.path.join(day_path, axis)
+            if os.path.exists(os.path.join(path, "_SUCCESS")):
+                out.append(path)
+    return out

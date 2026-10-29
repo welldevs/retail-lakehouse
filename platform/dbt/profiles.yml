@@ -1,7 +1,8 @@
-# Profile local. As credenciais vem do ambiente (.env na raiz), nunca do arquivo.
+# Local profile. Credentials come from the environment (.env at the repo root), never from
+# this file.
 #
-# s3_endpoint no DuckDB e host:porta SEM esquema, e o MinIO exige url_style=path
-# (o estilo virtual-host exigiria DNS por bucket).
+# s3_endpoint in DuckDB is host:port WITHOUT a scheme, and MinIO requires url_style=path
+# (virtual-host style would require DNS per bucket).
 retail_lakehouse:
   target: dev
   outputs:
@@ -14,62 +15,62 @@ retail_lakehouse:
         - json
       settings:
         s3_endpoint: "{{ env_var('S3_ENDPOINT_HOST', 'localhost:9000') }}"
-        # Com default: sem ele o dbt aborta com "Env var required but not provided",
-        # que nao diz qual variavel nem onde defini-la. O valor de desenvolvimento do
-        # .env.example e o mesmo, entao o default nao esconde configuracao errada — so
-        # torna o erro legivel quando o .env nao foi criado.
+        # With a default: without it dbt aborts with "Env var required but not provided",
+        # which does not say which variable nor where to define it. The development value
+        # in .env.example is the same, so the default does not hide a wrong configuration —
+        # it only makes the error readable when .env was not created.
         s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'minioadmin') }}"
         s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'minioadmin') }}"
         s3_use_ssl: false
         s3_url_style: "path"
 
-    # SEGUNDO TARGET, mesmo projeto. A arvore models/silver/ so existe quando
-    # target.type == 'duckdb' e models/warehouse/ so quando == 'snowflake' (guard em
-    # dbt_project.yml), entao `dbt build --target snowflake` nunca tenta rodar um
-    # read_json sobre s3:// dentro do Snowflake.
+    # SECOND TARGET, same project. The models/silver/ tree only exists when
+    # target.type == 'duckdb' and models/warehouse/ only when in ('snowflake', 'postgres')
+    # (guard in dbt_project.yml), so a warehouse build never tries to run a read_json over
+    # s3:// inside the destination.
     #
-    # A fronteira entre as duas arvores e FISICA, nao logica: um modelo do warehouse le
-    # `source()` sobre as tabelas STAGE que o COPY INTO carregou, nunca `ref()` de um
-    # modelo Silver. Adaptadores diferentes nao se cruzam numa execucao — a mesma
-    # disciplina que separa Source de plataforma, um nivel acima.
+    # The boundary between the two trees is PHYSICAL, not logical: a warehouse model reads
+    # `source()` over the STAGE tables that COPY INTO loaded, never `ref()` of a Silver
+    # model. Different adapters do not cross in one run — the same discipline that
+    # separates Source from platform, one level up.
     #
-    # AUTENTICACAO POR PAR DE CHAVES, nao senha: e o metodo que o Snowflake recomenda
-    # para acesso programatico e o unico que serve para uma DAG. A chave privada mora
-    # fora do repo (~/.snowflake/keys/), com modo 600; aqui viaja so o CAMINHO.
+    # KEY-PAIR AUTHENTICATION, not password: it is the method Snowflake recommends for
+    # programmatic access and the only one that works for a DAG. The private key lives
+    # outside the repo (~/.snowflake/keys/), with mode 600; only the PATH travels here.
     snowflake:
       type: snowflake
-      # SEM DEFAULT, de proposito — ao contrario do MinIO acima. `minioadmin` e uma
-      # convencao local que o .env.example repete, entao o default nao esconde nada. Uma
-      # CONTA Snowflake nao tem equivalente: qualquer valor cravado aqui e a conta de uma
-      # pessoa especifica, e quem clonasse o repo sem configurar nada nao receberia
-      # "configure a conta" — receberia uma tentativa de conexao contra a conta alheia,
-      # falhando com "Object does not exist" bem longe da causa. Ausente, o dbt aborta
-      # dizendo o nome da variavel. Ver .env.snowflake.example.
+      # NO DEFAULT, on purpose — unlike MinIO above. `minioadmin` is a local convention
+      # that .env.example repeats, so the default hides nothing. A Snowflake ACCOUNT has no
+      # equivalent: any value hard-coded here is a specific person's account, and whoever
+      # cloned the repo without configuring anything would not get "configure the
+      # account" — they would get a connection attempt against someone else's account,
+      # failing with "Object does not exist" far away from the cause. When absent, dbt
+      # aborts naming the variable. See .env.snowflake.example.
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
-      # RETAIL_TRANSFORMER, nao ACCOUNTADMIN: o dbt LE o STAGE e ESCREVE GOLD e MART, e e
-      # exatamente isso que o papel concede. Rodar a transformacao como administrador
-      # tornaria os tres papeis decorativos — eles existiriam, estariam verificados, e
-      # nenhuma execucao real passaria por eles.
+      # RETAIL_TRANSFORMER, not ACCOUNTADMIN: dbt READS STAGE and WRITES GOLD and MART, and
+      # that is exactly what the role grants. Running the transformation as administrator
+      # would make the three roles decorative — they would exist, be verified, and no real
+      # run would go through them.
       role: "{{ env_var('SNOWFLAKE_ROLE', 'RETAIL_TRANSFORMER') }}"
       private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', env_var('HOME') ~ '/.snowflake/keys/spark_retail_rsa.p8') }}"
       database: "{{ env_var('SNOWFLAKE_DATABASE', 'RETAIL') }}"
       warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
-      # O schema DEFAULT do dbt e GOLD; MART sobrescreve pelo `+schema` do projeto.
+      # dbt's DEFAULT schema is GOLD; MART overrides it through the project's `+schema`.
       schema: GOLD
       threads: 4
       client_session_keep_alive: false
 
-    # TERCEIRO TARGET, mesmo guard de `target.type` do warehouse (dbt_project.yml agora
-    # aceita 'snowflake' OU 'postgres'). Existe porque a conta Snowflake acima e um TRIAL,
-    # com prazo: este target prova, com um motor que nao expira, que a arvore
-    # models/warehouse/ tambem troca de MOTOR — nao so de conta. Ver DECISIONS.md.
+    # THIRD TARGET, same `target.type` guard as the warehouse (dbt_project.yml now accepts
+    # 'snowflake' OR 'postgres'). It exists because the Snowflake account above is a TRIAL,
+    # with an expiry date: this target proves, with an engine that does not expire, that
+    # the models/warehouse/ tree can also switch ENGINE — not just account. See DECISIONS.md.
     #
-    # COM DEFAULT, ao contrario do Snowflake: nao ha "conta de outra pessoa" a proteger
-    # aqui. `localhost:5434/retail` e convencao do proprio projeto, do mesmo jeito que
-    # MINIO_ROOT_USER acima tem default — o Postgres deste target roda no container
-    # `warehouse-postgres` do compose, sob profile opt-in, e nao existe fora do
-    # desenvolvimento local.
+    # WITH DEFAULTS, unlike Snowflake: there is no "someone else's account" to protect
+    # here. `localhost:5434/retail` is the project's own convention, the same way
+    # MINIO_ROOT_USER above has a default — this target's Postgres runs in the compose
+    # container `warehouse-postgres`, under an opt-in profile, and does not exist outside
+    # local development.
     postgres:
       type: postgres
       host: "{{ env_var('WAREHOUSE_PG_HOST', 'localhost') }}"
@@ -77,16 +78,17 @@ retail_lakehouse:
       user: "{{ env_var('WAREHOUSE_PG_USER', 'retail') }}"
       password: "{{ env_var('WAREHOUSE_PG_PASSWORD', 'retail') }}"
       dbname: "{{ env_var('WAREHOUSE_PG_DB', 'retail') }}"
-      # MESMO MOTIVO do `role` do target snowflake acima: sem isto o dbt roda como
-      # `retail` (o superusuario do container, quem faz LOGIN) e toda tabela GOLD/MART
-      # nasceria dona DELE, nao de `retail_transformer` — os `alter default privileges
-      # for role retail_transformer ...` que `bootstrap()` cria (postgres_load.py) nunca
-      # disparariam, e `retail_reader` (o painel) ficaria sem select em NENHUMA tabela
-      # nova. Medido: com este campo ausente, `select` em MART.mart_order_funnel como
-      # retail_reader devolvia "permission denied for table mart_order_funnel" mesmo
-      # depois do bootstrap e de um `dbt build` limpo. dbt-postgres faz `set role` logo
-      # apos conectar (ver dbt/adapters/postgres/connections.py) — `retail` e superusuario
-      # e pode assumir qualquer papel sem exigir GRANT de membership antes.
+      # SAME REASON as the `role` of the snowflake target above: without this dbt runs as
+      # `retail` (the container superuser, the one that LOGs IN) and every GOLD/MART table
+      # would be born owned by IT, not by `retail_transformer` — the `alter default
+      # privileges for role retail_transformer ...` that `bootstrap()` creates
+      # (postgres_load.py) would never fire, and `retail_reader` (the dashboard) would have
+      # no select on ANY new table. Measured: with this field absent, `select` on
+      # MART.mart_order_funnel as retail_reader returned "permission denied for table
+      # mart_order_funnel" even after the bootstrap and a clean `dbt build`. dbt-postgres
+      # runs `set role` right after connecting (see dbt/adapters/postgres/connections.py) —
+      # `retail` is a superuser and can assume any role without first requiring a
+      # membership GRANT.
       role: "{{ env_var('WAREHOUSE_PG_ROLE', 'retail_transformer') }}"
       schema: gold
       threads: 4

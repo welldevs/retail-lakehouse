@@ -1,17 +1,17 @@
--- UNIDADES POPULACIONAIS (nucleos) do Callejero (arquivo UP), projetadas sem
--- interpretacao alem de decompor o codigo e extrair os dois nomes uteis.
+-- POPULATION UNITS (nuclei) of the Callejero (UP file), projected with no interpretation
+-- beyond decomposing the code and extracting the two useful names.
 --
--- GRAO: (ingestion_date, unit_code). unit_code (12 digitos) ja e unico dentro de uma
+-- GRAIN: (ingestion_date, unit_code). unit_code (12 digits) is already unique within an
 -- ingestion_date.
 --
--- Layout medido (CONTRACT.md da source, secao 2), NAO documentado oficialmente pelo
--- INE no download: linha de 604 chars, codigo em [0:12] (provincia 2 + municipio 3 +
--- sufixo 7; sufixo "0000000" e a linha AGREGADA do municipio inteiro, as demais sao
--- nucleos/entidades dentro dele), data em [15:23], nome do MUNICIPIO em [94:314], nome
--- da UNIDADE POPULACIONAL (o nucleo -- ex. "*DISEMINADO*" para populacao dispersa) em
--- [459:529]. Existem mais repeticoes do mesmo texto em outras larguras (formas
--- abreviadas), nao extraidas aqui -- confirmado comparando o conteudo real, nao
--- assumido por semelhanca de posicao.
+-- Measured layout (the source's CONTRACT.md, section 2), NOT officially documented by
+-- INE in the download: 604-char line, code at [0:12] (province 2 + municipality 3 +
+-- suffix 7; suffix "0000000" is the AGGREGATE row for the whole municipality, the others
+-- are nuclei/entities within it), date at [15:23], MUNICIPALITY name at [94:314], name
+-- of the POPULATION UNIT (the nucleus -- e.g. "*DISEMINADO*" for scattered population) at
+-- [459:529]. There are more repetitions of the same text at other widths (abbreviated
+-- forms), not extracted here -- confirmed by comparing the real content, not assumed
+-- from positional similarity.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_population_units.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -39,13 +39,13 @@ with raw as (
 
 select
     ingestion_date,
-    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
-    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
-    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
-    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
-    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
-    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
-    -- acidente.
+    -- A re-extraction of the SAME INE publication creates another ingestion_date with
+    -- equivalent rows, and this model stacks them all (the history is deliberate). Without an
+    -- explicit marker, whoever queries without filtering double-counts — it already happened
+    -- with silver_ine_population_series, which ended up with 1,547,496 rows in EACH of two
+    -- ingestion_dates. `where is_latest_ingestion` is the right way to read the current
+    -- state; without the filter, the whole history is read, and that becomes a choice rather
+    -- than an accident.
     ingestion_date = max(ingestion_date) over () as is_latest_ingestion,
     'UP'                                          as source_dataset,
     source_file,

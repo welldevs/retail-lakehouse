@@ -1,40 +1,42 @@
-"""O OLTP de pedidos e seu outbox transacional.
+"""The orders OLTP and its transactional outbox.
 
-POR QUE ISTO EXISTE. O gatilho escrito para o Kafka em ARCHITECTURE.md e "uma source
-genuinamente event-driven: POS, webhook, CDC DE UM OLTP". Republicar o log em lote num
-topico nao satisfaz esse gatilho — adicionaria um broker e zero informacao. O que satisfaz
-e o evento NASCER dentro da transacao que muda o estado do pedido. E isso que este modulo
-faz, e a propriedade que ele prova — atomicidade — e a unica razao pela qual o proximo
-marco tem direito de existir.
+WHY THIS EXISTS. The trigger written for Kafka in ARCHITECTURE.md is "a genuinely
+event-driven source: POS, webhook, CDC FROM AN OLTP". Republishing the log in batch onto a
+topic does not satisfy that trigger — it would add a broker and zero information. What
+satisfies it is the event being BORN inside the transaction that changes the order's state.
+That is what this module does, and the property it proves — atomicity — is the only reason
+the next milestone has the right to exist.
 
-A PROPRIEDADE, DITA COM PRECISAO: para todo evento, ou (a mudanca de estado E a linha do
-outbox) sao visiveis, ou nenhuma das duas e. Nunca uma sem a outra. Sem isso, o estado do
-OLTP e o topico divergem sem que nada reprove, e a divergencia so aparece semanas depois
-num numero plausivel.
+THE PROPERTY, STATED PRECISELY: for every event, either (the state change AND the outbox
+row) are visible, or neither is. Never one without the other. Without that, the OLTP state
+and the topic diverge with nothing failing, and the divergence only shows up weeks later
+in a plausible number.
 
-O QUE O DUPLO PROVA E O QUE SO O POSTGRES PROVA. Os testes offline (fake_pg.py) provam a
-FRONTEIRA: que as duas escritas saem entre o mesmo BEGIN e o mesmo COMMIT, sem commit
-intermediario — que e o defeito real que se comete escrevendo isto (um `commit()` a mais no
-meio transforma outbox em dual-write). Que a fronteira SIGNIFICA alguma coisa e propriedade
-do motor, e so se prova contra um Postgres de verdade: `make orders-prove-atomicity`
-injeta um trigger que faz o insert no outbox explodir e confere que a mudanca de estado
-tambem nao sobreviveu. As duas provas sao necessarias e nenhuma substitui a outra.
+WHAT THE DOUBLE PROVES AND WHAT ONLY POSTGRES PROVES. The offline tests (fake_pg.py) prove
+the BOUNDARY: that both writes go out between the same BEGIN and the same COMMIT, with no
+intermediate commit — which is the real defect one commits writing this (one extra
+`commit()` in the middle turns an outbox into a dual-write). That the boundary MEANS
+something is a property of the engine, and can only be proven against a real Postgres:
+`make orders-prove-atomicity` injects a trigger that makes the outbox insert blow up and
+checks that the state change did not survive either. Both proofs are needed and neither
+replaces the other.
 
-TRES GUARDAS INDEPENDENTES, QUE PRECISAM CONCORDAR:
+THREE INDEPENDENT GUARDS, WHICH MUST AGREE:
 
-  1. `outbox.event_id` UNIQUE          — reaplicar o mesmo evento nao duplica nada
-  2. `orders.last_sequence_no`         — o OLTP RECUSA evento fora de ordem
-  3. `orders.status` em `from_states`  — o OLTP RECUSA transicao invalida
+  1. `outbox.event_id` UNIQUE          — re-applying the same event duplicates nothing
+  2. `orders.last_sequence_no`         — the OLTP REJECTS an out-of-order event
+  3. `orders.status` in `from_states`  — the OLTP REJECTS an invalid transition
 
-A guarda 2 e o que da sentido a chave de particao do Kafka no Marco 5: se o OLTP aceitasse
-evento fora de ordem, preservar ordem por `order_id` no broker seria enfeite. E porque ele
-recusa que `key = order_id` passa a ser uma exigencia, e nao uma preferencia.
+Guard 2 is what gives meaning to the Kafka partition key in Milestone 5: if the OLTP
+accepted out-of-order events, preserving order by `order_id` in the broker would be
+decoration. It is because it rejects them that `key = order_id` becomes a requirement and
+not a preference.
 
-A MAQUINA DE ESTADOS E REDECLARADA AQUI, NAO IMPORTADA. A Source e FROZEN e esta plataforma
-nunca importa o codigo dela — o contrato e fisico. Declarar as transicoes de novo, a partir
-do CONTRACT.md secao 5, e o mesmo principio de `verify.py` reler o objeto em vez de confiar
-no que acabou de escrever: verificacao em vez de confianca. Se as duas declaracoes
-divergirem, `orders-apply` reprova em voz alta na primeira transicao afetada.
+THE STATE MACHINE IS REDECLARED HERE, NOT IMPORTED. The Source is FROZEN and this platform
+never imports its code — the contract is physical. Declaring the transitions again, from
+CONTRACT.md section 5, is the same principle as `verify.py` re-reading the object instead
+of trusting what it just wrote: verification instead of trust. If the two declarations
+diverge, `orders-apply` fails loudly on the first affected transition.
 """
 
 from __future__ import annotations
@@ -57,28 +59,28 @@ DEFAULT_DSN = os.environ.get(
 
 
 class OrdersOltpError(Exception):
-    """O OLTP recusou o log: fora de ordem, transicao invalida ou valor divergente."""
+    """The OLTP rejected the log: out of order, invalid transition or diverging value."""
 
 
 # --------------------------------------------------------------------------------------
 # DDL
 # --------------------------------------------------------------------------------------
 #
-# `outbox.event_json` guarda A LINHA CANONICA DO LOG, verbatim — nao uma reserializacao.
-# E ela que vai para o broker no Marco 5, e e por isso que o log reconstruido a partir do
-# outbox tem de bater sha256 com o manifesto da particao (`orders-outbox --verify`).
+# `outbox.event_json` stores THE CANONICAL LOG LINE, verbatim — not a re-serialization.
+# That is what goes to the broker in Milestone 5, and that is why the log rebuilt from the
+# outbox must match the partition manifest's sha256 (`orders-outbox --verify`).
 #
-# As colunas do envelope existem para ROTEAR (chave, ordem, filtro), nao para guardar a
-# verdade de novo. Para que as duas nao possam divergir, quatro CHECKs amarram cada coluna
-# ao proprio JSON: uma linha nao consegue ser roteada sob uma chave que discorda do payload
-# que ela carrega. E o motor que garante, nao a convencao.
+# The envelope columns exist to ROUTE (key, order, filter), not to store the truth again.
+# So that the two cannot diverge, four CHECKs tie each column to the JSON itself: a row
+# cannot be routed under a key that disagrees with the payload it carries. The engine
+# guarantees it, not convention.
 #
-# `payload` NAO e coluna: `event_json::jsonb -> 'payload'` responde qualquer consulta sem
-# guardar uma segunda copia. Duas representacoes da mesma verdade divergem.
+# `payload` is NOT a column: `event_json::jsonb -> 'payload'` answers any query without
+# storing a second copy. Two representations of the same truth diverge.
 #
-# `created_at default now()` e o UNICO relogio desta cadeia, e e legitimo: o log da Source
-# nao tem `recorded_at` de proposito ("sem relogio"), porque atraso e reordenacao sao
-# carimbados por quem RECEBE. Este e o momento de receber.
+# `created_at default now()` is the ONLY clock in this chain, and it is legitimate: the
+# Source log has no `recorded_at` on purpose ("no clock"), because delay and reordering are
+# stamped by whoever RECEIVES. This is the moment of receiving.
 
 DDL = """
 create table if not exists orders (
@@ -95,13 +97,14 @@ create table if not exists orders (
     line_count           integer     not null check (line_count > 0),
     picked_line_count    integer,
     gross_amount         numeric(12,2) not null,
-    -- NULL ATE SER DETERMINADO, e nao `gross` nem zero. `net_amount` responde "quanto foi
-    -- efetivamente separado", e um pedido cancelado antes da separacao nunca respondeu isso.
-    -- Inicializar com o valor colocado faria a coluna responder OUTRA pergunta ("quanto
-    -- ainda vale o pedido") com o MESMO nome que `silver_order.net_amount` usa para a
-    -- primeira — e `orders-reconcile`, no Marco 6, compararia duas perguntas diferentes.
-    -- Medido: 298 dos 6.400 pedidos (196 cancelados, 102 com pagamento recusado) morrem
-    -- antes da separacao. Eram exatamente as 298 divergencias entre os dois folds.
+    -- NULL UNTIL DETERMINED, not `gross` nor zero. `net_amount` answers "how much was
+    -- actually picked", and an order cancelled before picking never answered that.
+    -- Initializing it with the placed amount would make the column answer ANOTHER question
+    -- ("how much is the order still worth") under the SAME name `silver_order.net_amount`
+    -- uses for the first — and `orders-reconcile`, in Milestone 6, would compare two
+    -- different questions. Measured: 298 of the 6,400 orders (196 cancelled, 102 with
+    -- payment declined) die before picking. They were exactly the 298 divergences between
+    -- the two folds.
     net_amount           numeric(12,2),
     returned_amount      numeric(12,2) not null default 0,
     delivered_within_slot boolean,
@@ -121,23 +124,23 @@ create table if not exists order_line (
     fulfilled_unit_price        numeric(12,2),
     line_amount                 numeric(12,2) not null,
     primary key (order_id, line_no),
-    -- O MESMO vocabulario de `silver_order_line.line_status`, e nao um parecido. Se os dois
-    -- lados nomeassem o mesmo fato de formas diferentes, `orders-reconcile` (Marco 6)
-    -- precisaria de uma tabela de traducao — e tabela de traducao entre dois folds e
-    -- exatamente onde "compara duas coisas erradas e passa" mora.
+    -- The SAME vocabulary as `silver_order_line.line_status`, not a similar one. If the two
+    -- sides named the same fact differently, `orders-reconcile` (Milestone 6) would need a
+    -- translation table — and a translation table between two folds is exactly where
+    -- "compares two wrong things and passes" lives.
     constraint order_line_status_vocabulary check (status in (
         'placed', 'fulfilled', 'substituted', 'removed', 'not_picked')),
-    -- Linha removida nao tem produto cumprido nem valor. Linha substituida tem os dois.
-    -- Sem isto, um applier com defeito deixaria `line_amount` antigo numa linha removida e
-    -- o `net_amount` do pedido fecharia contra uma soma errada sem nada reprovar.
+    -- A removed line has neither a fulfilled product nor an amount. A substituted line has
+    -- both. Without this, a defective applier would leave a stale `line_amount` on a removed
+    -- line and the order's `net_amount` would close against a wrong sum with nothing failing.
     constraint order_line_removed_has_no_amount check (
         status <> 'removed' or (fulfilled_source_product_id is null and line_amount = 0)),
     constraint order_line_substituted_has_a_substitute check (
         status <> 'substituted' or fulfilled_source_product_id is not null),
     constraint order_line_fulfilled_has_a_product check (
         status <> 'fulfilled' or fulfilled_source_product_id is not null),
-    -- Linha de pedido que morreu antes da separacao nao entregou nada: sem produto cumprido
-    -- e sem valor. O que o cliente PEDIU continua em source_product_id e unit_price.
+    -- A line of an order that died before picking delivered nothing: no fulfilled product
+    -- and no amount. What the customer ORDERED stays in source_product_id and unit_price.
     constraint order_line_not_picked_has_no_amount check (
         status <> 'not_picked'
         or (fulfilled_source_product_id is null and line_amount = 0))
@@ -164,9 +167,9 @@ create table if not exists outbox (
         and sequence_no = (event_json::jsonb ->> 'sequence_no')::integer)
 );
 
--- Indice PARCIAL: a fila do publisher e so o que ainda nao foi publicado. Depois que o
--- outbox acumular milhoes de linhas publicadas, um indice cheio faria o publisher varrer
--- historico a cada rodada. Este indice encolhe conforme a fila drena, que e o oposto.
+-- PARTIAL index: the publisher's queue is only what has not been published yet. Once the
+-- outbox accumulates millions of published rows, a full index would make the publisher scan
+-- history on every round. This index shrinks as the queue drains, which is the opposite.
 create index if not exists outbox_unpublished
     on outbox (outbox_id) where published_at is null;
 
@@ -181,16 +184,16 @@ drop table if exists orders;
 
 
 # --------------------------------------------------------------------------------------
-# O plano de escrita: puro, testavel sem banco nenhum
+# The write plan: pure, testable without any database
 # --------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Statement:
-    """Uma escrita, com o numero de linhas que ela OBRIGATORIAMENTE tem de afetar.
+    """One write, with the number of rows it MUST affect.
 
-    `expect_rows` e a guarda: um update que nao encontra o pedido no estado esperado afeta
-    zero linhas e o Postgres nao reclama. Sem conferir o rowcount, aplicar um evento fora
-    de ordem seria silencioso — o pior modo de falha possivel numa cadeia de eventos.
+    `expect_rows` is the guard: an update that does not find the order in the expected state
+    affects zero rows and Postgres does not complain. Without checking the rowcount, applying
+    an out-of-order event would be silent — the worst possible failure mode in an event chain.
     """
 
     sql: str
@@ -201,7 +204,7 @@ class Statement:
 
 @dataclass(frozen=True)
 class Check:
-    """Uma conferencia escalar dentro da mesma transacao. Divergiu, a transacao inteira cai."""
+    """A scalar check inside the same transaction. If it diverges, the whole transaction falls."""
 
     sql: str
     params: tuple
@@ -209,8 +212,8 @@ class Check:
     detail: str
 
 
-# Transicoes validas, redeclaradas do CONTRACT.md secao 5 da Source. `from_states` e o
-# conjunto de estados a partir dos quais o evento pode ser aplicado.
+# Valid transitions, redeclared from the Source's CONTRACT.md section 5. `from_states` is the
+# set of states from which the event may be applied.
 STATE_BEFORE = {
     "order_payment_authorized": ("PLACED",),
     "order_payment_failed": ("PLACED",),
@@ -253,10 +256,10 @@ insert into order_line (
 values (%s, %s, %s, %s, %s, 'placed', %s)
 """
 
-# A guarda de ordem E a de estado na MESMA clausula where. Se qualquer uma nao valer, o
-# update afeta zero linhas e `expect_rows=1` derruba a transacao. Fazer as duas conferencias
-# num SELECT antes seria uma condicao de corrida: entre ler e escrever, outra sessao pode
-# ter avancado o pedido.
+# The order guard AND the state guard in the SAME where clause. If either does not hold, the
+# update affects zero rows and `expect_rows=1` brings the transaction down. Doing both checks
+# in a SELECT beforehand would be a race condition: between reading and writing, another
+# session may have advanced the order.
 _ADVANCE = """
 update orders
    set status = %s,
@@ -276,7 +279,7 @@ update orders
 
 
 def _parse_ts(value: str) -> datetime:
-    """ISO-8601 com sufixo Z. Convertido em Python para nao depender do parser do servidor."""
+    """ISO-8601 with a Z suffix. Converted in Python so as not to depend on the server parser."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
@@ -293,6 +296,8 @@ def _advance(event, status, *, extra="", extra_params=()):
         _ADVANCE.format(extra=extra),
         params,
         expect_rows=1,
+        # Kept in Portuguese on purpose: scripts/prove_oltp_atomicity.py checks for the
+        # substring "fora de ordem" in this message. Translate both together.
         detail=(
             f"{order_id} seq={seq} {event['event_type']}: pedido inexistente, evento fora "
             f"de ordem (esperado last_sequence_no={seq - 1}) ou estado fora de {allowed}"
@@ -301,10 +306,10 @@ def _advance(event, status, *, extra="", extra_params=()):
 
 
 def plan(event) -> list:
-    """As escritas de estado de UM evento. Funcao pura: nao le banco, nao tem relogio.
+    """The state writes of ONE event. Pure function: reads no database, has no clock.
 
-    Nao inclui a linha do outbox — quem monta a transacao e `_apply_event`, e a ordem la
-    e deliberada (outbox primeiro, ver o comentario naquele ponto).
+    Does not include the outbox row — the transaction is assembled by `_apply_event`, and the
+    order there is deliberate (outbox first, see the comment at that point).
     """
     kind = event["event_type"]
     order_id = event["order_id"]
@@ -330,7 +335,7 @@ def plan(event) -> list:
                     gross,
                 ),
                 expect_rows=1,
-                detail=f"{order_id}: pedido ja existe no OLTP",
+                detail=f"{order_id}: order already exists in the OLTP",
             )
         ]
         for line in payload["lines"]:
@@ -347,16 +352,16 @@ def plan(event) -> list:
                         unit * line["quantity"],
                     ),
                     expect_rows=1,
-                    detail=f"{order_id} linha {line['line_no']}: ja existe no OLTP",
+                    detail=f"{order_id} line {line['line_no']}: already exists in the OLTP",
                 )
             )
         return ops
 
     if kind in ("order_line_substituted", "order_line_removed"):
         line_no = payload["line_no"]
-        # A guarda de ordem VEM PRIMEIRO. Mexer na linha antes e depois descobrir que o
-        # evento estava fora de ordem funcionaria (a transacao cai inteira), mas deixaria a
-        # mensagem de erro apontando para o sintoma em vez da causa.
+        # The order guard COMES FIRST. Touching the line first and then discovering the event
+        # was out of order would work (the whole transaction falls), but would leave the
+        # error message pointing at the symptom instead of the cause.
         ops = [_advance(event, STATE_AFTER[kind])]
         if kind == "order_line_substituted":
             amount = Decimal(payload["substitute_unit_price"]) * payload["quantity"]
@@ -378,7 +383,7 @@ def plan(event) -> list:
                         line_no,
                     ),
                     expect_rows=1,
-                    detail=f"{order_id} linha {line_no}: inexistente ou ja alterada",
+                    detail=f"{order_id} line {line_no}: missing or already changed",
                 )
             )
         else:
@@ -394,7 +399,7 @@ def plan(event) -> list:
                     """,
                     (order_id, line_no),
                     expect_rows=1,
-                    detail=f"{order_id} linha {line_no}: inexistente ou ja alterada",
+                    detail=f"{order_id} line {line_no}: missing or already changed",
                 )
             )
         ops.append(
@@ -402,16 +407,16 @@ def plan(event) -> list:
                 _RECOMPUTE_NET,
                 (order_id, order_id),
                 expect_rows=1,
-                detail=f"{order_id}: nao foi possivel recomputar net_amount",
+                detail=f"{order_id}: could not recompute net_amount",
             )
         )
         return ops
 
     if kind == "order_picked":
-        # O `picked_amount` declarado no evento e conferido CONTRA O ESTADO DO PROPRIO OLTP,
-        # dentro da transacao. Nao e desconfianca da Source: e a unica forma de garantir que
-        # o fold do OLTP e o fold do Silver partem do mesmo lugar. Se um dia divergirem, o
-        # marco 6 (`orders-reconcile`) compararia duas coisas erradas e PASSARIA.
+        # The `picked_amount` declared in the event is checked AGAINST THE OLTP'S OWN STATE,
+        # inside the transaction. It is not distrust of the Source: it is the only way to
+        # guarantee the OLTP fold and the Silver fold start from the same place. If they ever
+        # diverged, milestone 6 (`orders-reconcile`) would compare two wrong things and PASS.
         return [
             _advance(
                 event,
@@ -419,11 +424,11 @@ def plan(event) -> list:
                 extra=", picked_line_count = %s",
                 extra_params=(payload["picked_line_count"],),
             ),
-            # A LINHA INTOCADA SO VIRA `fulfilled` AQUI. Nao existe evento por linha dizendo
-            # "esta foi separada como pedida" — `order_picked` declara isso no grao do
-            # pedido, e o OLTP ja confere `picked_line_count` contra o proprio estado logo
-            # abaixo. Distribuir um fato declarado nao e inventar; rotular `fulfilled` na
-            # colocacao, como este modelo fazia antes, era.
+            # THE UNTOUCHED LINE ONLY BECOMES `fulfilled` HERE. There is no per-line event
+            # saying "this one was picked as ordered" — `order_picked` declares that at the
+            # order grain, and the OLTP already checks `picked_line_count` against its own
+            # state just below. Distributing a declared fact is not inventing; labelling
+            # `fulfilled` at placement, as this model used to do, was.
             Statement(
                 """
                 update order_line
@@ -433,34 +438,34 @@ def plan(event) -> list:
                  where order_id = %s and status = 'placed'
                 """,
                 (order_id,),
-                # Quantas linhas continuam intocadas varia por pedido; a guarda e o Check
-                # logo abaixo, que exige que NENHUMA linha continue indefinida.
+                # How many lines remain untouched varies per order; the guard is the Check
+                # just below, which requires that NO line remains undefined.
                 expect_rows=None,
-                detail=f"{order_id}: nao foi possivel cumprir as linhas intocadas",
+                detail=f"{order_id}: could not fulfil the untouched lines",
             ),
             Check(
                 "select count(*) from order_line where order_id = %s and status = 'placed'",
                 (order_id,),
                 0,
-                detail=f"{order_id}: sobrou linha indefinida depois da separacao",
+                detail=f"{order_id}: an undefined line is left after picking",
             ),
             Check(
                 "select coalesce(sum(line_amount), 0) from order_line where order_id = %s",
                 (order_id,),
                 Decimal(payload["picked_amount"]),
-                detail=f"{order_id}: picked_amount declarado nao fecha com as linhas do OLTP",
+                detail=f"{order_id}: declared picked_amount does not match the OLTP lines",
             ),
             Check(
                 "select count(*) from order_line where order_id = %s and status <> 'removed'",
                 (order_id,),
                 payload["picked_line_count"],
-                detail=f"{order_id}: picked_line_count declarado nao fecha com as linhas",
+                detail=f"{order_id}: declared picked_line_count does not match the lines",
             ),
             Statement(
                 _RECOMPUTE_NET,
                 (order_id, order_id),
                 expect_rows=1,
-                detail=f"{order_id}: nao foi possivel recomputar net_amount",
+                detail=f"{order_id}: could not recompute net_amount",
             ),
         ]
 
@@ -485,9 +490,9 @@ def plan(event) -> list:
         ]
 
     if kind in ("order_cancelled", "order_payment_failed"):
-        # O pedido morreu antes da separacao. As linhas nao foram cumpridas nem removidas:
-        # ninguem chegou a toca-las. Deixa-las `placed` faria o OLTP guardar para sempre um
-        # estado "pendente" de um pedido terminal.
+        # The order died before picking. The lines were neither fulfilled nor removed: nobody
+        # got to touch them. Leaving them `placed` would make the OLTP keep forever a
+        # "pending" state for a terminal order.
         return [
             _advance(event, STATE_AFTER[kind]),
             Statement(
@@ -501,7 +506,7 @@ def plan(event) -> list:
                 """,
                 (order_id,),
                 expect_rows=None,
-                detail=f"{order_id}: nao foi possivel encerrar as linhas do pedido",
+                detail=f"{order_id}: could not close the order lines",
             ),
         ]
 
@@ -509,8 +514,8 @@ def plan(event) -> list:
         return [_advance(event, STATE_AFTER[kind])]
 
     raise OrdersOltpError(
-        f"{event['order_id']} seq={event['sequence_no']}: event_type {kind!r} fora do "
-        f"vocabulario que este OLTP conhece"
+        f"{event['order_id']} seq={event['sequence_no']}: event_type {kind!r} outside the "
+        f"vocabulary this OLTP knows"
     )
 
 
@@ -524,7 +529,7 @@ on conflict (event_id) do nothing
 
 
 def outbox_statement(event, event_json: str) -> Statement:
-    """A linha do outbox. `event_json` e A LINHA DO LOG, verbatim — nao reserializada."""
+    """The outbox row. `event_json` is THE LOG LINE, verbatim — not re-serialized."""
     return Statement(
         _INSERT_OUTBOX,
         (
@@ -538,14 +543,14 @@ def outbox_statement(event, event_json: str) -> Statement:
             event["producer"],
             event_json,
         ),
-        # None de proposito: 0 linhas aqui NAO e erro, e o sinal de "ja aplicado".
+        # None on purpose: 0 rows here is NOT an error, it is the "already applied" signal.
         expect_rows=None,
         detail=f"{event['event_id']}: insert no outbox",
     )
 
 
 # --------------------------------------------------------------------------------------
-# Execucao
+# Execution
 # --------------------------------------------------------------------------------------
 
 @dataclass
@@ -566,34 +571,35 @@ def _execute(cur, ops) -> None:
             got = row[0] if row else None
             if got != op.expected:
                 raise OrdersOltpError(
-                    f"{op.detail}: OLTP={got!r} evento={op.expected!r}"
+                    f"{op.detail}: OLTP={got!r} event={op.expected!r}"
                 )
         elif op.expect_rows is not None and cur.rowcount != op.expect_rows:
             raise OrdersOltpError(
-                f"{op.detail} (afetou {cur.rowcount} linhas, esperado {op.expect_rows})"
+                f"{op.detail} (affected {cur.rowcount} rows, expected {op.expect_rows})"
             )
 
 
 def apply_event(connection, event, event_json: str) -> bool:
-    """Aplica UM evento. Devolve True se aplicou, False se ja estava aplicado.
+    """Applies ONE event. Returns True if applied, False if it was already applied.
 
-    A TRANSACAO E ESTE CORPO INTEIRO, e o `commit` no fim e o unico que existe. Um
-    `commit()` a mais entre o outbox e a mudanca de estado transformaria esta funcao em
-    dual-write — e e exatamente esse defeito que `test_orders_oltp` grava e reprova.
+    THE TRANSACTION IS THIS WHOLE BODY, and the `commit` at the end is the only one there is.
+    One extra `commit()` between the outbox and the state change would turn this function
+    into a dual-write — and that is exactly the defect `test_orders_oltp` records and fails.
 
-    OUTBOX PRIMEIRO, e nao por gosto: o `on conflict do nothing` no `event_id` unico e o
-    que decide se o evento ja foi aplicado. Perguntar isso ao estado (`last_sequence_no`)
-    daria a MESMA resposta — as duas guardas concordam por construcao — mas em forma de
-    RECUSA, nao de "pular". Num replay do mesmo dia, pular e o comportamento correto.
+    OUTBOX FIRST, and not by taste: the `on conflict do nothing` on the unique `event_id` is
+    what decides whether the event was already applied. Asking the state
+    (`last_sequence_no`) would give the SAME answer — the two guards agree by construction —
+    but as a REJECTION, not a "skip". On a replay of the same day, skipping is the correct
+    behavior.
     """
     try:
         with connection.cursor() as cur:
             outbox = outbox_statement(event, event_json)
             cur.execute(outbox.sql, outbox.params)
             if cur.rowcount == 0:
-                # Ja aplicado. Nada a desfazer, mas o rollback fecha a transacao de forma
-                # explicita em vez de deixar uma transacao aberta viajando para o proximo
-                # evento — que e como um `idle in transaction` nasce.
+                # Already applied. Nothing to undo, but the rollback closes the transaction
+                # explicitly instead of leaving an open transaction travelling to the next
+                # event — which is how an `idle in transaction` is born.
                 connection.rollback()
                 return False
             _execute(cur, plan(event))
@@ -605,10 +611,10 @@ def apply_event(connection, event, event_json: str) -> bool:
 
 
 def read_log(partition_path: str) -> list[tuple[dict, str]]:
-    """(evento, linha canonica) na ordem do arquivo, que ja e a ordem de aplicacao."""
+    """(event, canonical line) in file order, which already is the apply order."""
     path = os.path.join(partition_path, EVENTS_FILE)
     if not os.path.exists(path):
-        raise OrdersOltpError(f"log de eventos nao encontrado: {path}")
+        raise OrdersOltpError(f"event log not found: {path}")
     out = []
     with open(path, encoding="utf-8") as handle:
         for number, raw in enumerate(handle, start=1):
@@ -618,42 +624,43 @@ def read_log(partition_path: str) -> list[tuple[dict, str]]:
             try:
                 out.append((json.loads(line), line))
             except ValueError as exc:
-                raise OrdersOltpError(f"{path}:{number}: linha ilegivel: {exc}") from exc
+                raise OrdersOltpError(f"{path}:{number}: unreadable line: {exc}") from exc
     return out
 
 
 def verify_log(partition_path: str):
-    """Confere o sha256 do log contra o manifesto ANTES de replicar qualquer coisa.
+    """Checks the log's sha256 against the manifest BEFORE replicating anything.
 
-    Replicar um log adulterado no OLTP contaminaria o outbox, e o outbox e o que vai para o
-    broker. O ponto de conferir aqui, e nao depois, e que depois ja e tarde.
+    Replicating a tampered log into the OLTP would contaminate the outbox, and the outbox is
+    what goes to the broker. The point of checking here, and not later, is that later is
+    too late.
     """
     partition = manifest_reader.read(partition_path)
     if partition.source_name != SOURCE_NAME:
         raise OrdersOltpError(
-            f"particao de {partition.source_name!r}: este OLTP so aplica {SOURCE_NAME!r}"
+            f"partition of {partition.source_name!r}: this OLTP only applies {SOURCE_NAME!r}"
         )
     entries = [entry for entry in partition.files if entry.path.endswith(EVENTS_FILE)]
     if len(entries) != 1:
         raise OrdersOltpError(
-            f"manifesto declara {len(entries)} arquivos de log; esperado exatamente 1"
+            f"manifest declares {len(entries)} log files; expected exactly 1"
         )
     entry = entries[0]
     digest, size = entry.digest_on_disk()
     if digest != entry.sha256 or size != entry.bytes:
         raise OrdersOltpError(
-            f"log diverge do manifesto: sha256 em disco {digest} != {entry.sha256}"
+            f"log diverges from the manifest: sha256 on disk {digest} != {entry.sha256}"
         )
     return partition
 
 
 def apply_partition(connection, partition_path: str, *, verify: bool = True) -> ApplyResult:
-    """Replica o log de uma particao no OLTP, um evento por transacao.
+    """Replicates a partition's log into the OLTP, one event per transaction.
 
-    UMA TRANSACAO POR EVENTO, e nao por pedido ou por particao. E o unico recorte que
-    corresponde ao que um OLTP de verdade faz — cada mudanca de estado e um negocio
-    fechado — e e o unico em que a propriedade provada aqui significa o que promete. Uma
-    transacao por particao provaria "o dia inteiro e atomico", que nenhuma loja garante.
+    ONE TRANSACTION PER EVENT, not per order or per partition. It is the only cut that
+    matches what a real OLTP does — each state change is a closed deal — and the only one in
+    which the property proven here means what it promises. One transaction per partition
+    would prove "the whole day is atomic", which no store guarantees.
     """
     if verify:
         verify_log(partition_path)
@@ -672,15 +679,15 @@ def apply_partition(connection, partition_path: str, *, verify: bool = True) -> 
 
 
 # --------------------------------------------------------------------------------------
-# Conferencia do outbox
+# Outbox check
 # --------------------------------------------------------------------------------------
 
 def rebuild_log(connection, ingestion_date: str, wh: str) -> bytes:
-    """Reconstitui o log a partir do outbox, na ordem canonica da Source.
+    """Rebuilds the log from the outbox, in the Source's canonical order.
 
-    A ordem e `(occurred_at, order_id, sequence_no)` porque e a que a Source declara no
-    CONTRACT — nao `outbox_id`, que e ordem de INSERCAO. As duas coincidem hoje; depender
-    da coincidencia faria esta conferencia passar por sorte.
+    The order is `(occurred_at, order_id, sequence_no)` because that is what the Source
+    declares in the CONTRACT — not `outbox_id`, which is INSERTION order. The two coincide
+    today; depending on the coincidence would make this check pass by luck.
     """
     with connection.cursor() as cur:
         cur.execute(
@@ -698,12 +705,12 @@ def rebuild_log(connection, ingestion_date: str, wh: str) -> bytes:
 
 
 def verify_outbox(connection, partition_path: str) -> dict:
-    """Prova que o outbox nao perdeu, nao duplicou e nao alterou nada.
+    """Proves the outbox lost nothing, duplicated nothing and altered nothing.
 
-    E a prova mais forte que este marco tem para dar, e nao custa nada: se o log
-    reconstituido a partir das linhas do outbox reproduz o sha256 do manifesto, entao toda
-    a cadeia — ler, aplicar em transacao, gravar o outbox, reler, reordenar — e fiel byte a
-    byte. Contar linhas nao provaria isso; comparar somas tambem nao.
+    It is the strongest proof this milestone has to give, and it costs nothing: if the log
+    rebuilt from the outbox rows reproduces the manifest's sha256, then the whole chain —
+    read, apply in a transaction, write the outbox, re-read, re-order — is faithful byte for
+    byte. Counting rows would not prove that; comparing sums would not either.
     """
     partition = verify_log(partition_path)
     entry = [e for e in partition.files if e.path.endswith(EVENTS_FILE)][0]
@@ -749,27 +756,27 @@ def outbox_summary(connection) -> dict:
 
 
 # --------------------------------------------------------------------------------------
-# Conexao
+# Connection
 # --------------------------------------------------------------------------------------
 
 def connect(dsn: str = None):
-    """Conexao com o OLTP. Importa psycopg sob demanda, como boto3 e o conector Snowflake.
+    """Connection to the OLTP. Imports psycopg on demand, like boto3 and the Snowflake connector.
 
-    O import tardio e o que mantem `plan()` e `outbox_statement()` — as funcoes que carregam
-    toda a regra — testaveis num ambiente sem psycopg e sem banco de pe.
+    The late import is what keeps `plan()` and `outbox_statement()` — the functions that carry
+    all the rules — testable in an environment without psycopg and without a running database.
     """
     try:
         import psycopg
-    except ImportError as exc:  # pragma: no cover - depende do ambiente
+    except ImportError as exc:  # pragma: no cover - depends on the environment
         raise OrdersOltpError(
-            "psycopg nao esta instalado neste venv. Rode `make venv`."
+            "psycopg is not installed in this venv. Run `make venv`."
         ) from exc
     try:
         return psycopg.connect(dsn or DEFAULT_DSN)
     except psycopg.Error as exc:
         raise OrdersOltpError(
-            f"nao foi possivel conectar no OLTP ({dsn or DEFAULT_DSN}): {exc}\n"
-            "O plano de stream nao sobe com `make up`. Rode `make stream-up`."
+            f"could not connect to the OLTP ({dsn or DEFAULT_DSN}): {exc}\n"
+            "The stream plane does not come up with `make up`. Run `make stream-up`."
         ) from exc
 
 

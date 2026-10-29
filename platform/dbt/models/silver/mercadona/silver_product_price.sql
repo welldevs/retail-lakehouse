@@ -1,32 +1,34 @@
--- PROJECAO FIEL E TIPADA de cada snapshot. Nenhuma leitura entre datas acontece aqui:
--- interpretacao temporal e do silver_price_change.
+-- FAITHFUL, TYPED PROJECTION of each snapshot. No cross-date reading happens here:
+-- temporal interpretation belongs to silver_price_change.
 --
--- GRAO: (ingestion_date, warehouse, category_id, subgroup_id, source_product_id).
--- NAO e source_product_id. CONTRACT.md 4.8: um produto aparece em mais de uma categoria
--- e em mais de um subgrupo — ~270 linhas repetidas por particao. E semantica da fonte,
--- preservada de proposito.
+-- GRAIN: (ingestion_date, warehouse, category_id, subgroup_id, source_product_id).
+-- It is NOT source_product_id. CONTRACT.md 4.8: a product appears in more than one category
+-- and in more than one subgroup — ~270 repeated rows per partition. It is source
+-- semantics, preserved on purpose.
 --
--- CONTRACT.md 4.4: unit_price e string em 100% dos registros; converter para float
--- perderia precisao decimal em moeda. Daqui sai DECIMAL, nunca DOUBLE.
+-- CONTRACT.md 4.4: unit_price is a string in 100% of records; converting to float would
+-- lose decimal precision in currency. DECIMAL comes out of here, never DOUBLE.
 --
--- TRIM em todo preco: previous_unit_price vem da fonte com espaco a esquerda
--- ("       18.75") em 100% dos nao-nulos. O DuckDB tolera isso no CAST — medido — mas o
--- TRIM fica por PORTABILIDADE: o argumento do dbt e este mesmo SQL rodar depois em
--- Snowflake ou Spark, e nem todo motor e tolerante. Normalizar na origem custa nada.
+-- TRIM on every price: previous_unit_price comes from the source with leading whitespace
+-- ("       18.75") in 100% of non-nulls. DuckDB tolerates that in the CAST — measured — but
+-- the TRIM stays for PORTABILITY: the dbt argument is that this same SQL later runs on
+-- Snowflake or Spark, and not every engine is tolerant. Normalizing at the origin costs
+-- nothing.
 --
--- CONTRACT.md 4.6: a fonte NAO declara moeda. Nao ha coluna currency aqui, e a var
--- do projeto e premissa para o Gold, nao dado da fonte.
+-- CONTRACT.md 4.6: the source does NOT declare a currency. There is no currency column
+-- here, and the project var is a premise for Gold, not source data.
 --
--- CONTRACT.md 4.9 — `unit_price` NEM SEMPRE E PRECO DE UNIDADE COMPRAVEL.
--- Quando `selling_method = 1` (seletor de peso) e `unit_size` e nulo, a fonte devolve
--- `unit_price = reference_price * 99`: o preco do TETO do seletor, nao de nada que um
--- domicilio compre. Medido em 2026-08-31: o fator e exatamente 99,000 em 10 linhas
--- (max 3.663,00 EUR para um congelado a 37,00 EUR/kg), e 0,200 nas outras 21 do mesmo
--- selling_method — que sao a propria `unit_size` e estao corretas.
+-- CONTRACT.md 4.9 — `unit_price` IS NOT ALWAYS THE PRICE OF A PURCHASABLE UNIT.
+-- When `selling_method = 1` (weight selector) and `unit_size` is null, the source returns
+-- `unit_price = reference_price * 99`: the price of the selector's CEILING, not of anything
+-- a household buys. Measured on 2026-08-31: the factor is exactly 99.000 in 10 rows
+-- (max 3,663.00 EUR for a frozen item at 37.00 EUR/kg), and 0.200 in the other 21 of the
+-- same selling_method — which are the `unit_size` itself and are correct.
 --
--- `unit_price` FICA INTACTO, porque projecao fiel da fonte e invariante deste modelo. O
--- que entra sao as colunas DERIVADAS ao lado, e elas nao inventam nada: `min_bunch_amount`
--- e `increment_bunch_amount` sempre estiveram no RAW e este modelo os descartava.
+-- `unit_price` STAYS INTACT, because a faithful projection of the source is an invariant of
+-- this model. What comes in are the DERIVED columns next to it, and they invent nothing:
+-- `min_bunch_amount` and `increment_bunch_amount` were always in the RAW and this model
+-- used to discard them.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_product_price',
     options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
@@ -84,29 +86,29 @@ select
     subgroup_id,
     subgroup_name,
 
-    -- CHAVE DA FONTE, nao identidade de negocio (CONTRACT.md 4.5). Consistente dentro
-    -- do snapshot; sem garantia de estabilidade entre snapshots.
+    -- SOURCE KEY, not business identity (CONTRACT.md 4.5). Consistent within the snapshot;
+    -- no guarantee of stability across snapshots.
     p.id                                                    as source_product_id,
     p.display_name,
 
-    -- Linhagem de nivel 1 vinda do proprio produto. Redundante com silver_category, e a
-    -- redundancia e o teste: medido, concorda com a arvore em 100% das linhas.
+    -- Level-1 lineage coming from the product itself. Redundant with silver_category, and the
+    -- redundancy is the test: measured, it agrees with the tree in 100% of rows.
     p.categories[1].id                                      as product_level1_category_id,
     p.categories[1].name                                    as product_level1_category_name,
 
-    -- Precos. Strings na fonte; DECIMAL aqui.
+    -- Prices. Strings in the source; DECIMAL here.
     trim(p.price_instructions.unit_price)::decimal(10, 2)    as unit_price,
     trim(p.price_instructions.bulk_price)::decimal(10, 2)    as bulk_price,
     trim(p.price_instructions.reference_price)::decimal(12, 3) as reference_price,
     p.price_instructions.reference_format                    as reference_format,
     trim(p.price_instructions.previous_unit_price)::decimal(10, 2) as previous_unit_price,
 
-    -- Medido: FALSO em 100% das linhas nas tres particoes, enquanto 152 precos mudaram
-    -- entre 08-16 e 08-24. Preservado por fidelidade, mas NAO serve para detectar
-    -- variacao — e por isso que silver_price_change existe.
+    -- Measured: FALSE in 100% of rows across the three partitions, while 152 prices changed
+    -- between 08-16 and 08-24. Preserved for fidelity, but it does NOT serve to detect a
+    -- change — which is why silver_price_change exists.
     p.price_instructions.price_decreased                     as price_decreased,
 
-    -- tax_percentage e o campo preenchido; `iva` e nulo em 100% das linhas.
+    -- tax_percentage is the populated field; `iva` is null in 100% of rows.
     trim(p.price_instructions.tax_percentage)::decimal(6, 3) as tax_percentage,
 
     p.price_instructions.is_pack                             as is_pack,
@@ -118,10 +120,11 @@ select
     p.price_instructions.selling_method                      as selling_method,
     p.price_instructions.approx_size                         as approx_size,
 
-    -- OS TRES CAMPOS QUE ESTE MODELO DESCARTAVA. Estao no RAW desde a primeira particao;
-    -- nenhuma reingestao foi necessaria para traze-los. `min_bunch_amount` e a porcao
-    -- minima comprável em `reference_format` (0,15 kg no congelado a granel), e e o unico
-    -- caminho para um preco de unidade comprável quando `unit_price` e o teto do seletor.
+    -- THE THREE FIELDS THIS MODEL USED TO DISCARD. They have been in the RAW since the first
+    -- partition; no re-ingestion was needed to bring them in. `min_bunch_amount` is the
+    -- minimum purchasable portion in `reference_format` (0.15 kg for the loose frozen item),
+    -- and it is the only path to a purchasable-unit price when `unit_price` is the selector's
+    -- ceiling.
     p.price_instructions.bunch_selector                      as bunch_selector,
     p.price_instructions.min_bunch_amount                    as min_bunch_amount,
     p.price_instructions.increment_bunch_amount              as increment_bunch_amount,
@@ -140,42 +143,43 @@ from product
 select
     *,
 
-    -- COMO O PRECO DESTA LINHA SE FORMA. Rotulo, nao regra de negocio: cada valor descreve
-    -- uma convencao da fonte que foi MEDIDA, e a distincao existe porque as tres tem
-    -- consequencias diferentes para quem monta uma cesta.
+    -- HOW THIS ROW'S PRICE IS FORMED. A label, not a business rule: each value describes a
+    -- source convention that was MEASURED, and the distinction exists because the three have
+    -- different consequences for whoever builds a basket.
     --
-    --   bunch  selling_method = 1 e unit_size nulo -> unit_price = reference_price * 99.
-    --          E o UNICO caso em que unit_price nao serve. 10 linhas medidas.
-    --   piece  peca inteira (presunto de 8 a 9,5 kg): unit_price = reference_price *
-    --          unit_size, PRECO LEGITIMO. O que nao e plausivel ali e a incidencia de
-    --          compra, e isso e problema do modelo de demanda, nao deste modelo.
-    --   unit   embalagem de consumo. O caso normal.
+    --   bunch  selling_method = 1 and unit_size null -> unit_price = reference_price * 99.
+    --          It is the ONLY case where unit_price is unusable. 10 rows measured.
+    --   piece  whole piece (ham of 8 to 9.5 kg): unit_price = reference_price *
+    --          unit_size, a LEGITIMATE PRICE. What is not plausible there is the purchase
+    --          incidence, and that is a demand-model problem, not this model's.
+    --   unit   consumer packaging. The normal case.
     case
         when selling_method = 1 and unit_size is null then 'bunch'
         when packaging = 'Pieza'                      then 'piece'
         else 'unit'
     end                                                     as price_basis,
 
-    -- A PORCAO COMPRAVEL, em `reference_format`. Para `bunch` e a porcao minima do seletor;
-    -- para o resto e a propria `unit_size` da fonte (nula quando a fonte nao a declara).
+    -- THE PURCHASABLE PORTION, in `reference_format`. For `bunch` it is the selector's minimum
+    -- portion; for the rest it is the source's own `unit_size` (null when the source does not
+    -- declare it).
     case
         when selling_method = 1 and unit_size is null then min_bunch_amount
         else unit_size
     end                                                     as purchasable_unit_size,
 
-    -- O PRECO DA PORCAO COMPRAVEL. Difere de `unit_price` SO no caso `bunch`, e ali e
-    -- reference_price * min_bunch_amount — dois campos observados, nenhuma estimativa.
+    -- THE PRICE OF THE PURCHASABLE PORTION. Differs from `unit_price` ONLY in the `bunch` case,
+    -- and there it is reference_price * min_bunch_amount — two observed fields, no estimate.
     case
         when selling_method = 1 and unit_size is null
             then (reference_price * min_bunch_amount)::decimal(10, 2)
         else unit_price
     end                                                     as purchasable_unit_price,
 
-    -- CONTEUDO EM KG OU LITRO da porcao comprável, derivado de preco / preco de referencia.
-    -- Nulo de proposito quando `reference_format` nao e massa nem volume (`ud`, `dz`, `lv`,
-    -- `dc`, `m`): converter ovos para kg exigiria um peso por ovo que NENHUMA fonte deste
-    -- repo mede. Cobertura medida em 2026-08-31: 70,61% direto por kg/L, 11,88% via
-    -- 100 g / 100 ml, 16,70% em `ud` e portanto nulo aqui.
+    -- CONTENT IN KG OR LITRE of the purchasable portion, derived from price / reference price.
+    -- Null on purpose when `reference_format` is neither mass nor volume (`ud`, `dz`, `lv`,
+    -- `dc`, `m`): converting eggs to kg would require a weight per egg that NO source in this
+    -- repo measures. Coverage measured on 2026-08-31: 70.61% directly via kg/L, 11.88% via
+    -- 100 g / 100 ml, 16.70% in `ud` and therefore null here.
     case
         when reference_format in ('kg', 'L') and reference_price > 0
             then ((case

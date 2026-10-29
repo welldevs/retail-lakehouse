@@ -1,14 +1,14 @@
-"""Duplo de tabela Iceberg: estado em memória, conflito sob demanda.
+"""Iceberg table double: in-memory state, conflict on demand.
 
-O QUE ELE PROVA. A fusão monotônica e o laço de retry são a parte de `IcebergProjection` que
-decide se dois escritores se atropelam — e ela é lógica pura sobre `last_sequence_no`, não
-propriedade do formato. Exercê-la offline é rápido e determinístico, e permite forçar o
-conflito exatamente onde se quer.
+WHAT IT PROVES. The monotonic merge and the retry loop are the part of `IcebergProjection`
+that decides whether two writers trample each other — and it is pure logic over
+`last_sequence_no`, not a property of the format. Exercising it offline is fast and
+deterministic, and allows forcing the conflict exactly where you want it.
 
-O QUE ELE NÃO PROVA, e por isso `make orders-prove-projection` existe: que o Iceberg de
-verdade RECUSA um commit vindo de snapshot velho. Um duplo que levanta
-`CommitFailedException` só demonstra que o duplo levanta. Mesmo par de fake_pg.py com
-`make orders-prove-atomicity` e de fake_kafka.py com `make orders-prove-stream`.
+WHAT IT DOES NOT PROVE, and that is why `make orders-prove-projection` exists: that the real
+Iceberg REJECTS a commit coming from a stale snapshot. A double that raises
+`CommitFailedException` only demonstrates that the double raises. Same pair as fake_pg.py
+with `make orders-prove-atomicity` and fake_kafka.py with `make orders-prove-stream`.
 """
 
 from __future__ import annotations
@@ -25,42 +25,42 @@ class FakeMetadata:
 
 
 class _FakeArrow:
-    def __init__(self, linhas):
-        self._linhas = linhas
+    def __init__(self, rows):
+        self._rows = rows
 
     def to_pylist(self):
-        return [dict(linha) for linha in self._linhas]
+        return [dict(row) for row in self._rows]
 
     @property
     def num_rows(self):
-        return len(self._linhas)
+        return len(self._rows)
 
 
 class _FakeScan:
-    def __init__(self, linhas, campos):
-        self._linhas = linhas
-        self._campos = campos
+    def __init__(self, rows, fields):
+        self._rows = rows
+        self._fields = fields
 
     def to_arrow(self):
-        if self._campos is None:
-            return _FakeArrow(self._linhas)
-        return _FakeArrow([{c: linha.get(c) for c in self._campos}
-                           for linha in self._linhas])
+        if self._fields is None:
+            return _FakeArrow(self._rows)
+        return _FakeArrow([{c: row.get(c) for c in self._fields}
+                           for row in self._rows])
 
 
 class FakeIcebergTable:
-    """Tabela com `scan`/`upsert`/`refresh` e um roteiro de conflitos.
+    """Table with `scan`/`upsert`/`refresh` and a conflict script.
 
-    `conflicts_before_success` faz os N primeiros `upsert` levantarem
-    `CommitFailedException`, que é como o pyiceberg sinaliza "o branch mudou desde que você
-    carregou esta referência".
+    `conflicts_before_success` makes the first N `upsert` calls raise
+    `CommitFailedException`, which is how pyiceberg signals "the branch changed since you
+    loaded this reference".
 
-    `on_conflict_state` permite que outro escritor "apareça" entre a recusa e o retry — é o
-    cenário que separa retry cego de fusão monotônica.
+    `on_conflict_state` lets another writer "show up" between the rejection and the retry —
+    it is the scenario that separates a blind retry from a monotonic merge.
     """
 
-    def __init__(self, linhas=(), *, conflicts_before_success=0, on_conflict_state=None):
-        self.rows = {linha["order_id"]: dict(linha) for linha in linhas}
+    def __init__(self, rows=(), *, conflicts_before_success=0, on_conflict_state=None):
+        self.rows = {row["order_id"]: dict(row) for row in rows}
         self.conflicts_before_success = conflicts_before_success
         self.on_conflict_state = on_conflict_state
         self.upserts = 0
@@ -68,29 +68,29 @@ class FakeIcebergTable:
         self.journal: list[tuple] = []
         self._snapshots = [FakeSnapshot(1)]
 
-    # ---- interface consumida por IcebergProjection -------------------------
+    # ---- interface consumed by IcebergProjection ---------------------------
     def scan(self, selected_fields=None, snapshot_id=None):
         self.journal.append(("scan", tuple(selected_fields or ())))
         return _FakeScan(list(self.rows.values()), selected_fields)
 
-    def upsert(self, tabela_arrow, join_cols=("order_id",)):
+    def upsert(self, arrow_table, join_cols=("order_id",)):
         from pyiceberg.exceptions import CommitFailedException
 
         self.upserts += 1
         if self.conflicts_before_success > 0:
             self.conflicts_before_success -= 1
-            self.journal.append(("conflito",))
+            self.journal.append(("conflict",))
             if self.on_conflict_state:
-                # Outro escritor commitou primeiro. É exatamente aqui que um retry cego
-                # escreveria um estado antigo por cima.
-                for linha in self.on_conflict_state:
-                    self.rows[linha["order_id"]] = dict(linha)
+                # Another writer committed first. This is exactly where a blind retry would
+                # write an old state over it.
+                for row in self.on_conflict_state:
+                    self.rows[row["order_id"]] = dict(row)
                 self.on_conflict_state = None
             raise CommitFailedException("branch main has changed")
-        linhas = tabela_arrow.to_pylist()
-        self.journal.append(("upsert", tuple(sorted(l["order_id"] for l in linhas))))
-        for linha in linhas:
-            self.rows[linha["order_id"]] = dict(linha)
+        rows = arrow_table.to_pylist()
+        self.journal.append(("upsert", tuple(sorted(r["order_id"] for r in rows))))
+        for row in rows:
+            self.rows[row["order_id"]] = dict(row)
         self._snapshots.append(FakeSnapshot(len(self._snapshots) + 1))
         return None
 
@@ -107,7 +107,7 @@ class FakeIcebergTable:
 
 
 class FakeCatalog:
-    """Catálogo que devolve sempre a MESMA tabela — o refresh do duplo é o `refresh()`."""
+    """Catalog that always returns the SAME table — the double's refresh is `refresh()`."""
 
     def __init__(self, table):
         self._table = table

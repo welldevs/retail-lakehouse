@@ -1,54 +1,57 @@
--- POPULACAO por MUNICIPIO do INE (Tempus3, table_id 29005 — "Cifras oficiales del
--- padron por municipio"), projetada sem interpretacao alem de separar municipio/sexo,
--- que a fonte concatena em "Nombre", e resolver o CODIGO do municipio via o seed
--- ine_municipality_codes_seed — table_id=29005 nao traz codigo, so o nome por extenso
--- (ver CONTRACT.md da source, secao 2, e scripts/derive_municipality_codes.py).
+-- POPULATION by MUNICIPALITY from INE (Tempus3, table_id 29005 — "Cifras oficiales del
+-- padron por municipio"), projected with no interpretation beyond splitting
+-- municipality/sex, which the source concatenates in "Nombre", and resolving the
+-- municipality CODE via the ine_municipality_codes_seed seed — table_id=29005 carries no
+-- code, only the full name (see the source's CONTRACT.md, section 2, and
+-- scripts/derive_municipality_codes.py).
 --
--- GRAO: (ingestion_date, series_code, year, fk_periodo). fk_periodo=28 e o unico valor
--- medido no payload real (ao contrario de 31304, que publica 2 estimativas/ano —
--- fk_periodo 26 e 27); mantido no grao por simetria e como salvaguarda caso o INE
--- comece a publicar mais de uma estimativa/ano aqui no futuro, nao porque foi observado.
+-- GRAIN: (ingestion_date, series_code, year, fk_periodo). fk_periodo=28 is the only value
+-- measured in the real payload (unlike 31304, which publishes 2 estimates/year —
+-- fk_periodo 26 and 27); kept in the grain for symmetry and as a safeguard in case INE
+-- starts publishing more than one estimate/year here in the future, not because it was
+-- observed.
 --
--- MEDIDO CONTRA O PAYLOAD REAL (amostra de 4.509 series completas — a resposta sem
--- filtro tem historico desde 1996, e grande o bastante para truncar na rede durante
--- esta investigacao; a amostra e o prefixo integro ate o corte):
---   * "Nombre" tem SEMPRE exatamente 4 segmentos separados por ". ":
---     "<Municipio>. <Sexo>. Total habitantes. Personas." — ao contrario de 31304, a
---     ORDEM AQUI E FIXA (nenhuma excecao na amostra), entao municipio e sexo sao
---     extraidos por POSICAO (split_part 1 e 2), nao por vocabulario fechado.
---   * sexo e sempre um de 'Total'/'Hombres'/'Mujeres' — vocabulario DIFERENTE de
---     31304, que usa 'Ambos sexos' para o mesmo papel. Fontes diferentes, nao
---     normalizado aqui: cada modelo expoe o vocabulario da propria fonte.
---   * Secreto=false em 100% dos pontos da amostra (nenhuma supressao por sigilo
---     estatistico observada) — exposto como coluna propria (is_secret) em vez de
---     transformado, porque essa ausencia NAO foi verificada exaustivamente (a amostra
---     nao cobre os ~8.200 municipios inteiros) e nao ha payload observado com
---     Secreto=true para saber o que a fonte poe em "Valor" nesse caso.
+-- MEASURED AGAINST THE REAL PAYLOAD (sample of 4,509 complete series — the unfiltered
+-- response has history since 1996, and is large enough to get truncated on the network
+-- during this investigation; the sample is the intact prefix up to the cut):
+--   * "Nombre" ALWAYS has exactly 4 segments separated by ". ":
+--     "<Municipality>. <Sex>. Total habitantes. Personas." — unlike 31304, the
+--     ORDER HERE IS FIXED (no exception in the sample), so municipality and sex are
+--     extracted by POSITION (split_part 1 and 2), not by a closed vocabulary.
+--   * sex is always one of 'Total'/'Hombres'/'Mujeres' — a DIFFERENT vocabulary from
+--     31304, which uses 'Ambos sexos' for the same role. Different sources, not
+--     normalized here: each model exposes its own source's vocabulary.
+--   * Secreto=false in 100% of the sample's points (no statistical-confidentiality
+--     suppression observed) — exposed as its own column (is_secret) instead of
+--     transformed, because that absence was NOT verified exhaustively (the sample
+--     does not cover all ~8,200 municipalities) and there is no observed payload with
+--     Secreto=true to know what the source puts in "Valor" in that case.
 --
--- Nome de municipio NAO E CHAVE SEGURA: 18 nomes se repetem na Espanha entre provincias
--- diferentes (ver ine_municipality_codes_seed). O seed esta escopado a 08/28/41/46 e nao
--- tem NENHUMA colisao interna — medido — mas isso sozinho NAO basta, e uma versao
--- anterior deste comentario concluia errado que bastava: o lado RAW e NACIONAL (~8.200
--- municipios, nada e filtrado na extracao), entao uma linha do seed casa tanto a serie da
--- nossa provincia quanto a homonima de fora. Fanout medido em 3 municipios:
+-- Municipality name IS NOT A SAFE KEY: 18 names repeat across different provinces in
+-- Spain (see ine_municipality_codes_seed). The seed is scoped to 08/28/41/46 and has NO
+-- internal collision — measured — but that alone is NOT enough, and an earlier version of
+-- this comment wrongly concluded that it was: the RAW side is NATIONAL (~8,200
+-- municipalities, nothing is filtered at extraction), so a seed row matches both the
+-- series from our province and the homonymous one from elsewhere. Fanout measured in 3
+-- municipalities:
 --
 --     "Torrent. Total. Total habitantes. Personas. " -> DPOP21778 = 90.928 (46244)
 --     "Torrent. Total. Total habitantes. Personas. " -> DPOP7960  =    182 (17197, Girona)
 --
--- O teste de grao (ingestion_date, series_code, year, fk_periodo) nao pegava, porque as
--- duas series tem series_code diferente — dai o teste adicional
+-- The grain test (ingestion_date, series_code, year, fk_periodo) did not catch it, because
+-- the two series have different series_code — hence the additional test
 -- assert_ine_population_by_municipality_has_one_series_per_municipality.
 --
--- CORRECAO: `ine_ambiguous_series_seed` traz, para cada serie de nome ambiguo, o CODIGO
--- OFICIAL do municipio (provincia+municipio) obtido da propria API do INE
--- (VALORES_SERIE/{COD} — ver scripts/derive_ambiguous_series.py). Series de nome ambiguo
--- so passam quando o codigo oficial bate com o do seed; nomes nao ambiguos seguem
--- resolvidos por nome, como antes. Nao e heuristica de "fica o maior valor": e a fonte
--- dizendo qual serie e de qual municipio.
+-- FIX: `ine_ambiguous_series_seed` carries, for each series with an ambiguous name, the
+-- municipality's OFFICIAL CODE (province+municipality) obtained from INE's own API
+-- (VALORES_SERIE/{COD} — see scripts/derive_ambiguous_series.py). Ambiguous-name series
+-- only pass when the official code matches the seed's; unambiguous names are still
+-- resolved by name, as before. It is not a "keep the largest value" heuristic: it is the
+-- source saying which series belongs to which municipality.
 --
--- O INNER JOIN com o seed continua sendo a interpretacao deliberada do escopo: este
--- modelo Silver so resolve codigo — e so serve consulta cruzada com o Callejero — para o
--- que esta plataforma realmente cobre, mesmo raciocinio que warehouse_service_area aplica.
+-- The INNER JOIN with the seed remains the deliberate interpretation of scope: this Silver
+-- model only resolves codes — and only serves cross-queries with the Callejero — for what
+-- this platform actually covers, the same reasoning warehouse_service_area applies.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_ine_population_by_municipality.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -97,13 +100,13 @@ exploded as (
 
 select
     e.ingestion_date,
-    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
-    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
-    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
-    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
-    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
-    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
-    -- acidente.
+    -- A re-extraction of the SAME INE publication creates another ingestion_date with
+    -- equivalent rows, and this model stacks them all (the history is deliberate). Without an
+    -- explicit marker, whoever queries without filtering double-counts — it already happened
+    -- with silver_ine_population_series, which ended up with 1,547,496 rows in EACH of two
+    -- ingestion_dates. `where is_latest_ingestion` is the right way to read the current
+    -- state; without the filter, the whole history is read, and that becomes a choice rather
+    -- than an accident.
     e.ingestion_date = max(e.ingestion_date) over () as is_latest_ingestion,
     e.series_code,
     e.series_name,
@@ -121,9 +124,9 @@ select
 from exploded e
 inner join {{ ref('ine_municipality_codes_seed') }} c
     on e.municipality_name = c.municipality_name
--- Só as series de nome ambiguo aparecem neste seed. Para elas, o codigo oficial da fonte
--- tem de bater com o do seed; para todas as demais, `a.series_code is null` e o nome ja
--- resolve sozinho.
+-- Only the ambiguous-name series appear in this seed. For them, the source's official
+-- code must match the seed's; for all others, `a.series_code is null` and the name
+-- resolves on its own.
 left join {{ ref('ine_ambiguous_series_seed') }} a
     on e.series_code = a.series_code
 where a.series_code is null

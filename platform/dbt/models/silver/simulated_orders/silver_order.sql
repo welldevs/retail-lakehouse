@@ -1,32 +1,35 @@
--- O FOLD. Estado e medidas de cada pedido, derivados do log de eventos.
+-- THE FOLD. State and measures of each order, derived from the event log.
 --
--- GRAO: order_id. O id ja carrega o armazem e o dia (ord_mad1_20260824_000042), entao nao ha
--- colisao entre particoes e nao e preciso compor a chave.
+-- GRAIN: order_id. The id already carries the warehouse and the day
+-- (ord_mad1_20260824_000042), so there is no collision between partitions and no need to
+-- compose the key.
 --
--- ESTE MODELO E A RAZAO DE A SOURCE NAO GRAVAR ESTADO. Nao existe `orders.json` no RAW: duas
--- representacoes da mesma verdade divergem. O estado mora aqui, e e sempre reconstruivel do
--- log — o mesmo principio que faz DIM_PRODUCT ser SCD2 DERIVADO da historia em vez de
--- acumulado por MERGE ("acumular criaria estado que so existe no destino").
+-- THIS MODEL IS THE REASON THE SOURCE DOES NOT WRITE STATE. There is no `orders.json` in
+-- RAW: two representations of the same truth diverge. The state lives here, and is always
+-- rebuildable from the log — the same principle that makes DIM_PRODUCT an SCD2 DERIVED from
+-- history instead of accumulated by MERGE ("accumulating would create state that only
+-- exists in the destination").
 --
--- O FOLD E NAO-TRIVIAL, e e isso que justifica o modelo de eventos existir. `net_amount` NAO
--- e derivavel de `gross_amount_placed`: substituicao e remocao de linha alteram a cesta depois
--- da colocacao. Medido na janela de 2026-08-24 a 08-27: colocado 879.449,74 contra separado
--- 821.121,93 — 58.327,81 de diferenca que o primeiro evento nao sabia. Se os dois fossem
--- sempre iguais, o log seria um carimbo de data, e um teste dbt invertido vigia exatamente
--- isso.
+-- THE FOLD IS NON-TRIVIAL, and that is what justifies the event model existing.
+-- `net_amount` is NOT derivable from `gross_amount_placed`: line substitution and removal
+-- change the basket after placement. Measured over the 2026-08-24 to 08-27 window: placed
+-- 879,449.74 versus picked 821,121.93 — a 58,327.81 difference the first event did not
+-- know about. If the two were always equal, the log would be a date stamp, and an inverted
+-- dbt test watches exactly that.
 --
--- O ESTADO SAI DO TIPO DO ULTIMO EVENTO, e isso e correto e nao atalho: a maquina de estados
--- do contrato mapeia cada tipo a UM estado resultante (STATE_AFTER em events.py), entao o
--- estado depois do ultimo evento e o fold da cadeia inteira. Os dois eventos de linha mapeiam
--- para PICKING, que e tambem o estado de onde saem — eles mudam a CESTA, nao o estado.
+-- THE STATE COMES FROM THE TYPE OF THE LAST EVENT, and that is correct and not a shortcut:
+-- the contract's state machine maps each type to ONE resulting state (STATE_AFTER in
+-- events.py), so the state after the last event is the fold of the whole chain. The two
+-- line events map to PICKING, which is also the state they come from — they change the
+-- BASKET, not the state.
 --
--- `max(case when ...)` e nao `FILTER (WHERE ...)`: o DuckDB aceita os dois, o Snowflake so o
--- primeiro. Este modelo e duckdb-only pelo guard do dbt_project.yml, mas escrever o dialeto
--- portavel custa zero e o repo ja pagou uma vez por essa diferenca (ARCHITECTURE.md, "quatro
--- defeitos que so apareceram executando").
+-- `max(case when ...)` and not `FILTER (WHERE ...)`: DuckDB accepts both, Snowflake only
+-- the first. This model is duckdb-only through the dbt_project.yml guard, but writing the
+-- portable dialect costs nothing and the repo has already paid once for that difference
+-- (ARCHITECTURE.md, "four defects that only showed up when running").
 --
--- DINHEIRO E DECIMAL, NUNCA DOUBLE. Os valores atravessam o log como string exatamente para
--- que a conversao aconteca uma vez, aqui, com escala declarada.
+-- MONEY IS DECIMAL, NEVER DOUBLE. The values cross the log as strings precisely so that
+-- the conversion happens once, here, with a declared scale.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_order.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -54,11 +57,11 @@ colocacao as (
         json_extract_string(payload, '$.province_code')                as province_code,
         json_extract_string(payload, '$.municipality_code')            as municipality_code,
         json_extract_string(payload, '$.postal_code')                  as postal_code,
-        -- Faixa etaria do comprador NO MOMENTO DO PEDIDO, carimbada no evento pela Source.
-        -- Vem do payload e nao de um join com silver_customer de proposito, pelo mesmo
-        -- motivo de `demand_group` em silver_order_line: e a faixa que escolheu o vetor de
-        -- pesos daquela cesta, e derivá-la hoje daria a faixa de hoje. Um cliente que faz
-        -- aniversario dentro da janela tem dois pedidos em faixas diferentes, e esta certo.
+        -- Buyer age band AT THE TIME OF THE ORDER, stamped on the event by the Source.
+        -- It comes from the payload and not from a join with silver_customer on purpose, for the
+        -- same reason as `demand_group` in silver_order_line: it is the band that chose that
+        -- basket's weight vector, and deriving it today would give today's band. A customer whose
+        -- birthday falls within the window has two orders in different bands, and that is right.
         json_extract_string(payload, '$.buyer_age_band')               as buyer_age_band,
         cast(json_extract_string(payload, '$.price_as_of') as date)    as price_as_of,
         json_extract_string(payload, '$.price_source')                 as price_source,
@@ -101,15 +104,14 @@ marcos as (
         max(case when event_type = 'order_returned'           then occurred_at end)
                                                                            as returned_at,
 
-        -- CAST EXPLICITO PARA INTEGER, e a razao so aparece ao atravessar a fronteira.
-        -- `sum()` sobre INTEGER devolve HUGEINT no DuckDB; o parquet nao tem INT128, entao
-        -- a escrita rebaixa a coluna para DOUBLE em silencio e uma CONTAGEM DE EVENTOS
-        -- chega ao warehouse como FLOAT. Nao corrompe estes valores (nenhum passa de 40),
-        -- mas e a mesma classe de defeito que o repo recusa em dinheiro: o tipo passa a
-        -- afirmar "isto pode ter parte fracionaria", que e falso. Quem achou foi o DDL
-        -- derivado do proprio recorte — um DDL escrito a mao teria dito NUMBER(38,0) e a
-        -- divergencia entre o que o arquivo tem e o que a tabela declara so apareceria no
-        -- COPY INTO, ou nunca.
+        -- EXPLICIT CAST TO INTEGER, and the reason only shows up when crossing the boundary.
+        -- `sum()` over INTEGER returns HUGEINT in DuckDB; parquet has no INT128, so the write
+        -- silently downgrades the column to DOUBLE and an EVENT COUNT reaches the warehouse as
+        -- FLOAT. It does not corrupt these values (none goes above 40), but it is the same class
+        -- of defect the repo refuses for money: the type starts to claim "this may have a
+        -- fractional part", which is false. What found it was the DDL derived from the cut itself
+        -- — a hand-written DDL would have said NUMBER(38,0) and the divergence between what the
+        -- file holds and what the table declares would only show up at COPY INTO, or never.
         cast(sum(case when event_type = 'order_line_substituted' then 1 else 0 end) as integer)
                                                                            as substituted_lines,
         cast(sum(case when event_type = 'order_line_removed'     then 1 else 0 end) as integer)
@@ -167,7 +169,7 @@ select
     c.price_as_of,
     c.price_source,
 
-    -- O tipo do ultimo evento determina o estado: ver o cabecalho.
+    -- The type of the last event determines the state: see the header.
     case u.last_event_type
         when 'order_placed'              then 'PLACED'
         when 'order_payment_authorized'  then 'CONFIRMED'
@@ -183,8 +185,8 @@ select
         when 'order_returned'            then 'RETURNED'
     end                                                                as order_status,
     u.last_event_type,
-    -- DELIVERED nao entra: uma devolucao ainda pode vir depois dele, e e por isso que ele
-    -- nao encerra o agregado (CONTRACT.md secao 2.2).
+    -- DELIVERED is not included: a return can still come after it, which is why it does not
+    -- close the aggregate (CONTRACT.md section 2.2).
     u.last_event_type in (
         'order_payment_failed', 'order_cancelled', 'order_delivery_failed', 'order_returned'
     )                                                                  as is_terminal,
@@ -212,8 +214,8 @@ select
 
     c.gross_amount_placed,
     m.net_amount,
-    -- A diferenca que so existe porque ha eventos. Positiva quando a cesta encolheu na
-    -- separacao; pode ser negativa quando um substituto e mais caro que o original.
+    -- The difference that only exists because there are events. Positive when the basket
+    -- shrank at picking; can be negative when a substitute is more expensive than the original.
     c.gross_amount_placed - m.net_amount                               as amount_delta,
     m.returned_amount,
 

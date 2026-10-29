@@ -1,37 +1,38 @@
--- PROJECAO FIEL do log de eventos de pedido. Nenhuma interpretacao alem de tipar o envelope.
+-- FAITHFUL PROJECTION of the order event log. No interpretation beyond typing the envelope.
 --
--- GRAO: event_id. Deterministico por contrato — sha256(order_id|sequence_no) — e por isso
--- unico em toda a janela, nao so dentro da particao.
+-- GRAIN: event_id. Deterministic by contract — sha256(order_id|sequence_no) — and therefore
+-- unique across the whole window, not just within the partition.
 --
--- O PAYLOAD FICA COMO JSON, DE PROPOSITO, e esta e a decisao mais importante deste modelo.
--- Deixar o DuckDB inferir o payload produz um STRUCT com a UNIAO dos campos dos 12 tipos —
--- medido, 32 campos — e essa uniao depende do que a amostragem viu. Um dia sem nenhuma
--- devolucao nao teria `returned_amount` no struct, e um modelo a jusante que o referenciasse
--- passaria a NAO COMPILAR dependendo do sorteio. E a mesma armadilha que fez a impressao
--- digital desta Source cobrir o vocabulario declarado em vez do observado.
+-- THE PAYLOAD STAYS AS JSON, ON PURPOSE, and this is the most important decision in this
+-- model. Letting DuckDB infer the payload produces a STRUCT with the UNION of the fields of
+-- the 12 types — measured, 32 fields — and that union depends on what sampling saw. A day
+-- with no returns would not have `returned_amount` in the struct, and a downstream model
+-- referencing it would stop COMPILING depending on the draw. It is the same trap that made
+-- this Source's fingerprint cover the declared vocabulary instead of the observed one.
 --
--- Entao o schema e DECLARADO em `columns =`, nunca inferido, e o payload atravessa como JSON.
--- Quem precisa de um campo o extrai por nome, e a extracao de um campo ausente devolve NULL
--- em vez de quebrar o build. As duas tabelas que dobram o log (silver_order,
--- silver_order_line) fazem exatamente isso.
+-- So the schema is DECLARED in `columns =`, never inferred, and the payload passes through
+-- as JSON. Whoever needs a field extracts it by name, and extracting a missing field
+-- returns NULL instead of breaking the build. The two tables that fold the log
+-- (silver_order, silver_order_line) do exactly that.
 --
--- SEM is_latest_ingestion, e o motivo e o mesmo ja escrito para os modelos da Mercadona: aqui
--- as varias datas SAO o produto, nao efeito colateral de reextracao. Cada ingestion_date e um
--- dia de operacao, e empilhar dias e o ponto.
+-- NO is_latest_ingestion, and the reason is the same one already written for the Mercadona
+-- models: here the multiple dates ARE the product, not a side effect of re-extraction. Each
+-- ingestion_date is a day of operation, and stacking days is the point.
 --
--- ingestion_date E A DATA DO PEDIDO, nao a do evento (CONTRACT.md secao 1). Um pedido das
--- 22h40 entregue as 9h do dia seguinte deixa TODOS os seus eventos na particao do dia em que
--- foi colocado. Por isso este modelo expoe TAMBEM `event_date`: as duas perguntas — "pedidos
--- colocados no dia D" e "eventos ocorridos no dia D" — sao legitimas e diferentes.
+-- ingestion_date IS THE ORDER DATE, not the event date (CONTRACT.md section 1). An order
+-- placed at 22:40 and delivered at 9:00 the next day leaves ALL its events in the partition
+-- of the day it was placed. That is why this model ALSO exposes `event_date`: the two
+-- questions — "orders placed on day D" and "events that occurred on day D" — are legitimate
+-- and different.
 --
--- partition_wh EXISTE PARA SER RECONCILIADO, pelo mesmo motivo de silver_customer: o campo
--- `wh` do registro e o segmento hive `wh=` tem o mesmo nome e o DuckDB os deduplica numa
--- coluna so, com o valor do registro vencendo. Sem uma segunda coluna, uma particao pousada
--- sob o diretorio errado passaria despercebida.
+-- partition_wh EXISTS TO BE RECONCILED, for the same reason as silver_customer: the
+-- record's `wh` field and the hive segment `wh=` have the same name and DuckDB
+-- deduplicates them into a single column, with the record's value winning. Without a
+-- second column, a partition landed under the wrong directory would go unnoticed.
 --
--- Este modelo assume ao menos um arquivo aterrissado (read_json falha sobre glob vazio).
--- Quando a source ainda nao aterrissou nada, `make silver` o exclui do build via
--- `retail-platform has-data simulated_orders` — mesmo tratamento das outras quatro.
+-- This model assumes at least one landed file (read_json fails on an empty glob).
+-- When the source has not landed anything yet, `make silver` excludes it from the build via
+-- `retail-platform has-data simulated_orders` — the same treatment as the other four.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_order_event.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -51,8 +52,8 @@ select
 
     occurred_at,
     cast(occurred_at as date)                 as event_date,
-    -- Um evento pode ocorrer depois da meia-noite do dia do pedido. Marcar isso e mais
-    -- honesto do que deixar o consumidor descobrir comparando as duas colunas.
+    -- An event may occur after midnight of the order day. Flagging that is more honest
+    -- than letting the consumer find out by comparing the two columns.
     cast(occurred_at as date) <> ingestion_date as crosses_order_date,
 
     payload
@@ -62,7 +63,7 @@ from read_json(
     format = 'newline_delimited',
     hive_partitioning = 1,
     filename = true,
-    -- DECLARADO, nunca inferido. Ver o cabecalho.
+    -- DECLARED, never inferred. See the header.
     columns = {
         event_id: 'VARCHAR',
         event_type: 'VARCHAR',

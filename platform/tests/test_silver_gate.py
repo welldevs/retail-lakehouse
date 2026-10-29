@@ -1,26 +1,26 @@
-"""O portao do build do Silver — decidido num lugar so, e verificado sem rede.
+"""The Silver build gate — decided in one place, and verified without network.
 
-POR QUE ESTA SUITE EXISTE, e ela existe por um defeito que passou tres dias em producao.
+WHY THIS SUITE EXISTS: because of a defect that spent three days in production.
 
-A decisao de "o que excluir do `dbt build`" vivia em SEIS arquivos: o alvo `silver` do
-Makefile, com os cinco portoes, e cada uma das cinco DAGs, com o portao da propria source e
-mais nenhum. Nenhuma DAG tinha o portao do Iceberg, e a da Mercadona nao tinha portao algum.
+The decision "what to exclude from `dbt build`" lived in SIX files: the Makefile `silver`
+target, with all five gates, and each of the five DAGs, with its own source's gate and
+nothing else. No DAG had the Iceberg gate, and the Mercadona one had no gate at all.
 
-O sintoma: `mercadona_catalog_daily` reprovava TODO DIA na ultima tarefa. Os quatro armazens
-extraiam, validavam, aterrissavam e verificavam com sucesso; o `silver` caia com
-"no version-hint could be found". O dado estava certo o tempo inteiro — o portao e que
-morava no arquivo errado.
+The symptom: `mercadona_catalog_daily` failed EVERY DAY on its last task. The four
+warehouses extracted, validated, landed and verified successfully; `silver` fell over with
+"no version-hint could be found". The data was right the whole time — the gate just lived
+in the wrong file.
 
-Nada pegou isso porque nao havia o que pegar: `make silver` passava (tem o portao completo),
-`make test` passava (nao olha DAG), e a suite do dbt nunca chegava a rodar. So a execucao
-real reprovava, e um dia depois.
+Nothing caught it because there was nothing to catch it: `make silver` passed (it has the
+full gate), `make test` passed (it doesn't look at DAGs), and the dbt suite never got to run.
+Only the real run failed, and a day later.
 
-Estes testes miram nos dois lados do defeito:
+These tests aim at both sides of the defect:
 
-  * `plan()` e PURA, entao a decisao inteira e exercitavel sem MinIO e sem catalogo;
-  * e ha uma checagem de FONTE que exige que toda DAG que constroi o Silver passe pelo
-    verbo, em vez de montar o proprio comando de dbt. Um portao correto em um lugar so vale
-    enquanto for o unico lugar.
+  * `plan()` is PURE, so the whole decision can be exercised without MinIO or catalog;
+  * and there is a SOURCE check requiring every DAG that builds Silver to go through the
+    verb, instead of assembling its own dbt command. A correct gate in one place is only
+    worth something while it is the only place.
 """
 
 from __future__ import annotations
@@ -43,206 +43,270 @@ from retail_platform.silver_gate import (  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DAGS = os.path.join(REPO, "orchestration", "airflow", "dags")
 MODELS = os.path.join(REPO, "platform", "dbt", "models", "silver")
-TESTES = os.path.join(REPO, "platform", "dbt", "tests")
+TESTS = os.path.join(REPO, "platform", "dbt", "tests")
 
-TUDO = {prefixo: True for prefixo, _ in SOURCE_MODELS}
-METADADO = "s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00052-x.json"
+ALL_LANDED = {prefix: True for prefix, _ in SOURCE_MODELS}
+METADATA = "s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00052-x.json"
 
 
-class PlanoTest(unittest.TestCase):
-    def test_com_tudo_no_lugar_nao_exclui_nada(self):
-        completo = {chave: METADADO for chave, _, _ in ICEBERG_TABLES}
-        self.assertEqual(plan(TUDO, completo)[:1], ["--vars"])
-        self.assertNotIn("--exclude", plan(TUDO, completo))
+class PlanTest(unittest.TestCase):
+    def test_with_everything_in_place_nothing_is_excluded(self):
+        complete = {key: METADATA for key, _, _ in ICEBERG_TABLES}
+        self.assertEqual(plan(ALL_LANDED, complete)[:1], ["--vars"])
+        self.assertNotIn("--exclude", plan(ALL_LANDED, complete))
 
-    def test_a_forma_antiga_com_uma_string_ainda_vale_para_a_projecao_viva(self):
-        """Ate a Fase 7 `plan` recebia um caminho so, porque so havia uma tabela Iceberg.
-        A string continua aceita e significa exatamente o que significava — e nada mais:
-        o ledger de estoque fica de fora, que e o correto para quem nao rodou o Spark."""
-        argumentos = plan(TUDO, METADADO)
-        self.assertIn(f'{ICEBERG_VAR}: "{METADADO}"',
-                      argumentos[argumentos.index("--vars") + 1])
-        self.assertIn("silver_stock_ledger", argumentos)
+    def test_old_single_string_form_still_applies_to_the_live_projection(self):
+        """Until Phase 7 `plan` received a single path, because there was only one Iceberg
+        table. The string is still accepted and means exactly what it meant — and nothing
+        more: the stock ledger stays out, which is right for whoever hasn't run Spark."""
+        arguments = plan(ALL_LANDED, METADATA)
+        self.assertIn(f'{ICEBERG_VAR}: "{METADATA}"',
+                      arguments[arguments.index("--vars") + 1])
+        self.assertIn("silver_stock_ledger", arguments)
 
-    def test_source_sem_dado_leva_todos_os_seus_modelos_junto(self):
-        """Excluir o modelo e deixar o irmao que faz `ref()` nele seria trocar um erro por
-        outro: `silver_price_change` le `silver_product_price`, e `silver_order`/
-        `silver_order_line` leem `silver_order_event`."""
-        landed = dict(TUDO, mercadona_catalog_api=False)
-        argumentos = plan(landed, METADADO)
-        for modelo in ("silver_product_price", "silver_price_change", "silver_category",
-                       "raw_manifest"):
-            self.assertIn(modelo, argumentos)
+    def test_source_without_data_takes_all_its_models_with_it(self):
+        """Excluding the model and leaving the sibling that `ref()`s it would trade one
+        error for another: `silver_price_change` reads `silver_product_price`, and
+        `silver_order`/`silver_order_line` read `silver_order_event`."""
+        landed = dict(ALL_LANDED, mercadona_catalog_api=False)
+        arguments = plan(landed, METADATA)
+        for model in ("silver_product_price", "silver_price_change", "silver_category",
+                      "raw_manifest"):
+            self.assertIn(model, arguments)
 
-    def test_catalogo_indisponivel_exclui_o_modelo_E_o_teste_que_o_compara(self):
-        """Excluir so o modelo deixaria o teste tentando `ref()` de algo que nao foi
-        construido — um erro de compilacao no lugar de um erro de execucao."""
-        argumentos = plan(TUDO, None)
-        for no in ICEBERG_NODES:
-            self.assertIn(no, argumentos)
-        self.assertNotIn("--vars", argumentos)
+    def test_unavailable_catalog_excludes_the_model_AND_the_test_comparing_it(self):
+        """Excluding only the model would leave the test trying to `ref()` something that
+        was not built — a compilation error instead of a run error."""
+        arguments = plan(ALL_LANDED, None)
+        for node in ICEBERG_NODES:
+            self.assertIn(node, arguments)
+        self.assertNotIn("--vars", arguments)
 
-    def test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova(self):
-        """A propriedade que impede o Spark de entrar no caminho padrao do projeto.
+    def test_SPARK_IS_OPTIONAL_and_this_is_what_proves_it(self):
+        """The property that keeps Spark out of the project's default path.
 
-        Com a projecao viva de pe e o Spark NUNCA tendo rodado, o build sai com o ledger de
-        estoque de fora e todo o resto dentro. Numa maquina onde ninguem fez `make
-        stock-ledger` — que e o caso de qualquer clone novo — `make silver` constroi o
-        Silver inteiro sem Spark, sem JVM e sem imagem baixada.
+        With the live projection up and Spark NEVER having run, the build leaves the stock
+        ledger out and everything else in. On a machine where nobody ran `make
+        stock-ledger` — which is the case for any fresh clone — `make silver` builds the
+        whole Silver without Spark, without a JVM and without a downloaded image.
 
-        Sem este teste a promessa seria um paragrafo de README, e paragrafo nao reprova.
+        Without this test the promise would be a README paragraph, and paragraphs don't fail.
         """
-        argumentos = plan(TUDO, {"live_order_state": METADADO, "stock_ledger": None})
-        for no in ICEBERG_TABLES[1][2]:
-            self.assertIn(no, argumentos)
-        for no in ICEBERG_TABLES[0][2]:
-            self.assertNotIn(no, argumentos)
-        # e a projecao viva continua recebendo o caminho dela
-        self.assertIn(f'{ICEBERG_VAR}: "{METADADO}"',
-                      argumentos[argumentos.index("--vars") + 1])
+        arguments = plan(ALL_LANDED, {"live_order_state": METADATA, "stock_ledger": None})
+        for node in ICEBERG_TABLES[1][2]:
+            self.assertIn(node, arguments)
+        for node in ICEBERG_TABLES[0][2]:
+            self.assertNotIn(node, arguments)
+        # and the live projection still receives its path
+        self.assertIn(f'{ICEBERG_VAR}: "{METADATA}"',
+                      arguments[arguments.index("--vars") + 1])
 
-    def test_o_caso_inverso_tambem_vale_uma_tabela_nao_arrasta_a_outra(self):
-        """Spark rodou, plano de stream nao subiu. As duas tabelas sao independentes: um
-        portao que as tratasse junto excluiria o ledger por causa do Kafka."""
-        argumentos = plan(TUDO, {"live_order_state": None, "stock_ledger": METADADO})
-        for no in ICEBERG_TABLES[0][2]:
-            self.assertIn(no, argumentos)
-        for no in ICEBERG_TABLES[1][2]:
-            self.assertNotIn(no, argumentos)
+    def test_the_reverse_also_holds_one_table_does_not_drag_the_other(self):
+        """Spark ran, the stream plane didn't come up. The two tables are independent: a
+        gate that treated them together would exclude the ledger because of Kafka."""
+        arguments = plan(ALL_LANDED, {"live_order_state": None, "stock_ledger": METADATA})
+        for node in ICEBERG_TABLES[0][2]:
+            self.assertIn(node, arguments)
+        for node in ICEBERG_TABLES[1][2]:
+            self.assertNotIn(node, arguments)
 
-    def test_com_as_duas_tabelas_as_duas_vars_viajam_juntas(self):
-        argumentos = plan(TUDO, {chave: METADADO for chave, _, _ in ICEBERG_TABLES})
-        self.assertNotIn("--exclude", argumentos)
-        var = argumentos[argumentos.index("--vars") + 1]
-        for _, nome, _ in ICEBERG_TABLES:
-            self.assertIn(f'{nome}: "{METADADO}"', var)
+    def test_with_both_tables_both_vars_travel_together(self):
+        arguments = plan(ALL_LANDED, {key: METADATA for key, _, _ in ICEBERG_TABLES})
+        self.assertNotIn("--exclude", arguments)
+        var = arguments[arguments.index("--vars") + 1]
+        for _, name, _ in ICEBERG_TABLES:
+            self.assertIn(f'{name}: "{METADATA}"', var)
 
-    def test_este_e_o_defeito_de_2026_08_31(self):
-        """A combinacao exata que reprovava: TODAS as sources com dado, catalogo fora.
+    def test_this_is_the_2026_08_31_defect(self):
+        """The exact combination that failed: ALL sources with data, catalog down.
 
-        Era o estado normal de qualquer maquina sem `make stream-up`, e do container do
-        Airflow, que ate entao nem tinha como alcancar o catalogo. O build tem de ficar
-        VERDE com um modelo a menos, nao vermelho com um modelo impossivel.
+        It was the normal state of any machine without `make stream-up`, and of the Airflow
+        container, which until then had no way to reach the catalog. The build has to stay
+        GREEN with one model fewer, not red with an impossible model.
         """
-        argumentos = plan(TUDO, None)
-        self.assertEqual(argumentos[0], "--exclude")
-        esperado = {no for _, _, nos in ICEBERG_TABLES for no in nos}
-        self.assertEqual(set(argumentos[1:]), esperado)
+        arguments = plan(ALL_LANDED, None)
+        self.assertEqual(arguments[0], "--exclude")
+        expected = {node for _, _, nodes in ICEBERG_TABLES for node in nodes}
+        self.assertEqual(set(arguments[1:]), expected)
 
-    def test_prefixo_ausente_do_dicionario_conta_como_nao_aterrissado(self):
-        """O lado seguro: excluir um modelo que poderia ser construido custa uma execucao;
-        tentar construir um que nao pode custa o build inteiro."""
-        argumentos = plan({}, None)
-        for _, modelos in SOURCE_MODELS:
-            for modelo in modelos:
-                self.assertIn(modelo, argumentos)
+    def test_prefix_missing_from_the_dict_counts_as_not_landed(self):
+        """The safe side: excluding a model that could be built costs one run; trying to
+        build one that can't costs the whole build."""
+        arguments = plan({}, None)
+        for _, models in SOURCE_MODELS:
+            for model in models:
+                self.assertIn(model, arguments)
 
-    def test_o_caminho_do_metadado_vai_entre_aspas_no_yaml(self):
-        """`s3://...` sem aspas faz o YAML ler `s3:` como chave e o var chegar VAZIO — e um
-        var vazio nao reprova o parse, reprova o modelo, tres passos adiante."""
-        argumentos = plan(TUDO, METADADO)
-        var = argumentos[argumentos.index("--vars") + 1]
-        self.assertEqual(var, f'{{{ICEBERG_VAR}: "{METADADO}"}}')
+    def test_metadata_path_is_quoted_in_the_yaml(self):
+        """`s3://...` unquoted makes YAML read `s3:` as a key and the var arrive EMPTY — and
+        an empty var doesn't fail the parse, it fails the model, three steps later."""
+        arguments = plan(ALL_LANDED, METADATA)
+        var = arguments[arguments.index("--vars") + 1]
+        self.assertEqual(var, f'{{{ICEBERG_VAR}: "{METADATA}"}}')
 
 
-class ModelosDeclaradosExistemTest(unittest.TestCase):
-    def test_todo_NO_citado_pelo_portao_existe_no_disco(self):
-        """Um nome errado aqui nao reprova nada: o dbt ignora `--exclude` de um no
-        inexistente, e o no que se queria excluir e construido assim mesmo.
+class DeclaredModelsExistTest(unittest.TestCase):
+    def test_every_NODE_cited_by_the_gate_exists_on_disk(self):
+        """A wrong name here fails nothing: dbt ignores `--exclude` of a nonexistent node,
+        and the node one meant to exclude gets built anyway.
 
-        A VARREDURA INCLUI `tests/`, E ISSO ERA UMA BRECHA ATE A FASE 7. O portao sempre
-        excluiu TESTES junto com modelos — `assert_live_projection_matches_batch_fold` esta
-        la desde o Marco 6 — mas esta conferencia so olhava `models/`, e so o PRIMEIRO no de
-        cada tabela Iceberg. Um typo no nome de um teste passaria: o dbt ignoraria o
-        `--exclude`, o teste rodaria contra um modelo que nao foi construido, e o erro
-        apareceria como falha de compilacao tres passos adiante da causa.
+        THE SCAN INCLUDES `tests/`, AND THAT WAS A GAP UNTIL PHASE 7. The gate always
+        excluded TESTS along with models — `assert_live_projection_matches_batch_fold` has
+        been there since Milestone 6 — but this check only looked at `models/`, and only at
+        the FIRST node of each Iceberg table. A typo in a test name would pass: dbt would
+        ignore the `--exclude`, the test would run against a model that wasn't built, and
+        the error would show up as a compilation failure three steps away from the cause.
         """
-        no_disco = {
-            os.path.splitext(arquivo)[0]
-            for raiz in (MODELS, TESTES)
-            for _, _, arquivos in os.walk(raiz)
-            for arquivo in arquivos if arquivo.endswith(".sql")
+        on_disk = {
+            os.path.splitext(filename)[0]
+            for root in (MODELS, TESTS)
+            for _, _, filenames in os.walk(root)
+            for filename in filenames if filename.endswith(".sql")
         }
-        self.assertTrue(no_disco, f"nenhum arquivo .sql em {MODELS} nem em {TESTES}")
-        for _, modelos in SOURCE_MODELS:
-            for modelo in modelos:
-                self.assertIn(modelo, no_disco)
-        for _, _, nos in ICEBERG_TABLES:
-            for no in nos:
-                self.assertIn(no, no_disco, f"o portao cita `{no}`, que nao existe")
+        self.assertTrue(on_disk, f"no .sql file in {MODELS} or in {TESTS}")
+        for _, models in SOURCE_MODELS:
+            for model in models:
+                self.assertIn(model, on_disk)
+        for _, _, nodes in ICEBERG_TABLES:
+            for node in nodes:
+                self.assertIn(node, on_disk, f"the gate cites `{node}`, which does not exist")
 
-    def test_todo_modelo_de_source_esta_atribuido_a_alguma_source(self):
-        """O inverso, e e o que pega o modelo NOVO: quem cria um modelo de source e esquece
-        de registra-lo aqui produz exatamente o defeito de 2026-08-31 — um modelo que o
-        portao nao sabe excluir, num repositorio onde aquela source ainda nao aterrissou."""
-        declarados = ({m for _, modelos in SOURCE_MODELS for m in modelos}
-                      | {n for _, _, nos in ICEBERG_TABLES for n in nos})
-        # Modelos direto sob silver/ sao passagens de seed: nao dependem de RAW nenhum.
-        for raiz, _, arquivos in os.walk(MODELS):
-            if os.path.abspath(raiz) == os.path.abspath(MODELS):
+    def test_every_source_model_is_assigned_to_some_source(self):
+        """The inverse, and it is what catches the NEW model: whoever creates a source model
+        and forgets to register it here produces exactly the 2026-08-31 defect — a model the
+        gate doesn't know how to exclude, in a repository where that source hasn't landed
+        yet."""
+        declared = ({m for _, models in SOURCE_MODELS for m in models}
+                    | {n for _, _, nodes in ICEBERG_TABLES for n in nodes})
+        # Models directly under silver/ are seed passthroughs: they depend on no RAW.
+        for root, _, filenames in os.walk(MODELS):
+            if os.path.abspath(root) == os.path.abspath(MODELS):
                 continue
-            for arquivo in arquivos:
-                if not arquivo.endswith(".sql"):
+            for filename in filenames:
+                if not filename.endswith(".sql"):
                     continue
-                nome = os.path.splitext(arquivo)[0]
-                self.assertIn(nome, declarados,
-                              f"{nome} nao esta em SOURCE_MODELS nem em ICEBERG_NODES")
+                name = os.path.splitext(filename)[0]
+                self.assertIn(name, declared,
+                              f"{name} is in neither SOURCE_MODELS nor ICEBERG_NODES")
 
 
-class TodaDagPassaPeloPortaoTest(unittest.TestCase):
-    """A checagem que teria evitado o defeito: um portao unico so vale se for o unico.
+class EveryDagGoesThroughTheGateTest(unittest.TestCase):
+    """The check that would have prevented the defect: a single gate is only worth something
+    if it is the only one.
 
-    Nao basta o portao estar certo — nada impede a proxima DAG de montar o proprio
-    `dbt build`, que foi exatamente como as seis copias nasceram.
+    The gate being right is not enough — nothing stops the next DAG from assembling its own
+    `dbt build`, which is exactly how the six copies were born.
     """
 
     def _dags(self):
-        for arquivo in sorted(os.listdir(DAGS)):
-            if not arquivo.endswith(".py"):
+        for filename in sorted(os.listdir(DAGS)):
+            if not filename.endswith(".py"):
                 continue
-            with open(os.path.join(DAGS, arquivo), encoding="utf-8") as handle:
-                yield arquivo, handle.read()
+            with open(os.path.join(DAGS, filename), encoding="utf-8") as handle:
+                yield filename, handle.read()
 
-    def test_nenhuma_dag_do_silver_monta_o_proprio_comando_de_dbt(self):
-        for arquivo, fonte in self._dags():
-            if arquivo == "warehouse_load.py":
-                # A UNICA excecao legitima: ela roda `--target snowflake`, onde a arvore le
-                # so `source()` sobre o STAGE e portao nenhum se aplica.
+    def test_no_silver_dag_assembles_its_own_dbt_command(self):
+        for filename, source in self._dags():
+            if filename == "warehouse_load.py":
+                # The ONLY legitimate exception: it runs the warehouse target (postgres since
+                # CR-007), where the tree reads only `source()` over STAGE and no gate applies.
                 continue
-            self.assertNotIn('"build"', fonte,
-                             f"{arquivo} monta o proprio `dbt build` em vez de usar o verbo")
+            self.assertNotIn('"build"', source,
+                             f"{filename} assembles its own `dbt build` instead of using the verb")
 
-    def test_toda_dag_com_tarefa_silver_chama_o_verbo(self):
-        vistas = 0
-        for arquivo, fonte in self._dags():
-            arvore = ast.parse(fonte)
-            tem_silver = any(
-                isinstance(no, ast.FunctionDef) and no.name == "silver"
-                for no in ast.walk(arvore)
+    def test_every_dag_with_a_silver_task_calls_the_verb(self):
+        seen = 0
+        for filename, source in self._dags():
+            tree = ast.parse(source)
+            has_silver = any(
+                isinstance(node, ast.FunctionDef) and node.name == "silver"
+                for node in ast.walk(tree)
             )
-            if not tem_silver:
+            if not has_silver:
                 continue
-            vistas += 1
-            self.assertIn("silver-build", fonte,
-                          f"{arquivo} tem tarefa `silver` que nao passa pelo portao")
-        self.assertEqual(vistas, 5, "esperava as cinco DAGs de source com tarefa `silver`")
+            seen += 1
+            self.assertIn("silver-build", source,
+                          f"{filename} has a `silver` task that bypasses the gate")
+        self.assertEqual(seen, 5, "expected the five source DAGs with a `silver` task")
 
-    def test_o_makefile_tambem_passa_pelo_verbo(self):
-        """O Makefile foi o lugar CERTO por mais tempo, e ainda assim precisa da checagem:
-        o defeito nao foi ele estar errado, foi ele estar sozinho."""
+    def test_the_makefile_also_goes_through_the_verb(self):
+        """The Makefile was the RIGHT place for the longest time, and it still needs the
+        check: the defect was not that it was wrong, it was that it was alone."""
         with open(os.path.join(REPO, "Makefile"), encoding="utf-8") as handle:
             makefile = handle.read()
-        alvo = makefile.split("\nsilver:", 1)[1].split("\n\n", 1)[0]
-        # Comentarios fora: o alvo DESCREVE o portao que perdeu, e a palavra `--exclude`
-        # aparece nessa explicacao. O que nao pode voltar e o alvo MONTAR a lista.
-        comandos = "\n".join(
-            linha for linha in alvo.split("\n") if not linha.lstrip().startswith("#")
+        target = makefile.split("\nsilver:", 1)[1].split("\n\n", 1)[0]
+        # Comments out: the target DESCRIBES the gate it lost, and the word `--exclude`
+        # appears in that explanation. What must not come back is the target BUILDING the list.
+        commands = "\n".join(
+            line for line in target.split("\n") if not line.lstrip().startswith("#")
         )
-        self.assertIn("silver-build", comandos)
-        self.assertNotIn("--exclude", comandos)
-        self.assertNotIn("--vars", comandos)
-        self.assertNotIn("has-data", comandos)
-        self.assertNotIn("iceberg-metadata", comandos)
+        self.assertIn("silver-build", commands)
+        self.assertNotIn("--exclude", commands)
+        self.assertNotIn("--vars", commands)
+        self.assertNotIn("has-data", commands)
+        self.assertNotIn("iceberg-metadata", commands)
+
+
+def _calls(source: str, name: str):
+    """Every `name(...)` call in the DAG, with its literal keywords."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == name:
+            yield {k.arg: k.value for k in node.keywords if k.arg}
+
+
+def _task_id(kwargs) -> str | None:
+    value = kwargs.get("task_id")
+    return value.value if isinstance(value, ast.Constant) else None
+
+
+class DagTriggerRulesTest(unittest.TestCase):
+    """The two-warehouse defect (DECISIONS.md § "Two orchestration defects") only showed up
+    in a real, mixed run: `mad1`'s short-circuit dragged `silver` down even with `bcn1`
+    freshly landed. It took TWO fixes, and no offline test guarded either of them. Undoing
+    either one brings the symptom back with no error at all.
+    """
+
+    def _dags(self):
+        return EveryDagGoesThroughTheGateTest._dags(self)
+
+    def test_every_gate_honors_the_downstream_trigger_rule(self):
+        seen = 0
+        for filename, source in self._dags():
+            for kwargs in _calls(source, "ShortCircuitOperator"):
+                seen += 1
+                value = kwargs.get("ignore_downstream_trigger_rules")
+                self.assertTrue(
+                    isinstance(value, ast.Constant) and value.value is False,
+                    f"{filename}: ShortCircuitOperator without ignore_downstream_trigger_rules=False"
+                    " — the default skips ALL downstream, including `silver`",
+                )
+        self.assertEqual(seen, 6, "expected one gate in each of the six DAGs")
+
+    def test_silver_runs_if_at_least_one_warehouse_landed(self):
+        seen = 0
+        for filename, source in self._dags():
+            for kwargs in _calls(source, "PythonOperator"):
+                if _task_id(kwargs) != "silver":
+                    continue
+                seen += 1
+                rule = kwargs.get("trigger_rule")
+                self.assertEqual(
+                    getattr(rule, "attr", None), "NONE_FAILED_MIN_ONE_SUCCESS",
+                    f"{filename}: `silver` without NONE_FAILED_MIN_ONE_SUCCESS — with all_success,"
+                    " a warehouse that short-circuited blocks the other one's Silver",
+                )
+        self.assertEqual(seen, 5, "expected the `silver` task in the five source DAGs")
+
+    def test_warehouse_trigger_stays_on_all_success(self):
+        """The inverse: here the default is right. Suspicious Silver doesn't go to the warehouse."""
+        seen = 0
+        for filename, source in self._dags():
+            for kwargs in _calls(source, "TriggerDagRunOperator"):
+                if _task_id(kwargs) != "trigger_warehouse_load":
+                    continue
+                seen += 1
+                self.assertNotIn("trigger_rule", kwargs, filename)
+        self.assertGreaterEqual(seen, 1)
 
 
 if __name__ == "__main__":

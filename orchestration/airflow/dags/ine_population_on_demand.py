@@ -1,20 +1,20 @@
-"""DAG sob demanda: RAW no object storage e Silver a partir da populacao do INE.
+"""On-demand DAG: RAW in object storage and Silver from INE population data.
 
-Ao contrario de mercadona_catalog_daily, este DAG NAO tem cron. Tres decisoes vem disso:
+Unlike mercadona_catalog_daily, this DAG has NO cron. Three decisions follow from that:
 
-  1. schedule=None: o INE publica Cifras de Poblacion de forma irregular — as vezes
-     meses entre uma atualizacao e outra. Um cron diario ou mensal daria a falsa
-     impressao de garantia de frescor que a fonte nao tem. Disparo manual, quando
-     alguem sabe que o INE publicou algo novo (`make ine-trigger` ou pela UI).
-  2. sem pool dedicado: o pool `mercadona_api` existe porque concorrencia MEDIDA deu
-     ~20% de 403 sob fan-out de 4 armazens. Aqui nao ha fan-out — uma run busca um
-     table_id so, sequencial por natureza — entao nao ha nada medido que justifique
-     inventar infra de throttle agora.
-  3. sem guard_date: a garantia da Mercadona existe porque a API so serve o preco de
-     HOJE, e um run datado do passado gravaria dado de hoje sob rotulo errado. A API do
-     INE devolve a serie historica inteira em qualquer momento em que for chamada —
-     nao ha "dado de hoje rotulado como ontem" possivel aqui. A imutabilidade de
-     particao (extract.py) ja protege contra reescrita acidental.
+  1. schedule=None: INE publishes Cifras de Poblacion irregularly — sometimes months
+     between one update and the next. A daily or monthly cron would give a false
+     impression of a freshness guarantee the source does not have. Manual trigger, when
+     someone knows INE has published something new (`make ine-trigger` or the UI).
+  2. no dedicated pool: the `mercadona_api` pool exists because MEASURED concurrency gave
+     ~20% 403s under a 4-warehouse fan-out. There is no fan-out here — a run fetches a
+     single table_id, sequential by nature — so nothing measured justifies inventing
+     throttle infrastructure now.
+  3. no guard_date: the Mercadona guard exists because that API only serves TODAY's price,
+     and a run dated in the past would write today's data under the wrong label. The INE
+     API returns the whole historical series whenever it is called — "today's data
+     labelled as yesterday" is impossible here. Partition immutability (extract.py)
+     already protects against accidental rewrites.
 """
 
 from __future__ import annotations
@@ -47,24 +47,24 @@ PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/b
 
 TABLES = os.environ.get("RETAIL_INE_TABLES", "31304")
 
-# O default da Source e 30s por requisicao, dimensionado para uma chamada de API comum.
-# Estas tabelas nao sao comuns: MEDIDO em disco, 31304 devolve 264 MB e 29005 outros
-# 125 MB num unico GET. Com 30s a extracao estola sem completar; com 240s ela passa, e
-# ainda assim ja foi observada uma resposta truncar no meio (JSON corrompido por volta do
-# byte 154.000.000), que so o retry resolveu. Mesmos valores do Makefile da raiz — os dois
-# caminhos (manual e orquestrado) tem de se comportar igual.
+# The Source's default is 30 s per request, sized for an ordinary API call. These tables
+# are not ordinary: MEASURED on disk, 31304 returns 264 MB and 29005 another 125 MB in a
+# single GET. With 30 s the extraction stalls without completing; with 240 s it passes, and
+# even so a response has been seen truncating midway (JSON corrupted around byte
+# 154,000,000), which only the retry fixed. Same values as the root Makefile — both paths
+# (manual and orchestrated) must behave the same.
 TIMEOUT = os.environ.get("RETAIL_INE_TIMEOUT", "240")
 MAX_RETRIES = os.environ.get("RETAIL_INE_MAX_RETRIES", "3")
 
-# Codigos de saida do CONTRACT.md secao 7 da source (mesmos valores da Mercadona, sources
-# diferentes e independentes — nao ha acoplamento em comparti-los aqui).
+# Exit codes from the source's CONTRACT.md section 7 (same values as Mercadona; different,
+# independent sources — sharing them here creates no coupling).
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_FATAL = 2
 
 
 def _run(argv: list[str], env_extra: dict | None = None) -> int:
-    """Executa e ENCAMINHA a saida linha a linha para o log da tarefa."""
+    """Run and FORWARD the output, line by line, to the task log."""
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
@@ -80,21 +80,21 @@ def _run(argv: list[str], env_extra: dict | None = None) -> int:
 
 
 def _run_source(argv: list[str]) -> int:
-    """Invoca a Source no interpretador do Airflow. Seguro porque dependencies = []."""
+    """Invoke the Source on Airflow's interpreter. Safe because dependencies = []."""
     return _run([SOURCE_PYTHON, "-m", "ine_population_source", *argv],
                 {"PYTHONPATH": INE_SOURCE_SRC})
 
 
 def _run_platform(argv: list[str]) -> int:
-    """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
+    """Invoke the platform in its separate venv, with code from the mounted repo."""
     return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
                 {"PYTHONPATH": PLATFORM_SRC})
 
 
 def _log_task_failure(context: dict) -> None:
-    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
-    interno do scheduler. Usa o logger que a propria task ja escreve
-    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """CR-005: the only structured record a task failure leaves, besides the scheduler's
+    internal state. Uses the logger the task already writes to
+    (`logging.getLogger("airflow.task")`) — no new file, no new service.
     """
     ti = context.get("task_instance")
     exc = context.get("exception")
@@ -115,20 +115,20 @@ def partition_path(ingestion_date: str) -> str:
 
 
 def already_landed(ds: str, **_) -> bool:
-    """Short-circuit olhando o DESTINO, nao o disco local — mesmo raciocinio da Mercadona:
-    exit 0 = nada a fazer; exit 1 = aterrissada mas divergente, `land` se auto-corrige;
-    exit 2 = nem existe, segue para extract."""
+    """Short-circuit that looks at the DESTINATION, not the local disk — same reasoning as
+    Mercadona: exit 0 = nothing to do; exit 1 = landed but divergent, `land` self-heals;
+    exit 2 = does not exist, carry on to extract."""
     code = _run_platform(["verify-landing", partition_path(ds)])
     if code == EXIT_OK:
-        print("particao ja aterrissada e verificada no destino: nada a fazer.")
+        print("partition already landed and verified at the destination: nothing to do.")
         return False
-    print(f"verify-landing retornou {code}: seguindo o pipeline.")
+    print(f"verify-landing returned {code}: continuing the pipeline.")
     return True
 
 
 def extract(ds: str, **_) -> None:
     if os.path.exists(os.path.join(partition_path(ds), "_SUCCESS")):
-        print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
+        print("partition already complete and immutable on disk: extract skipped (not a failure).")
         return
 
     code = _run_source([
@@ -136,46 +136,46 @@ def extract(ds: str, **_) -> None:
         "--timeout", TIMEOUT, "--max-retries", MAX_RETRIES,
     ])
     if code == EXIT_FATAL:
-        raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
+        raise RuntimeError(f"extract failed fatally (exit {code}); retrying will not fix it")
     if code == EXIT_PARTIAL:
-        raise RuntimeError(f"extract parcial (exit {code}): ha entradas em failures[]")
+        raise RuntimeError(f"partial extract (exit {code}): there are entries in failures[]")
     if code != EXIT_OK:
-        raise RuntimeError(f"extract retornou exit {code}")
+        raise RuntimeError(f"extract returned exit {code}")
 
 
 def validate(ds: str, **_) -> None:
-    # Sem --strict: table_id=29005 tem municipios fora do escopo desta plataforma (ex.
-    # Gatova/Castellon, Palmerola/Girona) sem nenhum ponto de dado publicado — legitimo,
-    # nao um problema de extracao. Ver comentario do alvo ine-validate no Makefile.
+    # No --strict: table_id=29005 has municipalities outside this platform's scope (e.g.
+    # Gatova/Castellon, Palmerola/Girona) with no published data point at all — legitimate,
+    # not an extraction problem. See the comment on the ine-validate target in the Makefile.
     code = _run_source(["validate", partition_path(ds)])
     if code != EXIT_OK:
-        raise RuntimeError(f"validate reprovou a particao (exit {code})")
+        raise RuntimeError(f"validate rejected the partition (exit {code})")
 
 
 def land(ds: str, **_) -> None:
     code = _run_platform(["land", partition_path(ds)])
     if code != EXIT_OK:
-        raise RuntimeError(f"land falhou (exit {code})")
+        raise RuntimeError(f"land failed (exit {code})")
 
 
 def verify_landing(ds: str, **_) -> None:
     code = _run_platform(["verify-landing", partition_path(ds)])
     if code != EXIT_OK:
-        raise RuntimeError(f"verify-landing reprovou o destino (exit {code})")
+        raise RuntimeError(f"verify-landing rejected the destination (exit {code})")
 
 
 def silver(**_) -> None:
-    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+    """Silver `dbt build`, with the gate applied by the platform.
 
-    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
-    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
-    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
-    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
-    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
-    source desta DAG.
+    THE GATE DOES NOT LIVE HERE, and it used to — that was the defect. Each DAG carried its
+    own partial copy of the decision (excluding its OWN source, and nothing else), the
+    Makefile carried the full version, and all six diverged. This DAG had no gate at all and
+    failed every day from the moment `silver_live_order_state` was born, because the Iceberg
+    projection can only be read when the catalog responds — and the catalog has nothing to
+    do with this DAG's source.
 
-    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
-    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    Now there is one verb: `retail_platform silver-build` observes what has landed and
+    whether the catalog responds, and builds `--exclude`/`--vars` itself. See silver_gate.py.
     """
     code = _run_platform([
         "silver-build",
@@ -183,12 +183,12 @@ def silver(**_) -> None:
         "--profiles-dir", f"{REPO}/platform/dbt",
     ])
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build falhou (exit {code})")
+        raise RuntimeError(f"dbt build failed (exit {code})")
 
 
 with DAG(
     dag_id="ine_population_on_demand",
-    description="RAW no object storage e Silver a partir da populacao do INE (provincia e municipio)",
+    description="RAW in object storage and Silver from INE population data (province and municipality)",
     schedule=None,
     start_date=datetime(2026, 8, 25),
     catchup=False,
@@ -237,8 +237,8 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
-        # Mesma trigger_rule da Mercadona: se o gate curto-circuitou (nada novo), silver
-        # ainda roda (barato, idempotente) em vez de ficar `skipped` arrastado pelo gate.
+        # Same trigger_rule as Mercadona: if the gate short-circuited (nothing new), silver
+        # still runs (cheap, idempotent) instead of being dragged into `skipped` by the gate.
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 

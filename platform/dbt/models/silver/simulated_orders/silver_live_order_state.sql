@@ -1,29 +1,28 @@
--- A PROJEÇÃO VIVA, lida da tabela Iceberg que dois processos escrevem.
+-- THE LIVE PROJECTION, read from the Iceberg table that two processes write.
 --
--- GRÃO: order_id. É o mesmo grão de `silver_order`, e de propósito: este modelo existe
--- SOMENTE para que a reconciliação entre o caminho em streaming e o caminho em lote seja uma
--- consulta, e não um script solto. Ele não acrescenta fato nenhum ao Lakehouse.
+-- GRAIN: order_id. It is the same grain as `silver_order`, on purpose: this model exists
+-- ONLY so that the reconciliation between the streaming path and the batch path is a
+-- query, and not a loose script. It adds no fact at all to the Lakehouse.
 --
--- POR QUE O CAMINHO DO METADADO VEM DE UMA VAR, E NÃO ESTÁ CRAVADO AQUI.
+-- WHY THE METADATA PATH COMES FROM A VAR, AND IS NOT HARD-CODED HERE.
 --
--- O DuckDB **recusa** descobrir sozinho qual é o metadado corrente de uma tabela Iceberg.
--- A mensagem dele é explícita: "globbing the filesystem to locate the latest version is
+-- DuckDB **refuses** to discover on its own which is the current metadata of an Iceberg
+-- table. Its message is explicit: "globbing the filesystem to locate the latest version is
 -- disabled by default as this is considered unsafe and could result in reading uncommitted
--- data". Existe um atalho — `SET unsafe_enable_version_guessing = true` — que foi medido,
--- funciona, e foi RECUSADO: ler metadado não commitado é exatamente o que uma leitura
--- concorrente com dois escritores não pode fazer.
+-- data". There is a shortcut — `SET unsafe_enable_version_guessing = true` — that was
+-- measured, works, and was REJECTED: reading uncommitted metadata is exactly what a
+-- concurrent read with two writers must not do.
 --
--- Quem sabe qual metadado é o corrente é o CATÁLOGO. `make silver` pergunta a ele
--- (`retail-platform iceberg-metadata`) e passa a resposta como var. A autoridade continua
--- num lugar só, sem flag insegura e sem reimplementar uma convenção de catálogo.
+-- The one who knows which metadata is current is the CATALOG. `make silver` asks it
+-- (`retail-platform iceberg-metadata`) and passes the answer as a var. The authority stays
+-- in a single place, with no unsafe flag and without reimplementing a catalog convention.
 --
--- O modelo fica FORA do `dbt build` enquanto a tabela não existir, pela mesma guarda
--- `has-data` das outras sources: um clone novo do repositório não pode quebrar por causa de
--- um plano de stream que ninguém subiu.
+-- The model stays OUT of `dbt build` while the table does not exist, through the same
+-- `has-data` guard as the other sources: a fresh clone of the repository must not break
+-- because of a stream plane nobody started.
 --
--- `written_by` é PROVENIÊNCIA: qual dos dois escritores tocou a linha por último. Sem ela,
--- "os dois escritores escreveram de verdade" seria afirmação sobre log, e não um fato
--- consultável.
+-- `written_by` is PROVENANCE: which of the two writers touched the row last. Without it,
+-- "both writers really wrote" would be a claim about a log, and not a queryable fact.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_live_order_state.parquet',
     options = {'overwrite_or_ignore': 1}

@@ -1,33 +1,32 @@
--- CALENDARIO COMPLETO, e a completude e o ponto.
+-- COMPLETE CALENDAR, and the completeness is the point.
 --
--- GRAO: um dia. CHAVE: date_key (YYYYMMDD).
--- TIPO: synthetic — gerado, nao observado. E a unica dimensao deste modelo que nao vem de
--- nenhuma fonte, e nao ha nada de errado nisso: um calendario nao e um fato.
+-- GRAIN: one day. KEY: date_key (YYYYMMDD).
+-- TYPE: synthetic — generated, not observed. It is the only dimension in this model that
+-- comes from no source, and there is nothing wrong with that: a calendar is not a fact.
 --
--- POR QUE COMPLETO, E NAO SO OS DIAS OBSERVADOS. Os dias 2026-08-17 a 08-23 nao existem
--- no catalogo e NAO podem ser recuperados — a API da Mercadona so serve o preco de hoje.
--- Um calendario que so tivesse os dias observados faria a lacuna DESAPARECER: um grafico
--- ligaria 08-16 a 08-24 como se fossem consecutivos. Com o calendario inteiro, a lacuna
--- e visivel, e FACT_INGESTION_RUN diz que ela e ausencia de observacao, nao de venda.
+-- WHY COMPLETE, AND NOT JUST THE OBSERVED DAYS. Days 2026-08-17 to 08-23 do not exist in
+-- the catalog and CANNOT be recovered — the Mercadona API only serves today's price.
+-- A calendar with only the observed days would make the gap DISAPPEAR: a chart would
+-- connect 08-16 to 08-24 as if they were consecutive. With the whole calendar, the gap is
+-- visible, and FACT_INGESTION_RUN says it is an absence of observation, not of sales.
 {{ config(materialized = 'table') }}
 
--- GERACAO DE CALENDARIO, POR MOTOR. Nao ha SQL portavel para "4.018 linhas sinteticas" que
--- sirva aos dois adaptadores: o Snowflake gera com `table(generator(...))` + `seq4()`, o
--- Postgres com `generate_series()`. Ao contrario do `WINDOW` de DIM_CUSTOMER — onde os dois
--- motores aceitam a MESMA sintaxe e um so evita a que falta num deles —, aqui as duas
--- sintaxes de geracao de linha nao tem denominador comum, entao o branch e por
--- `target.type` e nao por evitar-o-que-falta. O resultado (full_date, 2020-01-01 a
--- 2030-12-31) e identico dos dois lados.
+-- CALENDAR GENERATION, PER ENGINE. There is no portable SQL for "4,018 synthetic rows"
+-- that serves both adapters: Snowflake generates with `table(generator(...))` + `seq4()`,
+-- Postgres with `generate_series()`. Unlike DIM_CUSTOMER's `WINDOW` — where both engines
+-- accept the SAME syntax and one simply avoids the one missing in the other —, here the two
+-- row-generation syntaxes have no common denominator, so the branch is by `target.type`
+-- and not by avoiding-what-is-missing. The result (full_date, 2020-01-01 to 2030-12-31) is
+-- identical on both sides.
 with dias as (
 
     {% if target.type == 'postgres' %}
     select generate_series('2020-01-01'::date, '2030-12-31'::date, interval '1 day')::date
                                                             as full_date
     {% else %}
-    -- 4.018 dias. Faixa fixa e generosa de proposito: um calendario derivado do minimo e
-    -- maximo do dado ficaria curto no dia em que chegasse um pedido futuro, e recalcular a
-    -- dimensao por causa disso e o tipo de surpresa que uma dimensao de data existe para
-    -- nao dar.
+    -- 4,018 days. A fixed and generous range on purpose: a calendar derived from the data's
+    -- min and max would fall short the day a future order arrived, and recomputing the
+    -- dimension because of that is the kind of surprise a date dimension exists to avoid.
     select dateadd(day, seq4(), '2020-01-01'::date) as full_date
     from table(generator(rowcount => 4018))
     {% endif %}
@@ -47,8 +46,8 @@ select
     trim(to_char(full_date, 'Day'))                        as day_name,
     extract(week from full_date)::int                      as week_of_year,
 
-    -- Espanha: semana comeca na segunda. EXTRACT(dow ...) devolve 0=domingo, mesma
-    -- convencao do dayofweek() do Snowflake abaixo.
+    -- Spain: the week starts on Monday. EXTRACT(dow ...) returns 0=Sunday, same convention
+    -- as Snowflake's dayofweek() below.
     (extract(dow from full_date) in (0, 6))                as is_weekend,
     {% else %}
     cast(to_char(full_date, 'YYYYMMDD') as number(38, 0))  as date_key,
@@ -62,7 +61,7 @@ select
     dayname(full_date)                                     as day_name,
     weekofyear(full_date)                                  as week_of_year,
 
-    -- Espanha: semana comeca na segunda. dayofweek devolve 0=domingo.
+    -- Spain: the week starts on Monday. dayofweek returns 0=Sunday.
     (dayofweek(full_date) in (0, 6))                       as is_weekend,
     {% endif %}
 

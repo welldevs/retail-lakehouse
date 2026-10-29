@@ -1,41 +1,44 @@
--- Estado FINAL de cada linha do pedido, depois de substituicoes e remocoes.
+-- FINAL state of each order line, after substitutions and removals.
 --
--- GRAO: (order_id, line_no). `line_no` e a posicao na cesta COLOCADA e nunca e reaproveitado:
--- uma linha substituida mantem o mesmo line_no e troca o produto, uma linha removida mantem o
--- line_no e sai da conta. E o que permite reconstruir o que foi pedido e o que foi entregue
--- sem perder a correspondencia entre os dois.
+-- GRAIN: (order_id, line_no). `line_no` is the position in the PLACED basket and is never
+-- reused: a substituted line keeps the same line_no and swaps the product, a removed line
+-- keeps the line_no and drops out of the total. That is what makes it possible to rebuild
+-- what was ordered and what was delivered without losing the correspondence between them.
 --
--- POR QUE A LINHA COLOCADA E A LINHA FINAL CONVIVEM NA MESMA TABELA. `source_product_id` e o
--- que o cliente pediu; `fulfilled_source_product_id` e o que ele recebeu. Guardar so o segundo
--- apagaria a substituicao — que e exatamente o fato que o modelo de eventos existe para
--- registrar. Guardar so o primeiro faria a receita nao fechar.
+-- WHY THE PLACED LINE AND THE FINAL LINE LIVE IN THE SAME TABLE. `source_product_id` is
+-- what the customer ordered; `fulfilled_source_product_id` is what they received. Keeping
+-- only the second would erase the substitution — which is exactly the fact the event model
+-- exists to record. Keeping only the first would make revenue not close.
 --
 -- `line_status`: placed | fulfilled | substituted | removed | not_picked.
 --
--- `not_picked` EXISTE PORQUE O OLTP O EXIGIU. Ate o Marco 4, este modelo rotulava `fulfilled`
--- toda linha que nao tivesse sido substituida nem removida — INCLUSIVE as de pedido cancelado
--- ou com pagamento recusado, que nunca chegaram a separacao. Medido: 298 pedidos, 5.508 linhas
--- afirmando terem sido cumpridas por um pedido que morreu antes de alguem tocar nele.
+-- `not_picked` EXISTS BECAUSE THE OLTP DEMANDED IT. Until Milestone 4, this model labeled
+-- `fulfilled` every line that had been neither substituted nor removed — INCLUDING those
+-- of cancelled orders or with declined payment, which never reached picking. Measured: 298
+-- orders, 5,508 lines claiming to have been fulfilled by an order that died before anyone
+-- touched it.
 --
--- O log nunca disse isso. `order_picked` e o unico evento que declara separacao, e ele nao
--- ocorre nesses pedidos; `else 'fulfilled'` era uma afirmacao do modelo, nao da fonte. O
--- defeito so apareceu ao replicar o mesmo log num OLTP, onde a linha nasce `placed` e so vira
--- outra coisa quando um evento a muda — dois folds independentes discordando e a unica forma
--- barata de achar isto.
+-- The log never said that. `order_picked` is the only event that declares picking, and it
+-- does not occur in those orders; `else 'fulfilled'` was a claim of the model, not of the
+-- source. The defect only showed up when replicating the same log in an OLTP, where the
+-- line is born `placed` and only becomes something else when an event changes it — two
+-- independent folds disagreeing is the only cheap way to find this.
 --
--- `placed` cobre o pedido ainda em voo (nem separado, nem terminal). Nao ocorre na janela
--- atual — todos os 6.400 pedidos sao terminais — e existe para que o vocabulario seja
--- completo em vez de completo por sorte.
+-- `placed` covers the order still in flight (neither picked nor terminal). It does not
+-- occur in the current window — all 6,400 orders are terminal — and exists so that the
+-- vocabulary is complete rather than complete by luck.
 --
--- PRECO E O OBSERVADO, e a Source ja provou isso: `validate` reconfere, linha a linha, que o
--- unit_price bate com o catalogo daquele (armazem, price_as_of). Aqui ele so e tipado. O teste
--- dbt que refaz a conferencia contra silver_product_price existe porque esta e a primeira vez
--- que o numero atravessa RAW e parquet — a mesma logica de
--- assert_customer_lives_in_its_warehouse_service_area ser o terceiro check da Fase 1.
+-- THE PRICE IS THE OBSERVED ONE, and the Source has already proven it: `validate`
+-- re-checks, line by line, that the unit_price matches the catalog of that (warehouse,
+-- price_as_of). Here it is only typed. The dbt test that redoes the check against
+-- silver_product_price exists because this is the first time the number crosses RAW and
+-- parquet — the same logic as assert_customer_lives_in_its_warehouse_service_area being
+-- Phase 1's third check.
 --
--- price_as_of E price_source VIAJAM JUNTO DO NUMERO. Sem eles, comparar receita entre dias
--- compararia precos de vintages diferentes sem aviso — a mesma disciplina da var `currency`,
--- que o Gold materializa "para que a premissa viaje junto do numero".
+-- price_as_of AND price_source TRAVEL WITH THE NUMBER. Without them, comparing revenue
+-- across days would compare prices of different vintages without warning — the same
+-- discipline as the `currency` var, which Gold materializes "so that the premise travels
+-- with the number".
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_order_line.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -91,8 +94,9 @@ remocoes as (
 
 ),
 
--- O QUE ACONTECEU COM O PEDIDO, para decidir o que aconteceu com a linha. So dois fatos
--- interessam, e os dois vem de evento declarado: houve separacao, e houve fim antes dela.
+-- WHAT HAPPENED TO THE ORDER, to decide what happened to the line. Only two facts
+-- matter, and both come from a declared event: there was picking, and there was an end
+-- before it.
 marcos_do_pedido as (
 
     select
@@ -119,10 +123,10 @@ select
     c.linha.source_product_id                              as source_product_id,
     c.linha.category_id                                    as category_id,
     c.linha.subgroup_id                                    as subgroup_id,
-    -- Carimbado no evento pela Source, resolvido pela plataforma contra o de-para
-    -- versionado. Vem do evento e nao de um join com o catalogo aqui, pelo mesmo motivo de
-    -- `unit_price`: o que importa e o grupo que valia NO MOMENTO DO PEDIDO, e nao o que o
-    -- de-para diria hoje.
+    -- Stamped on the event by the Source, resolved by the platform against the versioned
+    -- mapping. It comes from the event and not from a join with the catalog here, for the
+    -- same reason as `unit_price`: what matters is the group that applied AT THE TIME OF THE
+    -- ORDER, not what the mapping would say today.
     c.linha.demand_group                                   as demand_group,
     c.linha.quantity                                       as quantity,
     cast(c.linha.unit_price as decimal(10, 2))             as unit_price,
@@ -135,8 +139,8 @@ select
         else 'placed'
     end                                                    as line_status,
 
-    -- O que o cliente recebeu. NULL quando a linha foi removida: null aqui significa "nao
-    -- existe", nao "desconhecido" — mesma disciplina de house_number na Fase 1.
+    -- What the customer received. NULL when the line was removed: null here means "does not
+    -- exist", not "unknown" — same discipline as house_number in Phase 1.
     case
         when r.line_no is not null then null
         when s.line_no is not null then s.substitute_source_product_id
@@ -150,15 +154,15 @@ select
         else null
     end                                                    as fulfilled_unit_price,
 
-    -- Valor que a linha efetivamente contribuiu. Zero para linha removida, para que a soma
-    -- por pedido feche com net_amount sem nenhum filtro do consumidor.
+    -- Value the line actually contributed. Zero for a removed line, so that the per-order
+    -- sum closes with net_amount without any consumer-side filter.
     case
         when r.line_no is not null then cast(0 as decimal(12, 2))
         when s.line_no is not null then cast(s.substitute_unit_price * c.linha.quantity as decimal(12, 2))
         when m.foi_separado = 1    then cast(cast(c.linha.unit_price as decimal(10, 2)) * c.linha.quantity as decimal(12, 2))
-        -- Linha de pedido que nunca foi separado contribui ZERO, pelo mesmo motivo que a
-        -- removida contribui zero: `line_amount` e o que a linha entregou, e ela nao
-        -- entregou nada. O valor pedido continua em `line_amount_placed`, ao lado.
+        -- A line of an order that was never picked contributes ZERO, for the same reason a
+        -- removed line contributes zero: `line_amount` is what the line delivered, and it
+        -- delivered nothing. The ordered value remains in `line_amount_placed`, next to it.
         else cast(0 as decimal(12, 2))
     end                                                    as line_amount,
 

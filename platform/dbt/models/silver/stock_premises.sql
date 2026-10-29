@@ -1,20 +1,21 @@
--- PASSAGEM do seed para o object storage — mesmo motivo/mecanismo de order_premises.sql.
+-- PASS-THROUGH of the seed to object storage — same reason/mechanism as order_premises.sql.
 --
--- POR QUE ESTAS PREMISSAS SAO SEPARADAS DAS DE PEDIDO. As de `order_premises` governam o
--- que um cliente FAZ; estas governam o que o ARMAZEM tem. Sao dominios diferentes e mudam
--- por razoes diferentes: a cesta muda quando se aprende algo sobre comportamento de compra,
--- a cobertura de estoque muda quando se aprende algo sobre a operacao. Junta-las num arquivo
--- so faria toda regeracao de pedidos parecer uma mudanca de politica de estoque, e vice-versa.
+-- WHY THESE PREMISES ARE SEPARATE FROM THE ORDER ONES. Those in `order_premises` govern
+-- what a customer DOES; these govern what the WAREHOUSE holds. They are different domains
+-- and change for different reasons: the basket changes when something is learned about
+-- buying behavior, stock coverage changes when something is learned about operations.
+-- Putting them in a single file would make every order regeneration look like a stock
+-- policy change, and vice versa.
 --
--- O QUE E SINTETICO AQUI, E O QUE NAO E. As quatro linhas sao POLITICA — quantos dias
--- cobrir, quando repor, ate onde repor, quanto o fornecedor demora. Nenhuma fonte deste
--- repositorio mede estoque, e o `label` diz `synthetic` em todas.
+-- WHAT IS SYNTHETIC HERE, AND WHAT IS NOT. The four rows are POLICY — how many days to
+-- cover, when to replenish, up to where to replenish, how long the supplier takes. No
+-- source in this repository measures stock, and the `label` says `synthetic` on all of them.
 --
--- O que NAO e sintetico e o numero que elas multiplicam: a demanda media diaria por serie
--- (armazem x produto) vem do consumo MEDIDO em `silver_order_line`. Entao o nivel de
--- estoque de cada produto e observado; so a quantidade de dias de cobertura e declarada.
--- E a mesma forma da base de clientes, dimensionada pela populacao do INE: a estrutura vem
--- do dado, a politica vem daqui, e as duas ficam distinguiveis.
+-- What is NOT synthetic is the number they multiply: the average daily demand per series
+-- (warehouse x product) comes from the consumption MEASURED in `silver_order_line`. So each
+-- product's stock level is observed; only the number of coverage days is declared. It is
+-- the same shape as the customer base, sized by INE population: the structure comes from
+-- the data, the policy comes from here, and the two remain distinguishable.
 {{ config(
     location = 's3://retail-lakehouse/silver/stock_premises.parquet',
     options = {'overwrite_or_ignore': 1}

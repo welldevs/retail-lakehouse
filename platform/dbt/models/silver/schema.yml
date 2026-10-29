@@ -3,24 +3,24 @@ version: 2
 models:
   - name: warehouse_province_map
     description: >
-      Passagem do seed warehouse_province_map_seed para o object storage — so um
-      "select *". Existe porque retail_platform query (connect_lakehouse) nunca le
-      tabela nativa do .duckdb local, so parquet sob s3://.../silver/; sem este modelo
-      o seed carrega no dbt build mas fica invisivel pra qualquer consulta feita do
-      jeito que o resto da plataforma consulta o Silver. As colunas e os testes de
-      conteudo (not_null, unique) ja estao no seed — aqui so garante que a passagem
-      preserva o grao.
+      Pass-through of the warehouse_province_map_seed seed to object storage — just a
+      "select *". It exists because retail_platform query (connect_lakehouse) never reads
+      a native table of the local .duckdb, only parquet under s3://.../silver/; without this model
+      the seed loads in dbt build but stays invisible to any query made the
+      way the rest of the platform queries Silver. The columns and the content
+      tests (not_null, unique) are already on the seed — here it only guarantees that the pass-through
+      preserves the grain.
     columns:
       - name: wh
         tests: [not_null, unique]
 
   - name: warehouse_service_area
     description: >
-      Passagem do seed warehouse_service_area_seed para o object storage — mesmo
-      mecanismo de warehouse_province_map. GRAO: (wh, province_code,
-      municipality_code). Municipios da Area Urbana Funcional (INE) de cada warehouse,
-      dentro das provincias ja landadas pelo Callejero (08/28/41/46) — municipios de
-      fronteira de Madrid/Barcelona ficam fora, ver scripts/derive_warehouse_service_area.py.
+      Pass-through of the warehouse_service_area_seed seed to object storage — same
+      mechanism as warehouse_province_map. GRAIN: (wh, province_code,
+      municipality_code). Municipalities of each warehouse's Functional Urban Area (INE),
+      within the provinces already landed by the Callejero (08/28/41/46) — Madrid/Barcelona
+      border municipalities stay out, see scripts/derive_warehouse_service_area.py.
     columns:
       - name: wh
         tests: [not_null]
@@ -35,16 +35,16 @@ models:
 
   - name: customer_premises
     description: >
-      Passagem do seed customer_premises_seed para o object storage — mesmo mecanismo de
-      order_premises. GRAO: premise_key. As 4 premissas DECLARADAS que governam quem EXISTE
-      como titular de conta: idade minima, de onde vem a taxa de penetracao, qual populacao
-      e o denominador dela e como a contagem se reparte entre armazens. Dominio separado do
-      de order_premises de proposito — aquelas governam o que um cliente FAZ, estas governam
-      quem ele e. A Fase 5 errou por nao ter a separacao: tratou "recem-nascido nao pode
-      comprar" como regra de pedido e a base seguiu com 18,01% de menores.
-      A unica coisa observada em jogo, os 2,2% do e-commerce no volume de alimentacao, NAO
-      esta aqui: customer_penetration_source aponta para demand_profile.channel_reference_pct,
-      onde ela foi medida. Por isso `label` e 'synthetic' nas quatro linhas.
+      Pass-through of the customer_premises_seed seed to object storage — same mechanism as
+      order_premises. GRAIN: premise_key. The 4 DECLARED premises that govern who EXISTS
+      as an account holder: minimum age, where the penetration rate comes from, which population
+      is its denominator and how the count is split across warehouses. A domain separate from
+      order_premises on purpose — those govern what a customer DOES, these govern
+      who they are. Phase 5 went wrong by not having the separation: it treated "a newborn cannot
+      buy" as an order rule and the base kept 18.01% minors.
+      The only observed thing at play, e-commerce's 2.2% of food volume, is NOT
+      here: customer_penetration_source points to demand_profile.channel_reference_pct,
+      where it was measured. That is why `label` is 'synthetic' on all four rows.
     columns:
       - name: premise_key
         tests: [not_null, unique]
@@ -52,8 +52,8 @@ models:
         tests: [not_null]
       - name: label
         description: >
-          Sempre 'synthetic'. As quatro linhas sao decisao desta plataforma; a medicao que
-          uma delas usa mora em outro seed e e apontada por nome, nunca copiada.
+          Always 'synthetic'. The four rows are this platform's decision; the measurement
+          one of them uses lives in another seed and is pointed to by name, never copied.
         tests:
           - not_null
           - accepted_values:
@@ -64,19 +64,19 @@ models:
 
   - name: stock_premises
     description: >
-      Passagem do seed stock_premises_seed para o object storage. GRAO: premise_key. A
-      POLITICA de estoque: quantos dias cobrir, quando repor, ate onde, e o prazo do
-      fornecedor. Todas 'synthetic' — nenhuma fonte deste repositorio mede estoque, e essa
-      ausencia e a razao de o dominio ter esperado ate a Fase 7.
+      Pass-through of the stock_premises_seed seed to object storage. GRAIN: premise_key. The stock
+      POLICY: how many days to cover, when to replenish, up to where, and the supplier lead
+      time. All 'synthetic' — no source in this repository measures stock, and that
+      absence is the reason the domain waited until Phase 7.
 
-      O QUE NAO E SINTETICO e o numero que elas multiplicam: a demanda media diaria por
-      serie vem do consumo MEDIDO em silver_order_line. A estrutura vem do dado, a politica
-      vem daqui, e as duas ficam distinguiveis — mesma forma da base de clientes ancorada
-      na populacao do INE.
+      WHAT IS NOT SYNTHETIC is the number they multiply: the average daily demand per
+      series comes from consumption MEASURED in silver_order_line. The structure comes from the data, the policy
+      comes from here, and the two stay distinguishable — the same shape as the customer base anchored
+      on INE population.
 
-      Separada de order_premises porque governa outro dominio: aquelas dizem o que um
-      cliente FAZ, estas o que o armazem TEM. Junta-las faria toda regeracao de pedidos
-      parecer mudanca de politica de estoque.
+      Separate from order_premises because it governs another domain: those say what a
+      customer DOES, these what the warehouse HAS. Merging them would make every order regeneration
+      look like a stock policy change.
     columns:
       - name: premise_key
         tests: [not_null, unique]
@@ -93,19 +93,19 @@ models:
 
   - name: order_premises
     description: >
-      Passagem do seed order_premises_seed para o object storage — mesmo mecanismo de
-      warehouse_service_area. GRAO: premise_key. As premissas DECLARADAS que o gerador de
-      pedidos consumiu: cadencia, cesta, taxas de excecao, duracoes entre marcos e o limiar
-      de SLA. Nenhuma e observada — nenhuma fonte deste repo mede cesta, cadencia ou
-      disponibilidade — e por isso `label` e 'synthetic' em todas as linhas, testado com
-      accepted_values e nao por convencao. Atravessa a fronteira ate o warehouse para que
-      MART_FULFILLMENT_SLA compare contra o MESMO limiar que o gerador usou, em vez de
-      contra uma copia do numero — copia que envelheceu de verdade na Fase 7, quando o
-      limiar caiu de 90 para 60.
+      Pass-through of the order_premises_seed seed to object storage — same mechanism as
+      warehouse_service_area. GRAIN: premise_key. The DECLARED premises the order
+      generator consumed: cadence, basket, exception rates, durations between milestones and the SLA
+      threshold. None is observed — no source in this repo measures basket, cadence or
+      availability — which is why `label` is 'synthetic' on every row, tested with
+      accepted_values and not by convention. It crosses the boundary to the warehouse so that
+      MART_FULFILLMENT_SLA compares against the SAME threshold the generator used, instead of
+      against a copy of the number — a copy that really went stale in Phase 7, when the
+      threshold dropped from 90 to 60.
 
-      TRES DELAS SAO DERIVADAS das outras, e assert_order_premises_are_internally_coherent
-      afere a derivacao: slot_lead_hours_min/max saem do ciclo declarado, e
-      sla_minutes_picking sai de sla_picking_percentile sobre a triangular da cesta.
+      THREE OF THEM ARE DERIVED from the others, and assert_order_premises_are_internally_coherent
+      checks the derivation: slot_lead_hours_min/max come from the declared cycle, and
+      sla_minutes_picking comes from sla_picking_percentile over the basket's triangular.
     columns:
       - name: premise_key
         tests: [not_null, unique]
@@ -113,8 +113,8 @@ models:
         tests: [not_null]
       - name: label
         description: >
-          Sempre 'synthetic'. `proxy` seria mentira: um proxy e medido em outro lugar e
-          usado aqui; estes numeros nao sao medidos em lugar nenhum.
+          Always 'synthetic'. `proxy` would be a lie: a proxy is measured elsewhere and
+          used here; these numbers are not measured anywhere.
         tests:
           - not_null
           - accepted_values:

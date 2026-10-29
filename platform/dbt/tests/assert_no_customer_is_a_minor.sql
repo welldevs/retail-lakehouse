@@ -1,27 +1,27 @@
--- NENHUM TITULAR DE CONTA E MENOR DE IDADE.
+-- NO ACCOUNT HOLDER IS A MINOR.
 --
--- O ACHADO QUE ISTO CONGELA, e por que ele precisou de DOIS testes. Medido em 2026-08-31:
--- 18,01% dos clientes tinham menos de 18 anos (3.602 de 20.000), com `age_at_ingestion` de
--- 0 a 100 — havia titular de conta recem-nascido. A Fase 5 tratou isso no dominio errado:
--- criou `min_buyer_age` e filtrou na hora do PEDIDO, deixando o cadastro intacto sob o
--- argumento de que `silver_customer` era projecao fiel da populacao residente. O argumento
--- estava certo sobre o que a Source entrega e errado sobre o que um cadastro e — uma base
--- de clientes nao e um censo. `assert_no_order_comes_from_a_minor` continua existindo e
--- continua certo; ele so nao era suficiente, porque provava que ninguem COMPRAVA sendo
--- menor, nunca que ninguem EXISTIA sendo menor.
+-- THE FINDING THIS FREEZES, and why it needed TWO tests. Measured on 2026-08-31:
+-- 18.01% of customers were under 18 (3,602 of 20,000), with `age_at_ingestion` from
+-- 0 to 100 — there were newborn account holders. Phase 5 handled this in the wrong domain:
+-- it created `min_buyer_age` and filtered at ORDER time, leaving the customer records intact on the
+-- argument that `silver_customer` was a faithful projection of the resident population. The argument
+-- was right about what the Source delivers and wrong about what a customer register is — a customer
+-- base is not a census. `assert_no_order_comes_from_a_minor` still exists and
+-- is still right; it just was not enough, because it proved nobody BOUGHT while being a
+-- minor, never that nobody EXISTED as a minor.
 --
--- TODAS AS ingestion_date, e nao so a corrente. Um menor numa geracao antiga continua sendo
--- um menor na base: `silver_customer` empilha o historico de proposito, os pedidos fixam
--- `customer_ingestion_date` e o export de pedidos resolve a versao MAIS RECENTE de cada
--- cliente — filtrar por `is_latest_ingestion` aqui deixaria a porta dos fundos aberta.
+-- ALL ingestion_dates, not just the current one. A minor in an old generation is still
+-- a minor in the base: `silver_customer` stacks the history on purpose, orders pin
+-- `customer_ingestion_date` and the orders export resolves the MOST RECENT version of each
+-- customer — filtering by `is_latest_ingestion` here would leave the back door open.
 --
--- A IDADE MINIMA NAO E CONSTANTE NESTE ARQUIVO: vem de `customer_premises`, que projeta o
--- proprio seed. Repeti-la aqui criaria um segundo lugar para muda-la, e os dois divergiriam.
+-- THE MINIMUM AGE IS NOT A CONSTANT IN THIS FILE: it comes from `customer_premises`, which projects the
+-- seed itself. Repeating it here would create a second place to change it, and the two would diverge.
 --
--- E A IDADE E `age_at_ingestion`, nao a idade hoje. E o atributo que o gerador realmente
--- amostrou (`birth_year = ano(ingestion_date) - idade`), entao a subtracao devolve o valor
--- exato sorteado. Comparar contra o relogio faria este teste mudar de resposta sozinho com
--- o passar do tempo, o que e o oposto do que um teste faz.
+-- AND THE AGE IS `age_at_ingestion`, not today's age. It is the attribute the generator actually
+-- sampled (`birth_year = year(ingestion_date) - age`), so the subtraction returns the exact
+-- drawn value. Comparing against the clock would make this test change its answer on its own as
+-- time passes, which is the opposite of what a test does.
 with limite as (
 
     select cast(value as integer) as min_customer_age
@@ -43,11 +43,11 @@ where c.age_at_ingestion < l.min_customer_age
 
 union all
 
--- O PISO DA PROPRIA PREMISSA. Mesmo mecanismo, mesma razao e mesmo numero de
--- `assert_no_order_comes_from_a_minor`: ler a premissa prova que o DADO obedece o que foi
--- declarado, mas sozinho nao impede a premissa de ser revertida — com o limiar em zero nao
--- existe menor e o teste passaria com uma base de recem-nascidos. O seed pode SUBIR a idade
--- minima quando quiser; abaixo de 18 ele nao pode ir em silencio.
+-- THE PREMISE'S OWN FLOOR. Same mechanism, same reason and same number as
+-- `assert_no_order_comes_from_a_minor`: reading the premise proves the DATA obeys what was
+-- declared, but on its own it does not keep the premise from being reverted — with the threshold at zero there
+-- are no minors and the test would pass with a base of newborns. The seed may RAISE the minimum
+-- age whenever it wants; below 18 it cannot go silently.
 select
     current_date  as ingestion_date,
     'PREMISSA'    as wh,

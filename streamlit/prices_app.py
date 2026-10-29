@@ -1,15 +1,14 @@
 """Price-watch dashboard — exclusive to Mercadona catalog price oscillation.
 
 Reads MART live (`mart_price_evolution`, `mart_assortment_daily`) and shows nothing else:
-no funnel, no basket, no stock. A SEPARATE screen from `app.py`'s operations dashboard,
-not a fourteenth tab bolted onto it — the user asked for an exclusive panel, and every
-query here already lives in `price_indicators.py`, which is where the question and the SQL
-travel together, same discipline as `indicators.py`.
+no funnel, no basket, no stock. A SEPARATE screen from the operations panel, not a tab
+bolted onto it; every query lives in the shared catalog
+(`retail_platform/indicators/prices.py`), where the question and the SQL travel together.
 
 WHAT AN "OFFER" MEANS HERE: a `change_type = 'preco_alterado'` row with `price_delta < 0`.
 There is no promotional flag in the warehouse — `fact_price_change.sql` proved the
 source's own flag false on every row — so every drop shown is a REAL, OBSERVED price
-decrease, never a confirmed marketing campaign. The panel says so; see price_indicators.py.
+decrease, never a confirmed marketing campaign. The panel says so; see the prices catalog.
 """
 
 from __future__ import annotations
@@ -22,8 +21,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import price_indicators as PI  # noqa: E402
+# `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
+from retail_platform.indicators import prices as PI  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_PRICE_DASHBOARD_TTL", "60"))
 
@@ -64,7 +64,7 @@ def fmt_pct(value) -> str:
     return f"{float(value):.2f}%"
 
 
-IND = {i.chave: i for i in PI.INDICADORES}
+IND = {i.key: i for i in PI.INDICATORS}
 
 # ------------------------------------------------------------------------------------
 # Connection
@@ -87,7 +87,7 @@ with st.sidebar:
 
     st.divider()
 
-    window = query(PI.JANELA)
+    window = query(PI.WINDOW)
     start_min = pd.to_datetime(window.iloc[0, 0]).date()
     end_max = pd.to_datetime(window.iloc[0, 1]).date()
 
@@ -100,19 +100,19 @@ with st.sidebar:
     else:
         start, end = start_min, end_max
 
-    warehouse_list = query(PI.ARMAZENS).iloc[:, 0].tolist()
+    warehouse_list = query(PI.WAREHOUSES).iloc[:, 0].tolist()
     warehouses = st.multiselect("Warehouses", warehouse_list, default=warehouse_list)
     if not warehouses:
         st.warning("Select at least one warehouse.")
         st.stop()
 
-    P = {"inicio": str(start), "fim": str(end), "armazens": ",".join(warehouses)}
+    P = {"start": str(start), "end": str(end), "warehouses": ",".join(warehouses)}
 
     st.divider()
-    termo = st.text_input("Product search (contains)", value="", placeholder="e.g. coca cola")
+    search_term = st.text_input("Product search (contains)", value="", placeholder="e.g. coca cola")
 
     st.divider()
-    freshness = query(PI.FRESCOR)
+    freshness = query(PI.FRESHNESS)
     latest_date = pd.to_datetime(freshness["FIM"], errors="coerce").max()
     st.caption(
         f"Catalog through {latest_date:%Y-%m-%d}" if pd.notna(latest_date)
@@ -209,16 +209,16 @@ with tabs[1]:
 # ---------------------------------------------------------------- Daily movement
 with tabs[2]:
     st.subheader("Change volume by day")
-    diario = numeric(
+    daily = numeric(
         query(IND["movimentacao_diaria"].sql, P), ["QUEDAS", "ALTAS", "ENTRADAS"],
     )
-    diario["SNAPSHOT_DATE"] = pd.to_datetime(diario["SNAPSHOT_DATE"])
-    diario_wide = diario.rename(columns={
+    daily["SNAPSHOT_DATE"] = pd.to_datetime(daily["SNAPSHOT_DATE"])
+    daily_wide = daily.rename(columns={
         "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "QUEDAS": "Drops",
         "ALTAS": "Increases", "ENTRADAS": "New listings",
     })
-    st.bar_chart(diario_wide, x="Date", y=["Drops", "Increases"], color="Warehouse", stack=False)
-    st.dataframe(diario_wide, hide_index=True, width="stretch")
+    st.bar_chart(daily_wide, x="Date", y=["Drops", "Increases"], color="Warehouse", stack=False)
+    st.dataframe(daily_wide, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- Categories
 with tabs[3]:
@@ -257,13 +257,13 @@ with tabs[3]:
 # ---------------------------------------------------------------- Product
 with tabs[4]:
     st.subheader("Product price history")
-    if not termo.strip():
+    if not search_term.strip():
         st.info("Type a product name in the sidebar search box to see its price history.")
     else:
-        PT = {**P, "termo": f"%{termo.strip()}%"}
+        PT = {**P, "term": f"%{search_term.strip()}%"}
         matches = query(IND["produtos_buscaveis"].sql, PT).iloc[:, 0].tolist()
         if not matches:
-            st.warning(f"No product matches \"{termo}\".")
+            st.warning(f"No product matches \"{search_term}\".")
         else:
             st.caption(
                 f"{len(matches)} matching name(s){' (showing up to 50)' if len(matches) == 50 else ''}."

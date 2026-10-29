@@ -1,30 +1,30 @@
-"""Deriva a area de atendimento de cada warehouse (municipios da AUF do INE) e reconfere
-cada municipio contra o Callejero — mesmo espirito de derive_warehouse_province_map.py,
-aplicado a uma segunda pergunta: nao "onde o armazem fica" (1 municipio), mas "quais
-municipios vizinhos estao na mesma Area Urbana Funcional" (N municipios).
+"""Derives each warehouse's service area (the municipalities of its INE AUF) and re-checks
+each municipality against the Callejero — same spirit as derive_warehouse_province_map.py,
+applied to a second question: not "where the warehouse is" (1 municipality), but "which
+neighboring municipalities are in the same Functional Urban Area" (N municipalities).
 
-Fonte da area: "Areas Urbanas Funcionales" do INE (AUF, ex-LUZ) — metodologia unica e
-oficial para todo o pais: um municipio pertence a AUF de uma cidade se >=15% da sua
-populacao empregada comuta para a cidade-nucleo por motivo de trabalho (limiar diferente
-para municipios pequenos, ver metodologia do INE). Arquivo baixado manualmente de
-https://www.ine.es/uaudit_imagenes/AUF_mun.xlsx (pagina "Areas Urbanas Funcionales" de
-ine.es) — SEM biblioteca de terceiros pra ler .xlsx: um .xlsx e um zip de XML, entao
-zipfile+xml.etree (stdlib) bastam pra extrair a planilha (aba unica: AUF | Codigo
+Area source: INE "Areas Urbanas Funcionales" (AUF, formerly LUZ) — a single, official
+methodology for the whole country: a municipality belongs to a city's AUF if >=15% of its
+employed population commutes to the core city for work (a different threshold
+for small municipalities, see the INE methodology). File downloaded by hand from
+https://www.ine.es/uaudit_imagenes/AUF_mun.xlsx ("Areas Urbanas Funcionales" page on
+ine.es) — NO third-party library to read .xlsx: an .xlsx is a zip of XML, so
+zipfile+xml.etree (stdlib) are enough to extract the sheet (single tab: AUF | Codigo
 municipal | Nombre municipio).
 
-Limitacao conhecida, deliberada: a AUF oficial de Madrid tem 166 municipios (38 fora da
-provincia 28 — Avila/Guadalajara/Toledo) e a de Barcelona tem 135 (2 fora da provincia
-08 — Tarragona). Esta Source so incorpora Callejero de 08/28/41/46 (CONTRACT.md da
-source), entao os municipios de fronteira ficam FORA da area de atendimento derivada
-aqui — nao foram baixados, nao tem SECC/UP/VIAS/TRAM pra cruzar. Sevilla (46/46 na
-provincia 41) e Valencia (63/63 na provincia 46) nao tem esse problema.
+Known, deliberate limitation: the official Madrid AUF has 166 municipalities (38 outside
+province 28 — Avila/Guadalajara/Toledo) and Barcelona's has 135 (2 outside province
+08 — Tarragona). This Source only ingests the Callejero for 08/28/41/46 (the source's
+CONTRACT.md), so the border municipalities stay OUT of the service area derived
+here — they were not downloaded, there is no SECC/UP/VIAS/TRAM to cross-check. Sevilla
+(46/46 in province 41) and Valencia (63/63 in province 46) do not have that problem.
 
-O nome de cada municipio vem do PROPRIO Callejero (UP, linha agregada do municipio,
-sufixo 0000000) — nao do texto do Excel do INE — pra bater exatamente com
-silver_callejero_population_units.municipality_name (mesma fonte, mesma grafia).
+Each municipality's name comes from the Callejero ITSELF (UP, the municipality's aggregate
+row, suffix 0000000) — not from the INE Excel text — so it matches
+silver_callejero_population_units.municipality_name exactly (same source, same spelling).
 
-Uso:
-    python3 scripts/derive_warehouse_service_area.py <AUF_mun.xlsx> <diretorio-do-callejero>
+Usage:
+    python3 scripts/derive_warehouse_service_area.py <AUF_mun.xlsx> <callejero-directory>
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from pathlib import Path
 
 XLSX_NS = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
-# wh -> (AUF do INE, codigo de provincia do warehouse, codigo de municipio do warehouse)
+# wh -> (INE AUF, warehouse province code, warehouse municipality code)
 WAREHOUSES = {
     "mad1": ("Madrid", "28", "079"),
     "bcn1": ("Barcelona", "08", "019"),
@@ -45,12 +45,12 @@ WAREHOUSES = {
     "vlc1": ("Valencia", "46", "250"),
 }
 
-# Provincias cuja Callejero ja foi baixada e landada (CONTRACT.md da ine-callejero-source).
+# Provinces whose Callejero has already been downloaded and landed (ine-callejero-source CONTRACT.md).
 LANDED_PROVINCES = {"08", "28", "41", "46"}
 
 
 def read_auf_xlsx(path: Path) -> list[tuple[str, str, str]]:
-    """Le a planilha (AUF, codigo municipal, nome) sem nenhuma biblioteca de terceiros."""
+    """Reads the sheet (AUF, municipal code, name) without any third-party library."""
     with zipfile.ZipFile(path) as zf:
         shared = [
             "".join((t.text or "") for t in si.findall(".//s:t", XLSX_NS))
@@ -71,16 +71,16 @@ def read_auf_xlsx(path: Path) -> list[tuple[str, str, str]]:
         if cells.get("A") and cells.get("A") != "AUF":
             rows.append((cells["A"], cells.get("B", ""), cells.get("C", "")))
     if not rows:
-        raise SystemExit(f"planilha vazia ou formato inesperado: {path}")
+        raise SystemExit(f"empty sheet or unexpected format: {path}")
     return rows
 
 
 def find_file(root: Path, prefix: str, province_code: str) -> Path:
     matches = sorted(root.glob(f"**/{prefix}.P{province_code}.*"))
     if not matches:
-        raise SystemExit(f"nao achei {prefix}.P{province_code}.* dentro de {root}")
+        raise SystemExit(f"could not find {prefix}.P{province_code}.* under {root}")
     if len(matches) > 1:
-        raise SystemExit(f"mais de um {prefix}.P{province_code}.* dentro de {root}: {matches}")
+        raise SystemExit(f"more than one {prefix}.P{province_code}.* under {root}: {matches}")
     return matches[0]
 
 
@@ -99,7 +99,7 @@ def municipio_name_from_up(root: Path, province_code: str, municipio_code: str) 
             line = line.rstrip("\r\n")
             if line.startswith(target_prefix):
                 return line[94:314].strip()
-    raise SystemExit(f"UP {path.name}: nenhuma linha agregada (sufixo 0000000) para {target_prefix!r}")
+    raise SystemExit(f"UP {path.name}: no aggregate row (suffix 0000000) for {target_prefix!r}")
 
 
 def main(argv: list[str]) -> int:
@@ -108,42 +108,42 @@ def main(argv: list[str]) -> int:
         return 2
     xlsx_path, callejero_root = Path(argv[1]), Path(argv[2])
     if not xlsx_path.is_file():
-        print(f"nao e um arquivo: {xlsx_path}", file=sys.stderr)
+        print(f"not a file: {xlsx_path}", file=sys.stderr)
         return 2
     if not callejero_root.is_dir():
-        print(f"nao e um diretorio: {callejero_root}", file=sys.stderr)
+        print(f"not a directory: {callejero_root}", file=sys.stderr)
         return 2
 
     auf_rows = read_auf_xlsx(xlsx_path)
-    print(f"{len(auf_rows)} linhas lidas de {xlsx_path.name}")
+    print(f"{len(auf_rows)} rows read from {xlsx_path.name}")
 
     output_rows: list[dict] = []
     for wh, (auf_name, home_province, home_municipio) in WAREHOUSES.items():
         members = [r for r in auf_rows if r[0] == auf_name]
         if not members:
-            raise SystemExit(f"AUF {auf_name!r} nao encontrada em {xlsx_path.name}")
+            raise SystemExit(f"AUF {auf_name!r} not found in {xlsx_path.name}")
 
         in_scope = [(code, name) for _, code, name in members if code[:2] in LANDED_PROVINCES]
         out_of_scope = len(members) - len(in_scope)
         print(
             f"{wh:6} AUF={auf_name:10} total={len(members):4} "
-            f"dentro-do-escopo={len(in_scope):4} fora-do-escopo={out_of_scope:4}"
+            f"in-scope={len(in_scope):4} out-of-scope={out_of_scope:4}"
         )
 
         home_code = f"{home_province}{home_municipio}"
         if not any(code == home_code for code, _ in in_scope):
             raise SystemExit(
-                f"{wh}: municipio-sede {home_code} nao aparece na AUF {auf_name!r} — "
-                f"inesperado, confira WAREHOUSES"
+                f"{wh}: home municipality {home_code} does not appear in AUF {auf_name!r} — "
+                f"unexpected, check WAREHOUSES"
             )
 
         for code, _auf_name_text in sorted(in_scope):
             province_code, municipio_code = code[:2], code[2:]
             if not secc_prefix_exists(callejero_root, province_code, municipio_code):
                 raise SystemExit(
-                    f"{wh}: municipio {code} (AUF {auf_name!r}) sem nenhuma secao SECC "
-                    f"em provincia {province_code} — codigo do INE/AUF nao bate com o "
-                    f"Callejero landado; nao vou incluir sem essa confirmacao"
+                    f"{wh}: municipality {code} (AUF {auf_name!r}) has no SECC section "
+                    f"in province {province_code} — the INE/AUF code does not match the "
+                    f"landed Callejero; not including it without that confirmation"
                 )
             real_name = municipio_name_from_up(callejero_root, province_code, municipio_code)
             output_rows.append(
@@ -166,8 +166,8 @@ def main(argv: list[str]) -> int:
         for row in output_rows:
             writer.writerow(row)
 
-    print(f"\nOK: {len(output_rows)} linhas (municipio, warehouse) escritas em {out_path}")
-    print("Todos os municipios confirmados contra SECC real; nomes vieram do UP real (nao do Excel do INE).")
+    print(f"\nOK: {len(output_rows)} (municipality, warehouse) rows written to {out_path}")
+    print("All municipalities confirmed against real SECC; names came from the real UP (not the INE Excel).")
     return 0
 
 

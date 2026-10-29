@@ -1,47 +1,47 @@
-# Imagem do Airflow com o que o DAG precisa invocar.
+# Airflow image with what the DAG needs to invoke.
 #
-# DUAS RUNTIMES, DE PROPOSITO. O Airflow e o dbt-core fixam versoes conflitantes de
-# jinja2, click e pydantic; instalar os dois no mesmo interpretador e uma briga que nao
-# precisa ser comprada. Entao:
+# TWO RUNTIMES, ON PURPOSE. Airflow and dbt-core pin conflicting versions of
+# jinja2, click and pydantic; installing both into the same interpreter is a fight that
+# does not need to be picked. So:
 #
-#   /usr/local/bin/python   Airflow  +  a SOURCE (via PYTHONPATH)
+#   /usr/local/bin/python   Airflow  +  the SOURCE (via PYTHONPATH)
 #   /opt/platform-venv      boto3, duckdb, dbt-duckdb
 #
-# A Source cabe no interpretador do Airflow sem nenhum risco porque ela tem
-# dependencies = [] — nao existe pacote de terceiros para conflitar. E o retorno pratico
-# daquela decisao, aqui: zero dependencia significa que ela roda em qualquer lugar.
+# The Source fits into the Airflow interpreter with no risk at all because it has
+# dependencies = [] — there is no third-party package to conflict. That is the practical
+# payoff of that decision, here: zero dependencies means it runs anywhere.
 #
-# Nenhum CODIGO e copiado para a imagem. O repositorio e montado em runtime e alcancado
-# por PYTHONPATH, para que editar um modelo dbt ou um modulo da plataforma nao exija
-# rebuild. So as DEPENDENCIAS ficam na imagem.
+# No CODE is copied into the image. The repository is mounted at runtime and reached
+# through PYTHONPATH, so that editing a dbt model or a platform module does not require a
+# rebuild. Only the DEPENDENCIES live in the image.
 
 FROM apache/airflow:2.10.5-python3.12
 
 USER root
 
-# A LISTA DE DEPENDENCIAS VIVE NUM LUGAR SO: platform/pyproject.toml.
+# THE DEPENDENCY LIST LIVES IN ONE PLACE ONLY: platform/pyproject.toml.
 #
-# Antes ela estava duplicada aqui, e a duplicacao fez o que duplicacao faz. A Fase 2
-# acrescentou `dbt-snowflake` e `snowflake-connector-python` ao pyproject; esta imagem
-# continuou com a lista da Fase 1; a DAG `warehouse_load` falhou em `load_stage` com
-# "snowflake-connector-python nao esta instalado neste venv" — e falhou em RUNTIME, dias
-# depois, em vez de no build. Ler o pyproject elimina a classe inteira do problema.
+# It used to be duplicated here, and the duplication did what duplication does. Phase 2
+# added `dbt-snowflake` and `snowflake-connector-python` to the pyproject; this image
+# kept the Phase 1 list; the `warehouse_load` DAG failed in `load_stage` with
+# "snowflake-connector-python is not installed in this venv" — and it failed at RUNTIME, days
+# later, instead of at build time. Reading the pyproject removes the whole class of problem.
 #
-# Copiar o pyproject nao viola "nenhum codigo vai para a imagem": e METADADO de
-# dependencia, e o codigo continua chegando por mount.
+# Copying the pyproject does not violate "no code goes into the image": it is dependency
+# METADATA, and the code still arrives through the mount.
 COPY platform/pyproject.toml /tmp/platform-pyproject.toml
 
-# O venv da plataforma vive em /opt, fora do HOME do usuario airflow, e fica legivel para
-# todos: o scheduler e o worker rodam como `airflow` e apenas o executam.
+# The platform venv lives in /opt, outside the airflow user's HOME, and is readable by
+# everyone: the scheduler and the worker run as `airflow` and only execute it.
 #
-# A CONFERENCIA FINAL E PARTE DO BUILD e importa os DOIS adaptadores do dbt mais o
-# conector. Se uma dependencia sumir da imagem, o build quebra aqui — nao a DAG, dias
-# depois, com o dado parado no meio do caminho.
+# THE FINAL CHECK IS PART OF THE BUILD and imports the dbt adapters plus the
+# connector. If a dependency disappears from the image, the build breaks here — not the DAG,
+# days later, with the data stuck halfway.
 RUN python -m venv /opt/platform-venv \
  && /opt/platform-venv/bin/python -c "\
 import tomllib, subprocess; \
 deps = tomllib.load(open('/tmp/platform-pyproject.toml', 'rb'))['project']['dependencies']; \
-print('instalando:', ', '.join(deps)); \
+print('installing:', ', '.join(deps)); \
 subprocess.check_call(['/opt/platform-venv/bin/pip', 'install', '--no-cache-dir', '--quiet', *deps])" \
  && chmod -R a+rX /opt/platform-venv \
  && /opt/platform-venv/bin/python -c "\
@@ -53,5 +53,5 @@ print('platform venv OK: boto3, duckdb, psycopg, confluent-kafka, pyiceberg, dbt
 
 USER airflow
 
-# Provider do Postgres para o metadata DB do LocalExecutor.
+# Postgres provider for the LocalExecutor metadata DB.
 RUN pip install --no-cache-dir --quiet "apache-airflow-providers-postgres==5.14.0"

@@ -1,6 +1,6 @@
--- Unicidade do GRAO COMPOSTO. Nao ha uma coluna unica de "id do tramo" nos bytes do
--- TRAM (ver comentario do modelo) — verificado sem excecao contra 304.952 linhas reais
--- das 4 provincias antes de assumir esta chave.
+-- Uniqueness of the COMPOSITE GRAIN. There is no single "segment id" column in the
+-- TRAM bytes (see the model comment) — verified without exception against 304,952 real rows
+-- of the 4 provinces before assuming this key.
 select
     ingestion_date,
     section_code,

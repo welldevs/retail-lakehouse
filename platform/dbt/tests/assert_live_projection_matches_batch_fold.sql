@@ -1,27 +1,27 @@
--- O caminho em STREAMING e o caminho em LOTE chegam ao mesmo estado, pedido a pedido.
+-- The STREAMING path and the BATCH path reach the same state, order by order.
 --
--- QUAIS DOIS CAMINHOS, EXATAMENTE — porque a resposta errada faz este teste valer nada.
+-- WHICH TWO PATHS, EXACTLY — because the wrong answer makes this test worth nothing.
 --
---   silver_order            window function em SQL sobre o log inteiro
---   silver_live_order_state fold incremental, evento a evento, atravessando um broker
+--   silver_order            SQL window function over the whole log
+--   silver_live_order_state incremental fold, event by event, through a broker
 --
--- Sao implementacoes INDEPENDENTES: nao compartilham codigo, nao compartilham motor, e nem
--- sequer compartilham linguagem. E por isso que o acordo entre elas e evidencia.
+-- They are INDEPENDENT implementations: they share no code, no engine, and not
+-- even a language. That is why their agreement is evidence.
 --
--- O que NAO e evidencia, e precisa estar dito: o acordo entre `orders-project` e
--- `orders-rebuild-projection` — os dois escritores da tabela Iceberg. Eles compartilham
--- `fold_event`, entao concordarem so mostra que nao se atropelam. Confundir as duas coisas
--- seria o mesmo defeito que este projeto ja registrou duas vezes: uma verificacao que
--- compara algo consigo mesmo e passa.
+-- What is NOT evidence, and needs to be said: the agreement between `orders-project` and
+-- `orders-rebuild-projection` — the two writers of the Iceberg table. They share
+-- `fold_event`, so their agreeing only shows they do not trample each other. Confusing the two things
+-- would be the same defect this project has already recorded twice: a check that
+-- compares something with itself and passes.
 --
--- POR QUE ESTE TESTE NAO E REDUNDANTE COM `orders-reconcile`. O verbo compara TRES folds
--- (inclusive o OLTP) e serve para quem opera; este roda dentro do `make silver` e reprova o
--- build. Um cobre a operacao, o outro cobre a integracao. Um pipeline em que a divergencia
--- so aparece quando alguem lembra de rodar um comando nao tem verificacao — tem habito.
+-- WHY THIS TEST IS NOT REDUNDANT WITH `orders-reconcile`. The command compares THREE folds
+-- (including the OLTP) and serves the operator; this one runs inside `make silver` and fails the
+-- build. One covers operations, the other covers integration. A pipeline in which the divergence
+-- only shows up when someone remembers to run a command has no check — it has a habit.
 --
--- `net_amount` e nulo para pedido que nunca chegou a separacao, nos DOIS lados. `is distinct
--- from` compara nulo com nulo como igual, que e o que se quer: nulo aqui significa "nao
--- houve separacao", e as duas implementacoes tem de concordar inclusive sobre isso.
+-- `net_amount` is null for an order that never reached picking, on BOTH sides. `is distinct
+-- from` treats null vs null as equal, which is what is wanted: null here means "there was
+-- no picking", and both implementations must agree on that too.
 select
     b.order_id,
     b.order_status              as status_lote,

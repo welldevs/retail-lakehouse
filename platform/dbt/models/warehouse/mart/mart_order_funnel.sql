@@ -1,24 +1,24 @@
--- GRAO: (order_date, wh) — uma linha por armazem por dia da janela.
+-- GRAIN: (order_date, wh) — one row per warehouse per day of the window.
 --
--- PERGUNTA QUE RESPONDE: de cada 100 pedidos colocados num armazem num dia, quantos foram
--- confirmados, separados, despachados e entregues — e por onde escaparam os que nao foram.
+-- QUESTION IT ANSWERS: of every 100 orders placed at a warehouse on a day, how many were
+-- confirmed, picked, dispatched and delivered — and where the ones that were not slipped away.
 --
--- O FUNIL SE APOIA EM MARCO, NUNCA EM STATUS, e esta e a decisao que faz a tabela ser
--- verdadeira. `order_status` guarda o estado ATUAL do pedido, que e o do ULTIMO evento.
--- Um pedido devolvido tem status RETURNED — e foi entregue. Medido em 2026-06, na janela
--- de entao: contar `order_status = 'DELIVERED'` dava 5.985 entregas; contar
--- `delivered_at is not null` dava 6.046. A diferenca eram os 61 pedidos devolvidos, e um
--- funil montado sobre status os perderia na etapa de entrega, produzindo uma taxa de
--- entrega 1% menor que a real sem nada reprovar. A DATA importa: a contagem e daquela
--- captura e nao volta a valer; o que continua valendo e a razao de a coluna ser o instante.
+-- THE FUNNEL RESTS ON MILESTONES, NEVER ON STATUS, and that is the decision that makes the table
+-- true. `order_status` holds the CURRENT state of the order, which is that of the LAST event.
+-- A returned order has status RETURNED — and it was delivered. Measured in 2026-06, on the window
+-- at the time: counting `order_status = 'DELIVERED'` gave 5,985 deliveries; counting
+-- `delivered_at is not null` gave 6,046. The difference was the 61 returned orders, and a
+-- funnel built on status would lose them at the delivery stage, producing a delivery rate
+-- 1% lower than the real one without anything failing. The DATE matters: the count is from that
+-- capture and does not hold again; what still holds is the reason the column is the instant.
 --
--- Marco e monotonico: uma vez alcancado, nao volta atras. Status nao e. Um funil e por
--- definicao uma contagem de etapas ALCANCADAS, entao a coluna certa e o instante.
+-- A milestone is monotonic: once reached, it does not go back. Status is not. A funnel is by
+-- definition a count of REACHED stages, so the right column is the instant.
 --
--- AS SAIDAS NAO SOMAM COM AS ETAPAS, e nao deviam. `orders_cancelled` conta quem saiu por
--- cancelamento em qualquer ponto antes da separacao; `orders_returned` conta quem saiu
--- DEPOIS de ter atravessado o funil inteiro. Somar as duas colunas as etapas contaria os
--- devolvidos duas vezes — por isso elas vivem num bloco proprio, com nome que diz saida.
+-- THE EXITS DO NOT ADD UP WITH THE STAGES, and they should not. `orders_cancelled` counts those who
+-- left through cancellation at any point before picking; `orders_returned` counts those who left
+-- AFTER crossing the whole funnel. Adding both columns to the stages would count the
+-- returned ones twice — which is why they live in their own block, with a name that says exit.
 {{ config(materialized = 'table') }}
 
 select
@@ -27,7 +27,7 @@ select
     d.year_month,
     f.wh,
 
-    -- ---- as etapas, por marco alcancado ------------------------------------------
+    -- ---- the stages, by milestone reached -----------------------------------------
     count(*)                                                as orders_placed,
     {{ count_if('f.confirmed_at is not null') }}              as orders_confirmed,
     {{ count_if('f.picking_started_at is not null') }}        as orders_picking_started,
@@ -35,28 +35,28 @@ select
     {{ count_if('f.dispatched_at is not null') }}             as orders_dispatched,
     {{ count_if('f.delivered_at is not null') }}              as orders_delivered,
 
-    -- ---- as saidas, que NAO somam com as etapas acima -----------------------------
+    -- ---- the exits, which do NOT add up with the stages above ---------------------
     {{ count_if('f.payment_failed_at is not null') }}         as orders_payment_failed,
     {{ count_if('f.cancelled_at is not null') }}               as orders_cancelled,
     {{ count_if('f.delivery_failed_at is not null') }}         as orders_delivery_failed,
     {{ count_if('f.returned_at is not null') }}                as orders_returned,
 
-    -- ---- as taxas, todas com o mesmo denominador ----------------------------------
-    -- Denominador unico (orders_placed) de proposito: taxas encadeadas etapa-a-etapa se
-    -- multiplicam e ninguem consegue somar o funil de cabeca. Aqui cada taxa responde
-    -- "de tudo que entrou, quanto chegou ate aqui", que e a pergunta que se faz de um funil.
+    -- ---- the rates, all with the same denominator ---------------------------------
+    -- A single denominator (orders_placed) on purpose: stage-by-stage chained rates
+    -- multiply and nobody can add up the funnel in their head. Here each rate answers
+    -- "of everything that came in, how much made it this far", which is the question one asks of a funnel.
     round({{ count_if('f.confirmed_at is not null') }}   / count(*), 4) as confirm_rate,
     round({{ count_if('f.picked_at is not null') }}      / count(*), 4) as pick_rate,
     round({{ count_if('f.delivered_at is not null') }}   / count(*), 4) as delivery_rate,
     round({{ count_if('f.cancelled_at is not null') }}   / count(*), 4) as cancellation_rate,
     round({{ count_if('f.returned_at is not null') }}    / count(*), 4) as return_rate,
 
-    -- ---- o dinheiro ---------------------------------------------------------------
-    -- gross e o que foi COLOCADO; net e o que foi SEPARADO. Os dois nunca sao iguais, e e
-    -- essa diferenca que justifica o log de eventos existir: substituicao e remocao mudam
-    -- a cesta depois da colocacao. `net_amount` e nulo para quem morreu antes da separacao,
-    -- e sum() ignora nulo — que aqui e o comportamento certo: quem nunca foi separado nao
-    -- contribui com zero, contribui com nada.
+    -- ---- the money ----------------------------------------------------------------
+    -- gross is what was PLACED; net is what was PICKED. The two are never equal, and it is
+    -- that difference that justifies the event log existing: substitution and removal change
+    -- the basket after placement. `net_amount` is null for those that died before picking,
+    -- and sum() ignores nulls — which here is the right behavior: what was never picked does not
+    -- contribute zero, it contributes nothing.
     sum(f.gross_amount_placed)                              as gross_amount_placed,
     sum(f.net_amount)                                       as net_amount_picked,
     sum(f.amount_delta)                                     as amount_delta,

@@ -1,16 +1,18 @@
-"""A sessao Spark com o catalogo Iceberg do projeto. UM lugar, dois consumidores.
+"""The Spark session with the project's Iceberg catalog. ONE place, two consumers.
 
-    scripts/spike_spark_iceberg.py   o experimento que decidiu se o Spark entrava
-    jobs/spark/stock_ledger.py       o job de producao
+    scripts/check_spark_iceberg.py   the experiment that decided whether Spark came in
+    jobs/spark/stock_ledger.py       the production job
 
-POR QUE O EXPERIMENTO IMPORTA DAQUI, EM VEZ DE GUARDAR A PROPRIA COPIA. A tentacao era
-congelar a configuracao dentro do spike, para que a evidencia registrada descrevesse
-exatamente o que foi medido. Seria pior: no dia em que a configuracao de producao mudasse,
-o spike continuaria APROVANDO uma configuracao que ninguem usa mais. Importando daqui,
-`make spike-spark-iceberg` vira uma conferencia viva — ele mede o que o job vai usar.
+WHY THE EXPERIMENT IMPORTS FROM HERE INSTEAD OF KEEPING ITS OWN COPY. The temptation was to
+freeze the configuration inside the spike, so the recorded evidence would describe exactly
+what was measured. That would be worse: the day the production configuration changed, the
+spike would keep APPROVING a configuration nobody uses anymore. By importing from here,
+`make check-spark-iceberg` becomes a live check — it measures what the job will use.
 
-E o mesmo argumento do CONTRACT do painel e do DDL do STAGE: o documento e derivado da
-coisa, entao nao ha um segundo lugar onde a verdade mora.
+It is the same argument as the dashboard CONTRACT and the STAGE DDL: the document is
+derived from the thing, so there is no second place where the truth lives.
+
+(`CATALOGO` and `sessao` keep their historical names because both consumers import them.)
 """
 
 from __future__ import annotations
@@ -21,48 +23,48 @@ CATALOGO = os.environ.get("ICEBERG_CATALOG_NAME", "retail")
 
 
 def sessao(app_name: str, *, master: str = "local[*]"):
-    """Sessao com o catalogo apontado para o MESMO Postgres que o pyiceberg escreve.
+    """Session with the catalog pointed at the SAME Postgres pyiceberg writes to.
 
-    Cada propriedade e uma escolha, e as tres que decidem:
+    Every property is a choice; these are the three that matter:
 
-    `catalog-impl=JdbcCatalog` — o `SqlCatalog` do pyiceberg grava em duas tabelas cujo
-    formato e o que o JdbcCatalog Java espera. As duas implementacoes sao independentes;
-    que elas conversem foi MEDIDO no Marco A, e nao presumido.
+    `catalog-impl=JdbcCatalog` — pyiceberg's `SqlCatalog` writes to two tables whose format
+    is what the Java JdbcCatalog expects. The two implementations are independent; that
+    they talk to each other was MEASURED in Milestone A, not assumed.
 
-    `io-impl=S3FileIO` e nao S3A — o pyiceberg escreveu os caminhos como `s3://` com o
-    PyArrowFileIO. O S3A do Hadoop pediria `s3a://` e nao acharia nada: o metadado ja esta
-    escrito e nao vai mudar de esquema para agradar o leitor. Como efeito colateral, a
-    imagem nao precisa do `hadoop-aws` nem do bundle do AWS SDK v1.
+    `io-impl=S3FileIO`, not S3A — pyiceberg wrote the paths as `s3://` with PyArrowFileIO.
+    Hadoop's S3A would ask for `s3a://` and find nothing: the metadata is already written
+    and will not change scheme to please the reader. As a side effect, the image needs
+    neither `hadoop-aws` nor the AWS SDK v1 bundle.
 
-    `local[*]` — driver e executor no mesmo JVM. O que este projeto demonstra com Spark e
-    interoperabilidade e FORMA do job, nunca escala: o gatilho de volume nao disparou e isso
-    esta medido. Um cluster de mentira nao demonstraria nem uma coisa nem outra.
+    `local[*]` — driver and executor in the same JVM. What this project demonstrates with
+    Spark is interoperability and the SHAPE of the job, never scale: the volume trigger did
+    not fire and that is measured. A fake cluster would demonstrate neither one.
     """
     from pyspark.sql import SparkSession
 
-    prefixo = f"spark.sql.catalog.{CATALOGO}"
+    prefix = f"spark.sql.catalog.{CATALOGO}"
     return (
         SparkSession.builder.appName(app_name)
         .master(master)
         .config("spark.sql.extensions",
                 "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-        .config(prefixo, "org.apache.iceberg.spark.SparkCatalog")
-        .config(f"{prefixo}.catalog-impl", "org.apache.iceberg.jdbc.JdbcCatalog")
-        .config(f"{prefixo}.uri", os.environ["ICEBERG_CATALOG_JDBC"])
-        .config(f"{prefixo}.jdbc.user", os.environ.get("ICEBERG_CATALOG_USER", "oltp"))
-        .config(f"{prefixo}.jdbc.password",
+        .config(prefix, "org.apache.iceberg.spark.SparkCatalog")
+        .config(f"{prefix}.catalog-impl", "org.apache.iceberg.jdbc.JdbcCatalog")
+        .config(f"{prefix}.uri", os.environ["ICEBERG_CATALOG_JDBC"])
+        .config(f"{prefix}.jdbc.user", os.environ.get("ICEBERG_CATALOG_USER", "oltp"))
+        .config(f"{prefix}.jdbc.password",
                 os.environ.get("ICEBERG_CATALOG_PASSWORD", "oltp"))
-        .config(f"{prefixo}.warehouse",
+        .config(f"{prefix}.warehouse",
                 os.environ.get("ICEBERG_WAREHOUSE", "s3://retail-lakehouse/iceberg"))
-        .config(f"{prefixo}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
-        .config(f"{prefixo}.s3.endpoint",
+        .config(f"{prefix}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+        .config(f"{prefix}.s3.endpoint",
                 os.environ.get("S3_ENDPOINT", "http://minio:9000"))
-        .config(f"{prefixo}.s3.path-style-access", "true")
-        .config(f"{prefixo}.s3.access-key-id", os.environ["AWS_ACCESS_KEY_ID"])
-        .config(f"{prefixo}.s3.secret-access-key", os.environ["AWS_SECRET_ACCESS_KEY"])
-        .config(f"{prefixo}.client.region", os.environ.get("AWS_REGION", "us-east-1"))
-        # UTC em todo lugar, como no resto da plataforma: `cast(picked_at as date)` do
-        # DuckDB ja resolveu o dia; a sessao nao pode desloca-lo de novo.
+        .config(f"{prefix}.s3.path-style-access", "true")
+        .config(f"{prefix}.s3.access-key-id", os.environ["AWS_ACCESS_KEY_ID"])
+        .config(f"{prefix}.s3.secret-access-key", os.environ["AWS_SECRET_ACCESS_KEY"])
+        .config(f"{prefix}.client.region", os.environ.get("AWS_REGION", "us-east-1"))
+        # UTC everywhere, as in the rest of the platform: DuckDB's `cast(picked_at as date)`
+        # already resolved the day; the session must not shift it again.
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
         .getOrCreate()

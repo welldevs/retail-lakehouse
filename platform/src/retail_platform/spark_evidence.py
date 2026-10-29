@@ -44,12 +44,12 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def _tabela(colunas: list[str], linhas: list) -> list[str]:
+def _table(columns: list[str], lines: list) -> list[str]:
     return [
-        "| " + " | ".join(colunas) + " |",
-        "|" + "|".join("---" for _ in colunas) + "|",
-        *["| " + " | ".join("" if v is None else str(v) for v in linha) + " |"
-          for linha in linhas],
+        "| " + " | ".join(columns) + " |",
+        "|" + "|".join("---" for _ in columns) + "|",
+        *["| " + " | ".join("" if v is None else str(v) for v in line) + " |"
+          for line in lines],
     ]
 
 
@@ -57,43 +57,43 @@ def _tabela(colunas: list[str], linhas: list) -> list[str]:
 # 1. INTEROP: who writes to the catalog
 # ======================================================================================
 
-def _observar_catalogo(config=None) -> dict:
+def _observe_catalog(config=None) -> dict:
     """Which tables the catalog has, and WHO wrote each one.
 
     `written_by` is what turns "three writers" into a queryable fact instead of a
     documentation sentence. Without this column, interop would be claimed all over again.
     """
-    from .orders_projection import TABLE_NAME as PROJECAO
-    from .stock_ledger import CONSUMPTION_TABLE, LEDGER_TABLE, catalog
+    from .orders_projection import TABLE_NAME as PROJECTION
+    from .stock_bridge import CONSUMPTION_TABLE, LEDGER_TABLE, catalog
 
-    saida = {"tabelas": [], "escritores": {}}
+    out = {"tabelas": [], "escritores": {}}
     cat = catalog(config)
-    for nome in (PROJECAO, CONSUMPTION_TABLE, LEDGER_TABLE):
-        if not cat.table_exists(nome):
-            saida["tabelas"].append({"nome": nome, "erro": "nao existe no catalogo"})
+    for name in (PROJECTION, CONSUMPTION_TABLE, LEDGER_TABLE):
+        if not cat.table_exists(name):
+            out["tabelas"].append({"nome": name, "erro": "does not exist in the catalog"})
             continue
-        tabela = cat.load_table(nome)
-        arrow = tabela.scan().to_arrow()
-        escritores = {}
+        table = cat.load_table(name)
+        arrow = table.scan().to_arrow()
+        writers = {}
         if "written_by" in arrow.column_names:
-            for valor in arrow.column("written_by").to_pylist():
-                escritores[valor] = escritores.get(valor, 0) + 1
-                saida["escritores"][valor] = saida["escritores"].get(valor, 0) + 1
-        saida["tabelas"].append({
-            "nome": nome,
+            for value in arrow.column("written_by").to_pylist():
+                writers[value] = writers.get(value, 0) + 1
+                out["escritores"][value] = out["escritores"].get(value, 0) + 1
+        out["tabelas"].append({
+            "nome": name,
             "linhas": arrow.num_rows,
-            "snapshots": len(list(tabela.metadata.snapshots)),
-            "escritores": escritores,
-            "metadata_location": tabela.metadata_location,
+            "snapshots": len(list(table.metadata.snapshots)),
+            "escritores": writers,
+            "metadata_location": table.metadata_location,
         })
-    return saida
+    return out
 
 
 # ======================================================================================
 # 2 AND 3. THE SAME COMPUTATION, ON BOTH ENGINES
 # ======================================================================================
 
-def _ledger_em_python(config=None) -> dict:
+def _ledger_in_python(config=None) -> dict:
     """The SAME loop as the Spark job, in plain Python over the same Iceberg table.
 
     THIS IS NOT AN APPROXIMATE REIMPLEMENTATION — it is the same algorithm: the
@@ -111,73 +111,73 @@ def _ledger_em_python(config=None) -> dict:
         sys.path.insert(0, REPO)
     from jobs.spark.stock_ledger import construir_ledger, ler_premissas  # noqa: E402
 
-    from .stock_ledger import CONSUMPTION_TABLE, catalog
+    from .stock_bridge import CONSUMPTION_TABLE, catalog
 
-    premissas = ler_premissas(os.path.join(
+    premises = ler_premissas(os.path.join(
         REPO, "platform", "dbt", "seeds", "stock_premises_seed.csv"))
-    ledger = construir_ledger(premissas)
+    ledger = construir_ledger(premises)
 
-    inicio = time.time()
-    consumo = catalog(config).load_table(CONSUMPTION_TABLE).scan().to_arrow().to_pandas()
-    dias = pd.date_range(consumo["stock_date"].min(), consumo["stock_date"].max(), freq="D")
-    n_dias = len(dias)
+    start = time.time()
+    consumption = catalog(config).load_table(CONSUMPTION_TABLE).scan().to_arrow().to_pandas()
+    days = pd.date_range(consumption["stock_date"].min(), consumption["stock_date"].max(), freq="D")
+    n_days = len(days)
 
-    # A MESMA DENSIFICACAO do job: uma linha por serie por dia, inclusive sem venda.
-    series = consumo.groupby(["wh", "source_product_id"], as_index=False)["units_consumed"].sum()
-    series["mean_daily_demand"] = series["units_consumed"] / float(n_dias)
-    grade = series.merge(pd.DataFrame({"stock_date": dias.date}), how="cross")
-    entrada = grade.merge(
-        consumo, on=["wh", "source_product_id", "stock_date"], how="left",
+    # The SAME DENSIFICATION as the job: one row per series per day, including days without sales.
+    series = consumption.groupby(["wh", "source_product_id"], as_index=False)["units_consumed"].sum()
+    series["mean_daily_demand"] = series["units_consumed"] / float(n_days)
+    grid = series.merge(pd.DataFrame({"stock_date": days.date}), how="cross")
+    ledger_input = grid.merge(
+        consumption, on=["wh", "source_product_id", "stock_date"], how="left",
         suffixes=("_total", ""))
-    entrada["units_demanded"] = entrada["units_consumed"].fillna(0).astype("int64")
+    ledger_input["units_demanded"] = ledger_input["units_consumed"].fillna(0).astype("int64")
 
-    linhas = []
-    for chave, grupo in entrada.groupby(["wh", "source_product_id"], sort=False):
-        linhas.append(ledger(chave, grupo))
-    resultado = pd.concat(linhas, ignore_index=True)
-    decorrido = time.time() - inicio
+    lines = []
+    for key, group in ledger_input.groupby(["wh", "source_product_id"], sort=False):
+        lines.append(ledger(key, group))
+    result = pd.concat(lines, ignore_index=True)
+    elapsed = time.time() - start
 
     return {
-        "segundos": round(decorrido, 1),
-        "linhas": int(len(resultado)),
+        "segundos": round(elapsed, 1),
+        "linhas": int(len(result)),
         "series": int(len(series)),
-        "demanda": int(resultado["units_demanded"].sum()),
-        "atendido": int(resultado["units_fulfilled"].sum()),
-        "ruptura": int(resultado["units_short"].sum()),
-        "ordens": int((resultado["reorder_units"] > 0).sum()),
-        "chegadas": int((resultado["units_received"] > 0).sum()),
+        "demanda": int(result["units_demanded"].sum()),
+        "atendido": int(result["units_fulfilled"].sum()),
+        "ruptura": int(result["units_short"].sum()),
+        "ordens": int((result["reorder_units"] > 0).sum()),
+        "chegadas": int((result["units_received"] > 0).sum()),
     }
 
 
-def _ledger_em_spark() -> dict:
+def _ledger_in_spark() -> dict:
     """Runs the real job, through the same target the operation would use, and reads what it prints.
 
     THE TIME INCLUDES THE JVM STARTUP and the `docker compose run`, and that is stated on
     the page instead of discounted. Discounting the cost of starting the engine would measure
     a Spark that doesn't exist — whoever runs the job pays that cost.
     """
-    comando = ["docker", "compose", "--env-file", ".env", "-f", "infra/docker-compose.yml",
+    command = ["docker", "compose", "--env-file", ".env", "-f", "infra/docker-compose.yml",
                "--profile", "spark", "run", "--rm", "--no-deps", "spark",
                "python3", "jobs/spark/stock_ledger.py"]
-    inicio = time.time()
-    proc = subprocess.run(comando, cwd=REPO, capture_output=True, text=True)
-    decorrido = time.time() - inicio
+    start = time.time()
+    proc = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+    elapsed = time.time() - start
     if proc.returncode != 0:
         return {"erro": (proc.stdout + proc.stderr)[-400:]}
 
-    metricas = {"segundos_com_jvm": round(decorrido, 1)}
-    for linha in proc.stdout.splitlines():
-        if "." in linha and " " in linha:
-            chave, _, valor = linha.partition(" ")
-            chave = chave.rstrip(".")
-            if chave in ("linhas", "series", "demanda", "atendido", "ruptura",
+    metrics = {"segundos_com_jvm": round(elapsed, 1)}
+    for line in proc.stdout.splitlines():
+        if "." in line and " " in line:
+            key, _, value = line.partition(" ")
+            key = key.rstrip(".")
+            if key in ("linhas", "series", "demanda", "atendido", "ruptura",
                          "ordens", "chegadas", "segundos", "dias_com_ruptura",
                          "unidades_pedidas", "cobertura_media"):
                 try:
-                    metricas[chave] = float(valor) if "." in valor else int(valor)
+                    metrics[key] = float(value) if "." in value else int(value)
                 except ValueError:
                     pass
-    return metricas
+    return metrics
 
 
 # ======================================================================================
@@ -197,7 +197,7 @@ SELF_JOIN = """
 """
 
 
-def _observar_nao_gatilho(config=None) -> dict:
+def _observe_non_trigger(config=None) -> dict:
     """The basket self-join in DuckDB: the natural candidate for "volume that requires Spark".
 
     It is here because the decision to adopt Spark has to come with the measurement that
@@ -211,18 +211,18 @@ def _observar_nao_gatilho(config=None) -> dict:
     from .query import connect_lakehouse
 
     config = config or from_env()
-    conexao = connect_lakehouse(config)
-    antes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    inicio = time.time()
-    pares, distintos = conexao.execute(SELF_JOIN).fetchone()
-    decorrido = time.time() - inicio
-    depois = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    connection = connect_lakehouse(config)
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    start = time.time()
+    pairs, distinct = connection.execute(SELF_JOIN).fetchone()
+    elapsed = time.time() - start
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return {
-        "pares": pares,
-        "distintos": distintos,
-        "segundos": round(decorrido, 2),
-        "pico_gb": round(depois / (1024 * 1024), 2),
-        "delta_gb": round(max(depois - antes, 0) / (1024 * 1024), 2),
+        "pares": pairs,
+        "distintos": distinct,
+        "segundos": round(elapsed, 2),
+        "pico_gb": round(after / (1024 * 1024), 2),
+        "delta_gb": round(max(after - before, 0) / (1024 * 1024), 2),
     }
 
 
@@ -231,33 +231,33 @@ def _observar_nao_gatilho(config=None) -> dict:
 # ======================================================================================
 
 def collect(config=None, *, rodar_spark: bool = True) -> dict:
-    dados = {"gerado_em": _utc_now()}
-    for nome, funcao in (
-        ("catalogo", lambda: _observar_catalogo(config)),
-        ("nao_gatilho", lambda: _observar_nao_gatilho(config)),
-        ("python", lambda: _ledger_em_python(config)),
+    data = {"gerado_em": _utc_now()}
+    for name, func in (
+        ("catalogo", lambda: _observe_catalog(config)),
+        ("nao_gatilho", lambda: _observe_non_trigger(config)),
+        ("python", lambda: _ledger_in_python(config)),
     ):
         try:
-            dados[nome] = funcao()
-        except Exception as exc:  # a pagina declara a ausencia; nunca inventa o numero
-            dados[nome] = {"erro": f"{type(exc).__name__}: {str(exc)[:300]}"}
-    dados["spark"] = _ledger_em_spark() if rodar_spark else {"erro": "nao executado"}
-    return dados
+            data[name] = func()
+        except Exception as exc:  # the page declares the absence; it never invents the number
+            data[name] = {"erro": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    data["spark"] = _ledger_in_spark() if rodar_spark else {"erro": "not run"}
+    return data
 
 
-def _ausente(titulo: str, erro: str) -> list[str]:
-    return [f"### {titulo}", "",
-            f"**Not observed on this run.** `{erro}`", "",
+def _absent(title: str, error: str) -> list[str]:
+    return [f"### {title}", "",
+            f"**Not observed on this run.** `{error}`", "",
             "The section declares the absence instead of disappearing: a page that hides",
             "what it couldn't measure is indistinguishable from one that measured and",
             "didn't like the result.", ""]
 
 
-def render(dados: dict) -> str:
-    linhas = [
+def render(data: dict) -> str:
+    lines = [
         "# Spark evidence — and the measurement that argues against it",
         "",
-        f"**Generated by `make spark-evidence` on {dados['gerado_em']}.** Do not edit by hand.",
+        f"**Generated by `make spark-evidence` on {data['gerado_em']}.** Do not edit by hand.",
         "",
         "This page exists to back a **negative** claim: Spark was not adopted for",
         "performance. Saying so without measuring would be rhetorical modesty — the same",
@@ -271,7 +271,7 @@ def render(dados: dict) -> str:
         "**1. It is the Iceberg catalog's third writer, and the first outside Python.**",
         "Iceberg was justified by *interop between engines* since Phase 3, and that half of",
         "the justification was **claimed and never demonstrated**: both writers were Python",
-        "using the same library. `make spike-spark-iceberg` was the gate that tested this",
+        "using the same library. `make check-spark-iceberg` was the gate that tested this",
         "before any line of this phase existed — with both outcomes declared in advance,",
         "including erasing the interop clause if it didn't hold up.",
         "",
@@ -284,34 +284,34 @@ def render(dados: dict) -> str:
     ]
 
     # ---- interop ---------------------------------------------------------------------
-    catalogo = dados.get("catalogo", {})
-    if "erro" in catalogo:
-        linhas += _ausente("Catalog writers", catalogo["erro"])
+    catalog_data = data.get("catalogo", {})
+    if "erro" in catalog_data:
+        lines += _absent("Catalog writers", catalog_data["erro"])
     else:
-        linhas += [
+        lines += [
             "## The catalog's writers, today",
             "",
             "`written_by` is what turns \"three writers\" into a **queryable fact** instead",
             "of a documentation sentence.",
             "",
         ]
-        linhas += _tabela(
+        lines += _table(
             ["Table", "Rows", "Snapshots", "Writers"],
             [[t["nome"], t.get("linhas", "—"), t.get("snapshots", "—"),
               ", ".join(f"`{k}` ({v})" for k, v in sorted(t.get("escritores", {}).items()))
               or t.get("erro", "—")]
-             for t in catalogo["tabelas"]],
+             for t in catalog_data["tabelas"]],
         )
-        distintos = sorted(catalogo.get("escritores", {}))
-        # A FRASE E DERIVADA DA LISTA, e nao cravada. A primeira versao dizia "`stream` e
-        # `rebuild` sao Python" — e os escritores presentes eram `platform` e `rebuild`. Um
-        # texto fixo ao lado de uma tabela gerada e a mesma doenca do numero copiado a mao,
-        # numa pagina que existe justamente para nao ter nenhum.
-        jvm = [e for e in distintos if e == "spark"]
-        python = [e for e in distintos if e != "spark"]
-        linhas += ["",
-                   f"**Distinct writers in the catalog: {len(distintos)}** — "
-                   + ", ".join(f"`{e}`" for e in distintos) + ".",
+        distinct = sorted(catalog_data.get("escritores", {}))
+        # THE SENTENCE IS DERIVED FROM THE LIST, not hard-coded. The first version said
+        # "`stream` and `rebuild` are Python" — and the writers present were `platform` and
+        # `rebuild`. Fixed text next to a generated table is the same disease as a
+        # hand-copied number, on a page that exists precisely to have none.
+        jvm = [e for e in distinct if e == "spark"]
+        python = [e for e in distinct if e != "spark"]
+        lines += ["",
+                   f"**Distinct writers in the catalog: {len(distinct)}** — "
+                   + ", ".join(f"`{e}`" for e in distinct) + ".",
                    "",
                    ", ".join(f"`{e}`" for e in python)
                    + (" is Python" if len(python) == 1 else " are Python")
@@ -324,21 +324,21 @@ def render(dados: dict) -> str:
                    "that isn't Python.",
                    ""]
 
-    # ---- os dois motores --------------------------------------------------------------
-    py, sp = dados.get("python", {}), dados.get("spark", {})
-    linhas += ["## The same job, on both engines", "",
+    # ---- the two engines --------------------------------------------------------------
+    py, sp = data.get("python", {}), data.get("spark", {})
+    lines += ["## The same job, on both engines", "",
                "The loop function is **imported** from `jobs/spark/stock_ledger.py` by both",
                "paths — it is not an approximate reimplementation. The only thing that",
                "changes is who iterates over the groups: a `for` in one process, or Spark",
                "distributing it. If these were two different implementations, the",
                "comparison would measure the skill of whoever wrote each one.", ""]
     if "erro" in py or "erro" in sp:
-        linhas += _ausente("Comparison", py.get("erro") or sp.get("erro"))
+        lines += _absent("Comparison", py.get("erro") or sp.get("erro"))
     else:
-        iguais = all(py.get(k) == sp.get(k)
+        identical = all(py.get(k) == sp.get(k)
                      for k in ("linhas", "series", "demanda", "atendido", "ruptura",
                                "ordens", "chegadas"))
-        linhas += _tabela(
+        lines += _table(
             ["", "Plain Python", "Spark"],
             [["rows", py.get("linhas"), sp.get("linhas")],
              ["series", py.get("series"), sp.get("series")],
@@ -351,11 +351,11 @@ def render(dados: dict) -> str:
               f"**{sp.get('segundos')}** (job) · "
               f"{sp.get('segundos_com_jvm')} with the JVM and the container"]],
         )
-        linhas += ["",
-                   f"**The two results are {'IDENTICAL' if iguais else 'DIFFERENT'}.** "
+        lines += ["",
+                   f"**The two results are {'IDENTICAL' if identical else 'DIFFERENT'}.** "
                    + ("Without that, the time comparison would mean nothing, because the "
                       "two would be measuring different things."
-                      if iguais else
+                      if identical else
                       "**This is a defect**: while they diverge, neither of the two times is "
                       "comparable, and the divergence is what needs investigating before "
                       "any reading of this page."),
@@ -366,36 +366,36 @@ def render(dados: dict) -> str:
                    "between the two stays visible instead of hidden in a footnote.",
                    ""]
         if py.get("segundos") and sp.get("segundos"):
-            mais_rapido = "Plain Python" if py["segundos"] < sp["segundos"] else "Spark"
-            razao = max(py["segundos"], sp["segundos"]) / max(
+            faster = "Plain Python" if py["segundos"] < sp["segundos"] else "Spark"
+            ratio = max(py["segundos"], sp["segundos"]) / max(
                 min(py["segundos"], sp["segundos"]), 0.1)
-            linhas += [
-                f"**At this volume, {mais_rapido} is ~{razao:.1f}x faster.** If the winner",
+            lines += [
+                f"**At this volume, {faster} is ~{ratio:.1f}x faster.** If the winner",
                 "is Python — which is expected at this scale — the number gets published",
                 "just the same. It is the proof that Spark isn't here for speed, and a page",
                 "that only published favorable results wouldn't prove anything.",
                 "",
             ]
 
-    # ---- o gatilho que nao disparou ----------------------------------------------------
-    ng = dados.get("nao_gatilho", {})
-    linhas += ["## The volume trigger, which did NOT fire", ""]
+    # ---- the trigger that did not fire -------------------------------------------------
+    ng = data.get("nao_gatilho", {})
+    lines += ["## The volume trigger, which did NOT fire", ""]
     if "erro" in ng:
-        linhas += _ausente("Basket self-join", ng["erro"])
+        lines += _absent("Basket self-join", ng["erro"])
     else:
-        linhas += [
+        lines += [
             "This project's natural candidate for \"volume that requires Spark\" is the",
             "basket self-join — every pair of products bought together, which is the basis",
             "of any affinity analysis. Measured in DuckDB, on a single node:",
             "",
         ]
-        linhas += _tabela(
+        lines += _table(
             ["Pairs", "Distinct pairs", "Seconds", "Peak RSS (GB)"],
-            [[f"{ng['pares']:,}".replace(",", "."),
-              f"{ng['distintos']:,}".replace(",", "."),
+            [[f"{ng['pares']:,}",
+              f"{ng['distintos']:,}",
               ng["segundos"], ng["pico_gb"]]],
         )
-        linhas += ["",
+        lines += ["",
                    "**The volume trigger did not fire, and it is measured.** ARCHITECTURE",
                    "declares Spark's trigger as *\"a partition DuckDB can't hold in",
                    "memory\"*; this number is what says it stays closed. If it ever turns",
@@ -403,7 +403,7 @@ def render(dados: dict) -> str:
                    "that is also information.",
                    ""]
 
-    linhas += [
+    lines += [
         "## What this page does NOT prove",
         "",
         "- **That Spark scales here.** It runs `local[*]`: driver and executor on the same",
@@ -416,14 +416,14 @@ def render(dados: dict) -> str:
         "  plus a policy declared in a seed. No source in this repository measures stock.",
         "",
     ]
-    return "\n".join(linhas) + "\n"
+    return "\n".join(lines) + "\n"
 
 
-def write(dados: dict, out: str = DEFAULT_OUT) -> str:
-    destino = os.path.join(REPO, out) if not os.path.isabs(out) else out
-    os.makedirs(os.path.dirname(destino), exist_ok=True)
-    temporario = destino + ".tmp"
-    with open(temporario, "w", encoding="utf-8") as arquivo:
-        arquivo.write(render(dados))
-    os.replace(temporario, destino)
-    return destino
+def write(data: dict, out: str = DEFAULT_OUT) -> str:
+    target = os.path.join(REPO, out) if not os.path.isabs(out) else out
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    tmp_path = target + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(render(data))
+    os.replace(tmp_path, target)
+    return target

@@ -1,22 +1,22 @@
--- A MESMA PESSOA NAO PODE ESTAR EM DUAS FAIXAS NA MESMA JANELA — salvo se fizer aniversario
--- dentro dela, e nesse caso as duas faixas precisam ser VIZINHAS e na ordem certa.
+-- THE SAME PERSON CANNOT BE IN TWO BANDS IN THE SAME WINDOW — unless they have a birthday
+-- within it, and in that case the two bands must be NEIGHBORS and in the right order.
 --
--- O MODO DE FALHA QUE ISTO PEGA: uma janela regerada pela metade. Alguem edita os limites
--- das faixas, reexporta a referencia e roda `orders-refresh` em dois dos quatro armazens.
--- O resultado e uma janela em que o mesmo cliente aparece como `35_49` num dia e `GE65` no
--- outro, e qualquer agregacao por coorte mistura duas definicoes — sem erro, sem nulo, sem
--- total quebrado. E o irmao de `assert_demand_group_is_stable_across_the_window`, no eixo
--- do comprador em vez do produto.
+-- THE FAILURE MODE THIS CATCHES: a half-regenerated window. Someone edits the band
+-- boundaries, re-exports the reference and runs `orders-refresh` on two of the four warehouses.
+-- The result is a window in which the same customer appears as `35_49` one day and `GE65` the
+-- next, and any per-cohort aggregation mixes two definitions — no error, no null, no
+-- broken total. It is the sibling of `assert_demand_group_is_stable_across_the_window`, on the
+-- buyer axis instead of the product one.
 --
--- POR QUE A VARIANTE OBVIA NAO PEGARIA. `assert_buyer_age_band_matches_the_customer_birth_year`
--- confere cada pedido contra o cadastro e passaria: as duas metades estao internamente
--- corretas, cada uma sob a sua definicao de faixa. O que so ESTA camada consegue perguntar e
--- se a janela e coerente CONSIGO MESMA.
+-- WHY THE OBVIOUS VARIANT WOULD NOT CATCH IT. `assert_buyer_age_band_matches_the_customer_birth_year`
+-- checks each order against the customer record and would pass: both halves are internally
+-- correct, each under its own band definition. What only THIS layer can ask is
+-- whether the window is coherent WITH ITSELF.
 --
--- ANIVERSARIO E LEGITIMO, e por isso a condicao nao e "faixa unica". A janela atual tem
--- quatro dias, mas o modelo nao depende disso: o que se exige e que a transicao seja para a
--- faixa seguinte e para frente no tempo. Duas faixas nao adjacentes, ou um cliente que
--- REJUVENESCE ao longo da janela, sao defeito.
+-- A BIRTHDAY IS LEGITIMATE, which is why the condition is not "a single band". The current window has
+-- four days, but the model does not depend on that: what is required is that the transition be to the
+-- next band and forward in time. Two non-adjacent bands, or a customer who
+-- GETS YOUNGER over the window, are defects.
 with por_cliente as (
 
     select
@@ -75,8 +75,8 @@ join ordem final
  and final.posicao = e.ultima
 where e.faixas > 1
   and (
-      -- salto de mais de uma faixa: nao ha aniversario que explique
+      -- a jump of more than one band: no birthday explains it
       e.ultima - e.primeira > 1
-      -- ou a faixa mais velha comeca ANTES de a mais nova terminar: o cliente rejuvenesceu
+      -- or the older band starts BEFORE the younger one ends: the customer got younger
       or final.primeiro_dia < inicial.ultimo_dia
   )

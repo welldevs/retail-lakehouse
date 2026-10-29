@@ -1,17 +1,17 @@
--- TESTE INVERTIDO: prova que postal_code NAO e chave, e que a modelagem sabe disso.
+-- INVERTED TEST: proves that postal_code is NOT a key, and that the model knows it.
 --
--- Medido: 29 CEPs cruzam fronteira de municipio no escopo das 4 AUFs. Se alguem um dia
--- "simplificar" DIM_GEOGRAPHY para o grao de CEP, esses 29 casos colapsariam e a soma por
--- municipio ficaria errada — silenciosamente, porque a tabela continuaria parecendo certa.
+-- Measured: 29 postal codes cross a municipality boundary within the scope of the 4 AUFs. If someone ever
+-- "simplifies" DIM_GEOGRAPHY to the postal-code grain, those 29 cases would collapse and the per-municipality
+-- sum would be wrong — silently, because the table would still look right.
 --
--- Este teste falha se a divergencia DESAPARECER, que e o oposto do usual. Nao e capricho:
--- um teste que so verifica o esperado nao protege a razao pela qual o grao e composto. Se
--- um dia o INE republicar o Callejero sem nenhum CEP compartilhado, este teste falha e
--- alguem revisita a decisao com o dado na mao, em vez de manter uma chave composta por
--- inercia.
+-- This test fails if the divergence DISAPPEARS, which is the opposite of the usual. It is not whim:
+-- a test that only checks what is expected does not protect the reason the grain is composite. If
+-- INE ever republishes the Callejero without any shared postal code, this test fails and
+-- someone revisits the decision with the data in hand, instead of keeping a composite key out of
+-- inertia.
 --
--- Falha quando NENHUM CEP cruza municipio (ou seja, quando o grao composto perdeu o motivo
--- de existir e o teste precisa ser reavaliado).
+-- Fails when NO postal code crosses municipalities (that is, when the composite grain has lost its reason
+-- to exist and the test needs to be reassessed).
 with compartilhados as (
 
     select postal_code, count(distinct province_code || municipality_code) as municipios

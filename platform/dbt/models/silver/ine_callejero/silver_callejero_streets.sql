@@ -1,14 +1,14 @@
--- RUAS do Callejero (arquivo VIAS), projetadas sem interpretacao alem de decompor o
--- codigo e extrair os campos de nome/tipo.
+-- STREETS of the Callejero (VIAS file), projected with no interpretation beyond
+-- decomposing the code and extracting the name/type fields.
 --
--- GRAO: (ingestion_date, street_code). street_code (10 digitos) ja e unico dentro de
--- uma ingestion_date.
+-- GRAIN: (ingestion_date, street_code). street_code (10 digits) is already unique within
+-- an ingestion_date.
 --
--- Layout medido (CONTRACT.md da source, secao 2): linha de 132 chars, codigo em [0:10]
--- (provincia 2 + municipio 3 + id da via 5), nome curto em [10:38], data em [38:46],
--- tipo de via (CALLE/PLAZA/CMNO/PRAJE...) em [52:57], nome completo em [57:107], nome
--- curto alternativo em [107:132]. Validado contra enderecos reais: "Alcala" no
--- municipio 079 (Madrid), "Gran Via" em 3 municipios diferentes.
+-- Measured layout (the source's CONTRACT.md, section 2): 132-char line, code at [0:10]
+-- (province 2 + municipality 3 + street id 5), short name at [10:38], date at [38:46],
+-- street type (CALLE/PLAZA/CMNO/PRAJE...) at [52:57], full name at [57:107], alternative
+-- short name at [107:132]. Validated against real addresses: "Alcala" in municipality
+-- 079 (Madrid), "Gran Via" in 3 different municipalities.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_streets.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -36,13 +36,13 @@ with raw as (
 
 select
     ingestion_date,
-    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
-    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
-    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
-    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
-    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
-    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
-    -- acidente.
+    -- A re-extraction of the SAME INE publication creates another ingestion_date with
+    -- equivalent rows, and this model stacks them all (the history is deliberate). Without an
+    -- explicit marker, whoever queries without filtering double-counts — it already happened
+    -- with silver_ine_population_series, which ended up with 1,547,496 rows in EACH of two
+    -- ingestion_dates. `where is_latest_ingestion` is the right way to read the current
+    -- state; without the filter, the whole history is read, and that becomes a choice rather
+    -- than an accident.
     ingestion_date = max(ingestion_date) over () as is_latest_ingestion,
     'VIAS'                                         as source_dataset,
     source_file,

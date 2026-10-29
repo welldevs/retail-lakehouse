@@ -1,29 +1,29 @@
--- O UNICO modelo que cruza datas.
+-- The ONLY model that crosses dates.
 --
--- Existe porque price_decreased e FALSO em 100% das linhas nas tres particoes, enquanto
--- 152 precos mudaram entre 08-16 e 08-24. O campo que a fonte oferece para sinalizar
--- variacao nao sinaliza nada: a unica forma de detectar mudanca e o diff de snapshots.
+-- It exists because price_decreased is FALSE in 100% of rows across the three partitions,
+-- while 152 prices changed between 08-16 and 08-24. The field the source offers to flag a
+-- change flags nothing: the only way to detect a change is to diff snapshots.
 --
--- GRAO: (warehouse, ingestion_date, source_product_id), comparando cada particao com a
--- ANTERIOR EXISTENTE, nao com "ontem". Isso importa: ha um vao de 8 dias entre 08-16 e
--- 08-24, e os dias 08-17..08-23 nao existem nem podem ser recuperados (a API so serve o
--- preco de hoje). Usar lag() sobre a sequencia de particoes, em vez de aritmetica de
--- data, e o que mantem o modelo correto na presenca de vaos.
+-- GRAIN: (warehouse, ingestion_date, source_product_id), comparing each partition with the
+-- PREVIOUS EXISTING one, not with "yesterday". That matters: there is an 8-day gap between
+-- 08-16 and 08-24, and days 08-17..08-23 do not exist and cannot be recovered (the API only
+-- serves today's price). Using lag() over the sequence of partitions, instead of date
+-- arithmetic, is what keeps the model correct in the presence of gaps.
 --
--- MEDE a variacao ligada a CHAVE DA FONTE, nao a de um item comercial. Ver a coluna
--- name_seen_before e CONTRACT.md 4.5.
+-- It MEASURES the change tied to the SOURCE KEY, not that of a commercial item. See the
+-- name_seen_before column and CONTRACT.md 4.5.
 --
--- CHANGE_TYPE E OS DELTAS COMPARAM purchasable_unit_price, NAO unit_price CRU — corrigido
--- depois da Fase 4 (ver DECISIONS.md, "Demand calibration against MAPA 2025"), que achou
--- que `unit_price` e o TETO do seletor de peso (`reference_price * 99`) em 10 combinacoes
--- produto x armazem, nao um preco que alguem paga. Aquela fase corrigiu a demanda; esta
--- correcao fecha a MESMA lacuna aqui, que sobrevivera intacta: silver_price_change nunca
--- foi tocado quando purchasable_unit_price entrou em silver_product_price, entao um
--- congelado a 37 EUR/kg continuava capaz de aparecer como "preco alterado" de milhares de
--- euros caso o teto oscilasse — medido que NAO oscilou nas particoes existentes, mas o
--- mecanismo estava la, esperando. `unit_price`/`previous_unit_price`/`price_delta` CRUS
--- continuam abaixo, sem alteracao — fidelidade da fonte e invariante deste modelo, exatamente
--- como em silver_product_price.
+-- CHANGE_TYPE AND THE DELTAS COMPARE purchasable_unit_price, NOT RAW unit_price — fixed
+-- after Phase 4 (see DECISIONS.md, "Demand calibration against MAPA 2025"), which found
+-- that `unit_price` is the CEILING of the weight selector (`reference_price * 99`) in 10
+-- product x warehouse combinations, not a price anyone pays. That phase fixed demand; this
+-- fix closes the SAME gap here, which had survived intact: silver_price_change was never
+-- touched when purchasable_unit_price entered silver_product_price, so a frozen item at
+-- 37 EUR/kg remained capable of showing up as a "price change" of thousands of euros if the
+-- ceiling moved — measured that it did NOT move in the existing partitions, but the
+-- mechanism was there, waiting. RAW `unit_price`/`previous_unit_price`/`price_delta` remain
+-- below, unchanged — source fidelity is an invariant of this model, exactly as in
+-- silver_product_price.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_price_change',
     options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
@@ -31,10 +31,10 @@
 
 with priced as (
 
-    -- Um preco por (id, armazem, data). Medido: o preco NAO divergre entre as aparicoes
-    -- repetidas do mesmo id — apenas o array categories[] difere (198 e 199 casos). Por
-    -- isso any_value nao esconde conflito aqui; e uma reducao segura, nao uma escolha
-    -- arbitraria. O teste de unicidade em schema.yml protege essa premissa.
+    -- One price per (id, warehouse, date). Measured: the price does NOT diverge between
+    -- repeated appearances of the same id — only the categories[] array differs (198 and 199
+    -- cases). So any_value hides no conflict here; it is a safe reduction, not an arbitrary
+    -- choice. The uniqueness test in schema.yml protects that premise.
     select
         ingestion_date,
         warehouse,
@@ -48,7 +48,7 @@ with priced as (
 
 ),
 
--- Sequencia de particoes existentes, por armazem.
+-- Sequence of existing partitions, per warehouse.
 partition_pair as (
 
     select
@@ -70,7 +70,7 @@ curr as (
     join priced p
       on p.warehouse = pp.warehouse
      and p.ingestion_date = pp.curr_date
-    where pp.prev_date is not null      -- a primeira particao nao tem anterior
+    where pp.prev_date is not null      -- the first partition has no previous one
 
 ),
 
@@ -86,7 +86,7 @@ prev as (
 
 ),
 
--- Nomes vistos em cada particao, para reconhecer id novo com nome antigo.
+-- Names seen in each partition, to recognize a new id with an old name.
 name_in_partition as (
 
     select distinct warehouse, ingestion_date, display_name from priced
@@ -104,16 +104,16 @@ select
     c.unit_price                                        as unit_price,
     c.unit_price - v.unit_price                          as price_delta,
 
-    -- O PRECO QUE IMPORTA PARA DETECTAR VARIACAO. Igual a unit_price/previous_unit_price em
-    -- tudo, exceto nas linhas `bunch` (10 combinacoes produto x armazem, ver cabecalho) —
-    -- ali unit_price e o teto do seletor de peso, nunca o preco de um consumidor.
+    -- THE PRICE THAT MATTERS FOR DETECTING CHANGE. Equal to unit_price/previous_unit_price in
+    -- everything, except the `bunch` rows (10 product x warehouse combinations, see header) —
+    -- there unit_price is the weight selector's ceiling, never a consumer's price.
     v.purchasable_unit_price                            as previous_purchasable_unit_price,
     c.purchasable_unit_price                            as purchasable_unit_price,
     c.purchasable_unit_price - v.purchasable_unit_price  as purchasable_price_delta,
     c.catalog_appearances,
 
-    -- COMPARA purchasable_unit_price, NAO unit_price cru: e o preco comparavel entre
-    -- particoes, e "o preco mudou" tem de significar isso, nao "o teto do seletor mudou".
+    -- COMPARES purchasable_unit_price, NOT raw unit_price: it is the price comparable across
+    -- partitions, and "the price changed" must mean that, not "the selector ceiling changed".
     case
         when v.source_product_id is null then 'entrou'
         when c.source_product_id is null then 'saiu'
@@ -121,12 +121,12 @@ select
         else 'estavel'
     end                                                 as change_type,
 
-    -- ARMADILHA DE IDENTIDADE DE NEGOCIO. Id novo cujo display_name ja existia na
-    -- particao anterior. NAO e lido como "produto novo" em silencio: vira fila de
-    -- revisao, porque a fonte nao diz se e o mesmo item rechaveado ou um item retirado
-    -- e outro lancado. Medido: 1 caso em 08-16, 5 casos em 08-24.
-    -- Resolver identidade de negocio e do consumidor, com regra declarada como premissa
-    -- (CONTRACT.md 4.5). Este modelo aponta os casos; nao decide por eles.
+    -- BUSINESS IDENTITY TRAP. A new id whose display_name already existed in the previous
+    -- partition. It is NOT silently read as a "new product": it goes to a review queue,
+    -- because the source does not say whether it is the same item re-keyed or an item
+    -- withdrawn and another launched. Measured: 1 case on 08-16, 5 cases on 08-24.
+    -- Resolving business identity is the consumer's job, with a rule declared as a premise
+    -- (CONTRACT.md 4.5). This model points out the cases; it does not decide for them.
     coalesce(v.source_product_id is null and np.display_name is not null, false)
                                                         as name_seen_before
 

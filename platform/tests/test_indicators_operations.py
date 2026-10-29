@@ -1,24 +1,25 @@
-"""Os indicadores do painel, conferidos sem Snowflake e sem rede.
+"""The panel's indicators, checked without a warehouse and without network.
 
-MORA EM platform/tests/ DE PROPOSITO, e nao em streamlit/. O painel compartilha o venv da
-plataforma (as dependencias de UI sao um `optional-dependencies` do mesmo pyproject), entao
-`make test` ja o alcanca — e o que importa e que estas checagens rodem SEMPRE, junto do resto,
-e nao num alvo separado que alguem lembra de chamar.
+IT LIVES IN platform/tests/ ON PURPOSE, not in streamlit/. The panel shares the platform
+venv (the UI dependencies are an `optional-dependencies` of the same pyproject), so
+`make test` already reaches it — and what matters is that these checks ALWAYS run, along with
+the rest, not in a separate target someone has to remember to call.
 
-O QUE ESTA SUITE PROTEGE, e o que ela deliberadamente nao tenta.
+WHAT THIS SUITE PROTECTS, and what it deliberately does not attempt.
 
-Nao tenta conferir NUMERO: para isso e preciso o Snowflake, e a suite e offline por
-invariante do repositorio. O smoke test que executa o app de verdade e
-`make dashboard-check`, que exige conta viva.
+It does not try to check NUMBERS: that needs a live warehouse, and the suite is offline by
+repository invariant. The smoke test that actually runs the app is `make dashboard-check`,
+which requires a live account.
 
-O que ela protege e a propriedade que o painel inteiro apoia: **o CONTRACT.md e derivado de
-indicators.py, entao nao pode divergir dele**. Se alguem ajustar um SQL e nao regenerar o
-documento, a conferencia continua "passando" — porque ninguem le um SQL e um texto lado a lado
-procurando desacordo. Este teste transforma a regeneracao em obrigacao verificada, e e o
-analogo direto do DDL do STAGE ser derivado do recorte em vez de escrito a mao.
+What it protects is the property the whole panel rests on: **docs/indicators/operations.md
+is derived from operations.py, so it cannot diverge from it**. If someone tweaks a SQL and
+doesn't regenerate the document, the review keeps "passing" — because nobody reads a SQL and
+a text side by side looking for disagreement. This test turns regeneration into a verified
+obligation, and is the direct analogue of the STAGE DDL being derived from the cut instead of
+hand-written.
 
-E protege a fronteira do parametro: toda consulta com eixo de data tem de LIGAR o filtro
-(`%(inicio)s`), nunca monta-lo por concatenacao. O seletor da interface e entrada de usuario.
+And it protects the parameter boundary: every query with a date axis must BIND the filter
+(`%(start)s`), never build it by concatenation. The interface selector is user input.
 """
 
 from __future__ import annotations
@@ -28,268 +29,278 @@ import os
 import sys
 import unittest
 
-RAIZ = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DASHBOARD = os.path.join(RAIZ, "streamlit")
-sys.path.insert(0, DASHBOARD)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "platform", "src"))
 
-import contract as C  # noqa: E402
-import indicators as I  # noqa: E402
+from retail_platform.indicators import contract as C  # noqa: E402
+from retail_platform.indicators import operations as I  # noqa: E402
 
-MART_DIR = os.path.join(RAIZ, "platform", "dbt", "models", "warehouse", "mart")
+PAGE = os.path.join(ROOT, "docs", "indicators", "operations.md")
+
+MART_DIR = os.path.join(ROOT, "platform", "dbt", "models", "warehouse", "mart")
 
 
-class EstruturaTest(unittest.TestCase):
-    def test_todo_indicador_declara_os_campos_de_conferencia(self):
-        """Um indicador sem grao declarado nao e conferivel: e o grao que diz se uma soma e
-        legitima. Sem tipo, ninguem sabe se pode ler o numero como medida do mundo."""
-        for indicador in I.INDICADORES:
-            with self.subTest(indicador.chave):
-                self.assertTrue(indicador.titulo.strip())
-                self.assertTrue(indicador.pergunta.strip().endswith("?"),
-                                "a pergunta tem de ser uma pergunta")
-                self.assertTrue(indicador.grao.strip())
-                self.assertTrue(indicador.tipo.strip())
-                self.assertTrue(indicador.marts)
-                self.assertTrue(indicador.sql.strip())
+class StructureTest(unittest.TestCase):
+    def test_every_indicator_declares_the_review_fields(self):
+        """An indicator without a declared grain is not reviewable: the grain is what says
+        whether a sum is legitimate. Without a kind, nobody knows whether the number can be
+        read as a measurement of the world."""
+        for indicator in I.INDICATORS:
+            with self.subTest(indicator.key):
+                self.assertTrue(indicator.title.strip())
+                self.assertTrue(indicator.question.strip().endswith("?"),
+                                "the question has to be a question")
+                self.assertTrue(indicator.grain.strip())
+                self.assertTrue(indicator.kind.strip())
+                self.assertTrue(indicator.marts)
+                self.assertTrue(indicator.sql.strip())
 
-    def test_as_chaves_sao_unicas(self):
-        chaves = [i.chave for i in I.INDICADORES]
-        self.assertEqual(len(chaves), len(set(chaves)))
+    def test_keys_are_unique(self):
+        keys = [i.key for i in I.INDICATORS]
+        self.assertEqual(len(keys), len(set(keys)))
 
-    def test_todo_indicador_tem_ao_menos_uma_armadilha_declarada(self):
-        """Nao e burocracia. Cada um destes indicadores agrega, e agregacao e onde a medida
-        obvia produz numero plausivel e errado — percentil que nao soma, contagem que nao e
-        aditiva, denominador trocado. Um indicador sem nenhuma ressalva provavelmente nao foi
-        pensado como quem vai reconstrui-lo em outra ferramenta."""
-        for indicador in I.INDICADORES:
-            with self.subTest(indicador.chave):
-                self.assertTrue(indicador.armadilhas,
-                                f"{indicador.chave} nao declara armadilha nenhuma")
-                # Nao basta a tupla existir. Uma entrada vazia — ou um placeholder de tres
-                # palavras — passava por `assertTrue` e nao avisa ninguem de nada. Descoberto
-                # ao provar que este proprio teste sabe reprovar: a injecao trocou a
-                # armadilha por string vazia e SO o teste de sincronia do CONTRACT pegou.
-                for armadilha in indicador.armadilhas:
+    def test_every_indicator_declares_at_least_one_caveat(self):
+        """Not bureaucracy. Each of these indicators aggregates, and aggregation is where the
+        obvious measure produces a plausible and wrong number — a percentile that doesn't
+        sum, a count that isn't additive, a swapped denominator. An indicator with no caveat
+        at all was probably not thought through as someone who will rebuild it in another
+        tool."""
+        for indicator in I.INDICATORS:
+            with self.subTest(indicator.key):
+                self.assertTrue(indicator.caveats,
+                                f"{indicator.key} declares no caveat at all")
+                # The tuple existing is not enough. An empty entry — or a three-word
+                # placeholder — passed `assertTrue` and warns nobody of anything. Found
+                # while proving this very test can fail: the injection replaced the caveat
+                # with an empty string and ONLY the contract sync test caught it.
+                for caveat in indicator.caveats:
                     self.assertGreater(
-                        len(armadilha.strip()), 60,
-                        f"{indicador.chave}: armadilha curta demais para explicar um modo "
-                        f"de falha — {armadilha!r}",
+                        len(caveat.strip()), 60,
+                        f"{indicator.key}: caveat too short to explain a failure "
+                        f"mode — {caveat!r}",
                     )
 
-    def test_os_marts_citados_existem_como_modelo_no_disco(self):
-        """Um nome errado aqui so falha em execucao, contra a conta viva — e o CONTRACT ja
-        teria sido publicado com a fonte errada."""
-        no_disco = {
-            os.path.splitext(arquivo)[0].upper()
-            for arquivo in os.listdir(MART_DIR) if arquivo.endswith(".sql")
+    def test_cited_marts_exist_as_models_on_disk(self):
+        """A wrong name here only fails at run time, against the live account — and the
+        contract would already have been published with the wrong source."""
+        on_disk = {
+            os.path.splitext(filename)[0].upper()
+            for filename in os.listdir(MART_DIR) if filename.endswith(".sql")
         }
-        self.assertTrue(no_disco)
-        for indicador in I.INDICADORES:
-            for mart in indicador.marts:
-                self.assertIn(mart, no_disco, f"{indicador.chave} cita {mart}, que nao existe")
+        self.assertTrue(on_disk)
+        for indicator in I.INDICATORS:
+            for mart in indicator.marts:
+                self.assertIn(mart, on_disk, f"{indicator.key} cites {mart}, which does not exist")
 
-    def test_todo_mart_do_disco_e_usado_por_algum_indicador(self):
-        """O inverso, e e o que pega o mart NOVO: quem cria um mart e nao o expoe deixa uma
-        tabela sem nenhum consumidor, que e como um mart morre em silencio."""
-        usados = {m for i in I.INDICADORES for m in i.marts}
-        for arquivo in os.listdir(MART_DIR):
-            if not arquivo.endswith(".sql"):
+    def test_every_mart_on_disk_is_used_by_some_indicator(self):
+        """The inverse, and it is what catches the NEW mart: whoever creates a mart and
+        doesn't expose it leaves a table with no consumer, which is how a mart dies silently."""
+        used = {m for i in I.INDICATORS for m in i.marts}
+        for filename in os.listdir(MART_DIR):
+            if not filename.endswith(".sql"):
                 continue
-            nome = os.path.splitext(arquivo)[0].upper()
-            self.assertIn(nome, usados, f"{nome} nao aparece em nenhum indicador")
+            name = os.path.splitext(filename)[0].upper()
+            self.assertIn(name, used, f"{name} does not appear in any indicator")
 
 
-class ParametroLigadoTest(unittest.TestCase):
-    def test_o_filtro_de_data_e_ligado_e_nunca_concatenado(self):
-        for indicador in I.INDICADORES:
-            if not indicador.datado:
+class BoundParameterTest(unittest.TestCase):
+    def test_date_filter_is_bound_and_never_concatenated(self):
+        for indicator in I.INDICATORS:
+            if not indicator.dated:
                 continue
-            with self.subTest(indicador.chave):
-                self.assertIn("%(inicio)s", indicador.sql)
-                self.assertIn("%(fim)s", indicador.sql)
+            with self.subTest(indicator.key):
+                self.assertIn("%(start)s", indicator.sql)
+                self.assertIn("%(end)s", indicator.sql)
 
-    def test_o_filtro_de_armazem_e_ligado_e_nunca_concatenado(self):
-        """O multiselect da interface e entrada de usuario. `split(%(armazens)s, ',')` liga o
-        valor; montar um `in (...)` por concatenacao nao."""
-        for indicador in I.INDICADORES:
-            if not indicador.datado:
+    def test_warehouse_filter_is_bound_and_never_concatenated(self):
+        """The interface multiselect is user input. `split(%(warehouses)s, ',')` binds the
+        value; building an `in (...)` by concatenation does not."""
+        for indicator in I.INDICATORS:
+            if not indicator.dated:
                 continue
-            with self.subTest(indicador.chave):
-                self.assertIn("%(armazens)s", indicador.sql)
+            with self.subTest(indicator.key):
+                self.assertIn("%(warehouses)s", indicator.sql)
 
-    def test_nenhuma_consulta_usa_format_ou_f_string_de_valor(self):
-        """As unicas interpolacoes permitidas sao as constantes do modulo (DB, filtros). Um
-        `{`/`}` sobrando numa consulta significa que alguem tentou montar valor na string."""
-        for indicador in I.INDICADORES:
-            with self.subTest(indicador.chave):
-                self.assertNotIn("{", indicador.sql)
-                self.assertNotIn("}", indicador.sql)
+    def test_no_query_uses_format_or_value_f_string(self):
+        """The only interpolations allowed are the module constants (DB, filters). A
+        leftover `{`/`}` in a query means someone tried to build a value into the string."""
+        for indicator in I.INDICATORS:
+            with self.subTest(indicator.key):
+                self.assertNotIn("{", indicator.sql)
+                self.assertNotIn("}", indicator.sql)
 
-    def test_o_painel_le_somente_o_schema_mart(self):
-        """A fronteira do papel `retail_reader`, afirmada tambem no codigo: uma consulta que
-        cite GOLD ou STAGE seria recusada pelo motor, mas falharia em execucao e contra a
-        conta viva. Aqui falha antes.
+    def test_panel_reads_only_the_mart_schema(self):
+        """The `retail_reader` role boundary, asserted in code too: a query citing GOLD or
+        STAGE would be refused by the engine, but would fail at run time and against the
+        live account. Here it fails earlier.
 
-        `"GOLD"`/`"STAGE"` citados (nao `.GOLD.`/`.STAGE.`): Postgres nao tem o database
-        prefixado de tres partes do Snowflake, so o schema — e e ele, citado em maiusculo,
-        que aparece na SQL real (ver I.MART em indicators.py)."""
-        for indicador in I.INDICADORES:
-            with self.subTest(indicador.chave):
-                self.assertNotIn('"GOLD"', indicador.sql)
-                self.assertNotIn('"STAGE"', indicador.sql)
-                self.assertIn(f"{I.MART}.", indicador.sql)
+        Quoted `"GOLD"`/`"STAGE"` (not `.GOLD.`/`.STAGE.`): Postgres has no three-part
+        database prefix like Snowflake, only the schema — and that, quoted in uppercase, is
+        what appears in the real SQL (see I.MART in model.py)."""
+        for indicator in I.INDICATORS:
+            with self.subTest(indicator.key):
+                self.assertNotIn('"GOLD"', indicator.sql)
+                self.assertNotIn('"STAGE"', indicator.sql)
+                self.assertIn(f"{I.MART}.", indicator.sql)
 
-    def test_nenhuma_consulta_escreve(self):
-        proibido = ("insert ", "update ", "delete ", "merge ", "create ", "drop ",
-                    "alter ", "truncate ", "grant ", "copy into")
-        for indicador in I.INDICADORES:
-            baixo = indicador.sql.lower()
-            for verbo in proibido:
-                with self.subTest(f"{indicador.chave}:{verbo.strip()}"):
-                    self.assertNotIn(verbo, baixo)
+    def test_no_query_writes(self):
+        forbidden = ("insert ", "update ", "delete ", "merge ", "create ", "drop ",
+                     "alter ", "truncate ", "grant ", "copy into")
+        for indicator in I.INDICATORS:
+            lowered = indicator.sql.lower()
+            for verb in forbidden:
+                with self.subTest(f"{indicator.key}:{verb.strip()}"):
+                    self.assertNotIn(verb, lowered)
 
 
-class ContractEmSincroniaTest(unittest.TestCase):
-    """O CONTRACT.md e derivado de indicators.py. Este teste e o que impede a divergencia.
+class ContractInSyncTest(unittest.TestCase):
+    """docs/indicators/operations.md is derived from operations.py. This test is what
+    prevents divergence.
 
-    Sem ele, ajustar um SQL e esquecer de rodar `make dashboard-contract` deixa o documento de
-    conferencia descrevendo uma consulta que nao existe mais — e a conferencia continua
-    "passando", porque ninguem compara um SQL com um texto procurando desacordo. E o mesmo
-    motivo pelo qual o DDL do STAGE e derivado do recorte.
+    Without it, tweaking a SQL and forgetting to run `make indicators-contract` leaves the
+    review document describing a query that no longer exists — and the review keeps
+    "passing", because nobody compares a SQL with a text looking for disagreement. Same
+    reason the STAGE DDL is derived from the cut.
     """
 
-    def test_o_contract_no_disco_e_BYTE_A_BYTE_o_que_o_gerador_produz(self):
-        """Comparacao EXATA, sem nenhuma linha isenta.
+    def test_contract_on_disk_is_BYTE_FOR_BYTE_what_the_generator_produces(self):
+        """EXACT comparison, with no exempted line.
 
-        Ate a revisao de 2026-09-01 o cabecalho trazia a data da geracao, e este teste
-        precisava descartar essa linha antes de comparar. Uma isencao dentro do proprio
-        teste de sincronia e uma faixa cega: qualquer coisa que caisse naquela linha
-        deixava de ser conferida. O cabecalho passou a trazer o sha256 de indicators.py —
-        funcao da origem, e nao do relogio — entao a comparacao pode ser total, e
-        `make dashboard-contract` sobre um contrato em dia nao muda um byte.
+        Until the 2026-09-01 revision the header carried the generation date, and this test
+        had to drop that line before comparing. An exemption inside the sync test itself is
+        a blind spot: anything that landed on that line stopped being checked. The header
+        now carries the sha256 of the catalog module — a function of the source, not of the
+        clock — so the comparison can be total, and `make indicators-contract` over an
+        up-to-date contract changes no byte.
         """
-        caminho = os.path.join(DASHBOARD, "CONTRACT.md")
-        self.assertTrue(os.path.exists(caminho), "CONTRACT.md nao existe — rode `make dashboard-contract`")
-        with open(caminho, encoding="utf-8") as arquivo:
-            no_disco = arquivo.read()
+        path = PAGE
+        self.assertTrue(os.path.exists(path),
+                        "operations.md does not exist — run `make indicators-contract`")
+        with open(path, encoding="utf-8") as handle:
+            on_disk = handle.read()
 
         self.assertEqual(
-            no_disco, C.render(),
-            "CONTRACT.md esta fora de sincronia com indicators.py. "
-            "Rode `make dashboard-contract`.",
+            on_disk, C.render_operations(),
+            "operations.md is out of sync with operations.py. "
+            "Run `make indicators-contract`.",
         )
 
-    def test_o_cabecalho_carrega_o_sha256_da_origem_e_nenhuma_data(self):
-        """Se o carimbo voltar a ser um relogio, o arquivo gerado fica eternamente sujo no
-        git e o teste acima tem de voltar a isentar uma linha. Guardado aqui para que a
-        regressao apareca como falha, e nao como ruido no diff."""
-        cabecalho = C.render().splitlines()[8]
-        self.assertIn(C.origem_sha256(), cabecalho)
-        self.assertNotRegex(C.render(), r"Gerado por `make dashboard-contract` em \d{4}-")
+    def test_header_carries_the_source_sha256_and_no_date(self):
+        """If the stamp goes back to being a clock, the generated file stays forever dirty
+        in git and the test above has to exempt a line again. Guarded here so the regression
+        shows up as a failure, not as noise in the diff."""
+        header = next(l for l in C.render_operations().splitlines()[:12] if "sha256" in l)
+        self.assertIn(C.source_sha256(I), header)
+        self.assertNotRegex(C.render_operations(),
+                            r"Generated by `make indicators-contract` on \d{4}-")
 
-    def test_o_contract_traz_o_sql_de_todo_indicador(self):
-        gerado = C.render()
-        for indicador in I.INDICADORES:
-            with self.subTest(indicador.chave):
-                self.assertIn(indicador.sql.strip(), gerado)
-                self.assertIn(indicador.titulo, gerado)
+    def test_contract_carries_every_indicator_sql(self):
+        generated = C.render_operations()
+        for indicator in I.INDICATORS:
+            with self.subTest(indicator.key):
+                self.assertIn(indicator.sql.strip(), generated)
+                self.assertIn(indicator.title, generated)
 
-    def test_o_contract_traz_toda_armadilha(self):
-        """A armadilha e a razao do documento existir. Uma que ficasse fora do CONTRACT
-        estaria escrita para ninguem."""
-        gerado = C.render()
-        for indicador in I.INDICADORES:
-            for armadilha in indicador.armadilhas:
-                with self.subTest(indicador.chave):
-                    self.assertIn(armadilha, gerado)
+    def test_contract_carries_every_caveat(self):
+        """The caveat is the reason the document exists. One left out of the contract would
+        be written for nobody."""
+        generated = C.render_operations()
+        for indicator in I.INDICATORS:
+            for caveat in indicator.caveats:
+                with self.subTest(indicator.key):
+                    self.assertIn(caveat, generated)
 
-    def test_o_contract_declara_o_que_o_painel_nao_exibe(self):
-        gerado = C.render()
-        self.assertIn("What the panel does NOT show", gerado)
-        for titulo, motivo, gatilho in I.FORA_DE_ALCANCE:
-            with self.subTest(titulo):
-                self.assertIn(titulo, gerado)
-                self.assertIn(gatilho, gerado)
+    def test_contract_declares_what_the_panel_does_not_show(self):
+        generated = C.render_operations()
+        self.assertIn("What the catalog does NOT answer", generated)
+        for title, reason, trigger in I.OUT_OF_SCOPE:
+            with self.subTest(title):
+                self.assertIn(title, generated)
+                self.assertIn(trigger, generated)
 
-    def test_o_gerador_nao_importa_nada_que_conecte(self):
-        """O CONTRACT tem de ser revisavel sem credencial e sem rede — mesma propriedade de
-        `make warehouse-ddl`.
+    def test_generator_imports_nothing_that_connects(self):
+        """The contract has to be reviewable without credentials and without network — same
+        property as `make warehouse-ddl`.
 
-        A checagem e por AST e nao por busca de texto: a palavra "snowflake" aparece
-        legitimamente no CORPO do documento gerado, que descreve a autenticacao. O que nao
-        pode existir e o IMPORT — e a diferenca entre falar sobre a conexao e abrir uma.
+        The check is by AST and not by text search: the word "snowflake" legitimately
+        appears in the BODY of the generated document, which describes authentication. What
+        cannot exist is the IMPORT — the difference between talking about the connection
+        and opening one.
         """
-        with open(os.path.join(DASHBOARD, "contract.py"), encoding="utf-8") as arquivo:
-            arvore = ast.parse(arquivo.read())
-        importados = set()
-        for no in ast.walk(arvore):
-            if isinstance(no, ast.Import):
-                importados.update(alias.name.split(".")[0] for alias in no.names)
-            elif isinstance(no, ast.ImportFrom) and no.module:
-                importados.add(no.module.split(".")[0])
-        permitidos = {"os", "sys", "hashlib", "indicators", "__future__"}
+        with open(C.__file__, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported.add(node.module.split(".")[0])
+        # Relative imports (`from . import operations`) are the catalog itself.
+        allowed = {"os", "sys", "hashlib", "__future__"}
         self.assertEqual(
-            importados - permitidos, set(),
-            "o gerador do CONTRACT so pode importar stdlib e indicators",
+            imported - allowed, set(),
+            "the contract generator may only import stdlib and the indicators package",
         )
 
 
-class ContagemNaProsaTest(unittest.TestCase):
-    """A documentacao diz quantos indicadores o painel tem. Esse numero e copiado a mao, e
-    ja errou tres vezes: dizia 16 quando eram 18, 19 consultas quando eram 21 — e, na Fase 7,
-    o README dizia 16 quando eram 22, porque este teste so vigiava o ARCHITECTURE.
+class CountInProseTest(unittest.TestCase):
+    """The documentation says how many indicators the panel has. That number is copied by
+    hand, and it has already been wrong three times: it said 16 when there were 18, 19
+    queries when there were 21 — and, in Phase 7, the README said 16 when there were 22,
+    because this test only watched ARCHITECTURE.
 
-    A TERCEIRA VEZ E A LICAO: guardar UM arquivo nao guarda a frase, guarda o arquivo. A
-    mesma contagem morava em dois documentos e so um tinha teste — entao o outro apodreceu
-    exatamente como se teste nenhum existisse. Agora os dois entram pela mesma lista, e
-    acrescentar um terceiro documento com a frase e uma linha aqui.
+    THE THIRD TIME IS THE LESSON: guarding ONE file doesn't guard the sentence, it guards the
+    file. The same count lived in two documents and only one had a test — so the other rotted
+    exactly as if no test existed. Now both go through the same list, and adding a third
+    document with the sentence is one line here.
 
-    Nao vale automatizar toda contagem escrita em prosa — na maioria delas o remedio foi
-    parar de escrever o numero. Esta fica porque a frase perde o sentido sem ele, e porque
-    acrescentar um indicador e justamente o momento em que ninguem lembra da documentacao.
+    Automating every count written in prose is not worth it — for most of them the remedy
+    was to stop writing the number. This one stays because the sentence loses its meaning
+    without it, and because adding an indicator is exactly the moment nobody remembers the
+    documentation.
     """
 
-    DOCUMENTOS = ("ARCHITECTURE.md", "README.md")
+    DOCUMENTS = ("ARCHITECTURE.md", "README.md")
 
-    def _texto(self, nome: str) -> str:
-        raiz = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        with open(os.path.join(raiz, nome), encoding="utf-8") as arquivo:
-            return arquivo.read()
+    def _text(self, name: str) -> str:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        with open(os.path.join(root, name), encoding="utf-8") as handle:
+            return handle.read()
 
-    def test_o_numero_de_indicadores_confere_em_todo_documento_que_o_cita(self):
-        grupos = len({indicador.grupo for indicador in I.INDICADORES})
-        frase = f"{len(I.INDICADORES)}\nindicators in {grupos} groups"
-        frase_linha = f"{len(I.INDICADORES)} indicators in {grupos} groups"
-        for nome in self.DOCUMENTOS:
-            with self.subTest(nome):
-                texto = self._texto(nome)
+    def test_indicator_count_matches_in_every_document_that_cites_it(self):
+        groups = len({indicator.group for indicator in I.INDICATORS})
+        sentence = f"{len(I.INDICATORS)}\nindicators in {groups} groups"
+        sentence_one_line = f"{len(I.INDICATORS)} indicators in {groups} groups"
+        for name in self.DOCUMENTS:
+            with self.subTest(name):
+                text = self._text(name)
                 self.assertTrue(
-                    frase in texto or frase_linha in texto,
-                    f"{nome} descreve outro numero de indicadores/grupos",
+                    sentence in text or sentence_one_line in text,
+                    f"{name} describes a different number of indicators/groups",
                 )
 
-    def test_o_numero_de_consultas_no_architecture_confere(self):
-        total = len(I.INDICADORES) + 3  # FRESCOR, JANELA, ARMAZENS
-        self.assertIn(f"the {total} queries", self._texto("ARCHITECTURE.md"))
+    def test_query_count_in_architecture_matches(self):
+        total = len(I.INDICATORS) + 3  # FRESHNESS, WINDOW, WAREHOUSES
+        self.assertIn(f"the {total} queries", self._text("ARCHITECTURE.md"))
 
 
-class ForaDeAlcanceTest(unittest.TestCase):
-    def test_todo_item_declara_motivo_E_gatilho(self):
-        """Ausencia sem gatilho e desculpa; com gatilho e decisao. E a mesma disciplina da
-        tabela de tecnologias nao adotadas do ARCHITECTURE.md."""
-        self.assertTrue(I.FORA_DE_ALCANCE)
-        for titulo, motivo, gatilho in I.FORA_DE_ALCANCE:
-            with self.subTest(titulo):
-                self.assertTrue(titulo.strip())
-                self.assertGreater(len(motivo.strip()), 40)
-                self.assertGreater(len(gatilho.strip()), 20)
+class OutOfScopeTest(unittest.TestCase):
+    def test_every_item_declares_reason_AND_trigger(self):
+        """Absence without a trigger is an excuse; with a trigger it is a decision. Same
+        discipline as the table of technologies not adopted in ARCHITECTURE.md."""
+        self.assertTrue(I.OUT_OF_SCOPE)
+        for title, reason, trigger in I.OUT_OF_SCOPE:
+            with self.subTest(title):
+                self.assertTrue(title.strip())
+                self.assertGreater(len(reason.strip()), 40)
+                self.assertGreater(len(trigger.strip()), 20)
 
-    def test_a_lacuna_de_cliente_x_pedido_esta_declarada(self):
-        """E a mais acionavel da lista e a que mais gente vai pedir: recompra, LTV, coorte.
-        Nenhum mart junta cliente com pedido, e isso precisa estar escrito onde quem for
-        montar o Power BI leia ANTES de prometer o indicador."""
-        texto = " ".join(m for _, m, _ in I.FORA_DE_ALCANCE)
-        self.assertIn("NO MART JOINS CUSTOMER WITH ORDER", texto)
+    def test_customer_by_order_gap_is_declared(self):
+        """The most actionable item on the list and the one most people will ask for:
+        repurchase, LTV, cohort. No mart joins customer with order, and that needs to be
+        written where whoever builds the Power BI reads it BEFORE promising the indicator."""
+        text = " ".join(m for _, m, _ in I.OUT_OF_SCOPE)
+        self.assertIn("NO MART JOINS CUSTOMER WITH ORDER", text)
 
 
 if __name__ == "__main__":

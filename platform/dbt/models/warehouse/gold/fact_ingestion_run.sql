@@ -1,16 +1,18 @@
--- 24 LINHAS QUE IMPEDEM UM MART MENTIR.
+-- 24 ROWS THAT KEEP A MART FROM LYING.
 --
--- GRAO: (source_name, ingestion_date, wh). TIPO: observed (metadado operacional).
+-- GRAIN: (source_name, ingestion_date, wh). TYPE: observed (operational metadata).
 --
--- O QUE ELE RESPONDE, e nenhuma outra tabela responde: a diferenca entre "nao houve preco"
--- e "NAO HOUVE OBSERVACAO". Os dias 2026-08-17 a 08-23 nao existem no catalogo, e nao
--- porque nada aconteceu — porque ninguem olhou, e a API so serve o preco de hoje, entao
--- nunca podera olhar. Sem esta tabela, um produto ausente num dia e indistinguivel de um
--- dia inteiro ausente, e qualquer serie temporal interpola a lacuna em silencio.
+-- WHAT IT ANSWERS, and no other table answers: the difference between "there was no price"
+-- and "THERE WAS NO OBSERVATION". Days 2026-08-17 to 08-23 do not exist in the catalog,
+-- and not because nothing happened — because nobody looked, and the API only serves
+-- today's price, so it will never be able to look. Without this table, a product missing
+-- on a day is indistinguishable from a whole day missing, and any time series silently
+-- interpolates the gap.
 --
--- E metadado promovido a fato de proposito. Custa 24 linhas; o que compra e a capacidade
--- de um mart dizer "nao sei" em vez de chutar. CR-005 acrescentou 6 delas para promover
--- started_at_utc/finished_at_utc/duration_seconds, que ja existiam duas camadas abaixo.
+-- It is metadata promoted to a fact on purpose. It costs 24 rows; what it buys is the
+-- ability of a mart to say "I don't know" instead of guessing. CR-005 added 6 of them to
+-- promote started_at_utc/finished_at_utc/duration_seconds, which already existed two
+-- layers below.
 {{ config(materialized = 'table') }}
 
 select
@@ -24,14 +26,14 @@ select
     failure_count,
     anomaly_count,
 
-    -- CR-005: ja existiam duas camadas abaixo (Silver) e eram descartados so por uma
-    -- lista fixa de colunas na projecao do STAGE — nao dado ausente, projecao esquecida.
+    -- CR-005: they already existed two layers below (Silver) and were dropped only by a fixed
+    -- list of columns in the STAGE projection — not missing data, a forgotten projection.
     started_at_utc,
     finished_at_utc,
     duration_seconds,
 
-    -- Uma execucao so e observacao valida se completou e nao registrou falha. Qualquer
-    -- outra coisa e particao suspeita, e o consumidor precisa saber sem ter de ler duas
-    -- colunas e lembrar da regra.
+    -- A run is only a valid observation if it completed and recorded no failure. Anything
+    -- else is a suspect partition, and the consumer needs to know without having to read two
+    -- columns and remember the rule.
     (complete and failure_count = 0)                        as is_valid_observation
 from {{ source('stage', 'STG_INGESTION_RUN') }}

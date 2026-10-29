@@ -1,13 +1,13 @@
-"""DAG diario: extract -> validate -> land -> verify -> silver.
+"""Daily DAG: extract -> validate -> land -> verify -> silver.
 
-Cinco decisoes deste DAG vem de comportamento MEDIDO da fonte e da Source, nao de
-convencao. Cada uma esta comentada no ponto onde e imposta:
+Five decisions in this DAG come from MEASURED behavior of the upstream API and of the
+Source, not from convention. Each one is commented where it is enforced:
 
-  1. exit 2 do `extract` NAO significa falha do dia (particao completa e imutavel);
-  2. catchup=False e guard_date: backfill e IMPOSSIVEL nesta fonte;
-  3. pool de 1 slot: o throttle vive dentro do processo, nao entre processos;
-  4. a Source roda com PYTHONPATH e zero dependencia, sem conflitar com o Airflow;
-  5. data/ e scratch; a verdade passa a ser o object storage.
+  1. exit 2 from `extract` does NOT mean the day failed (complete, immutable partition);
+  2. catchup=False and guard_date: backfill is IMPOSSIBLE for this source;
+  3. 1-slot pool: the throttle lives inside the process, not across processes;
+  4. the Source runs with PYTHONPATH and zero dependencies, without clashing with Airflow;
+  5. data/ is scratch; object storage becomes the source of truth.
 """
 
 from __future__ import annotations
@@ -34,58 +34,57 @@ try:  # Airflow 3.x
 except ImportError:  # Airflow 2.x
     from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
-# Raiz do repositorio, montada no container ou o proprio checkout no host.
+# Repository root: mounted in the container, or the checkout itself on the host.
 REPO = os.environ.get("RETAIL_REPO_ROOT", "/opt/retail-lakehouse")
 DATA_ROOT = f"{REPO}/data/mercadona"
 
-# Nenhum codigo e importado deste DAG: tudo e invocado por subprocesso, com PYTHONPATH
-# apontando para o repositorio montado. Assim editar um modulo nao exige rebuild da
-# imagem, e o DAG nao carrega dependencia nenhuma da Source ou da plataforma.
+# No code is imported by this DAG: everything is invoked as a subprocess, with PYTHONPATH
+# pointing at the mounted repository. Editing a module therefore needs no image rebuild,
+# and the DAG carries no dependency of the Source or of the platform.
 SOURCE_SRC = f"{REPO}/sources/mercadona-catalog-source/src"
 PLATFORM_SRC = f"{REPO}/platform/src"
 
-# DUAS RUNTIMES. A Source tem dependencies = [] e roda no proprio interpretador do
-# Airflow — nao existe pacote de terceiros para conflitar. A plataforma precisa de
-# boto3/duckdb/dbt, que colidem com os pins do Airflow (jinja2, click, pydantic), entao
-# vive num venv separado. Os defaults abaixo apontam para o venv do HOST, para que
-# `airflow dags test` funcione a partir do checkout; no container o compose sobrescreve
-# com /opt/platform-venv.
+# TWO RUNTIMES. The Source has dependencies = [] and runs on Airflow's own interpreter —
+# there is no third-party package to clash with. The platform needs boto3/duckdb/dbt,
+# which collide with Airflow's pins (jinja2, click, pydantic), so it lives in a separate
+# venv. The defaults below point at the HOST venv so that `airflow dags test` works from
+# the checkout; in the container, compose overrides them with /opt/platform-venv.
 SOURCE_PYTHON = os.environ.get("RETAIL_SOURCE_PYTHON", "python3")
 PLATFORM_PY = os.environ.get("RETAIL_PLATFORM_PYTHON", f"{REPO}/platform/.venv/bin/python")
 
-# Quatro cidades, escolhidas por DIVERGENCIA DE SORTIMENTO medida contra a fonte, nao por
-# tamanho de mercado. Os armazens de uma mesma cidade (mad1/mad2/mad3) tem conjuntos de
-# produto IDENTICOS e divergem so em preco, entao o segundo Madrid pagaria 152 requisicoes
-# para agregar um eixo. Entre cidades, os dois eixos variam. Descartado `alc1`: duplica
-# `vlc1` (34,4% de divergencia, a menor da matriz — mesma comunidade autonoma), enquanto
-# `svq1` entra com 52,3%. Ver ARCHITECTURE.md.
+# Four cities, chosen by ASSORTMENT DIVERGENCE measured against the API, not by market
+# size. Warehouses in the same city (mad1/mad2/mad3) have IDENTICAL product sets and differ
+# only in price, so a second Madrid would cost 152 requests to add a single axis. Across
+# cities, both axes vary. `alc1` was dropped: it duplicates `vlc1` (34.4% divergence, the
+# lowest in the matrix — same autonomous community), while `svq1` comes in at 52.3%.
+# See ARCHITECTURE.md.
 #
-# CUIDADO AO EDITAR: `wh` invalido NAO falha. A fonte devolve 200 caindo em `vlc1`, entao
-# um erro de digitacao aqui produz uma particao rotulada `wh=<erro>` contendo dados de
-# Valencia — errada e internamente consistente, que nenhum teste a jusante pega.
+# CAREFUL WHEN EDITING: an invalid `wh` does NOT fail. The API returns 200 and falls back
+# to `vlc1`, so a typo here produces a partition labelled `wh=<typo>` holding Valencia's
+# data — wrong yet internally consistent, and no downstream test catches it.
 WAREHOUSES = ["mad1", "bcn1", "vlc1", "svq1"]
 
-# UM slot. O throttle da Source e POR PROCESSO
-# (http_client.py: 1/delay req/s medido do inicio da requisicao anterior), entao dois
-# `extract` concorrentes dobram a taxa real contra o host. Medido: 152 requisicoes em 9 s
-# produziram ~20% de 403 e bloqueio intermitente por minutos; sequencial a 1,5 s deu 0
-# falhas. Com varios armazens, este pool e a UNICA coisa preservando a taxa segura.
+# ONE slot. The Source's throttle is PER PROCESS
+# (http_client.py: 1/delay req/s measured from the start of the previous request), so two
+# concurrent `extract` runs double the real rate against the host. Measured: 152 requests
+# in 9 s produced ~20% 403s and intermittent blocking for minutes; sequential at 1.5 s gave
+# 0 failures. With several warehouses, this pool is the ONLY thing keeping the rate safe.
 API_POOL = "mercadona_api"
 
-# Codigos de saida do CONTRACT.md secao 7 da Source.
+# Exit codes from the Source's CONTRACT.md section 7.
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_FATAL = 2
 
 
 def _run(argv: list[str], env_extra: dict | None = None) -> int:
-    """Executa e ENCAMINHA a saida linha a linha para o log da tarefa.
+    """Run and FORWARD the output, line by line, to the task log.
 
-    Deixar o subprocesso herdar os descritores parece funcionar e nao funciona: a saida
-    vai para o stdout do container, nao para o log da tarefa, e um exit code diferente de
-    zero chega ao Airflow sem nenhuma explicacao ao lado. Streaming linha a linha (em vez
-    de capturar tudo no fim) importa porque o extract leva ~227 s: sem isto a tarefa fica
-    muda durante quatro minutos.
+    Letting the subprocess inherit the file descriptors looks like it works and does not:
+    the output goes to the container's stdout, not to the task log, and a non-zero exit
+    code reaches Airflow with no explanation next to it. Line-by-line streaming (instead of
+    capturing everything at the end) matters because extract takes ~227 s: without it the
+    task stays silent for four minutes.
     """
     env = dict(os.environ)
     if env_extra:
@@ -102,21 +101,21 @@ def _run(argv: list[str], env_extra: dict | None = None) -> int:
 
 
 def _run_source(argv: list[str]) -> int:
-    """Invoca a Source no interpretador do Airflow. Seguro porque dependencies = []."""
+    """Invoke the Source on Airflow's interpreter. Safe because dependencies = []."""
     return _run([SOURCE_PYTHON, "-m", "mercadona_catalog_source", *argv],
                 {"PYTHONPATH": SOURCE_SRC})
 
 
 def _run_platform(argv: list[str]) -> int:
-    """Invoca a plataforma no venv separado, com o codigo vindo do repo montado."""
+    """Invoke the platform in its separate venv, with code from the mounted repo."""
     return _run([PLATFORM_PY, "-m", "retail_platform", *argv],
                 {"PYTHONPATH": PLATFORM_SRC})
 
 
 def _log_task_failure(context: dict) -> None:
-    """CR-005: o unico registro estruturado que uma falha de task deixa, alem do estado
-    interno do scheduler. Usa o logger que a propria task ja escreve
-    (`logging.getLogger("airflow.task")`) — nenhum arquivo novo, nenhum servico novo.
+    """CR-005: the only structured record a task failure leaves, besides the scheduler's
+    internal state. Uses the logger the task already writes to
+    (`logging.getLogger("airflow.task")`) — no new file, no new service.
     """
     ti = context.get("task_instance")
     exc = context.get("exception")
@@ -137,113 +136,112 @@ def partition_path(ingestion_date: str, warehouse: str) -> str:
 
 
 def guard_date(ds: str, **_) -> None:
-    """Falha se o DAG run nao for de hoje (UTC).
+    """Fail if the DAG run is not for today (UTC).
 
-    NAO EXISTE BACKFILL nesta fonte: a API serve apenas o preco de HOJE. Um run datado de
-    uma data passada gravaria os precos de hoje sob a chave daquela data — dado
-    silenciosamente errado, que nenhum teste a jusante pegaria, porque a particao seria
-    internamente consistente. O vao de 8 dias entre 2026-08-16 e 2026-08-24 e
-    irrecuperavel por essa razao.
+    THERE IS NO BACKFILL for this source: the API only serves TODAY's price. A run dated in
+    the past would write today's prices under that date's key — silently wrong data that no
+    downstream test would catch, because the partition would be internally consistent. The
+    8-day gap between 2026-08-16 and 2026-08-24 is unrecoverable for this reason.
 
-    TRES CAMADAS, verificadas:
-      1. o proprio Airflow recusa execution_date no futuro;
-      2. catchup=False + start_date impedem o agendamento de runs anteriores ao inicio;
-      3. esta guarda cobre o disparo MANUAL de qualquer data != hoje.
+    THREE LAYERS, verified:
+      1. Airflow itself refuses an execution_date in the future;
+      2. catchup=False + start_date prevent scheduling runs before the start;
+      3. this guard covers a MANUAL trigger for any date != today.
 
-    Enquanto start_date == hoje, a camada 3 e redundante. Ela passa a ser a UNICA
-    protecao no dia seguinte, quando datas entre start_date e hoje se tornam
-    agendaveis por trigger manual — que e justamente quando o erro fica possivel.
+    While start_date == today, layer 3 is redundant. It becomes the ONLY protection the
+    next day, when dates between start_date and today become schedulable by manual
+    trigger — which is exactly when the mistake becomes possible.
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if ds != today:
         raise ValueError(
-            f"run datado de {ds}, hoje e {today}. A API serve apenas o preco de hoje: "
-            f"extrair para uma data passada produziria dado errado. Backfill nao existe "
-            f"nesta fonte."
+            f"run dated {ds}, today is {today}. The API only serves today's price: "
+            f"extracting for a past date would produce wrong data. Backfill does not exist "
+            f"for this source."
         )
-    print(f"data confere: {ds}")
+    print(f"date checks out: {ds}")
 
 
 def already_landed(ds: str, warehouse: str, **_) -> bool:
-    """Short-circuit olhando o DESTINO, nao o disco local.
+    """Short-circuit that looks at the DESTINATION, not the local disk.
 
-    Reusar `verify-landing` como gate, em vez de checar um marcador, tem tres efeitos que
-    um `os.path.exists` nao daria:
+    Reusing `verify-landing` as the gate, instead of checking a marker, has three effects
+    an `os.path.exists` would not give:
 
-      - exit 0 -> a particao esta no destino E com checksum conferido: nada a fazer;
-      - exit 1 -> aterrissada mas divergente: seguimos, e `land` a conserta (objeto com
-        checksum errado e reenviado), ou seja o DAG se auto-corrige;
-      - exit 2 -> nem existe localmente: seguimos para extract.
+      - exit 0 -> the partition is at the destination AND its checksums match: nothing to do;
+      - exit 1 -> landed but divergent: we carry on, and `land` fixes it (an object with a
+        wrong checksum is re-uploaded), i.e. the DAG self-heals;
+      - exit 2 -> it does not even exist locally: we carry on to extract.
 
-    Checar o `_SUCCESS` LOCAL aqui seria um erro: pularia o `land` de uma particao
-    extraida a mao e nunca aterrissada.
+    Checking the LOCAL `_SUCCESS` here would be a mistake: it would skip `land` for a
+    partition extracted by hand and never landed.
     """
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code == EXIT_OK:
-        print("particao ja aterrissada e verificada no destino: nada a fazer.")
+        print("partition already landed and verified at the destination: nothing to do.")
         return False
-    print(f"verify-landing retornou {code}: seguindo o pipeline.")
+    print(f"verify-landing returned {code}: continuing the pipeline.")
     return True
 
 
 def extract(ds: str, warehouse: str, **_) -> None:
-    """Roda o extract da Source.
+    """Run the Source's extract.
 
-    A Source tem ZERO dependencia de runtime, entao roda no proprio interpretador do
-    worker via PYTHONPATH, sem venv e sem conflitar com as dependencias pinadas do
-    Airflow. E o retorno pratico da decisao de manter dependencies = [].
+    The Source has ZERO runtime dependencies, so it runs on the worker's own interpreter via
+    PYTHONPATH, with no venv and no clash with Airflow's pinned dependencies. That is the
+    practical payoff of keeping dependencies = [].
     """
-    # Particao completa em disco e IMUTAVEL: reexecutar retorna exit 2. Nao e falha do
-    # dia — e a garantia 5 do contrato funcionando. Detectamos ANTES de chamar, para nao
-    # transformar sucesso em erro. Uma particao PARCIAL nao entra aqui: a retomada e
-    # exatamente o que queremos que aconteca (garantia 7).
+    # A complete partition on disk is IMMUTABLE: re-running returns exit 2. That is not a
+    # failure of the day — it is guarantee 5 of the contract working. We detect it BEFORE
+    # calling, so success is not turned into an error. A PARTIAL partition does not enter
+    # here: resuming is exactly what we want to happen (guarantee 7).
     if os.path.exists(os.path.join(partition_path(ds, warehouse), "_SUCCESS")):
-        print("particao ja completa e imutavel em disco: extract pulado (nao e falha).")
+        print("partition already complete and immutable on disk: extract skipped (not a failure).")
         return
 
     code = _run_source(["extract", "--out", DATA_ROOT, "--wh", warehouse, "--date", ds])
     if code == EXIT_FATAL:
-        # Particao inutilizavel ou uso invalido. Retry nao ajuda: o insumo nao muda.
-        raise RuntimeError(f"extract falhou de forma fatal (exit {code}); retry nao resolve")
+        # Unusable partition or invalid usage. Retrying does not help: the input does not change.
+        raise RuntimeError(f"extract failed fatally (exit {code}); retrying will not fix it")
     if code == EXIT_PARTIAL:
-        # Categorias em failures[]. A particao existe mas o contrato a reprova na
-        # validacao (garantia 16), entao paramos aqui com a causa explicita.
-        raise RuntimeError(f"extract parcial (exit {code}): ha entradas em failures[]")
+        # Categories in failures[]. The partition exists but the contract rejects it at
+        # validation (guarantee 16), so we stop here with the cause spelled out.
+        raise RuntimeError(f"partial extract (exit {code}): there are entries in failures[]")
     if code != EXIT_OK:
-        raise RuntimeError(f"extract retornou exit {code}")
+        raise RuntimeError(f"extract returned exit {code}")
 
 
 def validate(ds: str, warehouse: str, **_) -> None:
-    """Gate. Exit 1 reprova sem retry: reler os mesmos bytes daria o mesmo resultado."""
+    """Gate. Exit 1 rejects without retry: rereading the same bytes gives the same result."""
     code = _run_source(["validate", partition_path(ds, warehouse), "--strict"])
     if code != EXIT_OK:
-        raise RuntimeError(f"validate reprovou a particao (exit {code})")
+        raise RuntimeError(f"validate rejected the partition (exit {code})")
 
 
 def land(ds: str, warehouse: str, **_) -> None:
     code = _run_platform(["land", partition_path(ds, warehouse)])
     if code != EXIT_OK:
-        raise RuntimeError(f"land falhou (exit {code})")
+        raise RuntimeError(f"land failed (exit {code})")
 
 
 def verify_landing(ds: str, warehouse: str, **_) -> None:
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code != EXIT_OK:
-        raise RuntimeError(f"verify-landing reprovou o destino (exit {code})")
+        raise RuntimeError(f"verify-landing rejected the destination (exit {code})")
 
 
 def silver(**_) -> None:
-    """`dbt build` do Silver, com o portao aplicado pela plataforma.
+    """Silver `dbt build`, with the gate applied by the platform.
 
-    O PORTAO NAO MORA AQUI, e ja morou — este era o defeito. Cada DAG carregava a propria
-    copia parcial da decisao (a exclusao da PROPRIA source, e mais nenhuma), o Makefile
-    carregava a versao completa, e as seis divergiam. Esta DAG nao tinha portao algum e
-    reprovava todo dia desde que `silver_live_order_state` nasceu, porque a projecao Iceberg
-    so pode ser lida quando o catalogo responde — e o catalogo nao tem nada a ver com a
-    source desta DAG.
+    THE GATE DOES NOT LIVE HERE, and it used to — that was the defect. Each DAG carried its
+    own partial copy of the decision (excluding its OWN source, and nothing else), the
+    Makefile carried the full version, and all six diverged. This DAG had no gate at all and
+    failed every day from the moment `silver_live_order_state` was born, because the Iceberg
+    projection can only be read when the catalog responds — and the catalog has nothing to
+    do with this DAG's source.
 
-    Agora ha um verbo: `retail_platform silver-build` observa o que aterrissou e se o
-    catalogo responde, e monta `--exclude`/`--vars` sozinho. Ver silver_gate.py.
+    Now there is one verb: `retail_platform silver-build` observes what has landed and
+    whether the catalog responds, and builds `--exclude`/`--vars` itself. See silver_gate.py.
     """
     code = _run_platform([
         "silver-build",
@@ -251,19 +249,19 @@ def silver(**_) -> None:
         "--profiles-dir", f"{REPO}/platform/dbt",
     ])
     if code != EXIT_OK:
-        raise RuntimeError(f"dbt build falhou (exit {code})")
+        raise RuntimeError(f"dbt build failed (exit {code})")
 
 
 with DAG(
     dag_id="mercadona_catalog_daily",
-    description="RAW no object storage e Silver a partir do catalogo da Mercadona",
+    description="RAW in object storage and Silver from the Mercadona catalog",
     schedule="0 6 * * *",
     start_date=datetime(2026, 8, 24),
-    # BACKFILL E IMPOSSIVEL: a API so serve o preco de hoje. Ligar catchup encheria o
-    # lake de particoes datadas no passado contendo precos de hoje.
+    # BACKFILL IS IMPOSSIBLE: the API only serves today's price. Turning catchup on would
+    # fill the lake with partitions dated in the past holding today's prices.
     catchup=False,
-    # Uma execucao por vez. Duas concorrentes disputariam a mesma particao em disco e
-    # dobrariam a taxa de requisicao contra a fonte.
+    # One run at a time. Two concurrent runs would fight over the same partition on disk
+    # and double the request rate against the API.
     max_active_runs=1,
     default_args={
         "owner": "data-platform",
@@ -285,13 +283,13 @@ with DAG(
             task_id=f"skip_if_landed_{warehouse}",
             python_callable=already_landed,
             op_kwargs={"warehouse": warehouse},
-            # PADRAO E True, e com mais de um armazem isso esta ERRADO: o short-circuit
-            # pula TODO o downstream ignorando a trigger_rule de cada tarefa — inclusive a
-            # do `silver`, que e compartilhado. Resultado observado: bcn1 aterrissava com
-            # sucesso e o `silver` era pulado mesmo assim, porque mad1 curto-circuitou.
+            # The DEFAULT is True, and with more than one warehouse that is WRONG: the
+            # short-circuit skips ALL of the downstream, ignoring each task's trigger_rule —
+            # including that of `silver`, which is shared. Observed result: bcn1 landed
+            # successfully and `silver` was skipped anyway, because mad1 short-circuited.
             #
-            # Com False, o gate pula apenas o SEU ramo, e a cascata normal de skip cuida
-            # do resto. O `silver` volta a decidir pela propria trigger_rule.
+            # With False, the gate skips only ITS OWN branch, and the normal skip cascade
+            # handles the rest. `silver` goes back to deciding by its own trigger_rule.
             ignore_downstream_trigger_rules=False,
         )
 
@@ -314,8 +312,8 @@ with DAG(
             task_id=f"land_{warehouse}",
             python_callable=land,
             op_kwargs={"warehouse": warehouse},
-            # Rede E retentavel, e `land` e idempotente: objeto com o checksum esperado
-            # e pulado, nao reenviado.
+            # The network IS retryable, and `land` is idempotent: an object with the
+            # expected checksum is skipped, not re-uploaded.
             retries=2,
         )
 
@@ -332,35 +330,35 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
-        # A regra PADRAO (all_success) esta ERRADA aqui, e o erro so aparece com mais de um
-        # armazem: o short-circuit de um deles marca seu verify_landing como `skipped`, e
-        # com all_success isso arrasta o `silver` junto — o dado recem-aterrissado do OUTRO
-        # armazem nunca seria transformado.
+        # The DEFAULT rule (all_success) is WRONG here, and the bug only shows up with more
+        # than one warehouse: one warehouse's short-circuit marks its verify_landing as
+        # `skipped`, and with all_success that drags `silver` along — the freshly landed data
+        # of the OTHER warehouse would never be transformed.
         #
-        # none_failed_min_one_success da o comportamento certo nos tres casos:
-        #   todos curto-circuitaram  -> nada novo, silver `skipped` (correto, e barato);
-        #   ao menos um aterrissou   -> silver RODA;
-        #   algum falhou             -> silver nao roda sobre um RAW suspeito.
+        # none_failed_min_one_success gives the right behavior in all three cases:
+        #   all short-circuited     -> nothing new, silver `skipped` (correct, and cheap);
+        #   at least one landed     -> silver RUNS;
+        #   any failed              -> silver does not run on top of suspect RAW.
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 
-    # SEM trigger_rule customizado aqui: o default (all_success) e o certo, ao contrario
-    # do proprio build_silver acima.
-    #   build_silver `skipped` (todos os wh curto-circuitaram, nada novo hoje) -> este
-    #     task tambem fica `skipped`, por cascata. Certo: nada mudou, nao ha por que
-    #     recarregar o Snowflake.
-    #   build_silver passou (ao menos um wh aterrissou) -> dispara.
-    #   build_silver falhou -> nao dispara. Nao empurramos Silver suspeito para o warehouse.
+    # NO custom trigger_rule here: the default (all_success) is the right one, unlike
+    # build_silver above.
+    #   build_silver `skipped` (every wh short-circuited, nothing new today) -> this task
+    #     is `skipped` too, by cascade. Correct: nothing changed, no reason to reload the
+    #     warehouse.
+    #   build_silver passed (at least one wh landed) -> triggers.
+    #   build_silver failed -> does not trigger. We do not push suspect Silver to the warehouse.
     trigger_warehouse_load = TriggerDagRunOperator(
         task_id="trigger_warehouse_load",
         trigger_dag_id="warehouse_load",
-        # Fire-and-forget: uma falha no Snowflake (rede, conta trial expirada — FAQ §9)
-        # fica isolada em warehouse_load e nao deve reprovar o catalogo do dia seguinte.
+        # Fire-and-forget: a warehouse failure (network, database down) stays isolated in
+        # warehouse_load and must not fail the next day's catalog.
         wait_for_completion=False,
         reset_dag_run=True,
     )
 
-    # O Silver le do object storage, entao depende do verify de TODOS os armazens.
+    # Silver reads from object storage, so it depends on the verify of ALL warehouses.
     for task in dag.tasks:
         if task.task_id.startswith("verify_landing_"):
             task >> build_silver

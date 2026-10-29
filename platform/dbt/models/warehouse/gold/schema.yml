@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: dim_date
-    description: "Calendario COMPLETO 2020-2030. Grao: um dia. Sintetico (gerado, nao observado)."
+    description: "COMPLETE calendar 2020-2030. Grain: one day. Synthetic (generated, not observed)."
     columns:
       - name: date_key
         tests: [not_null, unique]
@@ -10,7 +10,7 @@ models:
         tests: [not_null, unique]
 
   - name: dim_warehouse
-    description: "Os 4 armazens e sua AUF. Grao: um armazem."
+    description: "The 4 warehouses and their AUF. Grain: one warehouse."
     columns:
       - name: wh
         tests:
@@ -25,8 +25,8 @@ models:
         tests: [not_null]
       - name: home_municipalities
         description: >
-          Exatamente 1 por armazem. Mais de um significaria que o seed de area de servico
-          perdeu a nocao de municipio-sede.
+          Exactly 1 per warehouse. More than one would mean the service-area seed
+          lost track of the home municipality.
         tests:
           - accepted_values:
               arguments:
@@ -35,29 +35,29 @@ models:
 
   - name: dim_geography
     description: >
-      Grao (province_code, municipality_code, postal_code) — 699 linhas. postal_code
-      SOZINHO nao e chave: 29 CEPs cruzam fronteira de municipio (medido).
+      Grain (province_code, municipality_code, postal_code) — 699 rows. postal_code
+      ALONE is not a key: 29 postal codes cross a municipality boundary (measured).
     columns:
       - name: geography_sk
         tests: [not_null, unique]
       - name: postal_code
-        description: "NAO e unico. Ver assert_geography_postal_code_is_not_a_key."
+        description: "NOT unique. See assert_geography_postal_code_is_not_a_key."
         tests: [not_null]
       - name: municipality_name
-        description: "Grafia do INE 29005. A do Callejero viaja ao lado, com rotulo proprio."
+        description: "INE 29005 spelling. The Callejero's travels alongside, with its own label."
         tests: [not_null]
       - name: municipality_name_callejero
         description: >
-          Grafia do Callejero. Diverge da do INE em 370 de 370 casos ("BRUC (EL)" contra
-          "Bruc, El"). As duas convivem para que a divergencia seja visivel; o que se
-          compara entre fontes e sempre o codigo.
+          Callejero spelling. It diverges from INE's in 370 of 370 cases ("BRUC (EL)" against
+          "Bruc, El"). The two coexist so that the divergence is visible; what is
+          compared across sources is always the code.
         tests: [not_null]
       - name: wh
-        description: "Funcao do par (municipio, CEP): medido que 0 CEPs cruzam armazem."
+        description: "A function of the (municipality, postal code) pair: measured that 0 postal codes cross warehouses."
         tests: [not_null]
 
   - name: dim_category
-    description: "Arvore de 2 niveis, global. Grao: categoria de nivel 2 (151)."
+    description: "2-level tree, global. Grain: level-2 category (151)."
     columns:
       - name: category_sk
         tests: [not_null, unique]
@@ -66,21 +66,21 @@ models:
       - name: category_name
         tests: [not_null]
       - name: parent_category_id
-        description: "Nivel 1 (26). Existe APENAS na arvore: a API responde 404/410 para esses ids."
+        description: "Level 1 (26). It exists ONLY in the tree: the API answers 404/410 for those ids."
         tests: [not_null]
 
   - name: dim_product
     description: >
-      SCD2 derivado da HISTORIA completa, nao acumulado por MERGE — a dimensao pode ser
-      reconstruida do zero a qualquer momento e da sempre o mesmo resultado. Grao
+      SCD2 derived from the complete HISTORY, not accumulated through MERGE — the dimension can be
+      rebuilt from scratch at any time and always gives the same result. Grain
       (source_product_id, valid_from).
     columns:
       - name: product_sk
         tests: [not_null, unique]
       - name: source_product_id
         description: >
-          CHAVE DA FONTE, nao identidade de negocio. O SCD2 modela o ciclo de vida da
-          chave; ver identity_ambiguous.
+          SOURCE KEY, not a business identity. The SCD2 models the key's
+          lifecycle; see identity_ambiguous.
         tests: [not_null]
       - name: valid_from
         tests: [not_null]
@@ -88,17 +88,17 @@ models:
         tests: [not_null]
       - name: identity_ambiguous
         description: >
-          Id novo cujo display_name ja existia na particao anterior. A fonte nao diz se e o
-          mesmo item rechaveado ou um item retirado e outro lancado — a dimensao aponta o
-          caso em vez de decidir por ele.
+          A new id whose display_name already existed in the previous partition. The source does not say whether it is the
+          same item re-keyed or an item withdrawn and another launched — the dimension flags the
+          case instead of deciding it.
         tests: [not_null]
       - name: display_name
         tests: [not_null]
 
   - name: dim_customer
     description: >
-      SCD2 da base de clientes. Cada regeracao e uma versao nova. A PESSOA e sintetica; o
-      ENDERECO e real, do Callejero. Grao (customer_id, valid_from).
+      SCD2 of the customer base. Each regeneration is a new version. The PERSON is synthetic; the
+      ADDRESS is real, from the Callejero. Grain (customer_id, valid_from).
     columns:
       - name: customer_sk
         tests: [not_null, unique]
@@ -109,7 +109,7 @@ models:
       - name: is_current
         tests: [not_null]
       - name: geography_sk
-        description: "Junta com DIM_GEOGRAPHY por hash das chaves naturais, nunca por nome."
+        description: "Joins DIM_GEOGRAPHY by a hash of the natural keys, never by name."
         tests:
           - not_null
           - relationships:
@@ -125,13 +125,13 @@ models:
       - name: age_band
         tests: [not_null]
       - name: address_is_street_level
-        description: "true quando o Callejero declara que a via nao tem numeracao (TINUM='0')."
+        description: "true when the Callejero declares that the street has no numbering (TINUM='0')."
         tests: [not_null]
 
   - name: fact_price_snapshot
     description: >
-      Grao (snapshot_date, wh, source_product_id). SNAPSHOT, nao DAILY: ha lacunas que a
-      fonte nao permite recuperar. A presenca da linha E o sortimento.
+      Grain (snapshot_date, wh, source_product_id). SNAPSHOT, not DAILY: there are gaps the
+      source does not allow recovering. The presence of the row IS the assortment.
     columns:
       - name: date_key
         tests:
@@ -153,9 +153,9 @@ models:
         tests: [not_null]
       - name: currency
         description: >
-          PREMISSA do consumidor, nao dado da fonte: a Mercadona nao declara moeda em campo
-          nenhum. Vem da var `currency` do dbt_project e viaja junto do numero para que
-          ninguem tenha de adivinhar ao olhar um dashboard.
+          A consumer PREMISE, not source data: Mercadona declares a currency in no
+          field. It comes from the dbt_project `currency` var and travels with the number so that
+          nobody has to guess when looking at a dashboard.
         tests:
           - not_null
           - accepted_values:
@@ -163,8 +163,8 @@ models:
                 values: [EUR]
       - name: product_sk
         description: >
-          Aponta a VERSAO vigente no dia do snapshot, nao a corrente — e o que liga um
-          preco antigo ao nome que o produto tinha na epoca.
+          Points to the VERSION in effect on the snapshot day, not the current one — it is what links an
+          old price to the name the product had at the time.
         tests:
           - not_null
           - relationships:
@@ -174,8 +174,8 @@ models:
 
   - name: fact_price_change
     description: >
-      Grao (snapshot_date, previous_snapshot_date, wh, source_product_id). Fato de
-      TRANSICAO. previous_snapshot_date e a particao anterior EXISTENTE, nao "ontem".
+      Grain (snapshot_date, previous_snapshot_date, wh, source_product_id). A
+      TRANSITION fact. previous_snapshot_date is the previous EXISTING partition, not "yesterday".
     columns:
       - name: snapshot_date
         tests: [not_null]
@@ -183,17 +183,17 @@ models:
         tests: [not_null]
       - name: days_between_snapshots
         description: >
-          Sem esta coluna, uma variacao ao longo de 8 dias seria comparada com uma de 1 dia
-          sem ninguem notar. O vao de 08-16 a 08-24 e real e irrecuperavel.
+          Without this column, a change over 8 days would be compared with one over 1 day
+          without anyone noticing. The 08-16 to 08-24 gap is real and unrecoverable.
         tests: [not_null]
       - name: purchasable_unit_price
         description: >
-          O preco de que "a variacao mudou" fala. Igual a unit_price/previous_unit_price
-          em tudo, exceto nas ~10 combinacoes produto x armazem `bunch`, onde unit_price e
-          o teto do seletor de peso (ver fact_price_snapshot.purchasable_unit_price e
-          DECISIONS.md, "Demand calibration against MAPA 2025"). Quem mede oscilacao ou
-          oferta usa purchasable_price_delta/_pct, nunca price_delta/_pct crus. NULO em
-          linhas `saiu` (nao ha preco atual), mesma regra de `unit_price`.
+          The price "the change" refers to. Equal to unit_price/previous_unit_price
+          everywhere, except on the ~10 `bunch` product x warehouse combinations, where unit_price is
+          the weight selector's ceiling (see fact_price_snapshot.purchasable_unit_price and
+          DECISIONS.md, "Demand calibration against MAPA 2025"). Whoever measures price movement or
+          promotions uses purchasable_price_delta/_pct, never the raw price_delta/_pct. NULL on
+          `saiu` rows (there is no current price), the same rule as `unit_price`.
       - name: change_type
         tests:
           - not_null
@@ -203,8 +203,8 @@ models:
 
   - name: fact_ingestion_run
     description: >
-      Grao (source_name, ingestion_date, wh). Distingue "nao houve preco" de "nao houve
-      observacao". 24 linhas; sem elas toda serie temporal interpola em silencio.
+      Grain (source_name, ingestion_date, wh). Distinguishes "there was no price" from "there was no
+      observation". 24 rows; without them every time series silently interpolates.
     columns:
       - name: run_id
         tests: [not_null, unique]
@@ -218,9 +218,9 @@ models:
         tests: [not_null]
       - name: duration_seconds
         description: >
-          CR-005: promovido do Silver, onde ja existia. Zero nulo nas 90 particoes
-          historicas medidas (mercadona + oltp + orders) na revisao que acrescentou esta
-          coluna.
+          CR-005: promoted from Silver, where it already existed. Zero nulls across the 90 historical
+          partitions measured (mercadona + oltp + orders) in the review that added this
+          column.
         tests: [not_null]
       - name: started_at_utc
         tests: [not_null]
@@ -229,13 +229,13 @@ models:
 
   - name: fact_population_municipality
     description: >
-      Grao (province_code, municipality_code, sex_label, year), 1996-2025. FATO, nao
-      dimensao: serie temporal aditiva que serve de denominador. Sem o agregado 'Total'.
+      Grain (province_code, municipality_code, sex_label, year), 1996-2025. A FACT, not a
+      dimension: an additive time series that serves as a denominator. Without the 'Total' aggregate.
     columns:
       - name: sex_label
         description: >
-          O agregado 'Total' da fonte NAO entra: somar os tres rotulos daria o dobro da
-          populacao. Mesma armadilha do age_label, que na Fase 1 inflou a piramide em 2,03x.
+          The source's 'Total' aggregate does NOT come in: summing the three labels would give double the
+          population. The same trap as age_label, which in Phase 1 inflated the pyramid by 2.03x.
         tests:
           - not_null
           - accepted_values:
@@ -248,11 +248,11 @@ models:
 
   - name: fact_order
     description: >
-      ACCUMULATING SNAPSHOT. Grao order_id. Uma linha por pedido que se
-      preenche conforme ele avanca: onze marcos e as duracoes entre eles. E o padrao que
-      so existe porque ha eventos — uma fotografia de estado diria ONDE o pedido esta,
-      nunca QUANTO TEMPO levou para chegar la. NULL num marco significa "nao alcancado",
-      nunca "desconhecido"; is_terminal distingue "nunca vai acontecer" de "ainda nao".
+      ACCUMULATING SNAPSHOT. Grain order_id. One row per order that
+      fills in as it progresses: eleven milestones and the durations between them. It is the pattern that
+      only exists because there are events — a state snapshot would say WHERE the order is,
+      never HOW LONG it took to get there. NULL on a milestone means "not reached",
+      never "unknown"; is_terminal distinguishes "will never happen" from "not yet".
     columns:
       - name: order_id
         tests: [not_null, unique]
@@ -266,9 +266,9 @@ models:
                 values: [mad1, bcn1, svq1, vlc1]
       - name: customer_sk
         description: >
-          Versao de DIM_CUSTOMER vigente na data do pedido. E o primeiro fato do repo a
-          resolver um SCD2 por intervalo — ate aqui as duas dimensoes versionadas nao
-          tinham nenhum fato apontando para uma versao.
+          DIM_CUSTOMER version in effect on the order date. It is the repo's first fact to
+          resolve an SCD2 by interval — until here the two versioned dimensions did not
+          have any fact pointing to a version.
         tests: [not_null]
       - name: geography_sk
         tests: [not_null]
@@ -280,27 +280,27 @@ models:
                 values: [PLACED, CONFIRMED, PAYMENT_FAILED, CANCELLED, PICKING, PICKED,
                          IN_TRANSIT, DELIVERED, DELIVERY_FAILED, RETURNED]
       - name: placed_at
-        description: "O unico marco que todo pedido tem: sem ele nao ha pedido."
+        description: "The only milestone every order has: without it there is no order."
         tests: [not_null]
       - name: gross_amount_placed
         tests: [not_null]
       - name: net_amount
         description: >
-          NULO para os 298 pedidos que morreram antes da separacao. Nulo aqui significa
-          "ninguem apurou", e preenche-lo com o valor colocado foi um defeito real,
-          corrigido no Marco 4.
+          NULL for the 298 orders that died before picking. Null here means
+          "nobody computed it", and filling it with the placed value was a real defect,
+          fixed in Milestone 4.
       - name: currency
-        description: "Premissa do consumidor, nao dado da fonte. Viaja junto do numero."
+        description: "A consumer premise, not source data. It travels with the number."
         tests: [not_null]
       - name: line_count_placed
         tests: [not_null]
 
   - name: fact_order_item
     description: >
-      Grao (order_id, line_no) — 120.693 linhas. Carrega o produto PEDIDO e o CUMPRIDO
-      lado a lado, cada um resolvido para a versao de DIM_PRODUCT vigente em price_as_of.
-      unit_price_paid e MEDIDA DEGENERADA: preco varia por armazem e por dia, entao nunca
-      poderia ser atributo de uma dimensao global de produto.
+      Grain (order_id, line_no) — 120,693 rows. Carries the ORDERED and the FULFILLED product
+      side by side, each resolved to the DIM_PRODUCT version in effect at price_as_of.
+      unit_price_paid is a DEGENERATE MEASURE: price varies by warehouse and by day, so it could
+      never be an attribute of a global product dimension.
     columns:
       - name: order_id
         tests: [not_null]
@@ -313,28 +313,28 @@ models:
               arguments:
                 values: [placed, fulfilled, substituted, removed, not_picked]
       - name: product_sk
-        description: "Versao vigente em price_as_of do produto PEDIDO."
+        description: "Version in effect at price_as_of of the ORDERED product."
         tests: [not_null]
       - name: unit_price_paid
         description: >
-          Preco do produto CUMPRIDO — o do substituto nas 4.670 linhas substituidas.
-          Fecha contra FACT_PRICE_SNAPSHOT em 112.864 de 112.864 linhas (medido).
+          Price of the FULFILLED product — the substitute's on the 4,670 substituted lines.
+          Closes against FACT_PRICE_SNAPSHOT on 112,864 of 112,864 lines (measured).
       - name: line_amount
-        description: "Zero, nunca nulo, para linha removida ou nunca separada."
+        description: "Zero, never null, for a removed or never-picked line."
         tests: [not_null]
       - name: quantity
         tests: [not_null]
 
   - name: fact_order_event
     description: >
-      FATO TRANSACIONAL, grao event_id — 44.456 linhas. Guarda os eventos que nao cabem
-      numa coluna de marco porque ocorrem N vezes por pedido: 4.670 substituicoes e 2.321
-      remocoes de linha. Duas datas, e a diferenca e medida: date_key e o dia do PEDIDO
-      (eixo de particao), event_date_key e o dia em que o evento OCORREU — divergem em
-      4.567 dos 44.456, e 1.156 eventos ocorrem fora da janela de pedidos.
+      TRANSACTIONAL FACT, grain event_id — 44,456 rows. It keeps the events that do not fit
+      in a milestone column because they occur N times per order: 4,670 substitutions and 2,321
+      line removals. Two dates, and the difference is measured: date_key is the ORDER day
+      (partition axis), event_date_key is the day the event OCCURRED — they diverge on
+      4,567 of the 44,456, and 1,156 events occur outside the order window.
     columns:
       - name: event_id
-        description: "sha256(order_id|sequence_no)[:32] — deterministico, nunca uuid4."
+        description: "sha256(order_id|sequence_no)[:32] — deterministic, never uuid4."
         tests: [not_null, unique]
       - name: order_id
         tests: [not_null]
@@ -355,17 +355,17 @@ models:
         tests: [not_null]
       - name: payload
         description: >
-          O corpo do evento, tipado como VARIANT aqui e transportado como VARCHAR pelo
-          STAGE. try_parse_json e nao parse_json: uma linha malformada vira nulo visivel,
-          e o not_null abaixo e o que garante que "visivel" nao dependa de alguem olhar.
+          The event body, typed as VARIANT here and carried as VARCHAR through
+          STAGE. try_parse_json and not parse_json: a malformed row becomes a visible null,
+          and the not_null below is what guarantees that "visible" does not depend on someone looking.
         tests: [not_null]
 
   - name: fact_order_premise
     description: >
-      As 30 premissas DECLARADAS que o gerador consumiu. Metadado promovido a fato pelo
-      mesmo motivo de FACT_INGESTION_RUN: sem ele o mart a jusante nao tem como ser
-      honesto. MART_FULFILLMENT_SLA mede contra o sla_minutes_picking DAQUI, que e o mesmo
-      numero do seed cujo sha256 esta no manifesto de cada particao do RAW.
+      The 30 DECLARED premises the generator consumed. Metadata promoted to a fact for the
+      same reason as FACT_INGESTION_RUN: without it the downstream mart has no way to be
+      honest. MART_FULFILLMENT_SLA measures against the sla_minutes_picking FROM HERE, which is the same
+      number as the seed whose sha256 is in the manifest of every RAW partition.
     columns:
       - name: premise_key
         tests: [not_null, unique]
@@ -373,8 +373,8 @@ models:
         tests: [not_null]
       - name: premise_label
         description: >
-          Sempre 'synthetic'. 'proxy' seria mentira: um proxy e medido em outro lugar e
-          usado aqui; estes numeros nao sao medidos em lugar nenhum.
+          Always 'synthetic'. 'proxy' would be a lie: a proxy is measured elsewhere and
+          used here; these numbers are not measured anywhere.
         tests:
           - not_null
           - accepted_values:
@@ -385,18 +385,18 @@ models:
 
   - name: fact_stock_ledger
     description: >
-      PERIODIC SNAPSHOT — o terceiro padrao de fato do warehouse. FACT_ORDER_EVENT e
-      transacional (uma linha por evento), FACT_ORDER e accumulating (uma linha que se
-      preenche), e este e o estado de uma prateleira num dia. Grao (stock_date, wh,
-      source_product_id), com linha inclusive nos dias sem venda — que e onde a reposicao
-      chega.
+      PERIODIC SNAPSHOT — the warehouse's third fact pattern. FACT_ORDER_EVENT is
+      transactional (one row per event), FACT_ORDER is accumulating (one row that
+      fills in), and this one is the state of a shelf on a day. Grain (stock_date, wh,
+      source_product_id), with a row even on days without sales — which is where replenishment
+      arrives.
 
-      TIPO: synthetic (a politica de cobertura) sobre observed (o consumo, que veio dos
-      pedidos, que vieram do catalogo real). Nenhuma fonte deste projeto mede estoque: o
-      ledger e CALCULADO por um job Spark, e `written_by` = 'spark' viaja ate aqui.
+      TYPE: synthetic (the cover policy) over observed (consumption, which came from the
+      orders, which came from the real catalog). No source in this project measures stock: the
+      ledger is COMPUTED by a Spark job, and `written_by` = 'spark' travels all the way here.
 
-      A JANELA E UM DIA MAIOR que a de FACT_ORDER porque o consumo e datado pela SEPARACAO,
-      e um pedido colocado tarde no ultimo dia e separado no dia seguinte.
+      THE WINDOW IS ONE DAY LONGER than FACT_ORDER's because consumption is dated by PICKING,
+      and an order placed late on the last day is picked the next day.
     columns:
       - name: date_key
         tests: [not_null]
@@ -404,38 +404,38 @@ models:
         tests: [not_null]
       - name: wh
         description: >
-          Chave natural de DIM_WAREHOUSE, sem surrogate: o armazem nao versiona e `wh` e
-          parametro real da API da Mercadona.
+          DIM_WAREHOUSE's natural key, no surrogate: the warehouse does not version and `wh` is a
+          real parameter of the Mercadona API.
         tests: [not_null]
       - name: source_product_id
         tests: [not_null]
       - name: product_sk
         description: >
-          Versao do produto VIGENTE NA DATA do saldo, resolvida por range join como
-          FACT_ORDER_ITEM faz. Apontar para a versao corrente faria o saldo do primeiro dia
-          carregar o atributo do ultimo.
+          Product version IN EFFECT ON THE DATE of the balance, resolved by range join as
+          FACT_ORDER_ITEM does. Pointing to the current version would make the first day's balance
+          carry the last day's attribute.
       - name: opening_balance
         description: >
-          SEMI-ADITIVO: soma entre produtos e armazens, NAO soma entre dias. Somar saldo de
-          segunda com o de terca conta o mesmo estoque duas vezes.
+          SEMI-ADDITIVE: sums across products and warehouses, does NOT sum across days. Summing Monday's
+          balance with Tuesday's counts the same stock twice.
         tests: [not_null]
       - name: closing_balance
-        description: "SEMI-ADITIVO, mesma ressalva de opening_balance. Nunca negativo."
+        description: "SEMI-ADDITIVE, same caveat as opening_balance. Never negative."
         tests: [not_null]
       - name: units_short
         description: >
-          RUPTURA, aditiva. O que a demanda pediu e a prateleira nao tinha. Nunca virou saldo
-          negativo — a invariante e verificada no Silver, antes de chegar aqui.
+          STOCKOUT, additive. What demand asked for and the shelf did not have. It never became a negative
+          balance — the invariant is checked in Silver, before reaching here.
         tests: [not_null]
       - name: days_of_cover
         description: >
-          NAO ADITIVA em eixo nenhum: e uma razao. A media dela sobre produtos e uma media de
-          razoes, e nao a razao das somas — MART_STOCK_HEALTH publica as duas leituras lado a
-          lado exatamente porque a diferenca confunde.
+          NOT ADDITIVE on any axis: it is a ratio. Its average over products is an average of
+          ratios, not the ratio of the sums — MART_STOCK_HEALTH publishes both readings side by
+          side precisely because the difference confuses.
       - name: written_by
         description: >
-          PROVENIENCIA ate o Gold. Sempre 'spark': e como uma consulta ao warehouse descobre
-          que existe um escritor fora do Python no lakehouse.
+          PROVENANCE all the way to Gold. Always 'spark': it is how a query to the warehouse finds out
+          that there is a writer outside Python in the lakehouse.
         tests:
           - not_null
           - accepted_values: {arguments: {values: [spark]}}

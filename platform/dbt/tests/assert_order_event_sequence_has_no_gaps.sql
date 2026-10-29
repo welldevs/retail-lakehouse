@@ -1,13 +1,13 @@
--- sequence_no tem de ser 1..N contiguo dentro de cada pedido.
+-- sequence_no must be a contiguous 1..N within each order.
 --
--- POR QUE ISTO E O TESTE MAIS BASICO DE UM LOG. Um evento perdido entre a Source e o parquet
--- nao muda nenhuma contagem que o olho perceba: o pedido continua tendo eventos, o fold
--- continua produzindo um estado, e o valor continua plausivel. O que muda e o SIGNIFICADO —
--- um pedido que perdeu `order_line_removed` passa a declarar receita que nao aconteceu.
+-- WHY THIS IS THE MOST BASIC TEST OF A LOG. An event lost between the Source and the parquet
+-- changes no count the eye would notice: the order still has events, the fold
+-- still produces a state, and the value still looks plausible. What changes is the MEANING —
+-- an order that lost `order_line_removed` starts declaring revenue that did not happen.
 --
--- Conferir min=1, max=N e count=N pega as tres formas do defeito de uma vez: buraco no meio,
--- comeco perdido e duplicata. Comparar so `count(*) = max(sequence_no)` deixaria passar um
--- log em que uma duplicata compensa um buraco.
+-- Checking min=1, max=N and count=N catches all three forms of the defect at once: a gap in the middle,
+-- a lost start and a duplicate. Comparing only `count(*) = max(sequence_no)` would let through a
+-- log in which a duplicate offsets a gap.
 select
     order_id,
     count(*)                as eventos,

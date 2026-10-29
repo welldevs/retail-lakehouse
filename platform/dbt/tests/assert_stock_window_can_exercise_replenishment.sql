@@ -1,25 +1,25 @@
--- A JANELA TEM DE SER MAIOR QUE A COBERTURA INICIAL, SENAO O LEDGER NAO MEDE NADA.
+-- THE WINDOW MUST BE LONGER THAN THE OPENING COVER, OTHERWISE THE LEDGER MEASURES NOTHING.
 --
--- O ACHADO QUE ISTO CONGELA, e ele e contra o proprio autor. A primeira execucao do job de
--- estoque, em 2026-09-01, deu RUPTURA ZERO em 86.520 linhas. Nao era operacao boa:
--- `opening_days_of_demand` valia 7 e a janela observada tinha 5 dias, entao o estoque
--- INICIAL cobria o periodo inteiro. Ruptura zero era aritmetica, nao medicao.
+-- THE FINDING THIS FREEZES, and it is against the author himself. The first run of the stock
+-- job, on 2026-09-01, gave ZERO STOCKOUT over 86,520 rows. It was not a good operation:
+-- `opening_days_of_demand` was 7 and the observed window had 5 days, so the OPENING
+-- stock covered the whole period. Zero stockout was arithmetic, not measurement.
 --
--- E EXATAMENTE A MESMA FAMILIA do `orders_breaching_sla` estruturalmente zero que o Marco B
--- tinha acabado de corrigir no dominio de pedidos — recriada no dominio de estoque duas
--- horas depois, por quem tinha escrito a correcao. Um limiar que nenhuma cesta alcanca e um
--- estoque que nenhuma janela consome sao a mesma coisa: um numero que so pode dar um
--- resultado. Por isso a regra virou teste em vez de virar paragrafo.
+-- IT IS EXACTLY THE SAME FAMILY as the structurally zero `orders_breaching_sla` that Milestone B
+-- had just fixed in the orders domain — recreated in the stock domain two
+-- hours later, by the person who had written the fix. A threshold no basket reaches and a
+-- stock no window consumes are the same thing: a number that can only give one
+-- result. That is why the rule became a test instead of a paragraph.
 --
--- O QUE ELE NAO EXIGE, e a distincao importa: ele nao exige que HAJA ruptura. Uma operacao
--- que nao rompe e um estado legitimo do mundo, e exigir ruptura seria pedir que o modelo
--- produzisse o numero que agrada. O que ele exige e que a ruptura seja POSSIVEL — que o
--- resultado dependa da demanda e nao da aritmetica das premissas.
+-- WHAT IT DOES NOT REQUIRE, and the distinction matters: it does not require that there BE a stockout. An operation
+-- that never runs out is a legitimate state of the world, and requiring stockouts would be asking the model to
+-- produce the number that pleases. What it requires is that a stockout be POSSIBLE — that the
+-- result depend on demand and not on the premises' arithmetic.
 --
--- O QUE FICA DECLARADO E NAO E TESTADO: com cobertura de 7 dias, ponto em 3 e prazo de 2, um
--- ciclo de reposicao fecha na janela de 10 dias e o segundo nao. Cair a cobertura ate caber
--- dois ciclos seria escolher uma premissa pelo que ela faz com o grafico, e o teto da janela
--- e externo — 2026-09-01 e ate onde o catalogo observado alcanca.
+-- WHAT STAYS DECLARED AND IS NOT TESTED: with 7 days of cover, reorder point at 3 and lead time of 2, one
+-- replenishment cycle closes in the 10-day window and the second does not. Lowering the cover until
+-- two cycles fit would be choosing a premise for what it does to the chart, and the window's ceiling
+-- is external — 2026-09-01 is as far as the observed catalog reaches.
 with cobertura as (
 
     select cast(value as double) as opening_days_of_demand

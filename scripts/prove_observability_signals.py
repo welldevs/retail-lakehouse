@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Prova, contra o sistema real, se os seis sinais de observabilidade ja existem.
+"""Proves, against the real system, whether the six observability signals already exist.
 
-POR QUE ISTO EXISTE ANTES DE INSTRUMENTAR QUALQUER COISA.
+WHY THIS EXISTS BEFORE INSTRUMENTING ANYTHING.
 
-`BACKLOG.md`'s Observability row e explicito: antes de montar
-`application -> OpenTelemetry -> Collector -> backend`, e preciso PROVAR que
-os seis sinais exigidos ja nao existem por outro caminho — latencia, erro, throughput,
-falhas, processamento, estado do pipeline. Assumir a ausencia por padrao e a mesma doenca de
-qualquer outra afirmacao nao medida deste projeto.
+`BACKLOG.md`'s Observability row is explicit: before building
+`application -> OpenTelemetry -> Collector -> backend`, one must PROVE that
+the six required signals do not already exist through another path — latency, error,
+throughput, failures, processing, pipeline state. Assuming absence by default is the same
+disease as any other unmeasured claim in this project.
 
-Este script nao instrumenta nada. Ele LE o sistema real (particoes locais em `data/`, o SQL
-da plataforma, os arquivos de DAG) e devolve um veredito SIM/PARCIAL/NAO por sinal, com o
-detalhe que sustenta o veredito. E seguro por construcao: so leitura, nenhuma escrita.
+This script instruments nothing. It READS the real system (local partitions in `data/`, the
+platform SQL, the DAG files) and returns a YES/PARTIAL/NO verdict per signal, with the
+detail that supports the verdict. It is safe by construction: read-only, no writes.
 
     make observability-prove-signals
-    make observability-prove-signals --warehouse   (opcional: confere o Snowflake real)
+    make observability-prove-signals --warehouse   (optional: checks the real Snowflake)
 
-Reexecutar depois de uma mudanca (ex.: CR-005) e o proprio mecanismo de prova: um sinal que
-estava NAO e devolve SIM demonstra o fechamento, sem numero inventado.
+Re-running after a change (e.g. CR-005) is the proof mechanism itself: a signal that
+was NO and returns YES demonstrates the closure, with no invented number.
 """
 
 from __future__ import annotations
@@ -42,239 +42,239 @@ DATA_SOURCES = {
 RUNLOG_THRESHOLD_SECONDS = 10.0
 
 CLI_PY = os.path.join(REPO, "platform", "src", "retail_platform", "cli.py")
-SNOWFLAKE_EXPORT_PY = os.path.join(REPO, "platform", "src", "retail_platform", "snowflake_export.py")
+SNOWFLAKE_EXPORT_PY = os.path.join(REPO, "platform", "src", "retail_platform", "warehouse_cut.py")
 FACT_INGESTION_RUN_SQL = os.path.join(
     REPO, "platform", "dbt", "models", "warehouse", "gold", "fact_ingestion_run.sql"
 )
 SILVER_MODELS_DIR = os.path.join(REPO, "platform", "dbt", "models", "silver")
 DAGS_DIR = os.path.join(REPO, "orchestration", "airflow", "dags")
 
-resultados: list[tuple[str, str, str]] = []  # (sinal, veredito SIM/PARCIAL/NAO, detalhe)
+results: list[tuple[str, str, str]] = []  # (signal, verdict YES/PARTIAL/NO, detail)
 
 
-def registra(sinal: str, veredito: str, detalhe: str) -> None:
-    resultados.append((sinal, veredito, detalhe))
-    print(f"  [{veredito:8}] {sinal}")
-    for linha in detalhe.split("\n"):
-        print(f"             {linha}")
+def record(signal: str, verdict: str, detail: str) -> None:
+    results.append((signal, verdict, detail))
+    print(f"  [{verdict:8}] {signal}")
+    for line in detail.split("\n"):
+        print(f"             {line}")
 
 
-def le(caminho: str) -> str:
-    with open(caminho, encoding="utf-8") as f:
+def read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
-# ---- Q1: PROCESSING — log de progresso proporcional a duracao medida ------------------
+# ---- Q1: PROCESSING — progress log proportional to the measured duration ---------------
 
 def q1_processing() -> None:
     print()
-    print("Q1. PROCESSING — cada Source grava progresso proporcional a sua duracao medida?")
-    faltando: list[str] = []
-    achou_algum = False
-    for nome, rel in DATA_SOURCES.items():
-        raiz = os.path.join(REPO, rel)
-        manifests = sorted(glob.glob(os.path.join(raiz, "**", "_manifest.json"), recursive=True))
+    print("Q1. PROCESSING — does each Source write progress proportional to its measured duration?")
+    missing: list[str] = []
+    found_any = False
+    for name, rel in DATA_SOURCES.items():
+        root = os.path.join(REPO, rel)
+        manifests = sorted(glob.glob(os.path.join(root, "**", "_manifest.json"), recursive=True))
         if not manifests:
-            print(f"    {nome}: nenhuma particao local em {rel}/ — nao medido nesta maquina")
+            print(f"    {name}: no local partition under {rel}/ — not measured on this machine")
             continue
-        achou_algum = True
-        duracoes = []
-        sem_log = []
-        for caminho in manifests:
+        found_any = True
+        durations = []
+        without_log = []
+        for path in manifests:
             try:
-                manifesto = json.loads(le(caminho))
+                manifest = json.loads(read(path))
             except (OSError, json.JSONDecodeError):
                 continue
-            duracao = manifesto.get("duration_seconds")
-            if duracao is None:
+            duration = manifest.get("duration_seconds")
+            if duration is None:
                 continue
-            duracoes.append(duracao)
-            tem_run_log = os.path.exists(os.path.join(os.path.dirname(caminho), "_run.log"))
-            if duracao > RUNLOG_THRESHOLD_SECONDS and not tem_run_log:
-                sem_log.append((caminho, duracao))
-        if not duracoes:
+            durations.append(duration)
+            has_run_log = os.path.exists(os.path.join(os.path.dirname(path), "_run.log"))
+            if duration > RUNLOG_THRESHOLD_SECONDS and not has_run_log:
+                without_log.append((path, duration))
+        if not durations:
             continue
-        marca = "sim" if not sem_log else "NAO"
-        print(f"    {nome}: {len(manifests)} particao(oes), duracao {min(duracoes):.1f}-"
-              f"{max(duracoes):.1f}s, _run.log quando > {RUNLOG_THRESHOLD_SECONDS:.0f}s: {marca}")
-        if sem_log:
-            faltando.append(nome)
-            for caminho, duracao in sem_log[:2]:
-                rel_caminho = os.path.relpath(caminho, REPO)
-                print(f"        falta _run.log: {rel_caminho} ({duracao:.1f}s)")
+        mark = "yes" if not without_log else "NO"
+        print(f"    {name}: {len(manifests)} partition(s), duration {min(durations):.1f}-"
+              f"{max(durations):.1f}s, _run.log when > {RUNLOG_THRESHOLD_SECONDS:.0f}s: {mark}")
+        if without_log:
+            missing.append(name)
+            for path, duration in without_log[:2]:
+                rel_path = os.path.relpath(path, REPO)
+                print(f"        missing _run.log: {rel_path} ({duration:.1f}s)")
 
-    if not achou_algum:
-        registra("processing", "NAO MEDIDO",
-                  "nenhuma particao local em data/ — rode make daily / oltp-refresh-all / "
-                  "orders-refresh-all / ine-refresh / callejero-refresh antes de medir")
+    if not found_any:
+        record("processing", "NOT MEASURED",
+               "no local partition in data/ — run make daily / oltp-refresh-all / "
+               "orders-refresh-all / ine-refresh / callejero-refresh before measuring")
         return
-    if faltando:
-        registra("processing", "NAO",
-                  "source(s) com duracao acima do limiar e sem log de progresso: "
-                  + ", ".join(faltando))
+    if missing:
+        record("processing", "NO",
+               "source(s) with duration above the threshold and no progress log: "
+               + ", ".join(missing))
         return
-    registra("processing", "SIM",
-              "cada Source com duracao medida acima do limiar tem _run.log; as demais "
-              "rodam rapido o bastante para o mecanismo nao se justificar (ver detalhe acima)")
+    record("processing", "YES",
+           "every Source with a measured duration above the threshold has _run.log; the others "
+           "run fast enough for the mechanism not to be justified (see detail above)")
 
 
-# ---- Q2: THROUGHPUT / FAILURES — ja chegam ao Gold? ------------------------------------
+# ---- Q2: THROUGHPUT / FAILURES — do they already reach Gold? ---------------------------
 
 def q2_throughput_failures() -> None:
     print()
-    print("Q2. THROUGHPUT / FAILURES — declared_rows/failure_count/anomaly_count/complete "
-          "chegam ao Gold?")
-    sql = le(FACT_INGESTION_RUN_SQL)
-    campos = ["declared_rows", "failure_count", "anomaly_count", "complete"]
-    faltando = [c for c in campos if c not in sql]
-    if faltando:
-        registra("throughput/failures (Gold)", "NAO",
-                  f"fact_ingestion_run.sql nao seleciona: {', '.join(faltando)}")
+    print("Q2. THROUGHPUT / FAILURES — do declared_rows/failure_count/anomaly_count/complete "
+          "reach Gold?")
+    sql = read(FACT_INGESTION_RUN_SQL)
+    fields = ["declared_rows", "failure_count", "anomaly_count", "complete"]
+    missing = [c for c in fields if c not in sql]
+    if missing:
+        record("throughput/failures (Gold)", "NO",
+               f"fact_ingestion_run.sql does not select: {', '.join(missing)}")
         return
-    registra("throughput/failures (Gold)", "SIM",
-              f"fact_ingestion_run.sql seleciona {', '.join(campos)}")
+    record("throughput/failures (Gold)", "YES",
+           f"fact_ingestion_run.sql selects {', '.join(fields)}")
 
 
-# ---- Q3: LATENCY — duration_seconds/started_at_utc/finished_at_utc chegam ao Gold? -----
+# ---- Q3: LATENCY — do duration_seconds/started_at_utc/finished_at_utc reach Gold? ------
 
 def q3_latency() -> None:
     print()
-    print("Q3. LATENCY — duration_seconds/started_at_utc/finished_at_utc chegam ao Gold?")
-    sql_gold = le(FACT_INGESTION_RUN_SQL)
-    sql_export = le(SNOWFLAKE_EXPORT_PY)
-    campos = ["duration_seconds", "started_at_utc", "finished_at_utc"]
+    print("Q3. LATENCY — do duration_seconds/started_at_utc/finished_at_utc reach Gold?")
+    sql_gold = read(FACT_INGESTION_RUN_SQL)
+    sql_export = read(SNOWFLAKE_EXPORT_PY)
+    fields = ["duration_seconds", "started_at_utc", "finished_at_utc"]
 
-    no_gold = [c for c in campos if c not in sql_gold]
-    no_stage = [c for c in campos if c not in sql_export]
+    not_in_gold = [c for c in fields if c not in sql_gold]
+    not_in_stage = [c for c in fields if c not in sql_export]
 
-    # Onde o dado JA existe hoje, uma camada abaixo (Silver) — para deixar claro que o
-    # gap e de PROJECAO, nao de dado ausente.
-    modelos_silver = {
+    # Where the data ALREADY exists today, one layer below (Silver) — to make clear that the
+    # gap is one of PROJECTION, not of missing data.
+    silver_models = {
         "raw_manifest.sql": os.path.join(SILVER_MODELS_DIR, "mercadona", "raw_manifest.sql"),
         "silver_oltp_manifest.sql": os.path.join(
             SILVER_MODELS_DIR, "simulated_oltp", "silver_oltp_manifest.sql"),
         "silver_orders_manifest.sql": os.path.join(
             SILVER_MODELS_DIR, "simulated_orders", "silver_orders_manifest.sql"),
     }
-    tem_no_silver = []
-    for nome, caminho in modelos_silver.items():
-        if os.path.exists(caminho) and all(c in le(caminho) for c in campos):
-            tem_no_silver.append(nome)
+    in_silver = []
+    for name, path in silver_models.items():
+        if os.path.exists(path) and all(c in read(path) for c in fields):
+            in_silver.append(name)
 
-    if not no_gold:
-        registra("latency (Gold)", "SIM",
-                  f"fact_ingestion_run.sql ja seleciona {', '.join(campos)}")
+    if not not_in_gold:
+        record("latency (Gold)", "YES",
+               f"fact_ingestion_run.sql already selects {', '.join(fields)}")
         return
 
-    detalhe = (f"ausentes em fact_ingestion_run.sql: {', '.join(no_gold)}; "
-               f"ausentes na projecao STG_INGESTION_RUN (snowflake_export.py): "
-               f"{', '.join(no_stage) or '(nenhum — ja union-ados, so falta o Gold)'}")
-    if len(tem_no_silver) == len(modelos_silver):
-        detalhe += (f"\nOS TRES CAMPOS JA EXISTEM no Silver ({', '.join(tem_no_silver)}) — "
-                    "o gap e de projecao SQL, nao de dado ausente.")
-    registra("latency (Gold)", "NAO", detalhe)
+    detail = (f"missing in fact_ingestion_run.sql: {', '.join(not_in_gold)}; "
+              f"missing in the STG_INGESTION_RUN projection (warehouse_cut.py): "
+              f"{', '.join(not_in_stage) or '(none — already unioned, only Gold is missing)'}")
+    if len(in_silver) == len(silver_models):
+        detail += (f"\nALL THREE FIELDS ALREADY EXIST in Silver ({', '.join(in_silver)}) — "
+                   "the gap is SQL projection, not missing data.")
+    record("latency (Gold)", "NO", detail)
 
 
-# ---- Q4: FAILURES — cobertura de FACT_INGESTION_RUN por source ------------------------
+# ---- Q4: FAILURES — FACT_INGESTION_RUN coverage per source -----------------------------
 
 def q4_coverage() -> None:
     print()
-    print("Q4. COBERTURA — quantas das 5 Sources entram em FACT_INGESTION_RUN?")
-    sql_export = le(SNOWFLAKE_EXPORT_PY)
-    modelos_esperados = {
+    print("Q4. COVERAGE — how many of the 5 Sources make it into FACT_INGESTION_RUN?")
+    sql_export = read(SNOWFLAKE_EXPORT_PY)
+    expected_models = {
         "mercadona_catalog_api": "raw_manifest",
         "simulated_oltp": "silver_oltp_manifest",
         "simulated_orders": "silver_orders_manifest",
     }
-    cobertas = [nome for nome, modelo in modelos_esperados.items() if f"from {modelo}" in sql_export]
-    faltando = ["ine_population_api", "ine_callejero"]
-    # PARCIAL, nao SIM: 3/5 e o estado real, mesmo que a ausencia das outras duas seja uma
-    # decisao aceita (CR-005c) e nao um defeito. Rotular como SIM esconderia a fracao.
-    registra("coverage (Gold)",
-              "SIM" if len(cobertas) == 5 else "PARCIAL",
-              f"cobertas ({len(cobertas)}/5, com eixo wh): {', '.join(cobertas)}\n"
-              f"fora (sem eixo wh, sem modelo de manifesto): {', '.join(faltando)}")
+    covered = [name for name, model in expected_models.items() if f"from {model}" in sql_export]
+    missing = ["ine_population_api", "ine_callejero"]
+    # PARTIAL, not YES: 3/5 is the real state, even though the absence of the other two is an
+    # accepted decision (CR-005c) and not a defect. Labeling it YES would hide the fraction.
+    record("coverage (Gold)",
+           "YES" if len(covered) == 5 else "PARTIAL",
+           f"covered ({len(covered)}/5, with wh axis): {', '.join(covered)}\n"
+           f"left out (no wh axis, no manifest model): {', '.join(missing)}")
 
 
-# ---- Q5: ERROR — traceback preservado nas excecoes nao mapeadas de cli.py -------------
+# ---- Q5: ERROR — traceback preserved in cli.py's unmapped exceptions -------------------
 
 def q5_error() -> None:
     print()
-    print("Q5. ERROR — as excecoes nao mapeadas de cli.py preservam traceback?")
-    codigo = le(CLI_PY)
-    sites = [m.start() for m in re.finditer(r"except Exception as exc:", codigo)]
-    tem_logging_import = bool(re.search(r"^import logging\s*$", codigo, re.MULTILINE))
-    com_traceback = 0
+    print("Q5. ERROR — do cli.py's unmapped exceptions preserve the traceback?")
+    code = read(CLI_PY)
+    sites = [m.start() for m in re.finditer(r"except Exception as exc:", code)]
+    has_logging_import = bool(re.search(r"^import logging\s*$", code, re.MULTILINE))
+    with_traceback = 0
     for pos in sites:
-        # Uma janela pequena apos o "except Exception as exc:" ate a proxima linha de
-        # controle — e onde `logging.exception(...)` teria que aparecer para este site.
-        trecho = codigo[pos:pos + 300]
-        if "logging.exception(" in trecho:
-            com_traceback += 1
+        # A small window after "except Exception as exc:" up to the next control
+        # line — that is where `logging.exception(...)` would have to appear for this site.
+        snippet = code[pos:pos + 300]
+        if "logging.exception(" in snippet:
+            with_traceback += 1
 
     if not sites:
-        registra("error (cli.py)", "NAO MEDIDO", "nenhum `except Exception` encontrado")
+        record("error (cli.py)", "NOT MEASURED", "no `except Exception` found")
         return
-    if com_traceback == len(sites) and tem_logging_import:
-        registra("error (cli.py)", "SIM",
-                  f"{com_traceback}/{len(sites)} sites de excecao nao mapeada chamam "
-                  "logging.exception(...) — traceback completo preservado")
+    if with_traceback == len(sites) and has_logging_import:
+        record("error (cli.py)", "YES",
+               f"{with_traceback}/{len(sites)} unmapped-exception sites call "
+               "logging.exception(...) — full traceback preserved")
         return
-    registra("error (cli.py)", "NAO",
-              f"{len(sites)} sites de `except Exception as exc:` (linhas aproximadas via "
-              f"offset de texto), {com_traceback} com logging.exception(...) — os demais "
-              "imprimem so str(exc), sem traceback")
+    record("error (cli.py)", "NO",
+           f"{len(sites)} `except Exception as exc:` sites (approximate lines via "
+           f"text offset), {with_traceback} with logging.exception(...) — the rest "
+           "print only str(exc), with no traceback")
 
 
-# ---- Q6: PIPELINE STATE — falha de task do Airflow deixa registro estruturado? --------
+# ---- Q6: PIPELINE STATE — does an Airflow task failure leave a structured record? ------
 
 def q6_pipeline_state() -> None:
     print()
-    print("Q6. PIPELINE STATE — uma falha de task do Airflow deixa registro alem do "
+    print("Q6. PIPELINE STATE — does an Airflow task failure leave a record beyond the "
           "scheduler?")
     if not os.path.isdir(DAGS_DIR):
-        registra("pipeline state (Airflow)", "NAO MEDIDO", f"{DAGS_DIR} nao encontrado")
+        record("pipeline state (Airflow)", "NOT MEASURED", f"{DAGS_DIR} not found")
         return
     dags = sorted(glob.glob(os.path.join(DAGS_DIR, "*.py")))
-    com_callback = []
-    sem_callback = []
-    for caminho in dags:
-        nome = os.path.basename(caminho)
-        if "on_failure_callback" in le(caminho):
-            com_callback.append(nome)
+    with_callback = []
+    without_callback = []
+    for path in dags:
+        name = os.path.basename(path)
+        if "on_failure_callback" in read(path):
+            with_callback.append(name)
         else:
-            sem_callback.append(nome)
+            without_callback.append(name)
 
     if not dags:
-        registra("pipeline state (Airflow)", "NAO MEDIDO", "nenhuma DAG encontrada")
+        record("pipeline state (Airflow)", "NOT MEASURED", "no DAG found")
         return
-    if not sem_callback:
-        registra("pipeline state (Airflow)", "SIM",
-                  f"{len(com_callback)}/{len(dags)} DAGs com on_failure_callback")
+    if not without_callback:
+        record("pipeline state (Airflow)", "YES",
+               f"{len(with_callback)}/{len(dags)} DAGs with on_failure_callback")
         return
-    registra("pipeline state (Airflow)", "NAO",
-              f"0/{len(dags)} DAGs com on_failure_callback/sla= — uma falha de task fica so "
-              "no estado interno do scheduler")
+    record("pipeline state (Airflow)", "NO",
+           f"0/{len(dags)} DAGs with on_failure_callback/sla= — a task failure stays only "
+           "in the scheduler's internal state")
 
 
-# ---- --warehouse: confere o Snowflake real, opcional -----------------------------------
+# ---- --warehouse: checks the real Snowflake, optional ----------------------------------
 
-def q_warehouse_opcional(connection_name: str, database: str) -> None:
+def q_warehouse_optional(connection_name: str, database: str) -> None:
     print()
-    print("EXTRA (--warehouse). O FACT_INGESTION_RUN do Snowflake REAL ja tem as 3 colunas "
-          "de latencia?")
+    print("EXTRA (--warehouse). Does the REAL Snowflake FACT_INGESTION_RUN already have the 3 "
+          "latency columns?")
     try:
         from retail_platform.snowflake_load import connect
     except ImportError as exc:
-        registra("latency (Snowflake ao vivo)", "NAO VERIFICADO",
-                  f"nao foi possivel importar retail_platform: {exc}")
+        record("latency (live Snowflake)", "NOT VERIFIED",
+               f"could not import retail_platform: {exc}")
         return
     try:
         connection = connect(connection_name)
-    except Exception as exc:  # config ausente, conta expirada, etc. — nao e o foco deste script
-        registra("latency (Snowflake ao vivo)", "NAO VERIFICADO",
-                  f"sem conexao ({type(exc).__name__}: {str(exc)[:200]}) — rode com uma "
-                  "conta Snowflake configurada para conferir ao vivo")
+    except Exception as exc:  # missing config, expired account, etc. — not this script's focus
+        record("latency (live Snowflake)", "NOT VERIFIED",
+               f"no connection ({type(exc).__name__}: {str(exc)[:200]}) — run with a "
+               "configured Snowflake account to check live")
         return
     try:
         cursor = connection.cursor()
@@ -282,11 +282,11 @@ def q_warehouse_opcional(connection_name: str, database: str) -> None:
             f"select column_name from {database}.information_schema.columns "
             "where table_schema = 'GOLD' and table_name = 'FACT_INGESTION_RUN'"
         )
-        colunas = {row[0].lower() for row in cursor.fetchall()}
-        campos = {"duration_seconds", "started_at_utc", "finished_at_utc"}
-        faltando = campos - colunas
-        registra("latency (Snowflake ao vivo)", "NAO" if faltando else "SIM",
-                  f"colunas ausentes no destino real: {', '.join(sorted(faltando)) or '(nenhuma)'}")
+        columns = {row[0].lower() for row in cursor.fetchall()}
+        fields = {"duration_seconds", "started_at_utc", "finished_at_utc"}
+        missing = fields - columns
+        record("latency (live Snowflake)", "NO" if missing else "YES",
+               f"columns missing at the real target: {', '.join(sorted(missing)) or '(none)'}")
     finally:
         connection.close()
 
@@ -294,12 +294,12 @@ def q_warehouse_opcional(connection_name: str, database: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--warehouse", action="store_true",
-                         help="tambem confere o FACT_INGESTION_RUN do Snowflake real")
+                        help="also checks the real Snowflake FACT_INGESTION_RUN")
     parser.add_argument("--connection", default=os.environ.get("SNOWFLAKE_CONNECTION", "spark_retail"))
     parser.add_argument("--database", default=os.environ.get("SNOWFLAKE_DATABASE", "RETAIL"))
     args = parser.parse_args()
 
-    print("prova dos seis sinais de observabilidade exigidos (BACKLOG.md, Observability)")
+    print("proof of the six required observability signals (BACKLOG.md, Observability)")
     print("=" * 88)
 
     q1_processing()
@@ -309,19 +309,19 @@ def main() -> int:
     q5_error()
     q6_pipeline_state()
     if args.warehouse:
-        q_warehouse_opcional(args.connection, args.database)
+        q_warehouse_optional(args.connection, args.database)
 
     print()
     print("=" * 88)
-    print("resumo:")
-    for sinal, veredito, _ in resultados:
-        print(f"  [{veredito:8}] {sinal}")
+    print("summary:")
+    for signal, verdict, _ in results:
+        print(f"  [{verdict:8}] {signal}")
 
-    nao = [s for s, v, _ in resultados if v == "NAO"]
-    if nao:
+    absent = [s for s, v, _ in results if v == "NO"]
+    if absent:
         print()
-        print(f"{len(nao)} sinal(is) genuinamente ausente(s): {', '.join(nao)}")
-        print("isso e o que autoriza fechar exatamente esses — nada mais.")
+        print(f"{len(absent)} signal(s) genuinely absent: {', '.join(absent)}")
+        print("that is what authorizes closing exactly those — nothing more.")
     return 0
 
 

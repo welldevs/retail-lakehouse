@@ -1,95 +1,99 @@
-"""Constroi o perfil de demanda que a Source de Orders consome.
+"""Builds the demand profile that the Orders Source consumes.
 
-POR QUE ESTE MODULO EXISTE, E POR QUE ELE FICA NA PLATAFORMA
-------------------------------------------------------------
-Mesmo motivo de `orders_reference.py`: a Source e FROZEN (`dependencies = []`, verificado
-por AST) e nao fala com o Lakehouse. A PLATAFORMA le oito seeds versionados, resolve o
-mapeamento contra o catalogo observado e escreve UM JSON plano; a Source o le com `json` da
-stdlib e sorteia. Nenhum lado importa o codigo do outro, e nenhuma regra de calibracao mora
-dentro do gerador.
+WHY THIS MODULE EXISTS, AND WHY IT LIVES IN THE PLATFORM
+--------------------------------------------------------
+Same reason as `orders_reference.py`: the Source is FROZEN (`dependencies = []`, checked by
+AST) and does not talk to the Lakehouse. The PLATFORM reads eight versioned seeds, resolves
+the mapping against the observed catalog and writes ONE flat JSON; the Source reads it with
+the stdlib `json` and draws from it. Neither side imports the other's code, and no
+calibration rule lives inside the generator.
 
-O QUE ESTE MODULO CALIBRA, E O QUE ELE DELIBERADAMENTE NAO CALIBRA
--------------------------------------------------------------------
-Calibra: a PROBABILIDADE DE UM GRUPO DE DEMANDA aparecer numa linha da cesta.
-Nao calibra: quantos pedidos por dia, quantas linhas por cesta, quantas unidades por linha,
-nem que preco tem o produto. O MAPA mede consumo domestico do residente — nao mede pedido
-de loja online, nem cesta, nem cadencia de compra. Essas continuam premissas `synthetic` em
-`order_premises_seed.csv`, e a fronteira e o ponto mais importante desta fase.
+WHAT THIS MODULE CALIBRATES, AND WHAT IT DELIBERATELY DOES NOT
+--------------------------------------------------------------
+It calibrates: the PROBABILITY OF A DEMAND GROUP appearing on a basket line.
+It does not calibrate: how many orders per day, how many lines per basket, how many units
+per line, nor what price the product has. MAPA measures the resident's household
+consumption — it does not measure online-store orders, baskets, or purchase cadence. Those
+remain `synthetic` premises in `order_premises_seed.csv`, and that boundary is the most
+important point of this phase.
 
-A CADEIA, COM PRECO FORA DO CAMINHO DA DEMANDA
------------------------------------------------
-    grupo de demanda   P(g)  <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal
+THE CHAIN, WITH PRICE OUT OF THE DEMAND PATH
+--------------------------------------------
+    demand group       P(g)  <- MAPA VOLUME target (kg/L), tilted by channel
            |
-    produto no grupo         <- UNIFORME (nenhuma fonte mede giro por SKU)
+    product in group         <- UNIFORM (no source measures turnover per SKU)
            |
-    quantidade               <- w(k)=1/2^(k-1), inalterado
+    quantity                 <- w(k)=1/2^(k-1), unchanged
            |
-    preco unitario           <- OBSERVADO (purchasable_unit_price da Mercadona)
+    unit price               <- OBSERVED (Mercadona's purchasable_unit_price)
            |
-    valor do pedido          <- consequencia, nunca objetivo
+    order value              <- consequence, never a goal
 
-Preco nao aparece em nenhuma seta que aponta para demanda. Uma categoria cara pode ter
-volume baixo e receita alta, e isso passa a ser RESULTADO do modelo em vez de defeito: no
-MAPA, mariscos sao 0,81% do volume e 2,88% do valor.
+Price appears on no arrow pointing at demand. An expensive category can have low volume
+and high revenue, and that becomes a RESULT of the model instead of a defect: in MAPA,
+shellfish is 0.81% of volume and 2.88% of value.
 
-A PONTE ENTRE ALVO EM KG E SORTEIO DE LINHAS
----------------------------------------------
-O alvo do MAPA e share de KG; o sorteio escolhe LINHAS. A ponte e o tamanho medio OBSERVADO
-da embalagem, jamais o preco:
+THE BRIDGE BETWEEN A KG TARGET AND DRAWING LINES
+------------------------------------------------
+The MAPA target is a KG share; the draw picks LINES. The bridge is the OBSERVED mean
+package size, never the price:
 
-    P(grupo g)  proporcional a   alvo_volume_g / kg_medio_por_linha_g
+    P(group g)  proportional to   volume_target_g / mean_kg_per_line_g
 
-Um grupo cujo produto tipico pesa 1 kg precisa de menos linhas para entregar o mesmo volume
-que um grupo cujo produto tipico pesa 100 g. Sem essa divisao, "14% do volume em fruta"
-viraria "14% das linhas em fruta", que e outra coisa.
+A group whose typical product weighs 1 kg needs fewer lines to deliver the same volume
+than a group whose typical product weighs 100 g. Without that division, "14% of volume in
+fruit" would become "14% of lines in fruit", which is something else.
 
-QUANDO O ALVO DE VOLUME NAO PODE SER USADO
--------------------------------------------
-`net_content_kg_l` e nulo quando `reference_format` nao e massa nem volume (`ud`, `dz`).
-Um grupo cuja cobertura fica abaixo de `volume_coverage_min` NAO recebe alvo de volume: o
-kg medio seria calculado sobre uma amostra pequena e enviesada do proprio grupo. Ele recebe
-share de LINHAS igual ao share de volume do MAPA — fallback declarado, reportado a parte no
-reality check, e e o que impede HUEVOS (vendido em 'ud') de entrar por um peso por ovo que
-nenhuma fonte deste repo mede.
+WHEN THE VOLUME TARGET CANNOT BE USED
+-------------------------------------
+`net_content_kg_l` is null when `reference_format` is neither mass nor volume (`ud`, `dz`).
+A group whose coverage falls below `volume_coverage_min` gets NO volume target: the mean kg
+would be computed over a small, biased sample of the group itself. It gets a LINE share
+equal to the MAPA volume share — a declared fallback, reported separately in the reality
+check, and it is what keeps HUEVOS (sold in 'ud') from coming in through a per-egg weight
+that no source in this repo measures.
 
-A CAMADA DE COORTE (mapa_2025_v2)
-----------------------------------
-Tudo acima descreve o AGREGADO, e continua valendo palavra por palavra. O que a v2
-acrescenta e um andar acima dele: P(grupo) vira P(grupo | coorte do cliente).
+THE COHORT LAYER (mapa_2025_v2)
+-------------------------------
+Everything above describes the AGGREGATE, and still holds word for word. What v2 adds is
+one floor above it: P(group) becomes P(group | customer cohort).
 
-A coorte tem duas dimensoes, e sao as duas UNICAS em que um atributo observado do cliente
-coincide com um corte publicado do informe:
+The cohort has two dimensions, and they are the ONLY two in which an observed customer
+attribute coincides with a published cut of the report:
 
-    age_band   <- birth_year do cliente, que veio da distribuicao etaria do INE 31304
-    region     <- province_code do cliente, que veio do Callejero, mapeado para a CCAA
+    age_band   <- the customer's birth_year, which came from the INE 31304 age distribution
+    region     <- the customer's province_code, which came from the Callejero, mapped to CCAA
 
-Ciclo de vida do lar (9 tipos) e nivel socioeconomico (5 niveis) sao os cortes mais ricos do
-informe e ficaram de fora: o cliente nao tem composicao familiar nem renda, e atribui-las
-seria inventar o atributo — a mesma proibicao que a Fase 1 aplicou a densidade por tramo.
+Household life cycle (9 types) and socioeconomic level (5 levels) are the report's richest
+cuts and were left out: the customer has no household composition nor income, and
+assigning them would be inventing the attribute — the same prohibition Phase 1 applied to
+density per street section.
 
-O indice de afinidade sai do MESMO grafico para numerador e denominador, entao e
-adimensional e nao depende de a nossa piramide etaria ter a forma da espanhola:
+The affinity index takes numerator and denominator from the SAME chart, so it is
+dimensionless and does not depend on our age pyramid having the shape of Spain's:
 
-    idx(g, faixa)  =  volume_share(g, faixa) / populacao_share(faixa)
-    peso_bruto(g, coorte)  =  w_g  x  idx_idade(g, faixa)  x  idx_regiao(g, ccaa)
+    idx(g, band)  =  volume_share(g, band) / population_share(band)
+    raw_weight(g, cohort)  =  w_g  x  idx_age(g, band)  x  idx_region(g, ccaa)
 
-A MULTIPLICACAO ASSUME INDEPENDENCIA entre idade e regiao. O informe publica as duas
-marginais e nunca o cruzamento; e premissa declarada em `cohort_independence`, nao medicao.
+THE MULTIPLICATION ASSUMES INDEPENDENCE between age and region. The report publishes both
+marginals and never the cross-tab; it is a premise declared in `cohort_independence`, not a
+measurement.
 
-POR QUE O INDICE NAO PODE SER LIDO COMO SHARE. O `% Poblacion` do MAPA e a populacao que
-VIVE EM LARES cujo responsavel de compra esta naquela faixa — um lar com comprador de 40
-anos carrega os filhos para dentro de `35_49`. O nosso cliente e um individuo. Por isso o
-numero so entra como indice RELATIVO entre faixas, e nunca como share absoluto.
+WHY THE INDEX CANNOT BE READ AS A SHARE. MAPA's `% Poblacion` is the population that LIVES
+IN HOUSEHOLDS whose main shopper is in that band — a household with a 40-year-old shopper
+carries the children into `35_49`. Our customer is an individual. That is why the number
+only enters as a RELATIVE index between bands, and never as an absolute share.
 
-NEUTRALIDADE AGREGADA POR IPF
-------------------------------
-Sem correcao, o mix agregado sairia do alvo da v1 so porque a nossa distribuicao de coortes
-nao e a do MAPA — a calibracao da fase anterior seria desfeita de lado, sem que nada
-falhasse. `ipf_calibrate` ajusta um fator por grupo ate que a media dos pesos por coorte,
-ponderada pela distribuicao real de coortes ENTRE OS PEDIDOS, reproduza `w_g` exatamente.
+AGGREGATE NEUTRALITY THROUGH IPF
+--------------------------------
+Without correction, the aggregate mix would drift from the v1 target just because our
+cohort distribution is not MAPA's — the previous phase's calibration would be undone
+sideways, with nothing failing. `ipf_calibrate` adjusts one factor per group until the mean
+of the per-cohort weights, weighted by the real cohort distribution AMONG ORDERS,
+reproduces `w_g` exactly.
 
-Isso da a esta camada um criterio limpo: O AGREGADO NAO SE MOVE. O que muda e a
-condicional, e e la que se deve procurar o efeito.
+That gives this layer a clean criterion: THE AGGREGATE DOES NOT MOVE. What changes is the
+conditional, and that is where the effect should be looked for.
 """
 
 from __future__ import annotations
@@ -121,10 +125,10 @@ SEEDS = (
     CCAA_MAP_SEED,
 )
 
-# As quatro faixas do informe, verbatim, com o LIMITE SUPERIOR de cada uma. O limite
-# inferior da primeira nao mora aqui: quem pode pedir e `min_buyer_age`, premissa do
-# dominio de pedidos, e misturar as duas coisas faria a definicao da faixa depender de uma
-# regra de elegibilidade que nada tem a ver com consumo.
+# The report's four bands, verbatim, with the UPPER BOUND of each. The lower bound of the
+# first does not live here: who may order is `min_buyer_age`, a premise of the orders
+# domain, and mixing the two would make the band definition depend on an eligibility rule
+# that has nothing to do with consumption.
 AGE_BANDS = (
     ("LT35", 34),
     ("35_49", 49),
@@ -132,18 +136,18 @@ AGE_BANDS = (
     ("GE65", None),
 )
 
-# Codigo da media nacional em `mapa_2025_region_seed`. NAO e uma regiao: e o denominador
-# contra o qual as demais sao lidas, e precisa ser distinguido para nunca entrar como uma
-# comunidade servivel.
+# Code of the national average in `mapa_2025_region_seed`. It is NOT a region: it is the
+# denominator the others are read against, and it must be told apart so it never enters as
+# a servable community.
 NATIONAL_CODE = "00"
 
-# Tolerancia dos dois checksums de leitura do informe. Larga o bastante para os rotulos
-# de uma casa decimal (quatro faixas de 31,3 somam 100,1 sem que nada esteja errado),
-# estreita o bastante para pegar um digito trocado, que e o defeito real.
+# Tolerance of the two read checksums on the report. Wide enough for labels with one
+# decimal place (four bands of 31.3 add up to 100.1 with nothing wrong), narrow enough to
+# catch a swapped digit, which is the real defect.
 COHORT_SUM_TOLERANCE = Decimal("0.5")
 
-# Destinos que existem no mapeamento mas NAO sao categorias do MAPA. Sao rotulos de escopo,
-# e o codigo precisa distingui-los de uma chave de benchmark para nao procurar share deles.
+# Targets that exist in the mapping but are NOT MAPA categories. They are scope labels, and
+# the code must tell them apart from a benchmark key so it does not look up a share for them.
 NO_FOOD = "NO_FOOD"
 SIN_BENCHMARK = "SIN_BENCHMARK"
 SCOPE_LABELS = (NO_FOOD, SIN_BENCHMARK)
@@ -171,35 +175,35 @@ REQUIRED_PARAMS = (
 
 
 class DemandProfileError(Exception):
-    """Seed ausente, mapeamento incompleto ou peso incoerente."""
+    """Missing seed, incomplete mapping or inconsistent weight."""
 
 
 # --------------------------------------------------------------------------------
-# 1. Leitura dos seeds
+# 1. Reading the seeds
 # --------------------------------------------------------------------------------
 
 def _read_seed(seeds_dir: str, name: str) -> list[dict]:
     path = os.path.join(seeds_dir, name)
     if not os.path.exists(path):
-        raise DemandProfileError(f"seed ausente: {path}")
+        raise DemandProfileError(f"missing seed: {path}")
     with open(path, encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     if not rows:
-        raise DemandProfileError(f"{path}: seed vazio")
+        raise DemandProfileError(f"{path}: empty seed")
     return rows
 
 
 def seeds_sha256(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """sha256 de cada seed, para o manifesto.
+    """sha256 of each seed, for the manifest.
 
-    Sem isto, "qual perfil gerou este dia" seria respondido pela versao — que alguem pode
-    esquecer de incrementar ao editar um peso. O hash nao esquece.
+    Without this, "which profile generated this day" would be answered by the version —
+    which someone may forget to bump when editing a weight. The hash does not forget.
     """
     digests = {}
     for name in SEEDS:
         path = os.path.join(seeds_dir, name)
         if not os.path.exists(path):
-            raise DemandProfileError(f"seed ausente: {path}")
+            raise DemandProfileError(f"missing seed: {path}")
         with open(path, "rb") as handle:
             digests[name] = hashlib.sha256(handle.read()).hexdigest()
     return digests
@@ -211,17 +215,17 @@ def _decimal_or_none(value: str):
         return None
     try:
         return Decimal(value)
-    except Exception as exc:  # noqa: BLE001 - o valor veio de um CSV editado a mao
-        raise DemandProfileError(f"valor nao numerico no seed: {value!r}") from exc
+    except Exception as exc:  # noqa: BLE001 - the value came from a hand-edited CSV
+        raise DemandProfileError(f"non-numeric value in seed: {value!r}") from exc
 
 
 def load_benchmark(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """mapa_key -> linha do benchmark, com os numeros ja tipados."""
+    """mapa_key -> benchmark row, with the numbers already typed."""
     benchmark = {}
     for row in _read_seed(seeds_dir, BENCHMARK_SEED):
         key = row["mapa_key"].strip()
         if key in benchmark:
-            raise DemandProfileError(f"mapa_key repetida no benchmark: {key}")
+            raise DemandProfileError(f"repeated mapa_key in the benchmark: {key}")
         benchmark[key] = {
             "mapa_key": key,
             "mapa_label": row["mapa_label"].strip(),
@@ -238,17 +242,17 @@ def load_benchmark(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     for key in SCOPE_LABELS:
         if key not in benchmark:
             raise DemandProfileError(
-                f"o benchmark precisa declarar a linha de escopo {key}, mesmo sem numeros: "
-                f"e nela que fica escrito por que aquele destino existe"
+                f"the benchmark must declare the scope row {key}, even without numbers: "
+                f"that is where it is written why that target exists"
             )
-    faltando = [
+    missing = [
         row["mapa_key"] for row in benchmark.values()
         if row["use_as_weight"] and row["volume_share_pct"] is None
     ]
-    if faltando:
+    if missing:
         raise DemandProfileError(
-            f"chaves marcadas use_as_weight sem volume_share_pct: {faltando}. "
-            f"Um peso sem alvo viraria zero em silencio."
+            f"keys marked use_as_weight without volume_share_pct: {missing}. "
+            f"A weight without a target would silently become zero."
         )
     return benchmark
 
@@ -268,177 +272,177 @@ def load_mapping(seeds_dir: str = DEFAULT_SEEDS_DIR) -> list[dict]:
 def load_params(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
     params = {row["param_key"].strip(): row["value"].strip()
               for row in _read_seed(seeds_dir, PROFILE_SEED)}
-    faltando = [k for k in REQUIRED_PARAMS if k not in params]
-    if faltando:
-        raise DemandProfileError(f"demand_profile_seed sem o(s) parametro(s) {faltando}")
+    missing = [k for k in REQUIRED_PARAMS if k not in params]
+    if missing:
+        raise DemandProfileError(f"demand_profile_seed is missing parameter(s) {missing}")
     return params
 
 
 def load_seasonality(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """month -> fator sobre a TAXA DE PEDIDOS, nao sobre o mix.
+    """month -> factor on the ORDER RATE, not on the mix.
 
-    A distincao importa e vem da evidencia: o informe publica gasto mensal do TOTAL da
-    alimentacao (cinco meses, em prosa) e NAO publica perfil mensal por categoria — os
-    graficos mensais sao imagens. Um fator global sobre o mix se normalizaria e nao faria
-    nada; sobre a taxa de pedidos ele faz exatamente o que a evidencia sustenta.
+    The distinction matters and comes from the evidence: the report publishes monthly
+    spend for TOTAL food (five months, in prose) and does NOT publish a monthly profile per
+    category — the monthly charts are images. A global factor on the mix would normalize
+    away and do nothing; on the order rate it does exactly what the evidence supports.
     """
-    fatores = {}
+    factors = {}
     for row in _read_seed(seeds_dir, SEASONALITY_SEED):
-        mes = int(row["month"])
-        if not 1 <= mes <= 12:
-            raise DemandProfileError(f"mes fora de 1..12 no perfil sazonal: {mes}")
-        if mes in fatores:
-            raise DemandProfileError(f"mes repetido no perfil sazonal: {mes}")
-        fator = _decimal_or_none(row["factor"])
-        if fator is None or fator <= 0:
-            raise DemandProfileError(f"fator sazonal ausente ou nao positivo no mes {mes}")
-        fatores[mes] = fator
-    if len(fatores) != 12:
+        month = int(row["month"])
+        if not 1 <= month <= 12:
+            raise DemandProfileError(f"month outside 1..12 in the seasonal profile: {month}")
+        if month in factors:
+            raise DemandProfileError(f"repeated month in the seasonal profile: {month}")
+        factor = _decimal_or_none(row["factor"])
+        if factor is None or factor <= 0:
+            raise DemandProfileError(f"seasonal factor missing or non-positive in month {month}")
+        factors[month] = factor
+    if len(factors) != 12:
         raise DemandProfileError(
-            f"o perfil sazonal precisa dos 12 meses; vieram {sorted(fatores)}"
+            f"the seasonal profile needs all 12 months; got {sorted(factors)}"
         )
-    return fatores
+    return factors
 
 
 def _load_cohort(seeds_dir: str, name: str, key_field: str) -> dict:
-    """Le um seed de coorte e devolve mapa_key -> {chave da coorte: (populacao, volume)}.
+    """Reads a cohort seed and returns mapa_key -> {cohort key: (population, volume)}.
 
-    A CONFERENCIA MORA AQUI, e nao so no teste: um numero mal lido de um grafico do informe
-    e a unica forma realista de erro nesta tabela, e ele quebra a soma. Deixar a leitura
-    passar e conferir tres camadas adiante seria descobrir o defeito depois de ele ja ter
-    calibrado a demanda.
+    THE CHECK LIVES HERE, and not only in the test: a number misread from one of the
+    report's charts is the only realistic kind of error in this table, and it breaks the
+    sum. Letting the read pass and checking three layers later would mean finding the
+    defect after it had already calibrated demand.
     """
-    saida: dict[str, dict] = {}
+    out: dict[str, dict] = {}
     for row in _read_seed(seeds_dir, name):
-        chave = row["mapa_key"].strip()
-        coorte = row[key_field].strip()
-        populacao = _decimal_or_none(row["population_share_pct"])
+        key = row["mapa_key"].strip()
+        cohort = row[key_field].strip()
+        population = _decimal_or_none(row["population_share_pct"])
         volume = _decimal_or_none(row["volume_share_pct"])
-        if populacao is None or volume is None:
+        if population is None or volume is None:
             raise DemandProfileError(
-                f"{name}: {chave}/{coorte} sem share de populacao ou de volume. Uma celula "
-                f"vazia viraria indice zero, que e uma afirmacao forte e nao declarada."
+                f"{name}: {key}/{cohort} without a population or volume share. An empty "
+                f"cell would become index zero, which is a strong and undeclared claim."
             )
-        if populacao <= 0:
+        if population <= 0:
             raise DemandProfileError(
-                f"{name}: {chave}/{coorte} tem populacao {populacao}; o indice dividiria por zero"
+                f"{name}: {key}/{cohort} has population {population}; the index would divide by zero"
             )
-        destino = saida.setdefault(chave, {})
-        if coorte in destino:
-            raise DemandProfileError(f"{name}: linha repetida em {chave}/{coorte}")
-        destino[coorte] = (populacao, volume)
-    return saida
+        target = out.setdefault(key, {})
+        if cohort in target:
+            raise DemandProfileError(f"{name}: repeated row in {key}/{cohort}")
+        target[cohort] = (population, volume)
+    return out
 
 
 def load_cohort_age(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """mapa_key -> faixa etaria -> (share de populacao, share de volume).
+    """mapa_key -> age band -> (population share, volume share).
 
-    Reprova se um grupo nao trouxer as QUATRO faixas, ou se os shares de volume nao
-    fecharem 100. As quatro faixas sao uma particao do universo: se elas nao somam, ou
-    falta uma linha ou um digito foi lido errado — e as duas coisas produziriam um indice
-    plausivel que nunca falharia sozinho.
+    Fails if a group does not bring all FOUR bands, or if the volume shares do not add up
+    to 100. The four bands are a partition of the universe: if they do not add up, either a
+    row is missing or a digit was misread — and both would produce a plausible index that
+    would never fail on its own.
     """
-    bandas = tuple(nome for nome, _ in AGE_BANDS)
-    dados = _load_cohort(seeds_dir, COHORT_AGE_SEED, "age_band")
-    for chave, linhas in sorted(dados.items()):
-        faltando = [b for b in bandas if b not in linhas]
-        if faltando:
+    bands = tuple(name for name, _ in AGE_BANDS)
+    data = _load_cohort(seeds_dir, COHORT_AGE_SEED, "age_band")
+    for key, by_band in sorted(data.items()):
+        missing = [b for b in bands if b not in by_band]
+        if missing:
             raise DemandProfileError(
-                f"{COHORT_AGE_SEED}: {chave} sem a(s) faixa(s) {faltando}. As quatro faixas "
-                f"sao uma particao; faltar uma nao e cobertura parcial, e um total errado."
+                f"{COHORT_AGE_SEED}: {key} is missing band(s) {missing}. The four bands "
+                f"are a partition; missing one is not partial coverage, it is a wrong total."
             )
-        for rotulo, indice in (("volume", 1), ("populacao", 0)):
-            soma = sum(linhas[b][indice] for b in bandas)
-            if abs(soma - Decimal("100")) > COHORT_SUM_TOLERANCE:
+        for label, index in (("volume", 1), ("population", 0)):
+            weight_sum = sum(by_band[b][index] for b in bands)
+            if abs(weight_sum - Decimal("100")) > COHORT_SUM_TOLERANCE:
                 raise DemandProfileError(
-                    f"{COHORT_AGE_SEED}: {chave} soma {soma} de {rotulo} entre as quatro "
-                    f"faixas, e nao 100. Leitura errada de um rotulo do informe."
+                    f"{COHORT_AGE_SEED}: {key} sums {weight_sum} of {label} across the four "
+                    f"bands, not 100. A label of the report was misread."
                 )
-    return dados
+    return data
 
 
 def load_cohort_region(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """mapa_key -> ccaa_code -> (share de populacao, share de volume).
+    """mapa_key -> ccaa_code -> (population share, volume share).
 
-    SEM CHECKSUM DE SOMA, e a diferenca em relacao a idade e real: este seed traz so as
-    comunidades servidas, que sao 4 das 17, entao nao ha particao para fechar. O que da
-    para conferir e que o share de POPULACAO de cada comunidade e o mesmo em todo grupo —
-    ele e o universo, nao uma medicao da categoria — e isso `assert_cohort_seeds` faz.
+    NO SUM CHECKSUM, and the difference from age is real: this seed only carries the served
+    communities, which are 4 of 17, so there is no partition to close. What can be checked
+    is that each community's POPULATION share is the same in every group — it is the
+    universe, not a measurement of the category — and `assert_cohort_seeds` does that.
     """
     return _load_cohort(seeds_dir, COHORT_REGION_SEED, "ccaa_code")
 
 
 def load_region_reference(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """ccaa_code -> {label, consumo per capita, gasto per capita}. Inclui a media nacional."""
-    regioes = {}
+    """ccaa_code -> {label, per-capita consumption, per-capita spend}. Includes the national average."""
+    regions = {}
     for row in _read_seed(seeds_dir, REGION_SEED):
         code = row["ccaa_code"].strip()
-        if code in regioes:
-            raise DemandProfileError(f"{REGION_SEED}: ccaa_code repetido {code}")
+        if code in regions:
+            raise DemandProfileError(f"{REGION_SEED}: repeated ccaa_code {code}")
         per_capita = _decimal_or_none(row["per_capita_kg_l"])
         if per_capita is None or per_capita <= 0:
             raise DemandProfileError(
-                f"{REGION_SEED}: {code} sem consumo per capita positivo"
+                f"{REGION_SEED}: {code} without a positive per-capita consumption"
             )
-        regioes[code] = {
+        regions[code] = {
             "ccaa_code": code,
             "ccaa_label": row["ccaa_label"].strip(),
             "per_capita_kg_l": per_capita,
             "per_capita_eur": _decimal_or_none(row["per_capita_eur"]),
             "informe_section": row["informe_section"].strip(),
         }
-    if NATIONAL_CODE not in regioes:
+    if NATIONAL_CODE not in regions:
         raise DemandProfileError(
-            f"{REGION_SEED} sem a linha {NATIONAL_CODE} (media nacional). Ela nao e uma "
-            f"regiao, e o denominador contra o qual as demais sao lidas."
+            f"{REGION_SEED} lacks the {NATIONAL_CODE} row (national average). It is not a "
+            f"region, it is the denominator the others are read against."
         )
-    return regioes
+    return regions
 
 
 def load_province_ccaa(seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
-    """province_code -> ccaa_code. Sem destino padrao, pelo mesmo motivo do mapeamento."""
-    mapa = {}
+    """province_code -> ccaa_code. No default target, for the same reason as the mapping."""
+    province_map = {}
     for row in _read_seed(seeds_dir, CCAA_MAP_SEED):
-        provincia = row["province_code"].strip()
-        if provincia in mapa:
-            raise DemandProfileError(f"{CCAA_MAP_SEED}: provincia repetida {provincia}")
-        mapa[provincia] = row["ccaa_code"].strip()
-    return mapa
+        province = row["province_code"].strip()
+        if province in province_map:
+            raise DemandProfileError(f"{CCAA_MAP_SEED}: repeated province {province}")
+        province_map[province] = row["ccaa_code"].strip()
+    return province_map
 
 
 def ccaa_of(province_ccaa: dict, province_code: str) -> str:
-    """A comunidade de uma provincia, ou erro.
+    """The community of a province, or an error.
 
-    SEM DEFAULT. Uma provincia nova que caisse numa comunidade padrao herdaria em silencio
-    o perfil de consumo de outra regiao — e o mix resultante seria plausivel, que e
-    exatamente o tipo de defeito que este repo trata como o mais caro.
+    NO DEFAULT. A new province falling into a default community would silently inherit
+    another region's consumption profile — and the resulting mix would be plausible, which
+    is exactly the kind of defect this repo treats as the most expensive.
     """
-    codigo = (province_code or "").strip()
-    if codigo not in province_ccaa:
+    code = (province_code or "").strip()
+    if code not in province_ccaa:
         raise DemandProfileError(
-            f"provincia {codigo!r} nao esta em {CCAA_MAP_SEED}. Acrescente a linha — nao "
-            f"existe comunidade padrao."
+            f"province {code!r} is not in {CCAA_MAP_SEED}. Add the row — there is no "
+            f"default community."
         )
-    return province_ccaa[codigo]
+    return province_ccaa[code]
 
 
 def age_band_of(age: int) -> str:
-    """A faixa do informe para uma idade EM ANOS COMPLETOS no dia do pedido."""
-    for nome, teto in AGE_BANDS:
-        if teto is None or age <= teto:
-            return nome
-    raise DemandProfileError(f"idade {age!r} nao cai em nenhuma faixa")
+    """The report band for an age IN COMPLETED YEARS on the order day."""
+    for name, ceiling in AGE_BANDS:
+        if ceiling is None or age <= ceiling:
+            return name
+    raise DemandProfileError(f"age {age!r} falls in no band")
 
 
 # --------------------------------------------------------------------------------
-# 2. Resolucao do mapeamento
+# 2. Mapping resolution
 # --------------------------------------------------------------------------------
 
 def _specificity(rule: dict) -> int:
-    """Quanto mais especifica a regra, maior o numero. l3 pesa mais que l2, que pesa mais que l1.
+    """The more specific the rule, the larger the number. l3 weighs more than l2, which weighs more than l1.
 
-    Pesos 4/2/1 e nao 3/2/1: com potencias de dois nenhuma combinacao de niveis empata com
-    outra, entao "mais especifica" nunca fica ambiguo por soma.
+    Weights 4/2/1 and not 3/2/1: with powers of two no combination of levels ties with
+    another, so "more specific" is never ambiguous by sum.
     """
     return ((1 if rule["l1"] != WILDCARD else 0)
             + (2 if rule["l2"] != WILDCARD else 0)
@@ -452,93 +456,94 @@ def _matches(rule: dict, l1: str, l2: str, l3: str) -> bool:
 
 
 def resolve(mapping: list[dict], l1: str, l2: str, l3: str) -> str:
-    """A chave do grupo de demanda para uma trinca do catalogo.
+    """The demand group key for a catalog triple.
 
-    SEM DEFAULT. Trinca sem regra levanta erro em vez de cair num balde silencioso: um
-    default aqui seria uma premissa de demanda nao declarada, que e exatamente o que os
-    seeds existem para impedir. E duas regras igualmente especificas tambem levantam —
-    escolher a primeira faria o resultado depender da ordem do arquivo.
+    NO DEFAULT. A triple without a rule raises instead of falling into a silent bucket: a
+    default here would be an undeclared demand premise, which is exactly what the seeds
+    exist to prevent. Two equally specific rules also raise — picking the first would make
+    the result depend on the file order.
     """
-    candidatas = [r for r in mapping if _matches(r, l1, l2, l3)]
-    if not candidatas:
+    candidates = [r for r in mapping if _matches(r, l1, l2, l3)]
+    if not candidates:
         raise DemandProfileError(
-            f"nenhuma regra de mapeamento casa com ({l1!r}, {l2!r}, {l3!r}). "
-            f"Acrescente a regra em {MAPPING_SEED} — nao existe destino padrao."
+            f"no mapping rule matches ({l1!r}, {l2!r}, {l3!r}). "
+            f"Add the rule to {MAPPING_SEED} — there is no default target."
         )
-    melhor = max(_specificity(r) for r in candidatas)
-    vencedoras = [r for r in candidatas if _specificity(r) == melhor]
-    if len(vencedoras) > 1:
+    best = max(_specificity(r) for r in candidates)
+    winners = [r for r in candidates if _specificity(r) == best]
+    if len(winners) > 1:
         raise DemandProfileError(
-            f"({l1!r}, {l2!r}, {l3!r}) casa com {len(vencedoras)} regras igualmente "
-            f"especificas: {[r['mapa_key'] for r in vencedoras]}"
+            f"({l1!r}, {l2!r}, {l3!r}) matches {len(winners)} equally specific "
+            f"rules: {[r['mapa_key'] for r in winners]}"
         )
-    return vencedoras[0]["mapa_key"]
+    return winners[0]["mapa_key"]
 
 
 def unused_rules(mapping: list[dict], triples: list[tuple]) -> list[dict]:
-    """Regras que nao vencem nenhuma trinca do catalogo.
+    """Rules that win no catalog triple.
 
-    Regra morta nao quebra nada hoje, e por isso e perigosa: ela documenta uma decisao que
-    nao esta em vigor. Quem ler o seed vai acreditar nela.
+    A dead rule breaks nothing today, and that is why it is dangerous: it documents a
+    decision that is not in force. Whoever reads the seed will believe it.
     """
-    vencedoras = set()
+    winners = set()
     for l1, l2, l3 in triples:
-        candidatas = [(i, r) for i, r in enumerate(mapping) if _matches(r, l1, l2, l3)]
-        if not candidatas:
+        candidates = [(i, r) for i, r in enumerate(mapping) if _matches(r, l1, l2, l3)]
+        if not candidates:
             continue
-        melhor = max(_specificity(r) for _, r in candidatas)
-        for i, r in candidatas:
-            if _specificity(r) == melhor:
-                vencedoras.add(i)
-    return [r for i, r in enumerate(mapping) if i not in vencedoras]
+        best = max(_specificity(r) for _, r in candidates)
+        for i, r in candidates:
+            if _specificity(r) == best:
+                winners.add(i)
+    return [r for i, r in enumerate(mapping) if i not in winners]
 
 
 # --------------------------------------------------------------------------------
-# 3. Inclinacao de canal
+# 3. Channel tilt
 # --------------------------------------------------------------------------------
 
 def channel_tilt(row: dict, params: dict) -> tuple[Decimal, str]:
-    """Fator que leva o share do CONSUMO DOMESTICO para o share do E-COMMERCE.
+    """Factor that takes the HOUSEHOLD CONSUMPTION share to the E-COMMERCE share.
 
-    O MAPA mede o consumo do residente, nao o pedido online. Tratar um pelo outro seria o
-    erro que a fase inteira existe para evitar. O informe da tres granularidades de canal, e
-    esta funcao usa a melhor disponivel para cada grupo, sempre declarando qual foi:
+    MAPA measures the resident's consumption, not the online order. Treating one as the
+    other would be the error this whole phase exists to avoid. The report gives three
+    channel granularities, and this function uses the best available for each group, always
+    declaring which one:
 
-      fine   share de e-commerce publicado para este grupo         (18 blocos do informe)
-      group  publicado para o grupo pai (as carnes herdam de CARNES)
-      coarse so o corte fresca 1,1% / resto 2,8% sobre o total 2,2%
+      fine   e-commerce share published for this group          (18 blocks of the report)
+      group  published for the parent group (meats inherit from CARNES)
+      coarse only the fresh 1.1% / rest 2.8% cut over the 2.2% total
 
-    Nao ha quarta opcao: inventar um percentual para quem nao tem linha de canal seria
-    exatamente o que o §3 do plano proibiu.
+    There is no fourth option: inventing a percentage for a group with no channel row would
+    be exactly what §3 of the plan forbade.
     """
-    referencia = Decimal(params["channel_reference_pct"])
+    reference = Decimal(params["channel_reference_pct"])
     basis = row.get("channel_basis") or "coarse"
     ecom = row.get("ecommerce_volume_pct")
     if basis in ("fine", "group") and ecom is not None:
-        return ecom / referencia, basis
-    fresco = Decimal(params["channel_fresh_pct"])
-    resto = Decimal(params["channel_rest_pct"])
-    base = fresco if row.get("scope") == "fresh" else resto
-    return base / referencia, "coarse"
+        return ecom / reference, basis
+    fresh = Decimal(params["channel_fresh_pct"])
+    rest = Decimal(params["channel_rest_pct"])
+    base = fresh if row.get("scope") == "fresh" else rest
+    return base / reference, "coarse"
 
 
 # --------------------------------------------------------------------------------
-# 3b. Propensao por coorte
+# 3b. Propensity by cohort
 # --------------------------------------------------------------------------------
 
 ONE = Decimal("1")
 
 
 def affinity_index(population_share: Decimal, volume_share: Decimal) -> Decimal:
-    """Quanto uma coorte compra de um grupo, relativo ao que o seu tamanho faria esperar.
+    """How much a cohort buys of a group, relative to what its size would lead one to expect.
 
-    Numerador e denominador saem do MESMO grafico do informe, entao o quociente e
-    adimensional: ele nao depende de a nossa piramide etaria ter a forma da espanhola, e
-    por isso sobrevive a diferenca de denominador descrita no cabecalho do modulo.
+    Numerator and denominator come from the SAME chart of the report, so the quotient is
+    dimensionless: it does not depend on our age pyramid having the shape of Spain's, and
+    so it survives the denominator difference described in the module header.
 
-    1,0 significa "compra na proporcao do seu tamanho". Nao ha teto nem piso artificiais:
-    HUEVOS tem 0,74 nos menores de 35 e AGUA tem 0,31 em Madrid, e as duas coisas sao
-    medidas, nao ruido a ser aparado.
+    1.0 means "buys in proportion to its size". There is no artificial ceiling or floor:
+    HUEVOS is 0.74 among under-35s and AGUA is 0.31 in Madrid, and both are measurements,
+    not noise to be trimmed.
     """
     return volume_share / population_share
 
@@ -548,44 +553,46 @@ def region_frequency(
     served: list[str],
     weights: dict | None = None,
 ) -> dict:
-    """ccaa_code -> indice de frequencia, renormalizado sobre as comunidades SERVIDAS.
+    """ccaa_code -> frequency index, renormalized over the SERVED communities.
 
-    O informe publica consumo per capita por comunidade (secao 3). Cataluna consome 620,82
-    kg ou litro por pessoa e ano contra 505,86 de Madrid — 22,7% a mais, medido.
+    The report publishes per-capita consumption by community (section 3). Catalonia
+    consumes 620.82 kg or litres per person per year against Madrid's 505.86 — 22.7% more,
+    measured.
 
-    DUAS DECISOES, as duas declaradas em `demand_profile_seed`:
+    TWO DECISIONS, both declared in `demand_profile_seed`:
 
-    1. A intensidade regional vira FREQUENCIA de pedido, e nao tamanho de cesta. O informe
-       da kg por ano e nao publica frequencia de compra domestica ('actos de compra' so
-       aparece no capitulo extradomestico), entao repartir a intensidade entre frequencia e
-       cesta seria inventar a reparticao. Escolher uma e declarar e honesto; escolher e nao
-       declarar nao seria.
+    1. Regional intensity becomes order FREQUENCY, not basket size. The report gives kg per
+       year and does not publish household purchase frequency ('actos de compra' only
+       appears in the out-of-home chapter), so splitting the intensity between frequency
+       and basket would be inventing the split. Choosing one and declaring it is honest;
+       choosing without declaring would not be.
 
-    2. A renormalizacao e sobre as comunidades SERVIDAS, ponderada pelo tamanho da base de
-       cada uma, e nao contra a media nacional de 577,32. A media nacional inclui regioes
-       que nao atendemos: usa-la faria a contagem total de pedidos cair alguns por cento
-       sem que isso significasse nada. Assim a soma ponderada dos indices e exatamente 1, o
-       total de pedidos fica onde estava, e a fase muda so a REPARTICAO entre armazens.
+    2. The renormalization is over the SERVED communities, weighted by the size of each
+       one's base, and not against the national average of 577.32. The national average
+       includes regions we do not serve: using it would make the total order count drop a
+       few percent without that meaning anything. This way the weighted sum of the indices
+       is exactly 1, the order total stays where it was, and the phase only changes the
+       SPLIT between warehouses.
     """
     if not served:
-        raise DemandProfileError("nenhuma comunidade servida: nao ha o que renormalizar")
-    faltando = sorted(c for c in set(served) if c not in region_reference)
-    if faltando:
+        raise DemandProfileError("no served community: nothing to renormalize")
+    missing = sorted(c for c in set(served) if c not in region_reference)
+    if missing:
         raise DemandProfileError(
-            f"{REGION_SEED} nao declara consumo per capita de {faltando}"
+            f"{REGION_SEED} does not declare per-capita consumption for {missing}"
         )
-    pesos = {c: Decimal(1) for c in set(served)} if not weights else {
+    served_weights = {c: Decimal(1) for c in set(served)} if not weights else {
         c: Decimal(weights.get(c, 0)) for c in set(served)
     }
-    massa = sum(pesos.values(), Decimal("0"))
-    if massa <= 0:
-        raise DemandProfileError("as comunidades servidas somam peso zero")
-    media = sum(
-        pesos[c] * region_reference[c]["per_capita_kg_l"] for c in sorted(pesos)
-    ) / massa
-    if media <= 0:
-        raise DemandProfileError("consumo per capita medio nao positivo")
-    return {c: region_reference[c]["per_capita_kg_l"] / media for c in sorted(pesos)}
+    mass = sum(served_weights.values(), Decimal("0"))
+    if mass <= 0:
+        raise DemandProfileError("the served communities add up to zero weight")
+    mean = sum(
+        served_weights[c] * region_reference[c]["per_capita_kg_l"] for c in sorted(served_weights)
+    ) / mass
+    if mean <= 0:
+        raise DemandProfileError("non-positive mean per-capita consumption")
+    return {c: region_reference[c]["per_capita_kg_l"] / mean for c in sorted(served_weights)}
 
 
 def ipf_calibrate(
@@ -595,68 +602,69 @@ def ipf_calibrate(
     tolerance: Decimal,
     max_iterations: int,
 ) -> tuple[dict, int, Decimal]:
-    """Ajusta um fator por grupo ate que a media por coorte reproduza o peso agregado.
+    """Adjusts one factor per group until the per-cohort mean reproduces the aggregate weight.
 
-    O PROBLEMA QUE ISTO RESOLVE. Sem correcao,
+    THE PROBLEM THIS SOLVES. Without correction,
 
-        p(g | c)  =  w_g . i(g,c) / SOMA_h w_h . i(h,c)
+        p(g | c)  =  w_g . i(g,c) / SUM_h w_h . i(h,c)
 
-    e a media `SOMA_c m_c . p(g|c)` NAO volta a ser `w_g`, porque o denominador varia de
-    coorte para coorte. O desvio nao e ruido: ele desloca a calibracao agregada da fase
-    anterior sem que nada falhe, e um mix deslocado continua parecendo plausivel.
+    and the mean `SUM_c m_c . p(g|c)` does NOT return to `w_g`, because the denominator
+    varies from cohort to cohort. The deviation is not noise: it shifts the previous phase's
+    aggregate calibration with nothing failing, and a shifted mix still looks plausible.
 
-    A CORRECAO. Um fator `f_g` por grupo, ajustado por iteracao proporcional:
+    THE CORRECTION. One factor `f_g` per group, adjusted by proportional iteration:
 
-        p(g | c)  =  w_g . f_g . i(g,c) / SOMA_h w_h . f_h . i(h,c)
-        a_g       =  SOMA_c m_c . p(g|c)
+        p(g | c)  =  w_g . f_g . i(g,c) / SUM_h w_h . f_h . i(h,c)
+        a_g       =  SUM_c m_c . p(g|c)
         f_g       <- f_g . w_g / a_g
 
-    Converge para uma matriz positiva e devolve `f`, o numero de iteracoes e o maior desvio
-    que restou. Com a matriz de indices toda igual a 1,0 a primeira iteracao ja fecha e `f`
-    fica em 1 — o IPF e a identidade quando nao ha nada a corrigir, e ha teste que prova.
+    Converges for a positive matrix and returns `f`, the number of iterations and the
+    largest remaining deviation. With an index matrix all equal to 1.0 the first iteration
+    already closes and `f` stays at 1 — IPF is the identity when there is nothing to
+    correct, and a test proves it.
 
-    Ordem de iteracao SEMPRE por chave ordenada: a soma de Decimais nao e associativa no
-    ultimo digito, e iterar um dicionario faria o resultado depender de PYTHONHASHSEED.
+    Iteration order ALWAYS by sorted key: Decimal addition is not associative in the last
+    digit, and iterating a dict would make the result depend on PYTHONHASHSEED.
     """
-    grupos = tuple(sorted(base_weights))
-    coortes = tuple(sorted(cohort_mass))
-    if not grupos:
-        raise DemandProfileError("IPF sem grupo nenhum")
-    if not coortes:
-        raise DemandProfileError("IPF sem coorte nenhuma")
+    groups = tuple(sorted(base_weights))
+    cohorts = tuple(sorted(cohort_mass))
+    if not groups:
+        raise DemandProfileError("IPF with no group at all")
+    if not cohorts:
+        raise DemandProfileError("IPF with no cohort at all")
 
-    fator = {g: ONE for g in grupos}
-    pior = None
-    for iteracao in range(1, max_iterations + 1):
-        agregado = {g: Decimal("0") for g in grupos}
-        for c in coortes:
-            bruto = {g: base_weights[g] * fator[g] * index[c][g] for g in grupos}
-            total = sum(bruto[g] for g in grupos)
+    factor = {g: ONE for g in groups}
+    worst = None
+    for iteration in range(1, max_iterations + 1):
+        aggregate = {g: Decimal("0") for g in groups}
+        for c in cohorts:
+            raw = {g: base_weights[g] * factor[g] * index[c][g] for g in groups}
+            total = sum(raw[g] for g in groups)
             if total <= 0:
                 raise DemandProfileError(
-                    f"a coorte {c!r} soma peso zero sobre {len(grupos)} grupos"
+                    f"cohort {c!r} sums zero weight over {len(groups)} groups"
                 )
-            massa = cohort_mass[c]
-            for g in grupos:
-                agregado[g] += massa * bruto[g] / total
-        pior = max(abs(agregado[g] - base_weights[g]) for g in grupos)
-        if pior <= tolerance:
-            return fator, iteracao, pior
-        for g in grupos:
-            if agregado[g] <= 0:
+            mass = cohort_mass[c]
+            for g in groups:
+                aggregate[g] += mass * raw[g] / total
+        worst = max(abs(aggregate[g] - base_weights[g]) for g in groups)
+        if worst <= tolerance:
+            return factor, iteration, worst
+        for g in groups:
+            if aggregate[g] <= 0:
                 raise DemandProfileError(
-                    f"o grupo {g!r} ficou com massa agregada zero durante o IPF"
+                    f"group {g!r} ended up with zero aggregate mass during IPF"
                 )
-            fator[g] = fator[g] * base_weights[g] / agregado[g]
+            factor[g] = factor[g] * base_weights[g] / aggregate[g]
 
     raise DemandProfileError(
-        f"o IPF nao convergiu em {max_iterations} iteracoes; maior desvio {pior}. "
-        f"Aceitar a matriz assim desfaria a calibracao agregada da versao anterior."
+        f"IPF did not converge in {max_iterations} iterations; largest deviation {worst}. "
+        f"Accepting the matrix as is would undo the previous version's aggregate calibration."
     )
 
 
 # --------------------------------------------------------------------------------
-# 4. Construcao do perfil
+# 4. Building the profile
 # --------------------------------------------------------------------------------
 
 def _mean(values: list[Decimal]) -> Decimal:
@@ -664,28 +672,28 @@ def _mean(values: list[Decimal]) -> Decimal:
 
 
 def _content(value) -> Decimal | None:
-    """`net_content_kg_l` como Decimal, ou None quando nao ha conteudo utilizavel.
+    """`net_content_kg_l` as a Decimal, or None when there is no usable content.
 
-    Aceita None, string vazia e NaN. O NaN nao e paranoia: um DataFrame do pandas devolve
-    NaN para nulo, e `Decimal('nan')` NAO levanta — ele constroi um NaN que sobrevive a
-    aritmetica e envenena a media em silencio, que e pior do que o erro.
+    Accepts None, empty string and NaN. NaN is not paranoia: a pandas DataFrame returns NaN
+    for null, and `Decimal('nan')` does NOT raise — it builds a NaN that survives
+    arithmetic and silently poisons the mean, which is worse than the error.
     """
     if value is None:
         return None
-    texto = str(value).strip()
-    if not texto or texto.lower() in ("nan", "none", "<na>"):
+    text = str(value).strip()
+    if not text or text.lower() in ("nan", "none", "<na>"):
         return None
     try:
-        numero = Decimal(texto)
-    except Exception:  # noqa: BLE001 - valor vindo de CSV ou de um driver
+        number = Decimal(text)
+    except Exception:  # noqa: BLE001 - value coming from a CSV or a driver
         return None
-    if not numero.is_finite() or numero <= 0:
+    if not number.is_finite() or number <= 0:
         return None
-    return numero
+    return number
 
 
 def cohort_key(age_band: str, ccaa_code: str) -> str:
-    """A chave textual de uma coorte. Uma funcao so, usada dos dois lados da fronteira."""
+    """The text key of a cohort. A single function, used on both sides of the boundary."""
     return f"{age_band}|{ccaa_code}"
 
 
@@ -697,141 +705,141 @@ def _build_cohorts(
     params: dict,
     seeds_dir: str,
 ) -> dict:
-    """A camada de coorte sobre os pesos agregados, ja calibrada por IPF.
+    """The cohort layer over the aggregate weights, already calibrated by IPF.
 
-    `customers_by_cohort` conta os clientes ELEGIVEIS de cada (faixa, comunidade) — a
-    elegibilidade e do dominio de pedidos (`min_buyer_age`) e chega resolvida. Contar aqui
-    quem nao pode pedir enviesaria a massa das coortes e, por tabela, o IPF.
+    `customers_by_cohort` counts the ELIGIBLE customers of each (band, community) —
+    eligibility belongs to the orders domain (`min_buyer_age`) and arrives resolved.
+    Counting here those who cannot order would bias the cohort mass and, in turn, the IPF.
     """
     age = load_cohort_age(seeds_dir)
     region = load_cohort_region(seeds_dir)
     region_ref = load_region_reference(seeds_dir)
 
     if not warehouse_regions:
-        raise DemandProfileError("nenhum armazem tem comunidade autonoma resolvida")
-    servidas = sorted(set(warehouse_regions.values()))
-    if NATIONAL_CODE in servidas:
+        raise DemandProfileError("no warehouse has a resolved autonomous community")
+    served = sorted(set(warehouse_regions.values()))
+    if NATIONAL_CODE in served:
         raise DemandProfileError(
-            f"{NATIONAL_CODE} e a media nacional, nao uma comunidade servivel"
+            f"{NATIONAL_CODE} is the national average, not a servable community"
         )
 
-    # --- 1. frequencia por comunidade, ponderada pela base elegivel de cada uma --------
-    por_ccaa: dict[str, Decimal] = {}
-    for (_banda, ccaa), quantos in customers_by_cohort.items():
-        por_ccaa[ccaa] = por_ccaa.get(ccaa, Decimal("0")) + Decimal(quantos)
-    orfas = sorted(c for c in por_ccaa if c not in servidas)
-    if orfas:
+    # --- 1. frequency by community, weighted by each one's eligible base ---------------
+    by_ccaa: dict[str, Decimal] = {}
+    for (_band, ccaa), count in customers_by_cohort.items():
+        by_ccaa[ccaa] = by_ccaa.get(ccaa, Decimal("0")) + Decimal(count)
+    orphans = sorted(c for c in by_ccaa if c not in served)
+    if orphans:
         raise DemandProfileError(
-            f"ha cliente em comunidade(s) que nenhum armazem serve: {orfas}"
+            f"there are customers in community(ies) no warehouse serves: {orphans}"
         )
-    frequencia = region_frequency(region_ref, servidas, weights=por_ccaa)
+    frequency = region_frequency(region_ref, served, weights=by_ccaa)
 
-    # --- 2. massa de cada coorte ENTRE OS PEDIDOS, nao entre os clientes ---------------
-    # A distincao e o motivo de a frequencia entrar aqui: uma coorte de Cataluna pesa mais
-    # no mix agregado do que a mesma coorte em Madrid, porque coloca mais pedidos. Fazer o
-    # IPF contra a distribuicao de CLIENTES fecharia a conta errada.
-    bruta = {
-        cohort_key(banda, ccaa): Decimal(quantos) * frequencia[ccaa]
-        for (banda, ccaa), quantos in customers_by_cohort.items()
-        if quantos > 0
+    # --- 2. mass of each cohort AMONG ORDERS, not among customers --------------------
+    # The distinction is why frequency comes in here: a Catalonia cohort weighs more in
+    # the aggregate mix than the same cohort in Madrid, because it places more orders.
+    # Running IPF against the CUSTOMER distribution would balance the wrong books.
+    raw_mass = {
+        cohort_key(band, ccaa): Decimal(count) * frequency[ccaa]
+        for (band, ccaa), count in customers_by_cohort.items()
+        if count > 0
     }
-    total_massa = sum(bruta.values(), Decimal("0"))
-    if total_massa <= 0:
-        raise DemandProfileError("nenhum cliente elegivel em coorte nenhuma")
-    massa = {c: bruta[c] / total_massa for c in sorted(bruta)}
+    total_mass = sum(raw_mass.values(), Decimal("0"))
+    if total_mass <= 0:
+        raise DemandProfileError("no eligible customer in any cohort")
+    mass = {c: raw_mass[c] / total_mass for c in sorted(raw_mass)}
 
-    # --- 3. matriz de indices ----------------------------------------------------------
-    grupos = tuple(sorted(base_weights))
-    sem_dado = sorted(
-        g for g in grupos
+    # --- 3. index matrix ---------------------------------------------------------------
+    groups = tuple(sorted(base_weights))
+    no_data = sorted(
+        g for g in groups
         if g not in SCOPE_LABELS and (g not in age or g not in region)
     )
-    if sem_dado:
+    if no_data:
         raise DemandProfileError(
-            f"grupo(s) com peso do MAPA mas sem corte demografico: {sem_dado}. Deixa-los "
-            f"neutros em silencio esconderia uma lacuna de extracao atras de um mix "
-            f"plausivel; acrescente as linhas em {COHORT_AGE_SEED} e {COHORT_REGION_SEED}."
+            f"group(s) with a MAPA weight but no demographic cut: {no_data}. Leaving them "
+            f"silently neutral would hide an extraction gap behind a plausible mix; add "
+            f"the rows to {COHORT_AGE_SEED} and {COHORT_REGION_SEED}."
         )
 
-    indice: dict[str, dict] = {}
-    for chave in sorted(massa):
-        banda, ccaa = chave.split("|", 1)
-        linha = {}
-        for g in grupos:
-            fator = ONE
+    index: dict[str, dict] = {}
+    for key in sorted(mass):
+        band, ccaa = key.split("|", 1)
+        entry = {}
+        for g in groups:
+            factor = ONE
             if g in age:
-                if banda not in age[g]:
-                    raise DemandProfileError(f"{COHORT_AGE_SEED}: {g} sem a faixa {banda}")
-                linha_idade = age[g][banda]
-                fator *= affinity_index(linha_idade[0], linha_idade[1])
+                if band not in age[g]:
+                    raise DemandProfileError(f"{COHORT_AGE_SEED}: {g} is missing band {band}")
+                age_row = age[g][band]
+                factor *= affinity_index(age_row[0], age_row[1])
             if g in region:
                 if ccaa not in region[g]:
                     raise DemandProfileError(
-                        f"{COHORT_REGION_SEED}: {g} sem a comunidade {ccaa}"
+                        f"{COHORT_REGION_SEED}: {g} is missing community {ccaa}"
                     )
-                linha_regiao = region[g][ccaa]
-                fator *= affinity_index(linha_regiao[0], linha_regiao[1])
-            linha[g] = fator
-        indice[chave] = linha
+                region_row = region[g][ccaa]
+                factor *= affinity_index(region_row[0], region_row[1])
+            entry[g] = factor
+        index[key] = entry
 
-    # --- 4. IPF DENTRO DE CADA BLOCO, e nunca atravessando a fronteira deles -----------
+    # --- 4. IPF WITHIN EACH BLOCK, never crossing their boundary ----------------------
     #
-    # A restricao nao e detalhe de implementacao, e foi encontrada medindo. Normalizando a
-    # coorte inteira de uma vez, NO_FOOD e SIN_BENCHMARK — que tem indice 1,0 por ausencia
-    # de evidencia — saiam com 0,60x da fatia na coorte de 65+ em relacao a de menos de 35.
-    # Ou seja: o modelo passaria a AFIRMAR que quem tem mais de 65 anos compra 40% menos
-    # drogaria por linha de cesta. Ninguem mediu isso. O efeito era puro residuo da
-    # normalizacao, e era MAIOR que a maioria dos efeitos medidos.
+    # The restriction is not an implementation detail; it was found by measuring.
+    # Normalizing the whole cohort at once, NO_FOOD and SIN_BENCHMARK — which have index 1.0
+    # for lack of evidence — came out with 0.60x the slice in the 65+ cohort relative to
+    # under-35. That is: the model would start CLAIMING that people over 65 buy 40% less
+    # drugstore per basket line. Nobody measured that. The effect was pure normalization
+    # residue, and it was LARGER than most measured effects.
     #
-    # Fixar a fatia de cada bloco em toda coorte devolve a `food_line_share` o estatuto que
-    # o seed lhe da — premissa declarada, uniforme — e confina a propensao a redistribuir
-    # DENTRO do escopo onde existe evidencia. Indice neutro passa a significar de verdade
-    # "sem efeito", em vez de "efeito que sobrou da conta".
-    tolerancia = Decimal(params["ipf_tolerance"])
-    max_iteracoes = int(params["ipf_max_iterations"])
+    # Pinning each block's slice in every cohort gives `food_line_share` back the status
+    # the seed gives it — a declared, uniform premise — and confines propensity to
+    # redistributing WITHIN the scope where evidence exists. A neutral index then truly
+    # means "no effect", instead of "effect left over from the arithmetic".
+    tolerance = Decimal(params["ipf_tolerance"])
+    max_iterations = int(params["ipf_max_iterations"])
 
-    por_bloco: dict[str, list] = {}
-    for g in grupos:
-        por_bloco.setdefault(group_blocks[g], []).append(g)
+    by_block: dict[str, list] = {}
+    for g in groups:
+        by_block.setdefault(group_blocks[g], []).append(g)
 
-    fator: dict[str, Decimal] = {}
-    total_por_bloco: dict[str, Decimal] = {}
-    iteracoes = 0
-    desvio = Decimal("0")
-    for bloco in sorted(por_bloco):
-        do_bloco = sorted(por_bloco[bloco])
-        total = sum(base_weights[g] for g in do_bloco)
-        total_por_bloco[bloco] = total
+    factor: dict[str, Decimal] = {}
+    total_by_block: dict[str, Decimal] = {}
+    iterations = 0
+    deviation = Decimal("0")
+    for block in sorted(by_block):
+        members = sorted(by_block[block])
+        total = sum(base_weights[g] for g in members)
+        total_by_block[block] = total
         if total <= 0:
-            for g in do_bloco:
-                fator[g] = ONE
+            for g in members:
+                factor[g] = ONE
             continue
-        base_bloco = {g: base_weights[g] / total for g in do_bloco}
-        indice_bloco = {c: {g: indice[c][g] for g in do_bloco} for c in massa}
-        parcial, its, err = ipf_calibrate(
-            base_bloco, indice_bloco, massa, tolerancia, max_iteracoes
+        block_base = {g: base_weights[g] / total for g in members}
+        block_index = {c: {g: index[c][g] for g in members} for c in mass}
+        partial, its, err = ipf_calibrate(
+            block_base, block_index, mass, tolerance, max_iterations
         )
-        fator.update(parcial)
-        iteracoes = max(iteracoes, its)
-        desvio = max(desvio, err)
+        factor.update(partial)
+        iterations = max(iterations, its)
+        deviation = max(deviation, err)
 
-    pesos = []
-    for chave in sorted(massa):
-        linha = {}
-        for bloco, do_bloco in sorted(por_bloco.items()):
-            total = total_por_bloco[bloco]
+    served_weights = []
+    for key in sorted(mass):
+        entry = {}
+        for block, members in sorted(by_block.items()):
+            total = total_by_block[block]
             if total <= 0:
-                for g in do_bloco:
-                    linha[g] = Decimal("0")
+                for g in members:
+                    entry[g] = Decimal("0")
                 continue
-            bruto = {g: base_weights[g] * fator[g] * indice[chave][g] for g in do_bloco}
-            soma = sum(bruto[g] for g in do_bloco)
-            for g in do_bloco:
-                linha[g] = total * bruto[g] / soma
-        pesos.append({
-            "cohort": chave,
+            raw = {g: base_weights[g] * factor[g] * index[key][g] for g in members}
+            weight_sum = sum(raw[g] for g in members)
+            for g in members:
+                entry[g] = total * raw[g] / weight_sum
+        served_weights.append({
+            "cohort": key,
             "groups": [
-                {"demand_group": g, "line_weight": str(linha[g])} for g in grupos
+                {"demand_group": g, "line_weight": str(entry[g])} for g in groups
             ],
         })
 
@@ -840,18 +848,18 @@ def _build_cohorts(
         "independence": params["cohort_independence"],
         "calibration": params["cohort_calibration"],
         "independence_note": (
-            "O informe publica as marginais de idade e de comunidade e NUNCA o cruzamento "
-            "das duas. Multiplicar os dois indices assume independencia condicional: e "
-            "premissa declarada, nao medicao."
+            "The report publishes the age and community marginals and NEVER the cross-tab "
+            "of the two. Multiplying both indices assumes conditional independence: it is "
+            "a declared premise, not a measurement."
         ),
         "index_note": (
-            "O '% Poblacion' do MAPA e a populacao que VIVE EM LARES cujo responsavel de "
-            "compra esta naquela faixa, e nao a populacao daquela idade. O nosso cliente e "
-            "um individuo. Por isso o numero entra como indice RELATIVO entre faixas e "
-            "nunca como share absoluto — e por isso o IPF existe."
+            "MAPA's '% Poblacion' is the population that LIVES IN HOUSEHOLDS whose main "
+            "shopper is in that band, not the population of that age. Our customer is an "
+            "individual. That is why the number enters as a RELATIVE index between bands "
+            "and never as an absolute share — and why IPF exists."
         ),
         "age_bands": [
-            {"key": nome, "max_age": teto} for nome, teto in AGE_BANDS
+            {"key": name, "max_age": ceiling} for name, ceiling in AGE_BANDS
         ],
         "regions": [
             {
@@ -859,44 +867,44 @@ def _build_cohorts(
                 "ccaa_label": region_ref[c]["ccaa_label"],
                 "per_capita_kg_l": str(region_ref[c]["per_capita_kg_l"]),
                 "warehouses": sorted(w for w, r in warehouse_regions.items() if r == c),
-                "frequency_index": str(frequencia[c]),
+                "frequency_index": str(frequency[c]),
             }
-            for c in servidas
+            for c in served
         ],
         "region_frequency_basis": params["region_frequency_basis"],
         "region_frequency_normalization": params["region_frequency_normalization"],
         "region_frequency_note": (
-            "O indice pesa QUANTOS clientes pedem em cada armazem, nunca o tamanho da "
-            "cesta: o informe da intensidade em kg por ano e nao publica frequencia de "
-            "compra domestica. Renormalizado sobre as comunidades servidas, entao o total "
-            "de pedidos nao se move e o que muda e a reparticao entre armazens."
+            "The index weighs HOW MANY customers order at each warehouse, never the basket "
+            "size: the report gives intensity in kg per year and does not publish "
+            "household purchase frequency. Renormalized over the served communities, so "
+            "the order total does not move and what changes is the split between warehouses."
         ),
-        "neutral_groups": sorted(g for g in grupos if g in SCOPE_LABELS),
+        "neutral_groups": sorted(g for g in groups if g in SCOPE_LABELS),
         "neutral_note": (
-            "NO_FOOD e SIN_BENCHMARK ficam com indice 1,0 em toda coorte porque o informe "
-            "nao os mede — drogaria, limpeza e mascotas estao fora do universo dele. Nao e "
-            "a afirmacao de que todas as idades compram xampu igual; e a ausencia de "
-            "qualquer medicao que sustente o contrario."
+            "NO_FOOD and SIN_BENCHMARK keep index 1.0 in every cohort because the report "
+            "does not measure them — drugstore, cleaning and pets are outside its universe. "
+            "It is not the claim that all ages buy shampoo equally; it is the absence of any "
+            "measurement supporting otherwise."
         ),
         "block_shares_are_constant": True,
         "block_shares_note": (
-            "A fatia de cada bloco (calibrado, alimentar sem benchmark, nao alimentar) e a "
-            "MESMA em toda coorte, e o IPF roda dentro de cada um. Sem essa fronteira, os "
-            "grupos de indice neutro absorviam o residuo da normalizacao: NO_FOOD saia com "
-            "0,60x da fatia em 65+ contra menos de 35, o que seria afirmar que idoso compra "
-            "40% menos drogaria por linha — numero que nenhuma fonte deste repo mede, e "
-            "maior que a maioria dos efeitos que sao medidos."
+            "Each block's slice (calibrated, food without benchmark, non-food) is the SAME "
+            "in every cohort, and IPF runs within each one. Without that boundary, the "
+            "neutral-index groups absorbed the normalization residue: NO_FOOD came out with "
+            "0.60x the slice in 65+ against under-35, which would claim that older people buy "
+            "40% less drugstore per line — a number no source in this repo measures, and "
+            "larger than most effects that are measured."
         ),
-        "ipf_iterations": iteracoes,
-        "ipf_max_abs_error": str(desvio),
+        "ipf_iterations": iterations,
+        "ipf_max_abs_error": str(deviation),
         "ipf_note": (
-            "Criterio de aceitacao desta camada: o mix AGREGADO nao se move. Os pesos por "
-            "coorte, ponderados pela distribuicao real de coortes entre os pedidos, "
-            "reproduzem os pesos da calibracao agregada. O efeito da fase esta na "
-            "condicional, e e la que se deve procura-lo."
+            "Acceptance criterion of this layer: the AGGREGATE mix does not move. The "
+            "per-cohort weights, weighted by the real cohort distribution among orders, "
+            "reproduce the aggregate calibration weights. The phase's effect is in the "
+            "conditional, and that is where it should be looked for."
         ),
-        "mass": [{"cohort": c, "share": str(massa[c])} for c in sorted(massa)],
-        "weights": pesos,
+        "mass": [{"cohort": c, "share": str(mass[c])} for c in sorted(mass)],
+        "weights": served_weights,
     }
 
 
@@ -907,216 +915,216 @@ def build(
     customers_by_cohort: dict,
     warehouse_regions: dict,
 ) -> dict:
-    """Perfil de demanda a partir do catalogo observado e dos oito seeds.
+    """Demand profile from the observed catalog and the eight seeds.
 
-    `catalog_rows` precisa trazer `demand_group` — JA RESOLVIDO — e `net_content_kg_l`, que
-    pode ser nulo. A resolucao NAO acontece aqui de proposito: ela mora em um lugar so
-    (`orders_reference._stamp_demand_group`), pelo mesmo motivo que o portao do Silver mora
-    em `silver_gate.plan()`. Duas resolucoes divergem no primeiro ajuste, e a divergencia
-    seria invisivel porque as duas produziriam mix plausivel.
+    `catalog_rows` must carry `demand_group` — ALREADY RESOLVED — and `net_content_kg_l`,
+    which may be null. Resolution does NOT happen here on purpose: it lives in a single
+    place (`orders_reference._stamp_demand_group`), for the same reason the Silver gate
+    lives in `silver_gate.plan()`. Two resolutions diverge on the first tweak, and the
+    divergence would be invisible because both would produce a plausible mix.
 
-    `customers_by_cohort` mapeia (faixa etaria, ccaa) -> quantos clientes ELEGIVEIS, e
-    `warehouse_regions` mapeia armazem -> ccaa. Os dois sao OBRIGATORIOS, e nao opcionais
-    com fallback neutro: um perfil sem a camada de coorte carimbado com a versao v2 seria
-    um no-op silencioso — o pior resultado possivel para uma fase cujo criterio de sucesso
-    e justamente que o agregado nao se mova.
+    `customers_by_cohort` maps (age band, ccaa) -> how many ELIGIBLE customers, and
+    `warehouse_regions` maps warehouse -> ccaa. Both are REQUIRED, not optional with a
+    neutral fallback: a profile without the cohort layer stamped with version v2 would be a
+    silent no-op — the worst possible outcome for a phase whose success criterion is
+    precisely that the aggregate does not move.
     """
     benchmark = load_benchmark(seeds_dir)
     params = load_params(seeds_dir)
     seasonality = load_seasonality(seeds_dir)
 
     if not catalog_rows:
-        raise DemandProfileError("catalogo vazio: nao ha o que ponderar")
+        raise DemandProfileError("empty catalog: nothing to weight")
 
-    # --- 1. agrupar o catalogo pelo grupo ja carimbado ----------------------------
-    por_grupo: dict[str, dict] = {}
+    # --- 1. group the catalog by the already-stamped group ------------------------
+    by_group: dict[str, dict] = {}
     for row in catalog_rows:
         key = row.get("demand_group")
         if not key:
             raise DemandProfileError(
-                "linha de catalogo sem `demand_group`. A resolucao do mapeamento e "
-                "responsabilidade de quem monta o catalogo, e nao acontece aqui."
+                "catalog row without `demand_group`. Resolving the mapping is the "
+                "responsibility of whoever builds the catalog, and does not happen here."
             )
-        alvo = por_grupo.setdefault(key, {"produtos": 0, "com_kg": [], "sem_kg": 0})
-        alvo["produtos"] += 1
-        conteudo = _content(row.get("net_content_kg_l"))
-        if conteudo is None:
-            alvo["sem_kg"] += 1
+        bucket = by_group.setdefault(key, {"products": 0, "with_kg": [], "without_kg": 0})
+        bucket["products"] += 1
+        content = _content(row.get("net_content_kg_l"))
+        if content is None:
+            bucket["without_kg"] += 1
         else:
-            alvo["com_kg"].append(conteudo)
+            bucket["with_kg"].append(content)
 
-    faltantes = [k for k in por_grupo if k not in benchmark]
-    if faltantes:
+    unknown = [k for k in by_group if k not in benchmark]
+    if unknown:
         raise DemandProfileError(
-            f"o mapeamento aponta para chave(s) que o benchmark nao declara: {faltantes}"
+            f"the mapping points to key(s) the benchmark does not declare: {unknown}"
         )
 
-    cobertura_min = Decimal(params["volume_coverage_min"])
+    coverage_min = Decimal(params["volume_coverage_min"])
 
-    # --- 2. tres blocos: benchmark, alimentar sem benchmark, nao alimentar --------
-    chaves_bench = sorted(k for k in por_grupo
+    # --- 2. three blocks: benchmark, food without benchmark, non-food ------------
+    bench_keys = sorted(k for k in by_group
                           if k not in SCOPE_LABELS and benchmark[k]["use_as_weight"])
-    chaves_sem = sorted(k for k in por_grupo
+    unbench_keys = sorted(k for k in by_group
                         if k == SIN_BENCHMARK or (k not in SCOPE_LABELS
                                                   and not benchmark[k]["use_as_weight"]))
-    chaves_nofood = sorted(k for k in por_grupo if k == NO_FOOD)
+    nofood_keys = sorted(k for k in by_group if k == NO_FOOD)
 
-    if not chaves_bench:
+    if not bench_keys:
         raise DemandProfileError(
-            "nenhum grupo do catalogo caiu numa chave pesavel do MAPA. O mapeamento ou o "
-            "benchmark estao desalinhados, e sem isto nao ha calibracao nenhuma."
+            "no catalog group fell into a weightable MAPA key. The mapping or the "
+            "benchmark are misaligned, and without this there is no calibration at all."
         )
 
-    # --- 3. alvo de volume, inclinado pelo canal ---------------------------------
-    grupos: dict[str, dict] = {}
-    bruto_bench: dict[str, Decimal] = {}
-    for key in chaves_bench:
-        linha = benchmark[key]
-        info = por_grupo[key]
-        tilt, basis = channel_tilt(linha, params)
-        alvo_volume = linha["volume_share_pct"] * tilt
+    # --- 3. volume target, tilted by channel -------------------------------------
+    groups: dict[str, dict] = {}
+    raw_bench: dict[str, Decimal] = {}
+    for key in bench_keys:
+        entry = benchmark[key]
+        info = by_group[key]
+        tilt, basis = channel_tilt(entry, params)
+        volume_target = entry["volume_share_pct"] * tilt
 
-        cobertos = len(info["com_kg"])
-        cobertura = Decimal(cobertos) / Decimal(info["produtos"])
-        if cobertura >= cobertura_min:
-            kg_medio = _mean(info["com_kg"])
-            peso = alvo_volume / kg_medio
-            caminho = "volume"
+        covered = len(info["with_kg"])
+        coverage = Decimal(covered) / Decimal(info["products"])
+        if coverage >= coverage_min:
+            mean_kg = _mean(info["with_kg"])
+            weight = volume_target / mean_kg
+            target_path = "volume"
         else:
-            # Fallback DECLARADO: share de linhas igual ao share de volume. Nao e
-            # equivalente, e o reality check reporta estes grupos num bloco separado.
-            kg_medio = None
-            peso = alvo_volume
-            caminho = "lines"
+            # DECLARED fallback: line share equal to volume share. It is not
+            # equivalent, and the reality check reports these groups in a separate block.
+            mean_kg = None
+            weight = volume_target
+            target_path = "lines"
 
-        bruto_bench[key] = peso
-        grupos[key] = {
+        raw_bench[key] = weight
+        groups[key] = {
             "demand_group": key,
             "block": "benchmark",
-            "scope": linha["scope"],
-            "mapa_volume_share_pct": str(linha["volume_share_pct"]),
-            "mapa_value_share_pct": str(linha["value_share_pct"]) if linha["value_share_pct"] is not None else None,
-            "mapa_avg_price_eur_kg": str(linha["avg_price_eur_kg"]) if linha["avg_price_eur_kg"] is not None else None,
+            "scope": entry["scope"],
+            "mapa_volume_share_pct": str(entry["volume_share_pct"]),
+            "mapa_value_share_pct": str(entry["value_share_pct"]) if entry["value_share_pct"] is not None else None,
+            "mapa_avg_price_eur_kg": str(entry["avg_price_eur_kg"]) if entry["avg_price_eur_kg"] is not None else None,
             "channel_tilt": str(round(tilt, 6)),
             "channel_basis": basis,
-            "target_path": caminho,
-            "kg_coverage": str(round(cobertura, 4)),
-            "mean_kg_per_unit": str(round(kg_medio, 6)) if kg_medio is not None else None,
-            "assortment_products": info["produtos"],
-            "informe_section": linha["informe_section"],
+            "target_path": target_path,
+            "kg_coverage": str(round(coverage, 4)),
+            "mean_kg_per_unit": str(round(mean_kg, 6)) if mean_kg is not None else None,
+            "assortment_products": info["products"],
+            "informe_section": entry["informe_section"],
         }
 
-    # --- 4. os tres blocos somam 1, e cada divisao tem origem escrita -------------
-    #   alimentar          <- premissa declarada `food_line_share`
-    #     com benchmark    <- cobertura do PROPRIO benchmark (86,12%), nao premissa nova
-    #     sem benchmark    <- o complemento, dividido por tamanho de sortimento
-    #   nao alimentar      <- o resto, dividido por tamanho de sortimento
+    # --- 4. the three blocks add up to 1, and each split has a written origin ----
+    #   food               <- declared premise `food_line_share`
+    #     with benchmark   <- coverage of the benchmark ITSELF (86.12%), not a new premise
+    #     without benchmark <- the complement, split by assortment size
+    #   non-food           <- the rest, split by assortment size
     food_share = Decimal(params["food_line_share"])
     if not Decimal("0") < food_share <= Decimal("1"):
-        raise DemandProfileError(f"food_line_share fora de (0, 1]: {food_share}")
-    cobertura_bench = Decimal(params["benchmark_volume_coverage_pct"]) / Decimal("100")
-    if not Decimal("0") < cobertura_bench <= Decimal("1"):
+        raise DemandProfileError(f"food_line_share outside (0, 1]: {food_share}")
+    bench_coverage = Decimal(params["benchmark_volume_coverage_pct"]) / Decimal("100")
+    if not Decimal("0") < bench_coverage <= Decimal("1"):
         raise DemandProfileError(
-            f"benchmark_volume_coverage_pct fora de (0, 100]: {params['benchmark_volume_coverage_pct']}"
+            f"benchmark_volume_coverage_pct outside (0, 100]: {params['benchmark_volume_coverage_pct']}"
         )
 
-    bloco_bench = food_share * cobertura_bench
-    bloco_sem = food_share * (Decimal("1") - cobertura_bench)
-    bloco_nofood = Decimal("1") - food_share
+    bench_block = food_share * bench_coverage
+    unbench_block = food_share * (Decimal("1") - bench_coverage)
+    nofood_block = Decimal("1") - food_share
 
-    # UM BLOCO SEM NENHUM GRUPO NO CATALOGO. Acontece de verdade com catalogo pequeno — uma
-    # fixture de teste, ou uma janela em que a fonte so trouxe alimento. O peso daquele
-    # bloco nao tem a quem ir, e deixa-lo cair faria os pesos somarem menos que 1.
+    # A BLOCK WITH NO GROUP IN THE CATALOG. It really happens with a small catalog — a test
+    # fixture, or a window in which the source only brought food. That block's weight has
+    # nowhere to go, and dropping it would make the weights add up to less than 1.
     #
-    # Redistribuir PROPORCIONALMENTE aos blocos que existem, e REGISTRAR que aconteceu. Sem
-    # o registro seria uma correcao silenciosa: `demand_profile.json` mostraria pesos que
-    # nao correspondem aos parametros declarados, e a diferenca ficaria sem explicacao.
-    presentes = {
-        "benchmark_block": (bloco_bench, bool(chaves_bench)),
-        "sin_benchmark_block": (bloco_sem, bool(chaves_sem)),
-        "no_food_block": (bloco_nofood, bool(chaves_nofood)),
+    # Redistribute PROPORTIONALLY to the blocks that exist, and RECORD that it happened.
+    # Without the record it would be a silent correction: `demand_profile.json` would show
+    # weights that do not match the declared parameters, with the difference unexplained.
+    blocks_present = {
+        "benchmark_block": (bench_block, bool(bench_keys)),
+        "sin_benchmark_block": (unbench_block, bool(unbench_keys)),
+        "no_food_block": (nofood_block, bool(nofood_keys)),
     }
-    vazios = [nome for nome, (_peso, tem) in presentes.items() if not tem]
-    if vazios:
-        vivo = sum(peso for peso, tem in presentes.values() if tem)
-        if vivo <= 0:
-            raise DemandProfileError("nenhum bloco tem grupo no catalogo")
-        escala = Decimal("1") / vivo
-        bloco_bench = bloco_bench * escala if chaves_bench else Decimal("0")
-        bloco_sem = bloco_sem * escala if chaves_sem else Decimal("0")
-        bloco_nofood = bloco_nofood * escala if chaves_nofood else Decimal("0")
+    empty_blocks = [name for name, (_weight, present) in blocks_present.items() if not present]
+    if empty_blocks:
+        live = sum(weight for weight, present in blocks_present.values() if present)
+        if live <= 0:
+            raise DemandProfileError("no block has a group in the catalog")
+        scale = Decimal("1") / live
+        bench_block = bench_block * scale if bench_keys else Decimal("0")
+        unbench_block = unbench_block * scale if unbench_keys else Decimal("0")
+        nofood_block = nofood_block * scale if nofood_keys else Decimal("0")
 
-    total_sem = total_nofood = Decimal("0")
-    if chaves_sem:
-        total_sem = sum(Decimal(por_grupo[k]["produtos"]) for k in chaves_sem)
-    if chaves_nofood:
-        total_nofood = sum(Decimal(por_grupo[k]["produtos"]) for k in chaves_nofood)
+    unbench_total = nofood_total = Decimal("0")
+    if unbench_keys:
+        unbench_total = sum(Decimal(by_group[k]["products"]) for k in unbench_keys)
+    if nofood_keys:
+        nofood_total = sum(Decimal(by_group[k]["products"]) for k in nofood_keys)
 
-    total_bruto = sum(bruto_bench.values(), Decimal("0"))
-    for key in chaves_bench:
-        grupos[key]["line_weight"] = str(bloco_bench * bruto_bench[key] / total_bruto)
+    raw_total = sum(raw_bench.values(), Decimal("0"))
+    for key in bench_keys:
+        groups[key]["line_weight"] = str(bench_block * raw_bench[key] / raw_total)
 
-    for key in chaves_sem:
-        info = por_grupo[key]
-        grupos[key] = {
+    for key in unbench_keys:
+        info = by_group[key]
+        groups[key] = {
             "demand_group": key,
             "block": "sin_benchmark",
             "scope": benchmark[key]["scope"],
             "target_path": "assortment",
-            "assortment_products": info["produtos"],
-            "line_weight": str(bloco_sem * Decimal(info["produtos"]) / total_sem),
-            "note": "alimentar sem alvo de volume no informe; share proporcional ao sortimento",
+            "assortment_products": info["products"],
+            "line_weight": str(unbench_block * Decimal(info["products"]) / unbench_total),
+            "note": "food without a volume target in the report; share proportional to assortment",
         }
 
-    for key in chaves_nofood:
-        info = por_grupo[key]
-        grupos[key] = {
+    for key in nofood_keys:
+        info = by_group[key]
+        groups[key] = {
             "demand_group": key,
             "block": "no_food",
             "scope": "none",
             "target_path": "assortment",
-            "assortment_products": info["produtos"],
-            "line_weight": str(bloco_nofood * Decimal(info["produtos"]) / total_nofood),
-            "note": "fora do universo do MAPA; share proporcional ao sortimento",
+            "assortment_products": info["products"],
+            "line_weight": str(nofood_block * Decimal(info["products"]) / nofood_total),
+            "note": "outside the MAPA universe; share proportional to assortment",
         }
 
-    soma = sum(Decimal(g["line_weight"]) for g in grupos.values())
-    if abs(soma - Decimal("1")) > Decimal("0.000001"):
-        raise DemandProfileError(f"os pesos somam {soma}, e nao 1")
+    weight_sum = sum(Decimal(g["line_weight"]) for g in groups.values())
+    if abs(weight_sum - Decimal("1")) > Decimal("0.000001"):
+        raise DemandProfileError(f"the weights add up to {weight_sum}, not 1")
 
     return {
         "demand_model_version": params["demand_model_version"],
         "benchmark": "MAPA — Informe del Consumo Alimentario en España 2025",
         "benchmark_note": (
-            "A folha de rosto do PDF diz 'Informe del consumo alimentario en España 2024'; o "
-            "corpo inteiro reporta o ano 2025 ('A cierre del año 2025', 'frente a los 26.823,4 "
-            "millones del año 2024'). E residuo da edicao anterior na pagina de creditos. Os "
-            "numeros deste perfil vem do CORPO."
+            "The PDF's title page says 'Informe del consumo alimentario en España 2024'; the "
+            "whole body reports the year 2025 ('A cierre del año 2025', 'frente a los 26.823,4 "
+            "millones del año 2024'). It is residue of the previous edition on the credits "
+            "page. The numbers in this profile come from the BODY."
         ),
         "seeds_sha256": seeds_sha256(seeds_dir),
         "params": params,
         "blocks": {
             "food_line_share": str(food_share),
-            "benchmark_block": str(bloco_bench),
-            "sin_benchmark_block": str(bloco_sem),
-            "no_food_block": str(bloco_nofood),
+            "benchmark_block": str(bench_block),
+            "sin_benchmark_block": str(unbench_block),
+            "no_food_block": str(nofood_block),
         },
-        # Vazio no caso normal. Preenchido quando um bloco nao tinha nenhum grupo no
-        # catalogo e o peso dele foi redistribuido — a redistribuicao fica visivel aqui, e
-        # nao apenas na diferenca entre os parametros declarados e os pesos resultantes.
-        "blocks_redistributed": vazios,
+        # Empty in the normal case. Filled when a block had no group in the catalog and its
+        # weight was redistributed — the redistribution is visible here, and not only in the
+        # difference between the declared parameters and the resulting weights.
+        "blocks_redistributed": empty_blocks,
         "seasonality_applies_to": "daily_order_rate",
         "seasonality": {str(m): str(f) for m, f in sorted(seasonality.items())},
         "seasonality_note": (
-            "Neutro por ausencia de evidencia, nao por esquecimento: os graficos mensais do "
-            "informe sao imagens e nao ha perfil mensal por categoria. Aplica-se a taxa de "
-            "pedidos, nunca ao mix — um fator global sobre o mix se normalizaria e nao faria "
-            "nada. A janela atual cobre so agosto."
+            "Neutral for lack of evidence, not by oversight: the report's monthly charts "
+            "are images and there is no monthly profile per category. It applies to the "
+            "order rate, never to the mix — a global factor on the mix would normalize away "
+            "and do nothing. The current window only covers August."
         ),
-        "groups": [grupos[k] for k in sorted(grupos)],
+        "groups": [groups[k] for k in sorted(groups)],
         "cohorts": _build_cohorts(
-            {k: Decimal(g["line_weight"]) for k, g in grupos.items()},
-            {k: g["block"] for k, g in grupos.items()},
+            {k: Decimal(g["line_weight"]) for k, g in groups.items()},
+            {k: g["block"] for k, g in groups.items()},
             customers_by_cohort,
             warehouse_regions,
             params,

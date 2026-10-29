@@ -1,17 +1,17 @@
--- FECHA O CICLO manifesto -> RAW -> Silver para a source de OLTP, no mesmo espirito de
+-- CLOSES THE manifest -> RAW -> Silver LOOP for the OLTP source, in the same spirit as
 -- assert_silver_reconciles_with_manifest.sql (Mercadona).
 --
--- A Source declarou quantos clientes gerou, quantos ficaram sem numero de casa e quantos
--- municipios usou. O Silver chegou aos mesmos numeros por um caminho completamente
--- diferente: lendo o JSON aterrissado. Divergencia aqui significa que algo se perdeu ou
--- se duplicou entre a extracao e o parquet.
+-- The Source declared how many customers it generated, how many ended up without a house number and how many
+-- municipalities it used. Silver reached the same numbers along a completely
+-- different path: reading the landed JSON. A divergence here means something got lost or
+-- duplicated between extraction and parquet.
 --
--- house_number_null e municipalities_used entram junto com a contagem porque sao os dois
--- totais que uma perda PARCIAL preservaria: perder linhas sem numero manteria
--- customer_rows errado mas tambem quebraria estes — e perder linhas de um municipio
--- inteiro passaria despercebido se so a contagem fosse conferida.
+-- house_number_null and municipalities_used come in alongside the count because they are the two
+-- totals a PARTIAL loss would preserve: losing rows without a number would keep
+-- customer_rows wrong but would also break these — and losing the rows of a whole municipality
+-- would go unnoticed if only the count were checked.
 --
--- Falha se qualquer particao divergir.
+-- Fails if any partition diverges.
 with derived as (
 
     select

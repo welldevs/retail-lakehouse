@@ -1,28 +1,28 @@
--- TODA PARTICAO DE PEDIDO NASCEU DAS MESMAS PREMISSAS. UMA JANELA, UM CONTRATO.
+-- EVERY ORDER PARTITION WAS BORN FROM THE SAME PREMISES. ONE WINDOW, ONE CONTRACT.
 --
--- A LACUNA QUE ISTO FECHA, declarada no Marco B e medida na hora. O manifesto de cada
--- particao guarda `premises_sha256` — o hash do pacote de referencia que o gerador leu — e a
--- Source valida esse hash NA GERACAO. Mas nada comparava as particoes ENTRE SI depois de
--- aterrissadas.
+-- THE GAP THIS CLOSES, declared in Milestone B and measured on the spot. Each partition's
+-- manifest keeps `premises_sha256` — the hash of the reference package the generator read — and the
+-- Source validates that hash AT GENERATION. But nothing compared the partitions WITH EACH OTHER after
+-- they landed.
 --
--- O ESTADO PERIGOSO QUE ELE PEGA e concreto e ja aconteceu neste repositorio: no Marco B o
--- seed mudou (`sla_minutes_picking` 90 -> 60, `slot_lead_hours` 2-24h -> 1-8h) e o RAW
--- continuou sendo o antigo. `make silver` passou inteiro. Se a regeracao seguinte fosse
--- INTERROMPIDA no meio, metade da janela teria as premissas novas e metade as velhas — e
--- nada reprovaria, porque cada particao continua internamente consistente e todos os totais
--- continuam fechando. O warehouse mediria adesao de janela contra duas politicas ao mesmo
--- tempo, publicando um numero que nao descreve nenhuma das duas.
+-- THE DANGEROUS STATE IT CATCHES is concrete and has already happened in this repository: in Milestone B the
+-- seed changed (`sla_minutes_picking` 90 -> 60, `slot_lead_hours` 2-24h -> 1-8h) and RAW
+-- stayed the old one. `make silver` passed completely. If the next regeneration had been
+-- INTERRUPTED midway, half the window would have the new premises and half the old — and
+-- nothing would fail, because each partition stays internally consistent and all totals
+-- keep closing. The warehouse would measure window adherence against two policies at the same
+-- time, publishing a number that describes neither.
 --
--- E A MESMA CLASSE DA DENSIDADE DA BASE DE CLIENTES NA FASE 6: defeito de REPARTICAO, que
--- soma nenhuma denuncia.
+-- IT IS THE SAME CLASS AS THE CUSTOMER BASE DENSITY IN PHASE 6: an ALLOCATION defect, which
+-- no sum reveals.
 --
--- `generator_version` viaja junto pelo mesmo motivo: duas versoes do gerador na mesma janela
--- e a mesma doenca com outro nome.
+-- `generator_version` travels along for the same reason: two generator versions in the same window
+-- is the same disease under another name.
 --
--- O QUE ELE AINDA NAO PEGA, e fica declarado: se TODAS as particoes forem velhas de forma
--- uniforme, elas concordam entre si e este teste passa. Comparar o RAW contra o seed ATUAL
--- do repositorio exige recomputar o hash do pacote de referencia, que e trabalho de fora do
--- dbt — e e o que `make freeze` sela.
+-- WHAT IT STILL DOES NOT CATCH, and it stays declared: if ALL partitions are uniformly
+-- old, they agree with each other and this test passes. Comparing RAW against the repository's CURRENT
+-- seed requires recomputing the hash of the reference package, which is work outside
+-- dbt — and it is what `make freeze` seals.
 with particoes as (
 
     select distinct

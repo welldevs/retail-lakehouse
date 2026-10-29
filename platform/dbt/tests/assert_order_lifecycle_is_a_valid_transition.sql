@@ -1,15 +1,15 @@
--- Toda transicao entre eventos consecutivos de um pedido tem de existir na maquina de
--- estados do contrato, e nenhum evento pode vir depois de um estado terminal.
+-- Every transition between consecutive events of an order must exist in the contract's state
+-- machine, and no event may come after a terminal state.
 --
--- A TABELA DE PARES E A MESMA de events.py, escrita aqui de novo de proposito. Nao e
--- duplicacao ociosa: a Source valida o que EMITE, este teste valida o que CHEGOU ao parquet
--- depois de atravessar RAW e uma releitura. Sao os dois lados de uma fronteira, e o valor
--- esta em eles serem independentes — a mesma razao pela qual
--- assert_customer_lives_in_its_warehouse_service_area e o terceiro check da mesma regra.
+-- THE PAIR TABLE IS THE SAME as in events.py, written here again on purpose. It is not
+-- idle duplication: the Source validates what it EMITS, this test validates what REACHED the parquet
+-- after crossing RAW and a re-read. They are the two sides of a boundary, and the value
+-- is in their being independent — the same reason
+-- assert_customer_lives_in_its_warehouse_service_area is the third check of the same rule.
 --
--- Estados terminais (PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED) nao aparecem como
--- estado de partida em nenhum par: por construcao, qualquer evento depois deles reprova.
--- DELIVERED aparece, e so como partida de order_returned.
+-- Terminal states (PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED) do not appear as
+-- a starting state in any pair: by construction, any event after them fails.
+-- DELIVERED does appear, and only as the start of order_returned.
 with transicoes(estado_antes, tipo) as (
     values
         ('INICIO',     'order_placed'),

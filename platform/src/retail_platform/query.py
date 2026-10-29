@@ -1,18 +1,18 @@
-"""Consulta ao Silver.
+"""Querying Silver.
 
-O ARQUIVO retail.duckdb NAO CONTEM DADO. Ele guarda quatro VIEWs que apontam para o
-parquet no object storage — o dado real vive em s3://<lakehouse>/silver/. Isso e
-deliberado: o object storage e a verdade, e o .duckdb e estado local descartavel
-(esta no .gitignore e `make clean-duckdb` o apaga sem perda).
+The retail.duckdb FILE CONTAINS NO DATA. It holds four VIEWs pointing at the parquet in
+the object storage — the real data lives in s3://<lakehouse>/silver/. This is
+deliberate: the object storage is the truth, and the .duckdb is disposable local state
+(it is in .gitignore and `make clean-duckdb` deletes it without loss).
 
-A consequencia pratica e que abrir o arquivo com um cliente DuckDB qualquer FALHA com
-`NoSuchBucket`: a sessao nova nao sabe o endpoint nem a credencial, e o DuckDB tenta a
-AWS de verdade. Duas saidas, ambas oferecidas aqui:
+The practical consequence is that opening the file with an arbitrary DuckDB client FAILS
+with `NoSuchBucket`: the new session knows neither the endpoint nor the credentials, and
+DuckDB tries real AWS. Two ways out, both offered here:
 
-  - `connect()` devolve uma conexao ja configurada, para uso programatico;
-  - `create_persistent_secret()` grava um secret do DuckDB no perfil do usuario
-    (~/.duckdb/stored_secrets), depois do que QUALQUER cliente DuckDB da maquina abre o
-    arquivo e consulta as views sem configurar nada.
+  - `connect()` returns an already-configured connection, for programmatic use;
+  - `create_persistent_secret()` writes a DuckDB secret to the user's profile
+    (~/.duckdb/stored_secrets), after which ANY DuckDB client on the machine opens the
+    file and queries the views without configuring anything.
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ DEFAULT_DB = "platform/dbt/retail.duckdb"
 
 
 def _endpoint_host(endpoint: str) -> str:
-    """O DuckDB quer host:porta SEM esquema; o boto3 quer a URL completa.
+    """DuckDB wants host:port WITHOUT a scheme; boto3 wants the full URL.
 
-    O teste de ausencia de "://" nao e defensivismo: urlparse("minio:9000") interpreta
-    `minio` como ESQUEMA e `9000` como caminho, devolvendo "9000". Um S3_ENDPOINT escrito
-    sem esquema — forma perfeitamente razoavel — chegaria ao DuckDB so com a porta.
+    The check for a missing "://" is not defensiveness: urlparse("minio:9000") parses
+    `minio` as the SCHEME and `9000` as the path, returning "9000". An S3_ENDPOINT written
+    without a scheme — a perfectly reasonable form — would reach DuckDB with only the port.
     """
     if "://" not in endpoint:
         return endpoint
@@ -45,7 +45,7 @@ def _apply_s3_settings(connection, config) -> None:
 
 
 def connect(config, database: str = DEFAULT_DB, read_only: bool = True):
-    """Conexao ao .duckdb com httpfs e S3 configurados. Importa duckdb sob demanda."""
+    """Connection to the .duckdb with httpfs and S3 configured. Imports duckdb on demand."""
     import duckdb
 
     connection = duckdb.connect(database, read_only=read_only)
@@ -54,15 +54,15 @@ def connect(config, database: str = DEFAULT_DB, read_only: bool = True):
 
 
 def connect_lakehouse(config):
-    """Conexao EM MEMORIA com views sobre o parquet do object storage.
+    """IN-MEMORY connection with views over the object storage's parquet.
 
-    Nao toca o arquivo .duckdb, e essa e a razao de existir: o DuckDB e single-writer, e um
-    cliente com o arquivo aberto em escrita (DBeaver abre assim por padrao) bloqueia
-    qualquer outro processo — inclusive leitores. Consultar o Silver nao deveria depender
-    de ninguem ter fechado uma janela.
+    It does not touch the .duckdb file, and that is its reason to exist: DuckDB is
+    single-writer, and a client with the file open for writing (DBeaver opens it that way
+    by default) blocks every other process — readers included. Querying Silver should not
+    depend on someone having closed a window.
 
-    Tambem nao depende de o dbt ter rodado nesta maquina: as views sao derivadas do que
-    esta no bucket, que e a verdade.
+    It also does not depend on dbt having run on this machine: the views are derived from
+    what is in the bucket, which is the truth.
     """
     import duckdb
 
@@ -79,8 +79,8 @@ def connect_lakehouse(config):
             if not rest.endswith(".parquet"):
                 continue
             head, _, tail = rest.partition("/")
-            # `silver/x.parquet` vira uma view sobre o arquivo; `silver/x/…/y.parquet`
-            # vira uma view sobre a arvore particionada inteira.
+            # `silver/x.parquet` becomes a view over the file; `silver/x/…/y.parquet`
+            # becomes a view over the whole partitioned tree.
             (files if not tail else directories).add(head)
 
     for name in sorted(files):
@@ -97,11 +97,11 @@ def connect_lakehouse(config):
 
 
 def create_persistent_secret(config) -> str:
-    """Grava o secret S3 no perfil do usuario e devolve onde ficou.
+    """Writes the S3 secret to the user's profile and returns where it was stored.
 
-    Depois disto, `duckdb platform/dbt/retail.duckdb` funciona direto. O secret guarda a
-    credencial em ~/.duckdb — aceitavel para o MinIO local de desenvolvimento, e a razao
-    de o valor vir do .env em vez de estar escrito no codigo.
+    After this, `duckdb platform/dbt/retail.duckdb` works directly. The secret stores the
+    credentials in ~/.duckdb — acceptable for the local development MinIO, and the reason
+    the value comes from .env instead of being written in the code.
     """
     import duckdb
 
@@ -123,4 +123,4 @@ def create_persistent_secret(config) -> str:
         "select storage from duckdb_secrets() where name = ?", [SECRET_NAME]
     ).fetchone()
     connection.close()
-    return row[0] if row else "desconhecido"
+    return row[0] if row else "unknown"

@@ -51,14 +51,14 @@ DEFAULT_PAGE = os.path.join("docs", "FREEZE.md")
 DEFAULT_SEED = os.path.join("platform", "dbt", "seeds", "frozen_capture_seed.csv")
 
 MANIFEST_NAME = "_manifest.json"
-CAMPOS = ("source", "partition_key", "files", "records", "bytes", "content_sha256")
+FIELDS = ("source", "partition_key", "files", "records", "bytes", "content_sha256")
 
 
 class FreezeError(RuntimeError):
     """Failure sealing or checking the capture."""
 
 
-def _sha256_do_conteudo(manifesto: dict) -> str:
+def _content_sha256(manifest: dict) -> str:
     """sha256 of the SORTED list of (path, sha256, bytes, records) declared in the manifest.
 
     Sorted because the order in which the Source lists the files is an implementation
@@ -66,13 +66,13 @@ def _sha256_do_conteudo(manifesto: dict) -> str:
     depend on that. Canonical via JSON with fixed separators: `json.dumps` with variable
     spacing would change the hash without a single byte of data having changed.
     """
-    entradas = sorted(
+    entries = sorted(
         (str(f.get("path")), str(f.get("sha256")), int(f.get("bytes") or 0),
          int(f.get("records") or 0))
-        for f in manifesto.get("files") or []
+        for f in manifest.get("files") or []
     )
-    corpo = json.dumps(entradas, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(corpo.encode("utf-8")).hexdigest()
+    body = json.dumps(entries, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def collect(config=None) -> list[dict]:
@@ -80,114 +80,114 @@ def collect(config=None) -> list[dict]:
     from .config import from_env
 
     config = config or from_env()
-    cliente = config.client()
-    paginador = cliente.get_paginator("list_objects_v2")
+    client = config.client()
+    paginator = client.get_paginator("list_objects_v2")
 
-    registros: list[dict] = []
-    for pagina in paginador.paginate(Bucket=config.raw_bucket):
-        for item in pagina.get("Contents") or []:
-            chave = item["Key"]
-            if not chave.endswith("/" + MANIFEST_NAME):
+    records: list[dict] = []
+    for page in paginator.paginate(Bucket=config.raw_bucket):
+        for item in page.get("Contents") or []:
+            key = item["Key"]
+            if not key.endswith("/" + MANIFEST_NAME):
                 continue
-            corpo = cliente.get_object(Bucket=config.raw_bucket, Key=chave)["Body"].read()
-            manifesto = json.loads(corpo)
-            prefixo = chave[: -len("/" + MANIFEST_NAME)]
-            fonte, _, particao = prefixo.partition("/")
-            arquivos = manifesto.get("files") or []
-            registros.append({
-                "source": fonte,
-                "partition_key": particao,
-                "files": len(arquivos),
-                "records": sum(int(f.get("records") or 0) for f in arquivos),
-                "bytes": sum(int(f.get("bytes") or 0) for f in arquivos),
-                "content_sha256": _sha256_do_conteudo(manifesto),
+            body = client.get_object(Bucket=config.raw_bucket, Key=key)["Body"].read()
+            manifest = json.loads(body)
+            prefix = key[: -len("/" + MANIFEST_NAME)]
+            source, _, partition = prefix.partition("/")
+            files = manifest.get("files") or []
+            records.append({
+                "source": source,
+                "partition_key": partition,
+                "files": len(files),
+                "records": sum(int(f.get("records") or 0) for f in files),
+                "bytes": sum(int(f.get("bytes") or 0) for f in files),
+                "content_sha256": _content_sha256(manifest),
             })
-    registros.sort(key=lambda r: (r["source"], r["partition_key"]))
-    if not registros:
+    records.sort(key=lambda r: (r["source"], r["partition_key"]))
+    if not records:
         raise FreezeError(
             f"no _manifest.json under s3://{config.raw_bucket}/. Nothing has landed — "
             "run `make daily` (or the land targets) before sealing."
         )
-    return registros
+    return records
 
 
-def capture_id(registros: list[dict]) -> str:
+def capture_id(records: list[dict]) -> str:
     """Aggregate sha256 over the partition seals. ONE number names the whole capture.
 
     It exists so that a conversation about "the 4,939 products" can say WHICH capture
     those 4,939 belong to, without repeating an 81-row table.
     """
-    corpo = json.dumps(
-        [[r["source"], r["partition_key"], r["content_sha256"]] for r in registros],
+    body = json.dumps(
+        [[r["source"], r["partition_key"], r["content_sha256"]] for r in records],
         separators=(",", ":"), ensure_ascii=True,
     )
-    return hashlib.sha256(corpo.encode("utf-8")).hexdigest()
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def escrever_seed(registros: list[dict], destino: str = DEFAULT_SEED) -> str:
-    caminho = destino if os.path.isabs(destino) else os.path.join(REPO, destino)
+def escrever_seed(records: list[dict], target: str = DEFAULT_SEED) -> str:
+    path = target if os.path.isabs(target) else os.path.join(REPO, target)
     buffer = io.StringIO()
-    escritor = csv.DictWriter(buffer, fieldnames=CAMPOS, lineterminator="\n")
-    escritor.writeheader()
-    escritor.writerows({c: r[c] for c in CAMPOS} for r in registros)
-    temporario = caminho + ".tmp"
-    with open(temporario, "w", encoding="utf-8") as arquivo:
-        arquivo.write(buffer.getvalue())
-    os.replace(temporario, caminho)
-    return caminho
+    writer = csv.DictWriter(buffer, fieldnames=FIELDS, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows({c: r[c] for c in FIELDS} for r in records)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        fh.write(buffer.getvalue())
+    os.replace(tmp_path, path)
+    return path
 
 
-def ler_seed(origem: str = DEFAULT_SEED) -> list[dict]:
-    caminho = origem if os.path.isabs(origem) else os.path.join(REPO, origem)
-    if not os.path.exists(caminho):
+def ler_seed(origin: str = DEFAULT_SEED) -> list[dict]:
+    path = origin if os.path.isabs(origin) else os.path.join(REPO, origin)
+    if not os.path.exists(path):
         raise FreezeError(
-            f"{origem} does not exist: the capture was never sealed. Run `make freeze`."
+            f"{origin} does not exist: the capture was never sealed. Run `make freeze`."
         )
-    with open(caminho, encoding="utf-8") as arquivo:
+    with open(path, encoding="utf-8") as fh:
         return [
             {"source": l["source"], "partition_key": l["partition_key"],
              "files": int(l["files"]), "records": int(l["records"]),
              "bytes": int(l["bytes"]), "content_sha256": l["content_sha256"]}
-            for l in csv.DictReader(arquivo)
+            for l in csv.DictReader(fh)
         ]
 
 
-def comparar(selado: list[dict], atual: list[dict]) -> list[str]:
+def comparar(sealed: list[dict], current: list[dict]) -> list[str]:
     """Differences between the seal and today's RAW. Empty list = the capture is intact."""
-    por_chave = lambda lista: {(r["source"], r["partition_key"]): r for r in lista}  # noqa: E731
-    a, b = por_chave(selado), por_chave(atual)
-    problemas: list[str] = []
-    for chave in sorted(set(a) - set(b)):
-        problemas.append(f"partition SEALED but MISSING from RAW: {chave[0]}/{chave[1]}")
-    for chave in sorted(set(b) - set(a)):
-        problemas.append(f"NEW partition, outside the seal: {chave[0]}/{chave[1]}")
-    for chave in sorted(set(a) & set(b)):
-        if a[chave]["content_sha256"] != b[chave]["content_sha256"]:
-            problemas.append(
-                f"content CHANGED in {chave[0]}/{chave[1]}: "
-                f"sealed={a[chave]['content_sha256'][:16]}... "
-                f"current={b[chave]['content_sha256'][:16]}..."
+    by_key = lambda items: {(r["source"], r["partition_key"]): r for r in items}  # noqa: E731
+    a, b = by_key(sealed), by_key(current)
+    problems: list[str] = []
+    for key in sorted(set(a) - set(b)):
+        problems.append(f"partition SEALED but MISSING from RAW: {key[0]}/{key[1]}")
+    for key in sorted(set(b) - set(a)):
+        problems.append(f"NEW partition, outside the seal: {key[0]}/{key[1]}")
+    for key in sorted(set(a) & set(b)):
+        if a[key]["content_sha256"] != b[key]["content_sha256"]:
+            problems.append(
+                f"content CHANGED in {key[0]}/{key[1]}: "
+                f"sealed={a[key]['content_sha256'][:16]}... "
+                f"current={b[key]['content_sha256'][:16]}..."
             )
-    return problemas
+    return problems
 
 
-def render(registros: list[dict]) -> str:
-    identidade = capture_id(registros)
-    por_fonte: dict[str, list[dict]] = {}
-    for r in registros:
-        por_fonte.setdefault(r["source"], []).append(r)
+def render(records: list[dict]) -> str:
+    identity = capture_id(records)
+    by_source: dict[str, list[dict]] = {}
+    for r in records:
+        by_source.setdefault(r["source"], []).append(r)
 
-    linhas = [
+    lines = [
         "# The sealed capture",
         "",
         "**Generated by `make freeze`.** Do not edit by hand.",
         "",
-        f"**`capture_id` = `{identidade}`**",
+        f"**`capture_id` = `{identity}`**",
         "",
         f"Sealed on {datetime.now(timezone.utc).strftime('%Y-%m-%d')} · "
-        f"{len(registros)} partitions · "
-        f"{sum(r['records'] for r in registros):,} records · "
-        f"{sum(r['bytes'] for r in registros) / (1024**3):.2f} GB".replace(",", "."),
+        f"{len(records)} partitions · "
+        f"{sum(r['records'] for r in records):,} records · "
+        f"{sum(r['bytes'] for r in records) / (1024**3):.2f} GB",
         "",
         "## What this seal is, and what it is not",
         "",
@@ -224,34 +224,36 @@ def render(registros: list[dict]) -> str:
         "| Source | Partitions | Records | GB |",
         "|---|---|---|---|",
     ]
-    for fonte in sorted(por_fonte):
-        grupo = por_fonte[fonte]
-        linhas.append(
-            f"| `{fonte}` | {len(grupo)} | "
-            + f"{sum(r['records'] for r in grupo):,}".replace(",", ".")
-            + f" | {sum(r['bytes'] for r in grupo) / (1024**3):.3f} |"
+    for source in sorted(by_source):
+        group = by_source[source]
+        lines.append(
+            f"| `{source}` | {len(group)} | "
+            + f"{sum(r['records'] for r in group):,}"
+            + f" | {sum(r['bytes'] for r in group) / (1024**3):.3f} |"
         )
-    linhas += ["", "## Partitions", ""]
-    for fonte in sorted(por_fonte):
-        linhas += [f"### `{fonte}`", "",
-                   "| Partition | Files | Records | Bytes | `content_sha256` |",
-                   "|---|---|---|---|---|"]
-        for r in por_fonte[fonte]:
-            linhas.append(
-                f"| `{r['partition_key']}` | {r['files']} | "
-                + f"{r['records']:,}".replace(",", ".")
-                + f" | {r['bytes']:,}".replace(",", ".")
-                + f" | `{r['content_sha256'][:24]}…` |"
-            )
-        linhas.append("")
-    return "\n".join(linhas) + "\n"
+    lines.append(
+        f"| **total** | **{len(records)}** | "
+        + f"**{sum(r['records'] for r in records):,}**"
+        + f" | **{sum(r['bytes'] for r in records) / (1024**3):.2f}** |"
+    )
+    # The per-partition detail is not a table here: with the window growing, it was hundreds
+    # of rows nobody reads, duplicating the seed. The seed is what freeze-check compares.
+    lines += [
+        "",
+        f"The full per-partition breakdown ({len(records)} rows: partition key, file count, records,",
+        "bytes, `content_sha256`) is what `make freeze-check` actually compares against a",
+        "re-read of RAW. It is written machine-readable to",
+        "`platform/dbt/seeds/frozen_capture_seed.csv` rather than duplicated here as a table",
+        "for human reading.",
+    ]
+    return "\n".join(lines) + "\n"
 
 
-def escrever_pagina(registros: list[dict], destino: str = DEFAULT_PAGE) -> str:
-    caminho = destino if os.path.isabs(destino) else os.path.join(REPO, destino)
-    os.makedirs(os.path.dirname(caminho), exist_ok=True)
-    temporario = caminho + ".tmp"
-    with open(temporario, "w", encoding="utf-8") as arquivo:
-        arquivo.write(render(registros))
-    os.replace(temporario, caminho)
-    return caminho
+def escrever_pagina(records: list[dict], target: str = DEFAULT_PAGE) -> str:
+    path = target if os.path.isabs(target) else os.path.join(REPO, target)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        fh.write(render(records))
+    os.replace(tmp_path, path)
+    return path

@@ -3,73 +3,73 @@ version: 2
 seeds:
   - name: warehouse_province_map_seed
     description: >
-      Mapa wh -> provincia/municipio, com codigos oficiais do INE. Derivado do
-      Callejero do INE (sem API, baixado manualmente do site, semestral) — ver
-      scripts/derive_warehouse_province_map.py para a derivacao/reconferencia (cruza
-      UP contra SECC; os arquivos brutos do Callejero nao ficam no repo, so o
-      resultado, aqui). province_name usa a MESMA grafia de
-      silver_ine_population_series.province_name (ex. "Valencia/València"), para join
-      direto sem normalizacao de texto.
+      Map wh -> province/municipality, with official INE codes. Derived from the
+      INE Callejero (no API, downloaded by hand from the website, twice a year) — see
+      scripts/derive_warehouse_province_map.py for the derivation/re-check (it crosses
+      UP against SECC; the raw Callejero files are not kept in the repo, only the
+      result, here). province_name uses the SAME spelling as
+      silver_ine_population_series.province_name (e.g. "Valencia/València"), for a direct
+      join without text normalization.
 
-      Nome com sufixo _seed de proposito: existe tambem um MODELO chamado
-      warehouse_province_map (models/silver/warehouse_province_map.sql) que e so um
-      "select *" deste seed, materializado no object storage — e esse modelo, nao este
-      seed, que aparece em `retail_platform query` (ver comentario do modelo).
+      Name with the _seed suffix on purpose: there is also a MODEL called
+      warehouse_province_map (models/silver/warehouse_province_map.sql) that is just a
+      "select *" of this seed, materialized in object storage — it is that model, not this
+      seed, that shows up in `retail_platform query` (see the model comment).
     columns:
       - name: wh
-        description: Codigo do armazem, como aparece em silver_product_price.warehouse.
+        description: Warehouse code, as it appears in silver_product_price.warehouse.
         tests: [not_null, unique]
       - name: province_code
-        description: Codigo de provincia do INE (2 digitos, com zero a esquerda).
+        description: INE province code (2 digits, zero-padded).
         tests: [not_null]
       - name: province_name
         description: >
-          Grafia identica a silver_ine_population_series.province_name — join direto
-          sem normalizar texto.
+          Spelling identical to silver_ine_population_series.province_name — direct join
+          without normalizing text.
         tests: [not_null]
       - name: municipio_code
-        description: Codigo de municipio do INE (3 digitos, com zero a esquerda).
+        description: INE municipality code (3 digits, zero-padded).
         tests: [not_null]
       - name: municipio_name
         tests: [not_null]
 
   - name: ine_municipality_codes_seed
     description: >
-      Codigo INE (provincia+municipio) de cada municipio dentro do escopo desta
-      plataforma (08/28/41/46), derivado ao vivo de VALORES_VARIABLE/19 da API Tempus3
-      do INE — ver scripts/derive_municipality_codes.py para a derivacao e o porque
-      (DATOS_TABLA/29005, populacao por municipio, so tem o NOME do municipio em
-      "Nombre", nunca o codigo). municipality_name usa a grafia do Tempus3 (mesma de
-      silver_ine_population_by_municipality.municipality_name), DIFERENTE da grafia do
-      Callejero (maiuscula, artigo como sufixo) — nao e o mesmo texto de
-      silver_callejero_population_units.municipality_name, join por nome entre os dois
-      quebraria.
+      INE code (province+municipality) of each municipality within this
+      platform's scope (08/28/41/46), derived live from VALORES_VARIABLE/19 of INE's Tempus3
+      API — see scripts/derive_municipality_codes.py for the derivation and the reason
+      (DATOS_TABLA/29005, population by municipality, only has the municipality NAME in
+      "Nombre", never the code). municipality_name uses the Tempus3 spelling (same as
+      silver_ine_population_by_municipality.municipality_name), DIFFERENT from the
+      Callejero spelling (uppercase, article as suffix) — it is not the same text as
+      silver_callejero_population_units.municipality_name, and a join by name between the two
+      would break.
     columns:
       - name: province_code
-        description: Codigo de provincia do INE (2 digitos, com zero a esquerda).
+        description: INE province code (2 digits, zero-padded).
         tests: [not_null]
       - name: municipality_code
-        description: Codigo de municipio do INE (3 digitos, com zero a esquerda).
+        description: INE municipality code (3 digits, zero-padded).
         tests: [not_null]
       - name: municipality_name
         description: >
-          Nome do municipio na grafia Tempus3. Chave segura de join SOMENTE dentro
-          deste seed (escopado a 08/28/41/46) — confirmado que nenhum dos 866 nomes se
-          repete dentro desse escopo, embora 18 nomes se repitam na Espanha inteira
-          entre provincias diferentes (ex. "Arroyomolinos" em Madrid e Caceres).
+          Municipality name in the Tempus3 spelling. A safe join key ONLY within
+          this seed (scoped to 08/28/41/46) — confirmed that none of the 866 names
+          repeats within that scope, although 18 names repeat across all of Spain
+          between different provinces (e.g. "Arroyomolinos" in Madrid and Caceres).
         tests: [not_null, unique]
 
   - name: stock_premises_seed
     description: >
-      A POLITICA de estoque, em dias de demanda: cobertura inicial, ponto de reposicao,
-      nivel alvo e prazo do fornecedor. Todas 'synthetic' — nenhuma fonte deste repositorio
-      mede estoque, e essa ausencia e a razao de o dominio so existir desde a Fase 7.
+      The stock POLICY, in days of demand: opening cover, reorder point,
+      target level and supplier lead time. All 'synthetic' — no source in this repository
+      measures stock, and that absence is the reason the domain only exists since Phase 7.
 
-      O que NAO e sintetico e o numero que elas multiplicam: a demanda media diaria por
-      serie vem do consumo MEDIDO em silver_order_line. A politica vem daqui, a escala vem
-      do dado. Ver assert_stock_premises_are_internally_coherent, que cruza as quatro entre
-      si — ponto de reposicao maior que o prazo, nivel alvo maior que o ponto, e cobertura
-      inicial maior que o ponto.
+      What is NOT synthetic is the number they multiply: the average daily demand per
+      series comes from consumption MEASURED in silver_order_line. The policy comes from here, the scale comes
+      from the data. See assert_stock_premises_are_internally_coherent, which crosses the four
+      against each other — reorder point above the lead time, target level above the point, and opening
+      cover above the point.
     columns:
       - name: premise_key
         tests: [not_null, unique]
@@ -82,21 +82,21 @@ seeds:
 
   - name: frozen_capture_seed
     description: >
-      O SELO DA CAPTURA, uma linha por particao do RAW. DERIVADO: escrito por `make freeze`,
-      junto de docs/FREEZE.md, a partir da mesma coleta — nao editar a mao.
+      THE CAPTURE SEAL, one row per RAW partition. DERIVED: written by `make freeze`,
+      together with docs/FREEZE.md, from the same collection — do not edit by hand.
 
-      `content_sha256` cobre a lista ORDENADA de (path, sha256, bytes, records) declarada no
-      manifesto da particao. Ficam deliberadamente de fora run_id, timestamps e history: sao
-      metadados de EXECUCAO, e inclui-los faria um re-land de dado byte-identico quebrar o
-      selo. Alarme que dispara sem causa treina quem revisa a ignora-lo — mesma razao pela
-      qual o CONTRACT do painel carrega o sha256 da origem e nao a data da geracao.
+      `content_sha256` covers the SORTED list of (path, sha256, bytes, records) declared in the
+      partition manifest. run_id, timestamps and history are deliberately left out: they are
+      RUN metadata, and including them would make a re-land of byte-identical data break the
+      seal. An alarm that fires without cause trains reviewers to ignore it — the same reason
+      the panel CONTRACT carries the source's sha256 and not the generation date.
 
-      PODE ESTAR VAZIO, e vazio significa "ainda nao selado" — o estado de um clone novo.
-      assert_raw_matches_the_frozen_capture trata isso como nada a guardar; a partir do
-      primeiro selo ele passa a cobrar. Nao existe um terceiro estado.
+      IT MAY BE EMPTY, and empty means "not sealed yet" — the state of a fresh clone.
+      assert_raw_matches_the_frozen_capture treats that as nothing to guard; from the
+      first seal on it starts enforcing. There is no third state.
 
-      A verificacao COMPLETA e `make freeze-check`, que rele o object storage. O teste dbt
-      cobre a parte que roda sem rede extra: particao aterrissada depois do fechamento.
+      The COMPLETE check is `make freeze-check`, which re-reads the object storage. The dbt test
+      covers the part that runs without extra network: a partition landed after closing.
     columns:
       - name: source
         tests: [not_null]

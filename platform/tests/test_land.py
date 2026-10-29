@@ -1,4 +1,4 @@
-"""Chave do objeto e conversao de checksum. Sem rede."""
+"""Object key and checksum conversion. No network."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from .support import build_partition, build_single_axis_partition
 
 class TestChecksumEncoding(unittest.TestCase):
     def test_b64_of_hex_matches_what_s3_expects(self):
-        """S3 quer base64 do digest CRU, nao do hexadecimal. Enviar o hex em base64
-        fizera o servidor recusar todo objeto, ou pior, aceitar sem conferir."""
-        blob = b"conteudo"
+        """S3 wants base64 of the RAW digest, not of the hexadecimal. Sending the hex in base64
+        would make the server reject every object, or worse, accept without checking."""
+        blob = b"content"
         hex_digest = hashlib.sha256(blob).hexdigest()
         self.assertEqual(
             _b64_of_hex(hex_digest),
@@ -28,8 +28,8 @@ class TestChecksumEncoding(unittest.TestCase):
 
 class TestObjectKey(unittest.TestCase):
     def test_key_starts_with_the_source_name_and_keeps_the_hive_layout(self):
-        """O layout hive precisa sobreviver ao upload: e ele que faz o DuckDB derivar
-        ingestion_date e wh como colunas com hive_partitioning=1."""
+        """The hive layout must survive the upload: it is what makes DuckDB derive
+        ingestion_date and wh as columns with hive_partitioning=1."""
         with tempfile.TemporaryDirectory() as root:
             partition = build_partition(root, ingestion_date="2026-08-16", warehouse="mad1")
             entry = next(e for e in read(partition).files if e.stage == "catalog")
@@ -40,8 +40,8 @@ class TestObjectKey(unittest.TestCase):
         )
 
     def test_key_for_a_source_without_a_second_axis_has_no_extra_segment(self):
-        """object_key usa partition.source_name, nao uma constante fixa: uma segunda
-        source aterrissa com seu proprio prefixo, sem eixo nenhum quando nao ha um."""
+        """object_key uses partition.source_name, not a fixed constant: a second source
+        lands under its own prefix, with no axis at all when there is none."""
         with tempfile.TemporaryDirectory() as root:
             partition = build_single_axis_partition(root, ingestion_date="2026-09-01")
             entry = next(e for e in read(partition).files if e.stage == "tables")

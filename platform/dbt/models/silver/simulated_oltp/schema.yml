@@ -3,25 +3,25 @@ version: 2
 models:
   - name: silver_customer
     description: >
-      Clientes sinteticos ancorados em geografia REAL do Callejero. O cliente e inventado;
-      o lugar onde ele mora nao. Grao (ingestion_date, customer_id) — os mesmos ids
-      convivem em datas diferentes, porque cada regeracao da base cria uma
-      ingestion_date nova.
+      Synthetic customers anchored on REAL Callejero geography. The customer is invented;
+      the place where they live is not. Grain (ingestion_date, customer_id) — the same ids
+      coexist on different dates, because each regeneration of the base creates a new
+      ingestion_date.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: is_latest_ingestion
         description: >
-          true na ingestion_date mais recente. O historico de todas as geracoes e
-          preservado de proposito — e o que permite ver a base crescer — entao sem o
-          filtro somam-se clientes de geracoes diferentes. `where is_latest_ingestion` le
-          a base atual.
+          true on the most recent ingestion_date. The history of all generations is
+          preserved on purpose — it is what lets you see the base grow — so without the
+          filter customers from different generations add up. `where is_latest_ingestion` reads
+          the current base.
         tests: [not_null]
       - name: wh
         description: >
-          Armazem, no vocabulario da propria fonte. Preservado em vez de renomeado para
-          `warehouse`: e assim que warehouse_service_area e warehouse_province_map o
-          chamam, e sao com eles que este modelo se junta.
+          Warehouse, in the source's own vocabulary. Kept instead of renamed to
+          `warehouse`: that is what warehouse_service_area and warehouse_province_map
+          call it, and those are what this model joins with.
         tests:
           - not_null
           - accepted_values:
@@ -29,16 +29,16 @@ models:
                 values: [mad1, bcn1, svq1, vlc1]
       - name: partition_wh
         description: >
-          O eixo `wh=` do caminho, extraido do filename. Existe so para ser reconciliado
-          com `wh` — os dois tem o mesmo nome no read_json e o DuckDB os deduplica, entao
-          sem esta coluna uma particao pousada sob o diretorio errado nao teria com o que
-          ser comparada. Ver tests/assert_customer_partition_axis_matches_record.sql.
+          The path's `wh=` axis, extracted from the filename. It exists only to be reconciled
+          with `wh` — the two have the same name in read_json and DuckDB deduplicates them, so
+          without this column a partition landed under the wrong directory would have nothing to
+          be compared with. See tests/assert_customer_partition_axis_matches_record.sql.
         tests: [not_null]
       - name: customer_id
         description: >
-          cust_<wh>_<indice de 6 digitos>. Unico dentro de uma ingestion_date (o wh esta
-          embutido no id), NAO entre datas. Nao e identidade persistente: e chave da
-          particao — CONTRACT.md secao 3, garantia 3.
+          cust_<wh>_<6-digit index>. Unique within an ingestion_date (the wh is
+          embedded in the id), NOT across dates. It is not a persistent identity: it is a partition
+          key — CONTRACT.md section 3, guarantee 3.
         tests: [not_null]
       - name: province_code
         tests: [not_null]
@@ -48,26 +48,26 @@ models:
         tests: [not_null]
       - name: municipality_name
         description: >
-          Grafia do INE 29005 (`Bruc, El`), NAO a do Callejero (`BRUC (EL)`). Medido: as
-          duas divergem em 370 de 370 municipios. O que se compara entre as duas fontes e
-          sempre o CODIGO, nunca o nome.
+          INE 29005 spelling (`Bruc, El`), NOT the Callejero's (`BRUC (EL)`). Measured: the
+          two diverge in 370 of 370 municipalities. What is compared between the two sources is
+          always the CODE, never the name.
         tests: [not_null]
       - name: candidate_index
         description: >
-          Auditoria, nao chave estrangeira: aponta a linha exata de address_candidates.json
-          do export identificado em silver_oltp_manifest.reference_path. Esse arquivo e
-          insumo efemero do gerador e nao e pousado no RAW.
+          Audit, not a foreign key: points to the exact row of address_candidates.json
+          in the export identified in silver_oltp_manifest.reference_path. That file is an
+          ephemeral generator input and is not landed in RAW.
         tests: [not_null]
       - name: street_name
         tests: [not_null]
       - name: postal_code
-        description: CEP real do tramo (campo CPOS do Callejero). Nunca inventado.
+        description: The segment's real postal code (Callejero CPOS field). Never invented.
         tests: [not_null]
       - name: numbering_type
         description: >
-          Verbatim do Callejero (campo TINUM). "0" = a via nao tem esquema de numeracao,
-          "1" = impares, "2" = pares. Carregado ate o cliente para que a regra de numeracao
-          seja auditavel olhando so este modelo.
+          Verbatim from the Callejero (TINUM field). "0" = the street has no numbering scheme,
+          "1" = odd numbers, "2" = even numbers. Carried through to the customer so that the numbering rule
+          is auditable by looking at this model alone.
         tests:
           - not_null
           - accepted_values:
@@ -75,9 +75,9 @@ models:
                 values: ["0", "1", "2"]
       - name: house_number
         description: >
-          Numero dentro da faixa real do tramo, respeitando a paridade — ou NULL quando
-          nao existe numero. NULL nunca e puro aqui: esta sempre qualificado pelo
-          numbering_type ao lado. Ver
+          A number within the segment's real range, respecting parity — or NULL when
+          no number exists. NULL is never bare here: it is always qualified by the
+          numbering_type next to it. See
           tests/assert_customer_house_number_matches_numbering_type.sql.
       - name: first_name
         tests: [not_null]
@@ -85,8 +85,8 @@ models:
         tests: [not_null]
       - name: sex_label
         description: >
-          Rotulo EXATO da tabela 29005 do INE, de onde veio a proporcao — por isso
-          "Hombres"/"Mujeres" e nao "M"/"F". O agregado "Total" da fonte nunca e amostrado.
+          EXACT label from INE table 29005, where the proportion came from — hence
+          "Hombres"/"Mujeres" and not "M"/"F". The source's "Total" aggregate is never sampled.
         tests:
           - not_null
           - accepted_values:
@@ -94,23 +94,23 @@ models:
                 values: [Hombres, Mujeres]
       - name: birth_year
         description: >
-          Derivado: year(ingestion_date) menos a idade amostrada. Regerar a base em outra
-          data desloca este campo e preserva a idade — ver age_at_ingestion.
+          Derived: year(ingestion_date) minus the sampled age. Regenerating the base on another
+          date shifts this field and preserves the age — see age_at_ingestion.
         tests: [not_null]
       - name: age_at_ingestion
         description: >
-          A idade que o gerador realmente sorteou, recuperada exatamente (nao aproximada).
-          E o atributo demografico estavel entre geracoes. Distribuicao PROVINCIAL usada
-          como proxy: nao existe faixa etaria por municipio nas tabelas ingeridas por esta
-          plataforma.
+          The age the generator actually drew, recovered exactly (not approximated).
+          It is the demographic attribute that is stable across generations. A PROVINCIAL distribution used
+          as a proxy: there is no age band per municipality in the tables ingested by this
+          platform.
         tests: [not_null]
 
   - name: silver_oltp_manifest
     description: >
-      O _manifest.json da source de OLTP como fonte modelada. Alem da reconciliacao que
-      raw_manifest.sql faz para a Mercadona, carrega a LINHAGEM DOS INSUMOS: de qual
-      Callejero e de qual populacao estes clientes foram derivados. Esta e a unica source
-      derivada do repo, entao essa pergunta so tem resposta aqui.
+      The OLTP source's _manifest.json as a modeled source. Besides the reconciliation that
+      raw_manifest.sql does for Mercadona, it carries the INPUT LINEAGE: which
+      Callejero and which population these customers were derived from. This is the repo's only derived
+      source, so that question can only be answered here.
     columns:
       - name: ingestion_date
         tests: [not_null]
@@ -119,7 +119,7 @@ models:
       - name: run_id
         tests: [not_null, unique]
       - name: complete
-        description: A plataforma so consome particao completa; falso aqui e erro de ingestao.
+        description: The platform only consumes complete partitions; false here is an ingestion error.
         tests:
           - not_null
           - accepted_values:
@@ -128,11 +128,11 @@ models:
                 quote: false
       - name: source_warehouse
         description: >
-          O wh que a Source gravou no manifesto. Reconciliado contra o eixo hive da
-          particao pelo teste de coerencia, mesmo padrao de raw_manifest.
+          The wh the Source wrote in the manifest. Reconciled against the partition's hive axis
+          by the coherence test, the same pattern as raw_manifest.
         tests: [not_null]
       - name: failure_count
-        description: Falha registrada reprova a particao.
+        description: A recorded failure fails the partition.
         tests:
           - accepted_values:
               arguments:
@@ -140,15 +140,15 @@ models:
                 quote: false
       - name: seed
         description: >
-          A seed que reproduz esta particao. Junto de reference_path, ingestion_date e o
-          escopo do cadastro (min_customer_age, penetration_pct, allocation_rule), sao as
-          QUATRO condicoes da garantia de reprodutibilidade.
+          The seed that reproduces this partition. Together with reference_path, ingestion_date and the
+          register's scope (min_customer_age, penetration_pct, allocation_rule), they are the
+          FOUR conditions of the reproducibility guarantee.
         tests: [not_null]
       - name: count_source
         description: >
-          'reference' quando o tamanho da base veio da populacao adulta daquele armazem,
-          'cli' quando alguem passou --count. Sem esta coluna, uma base gerada com override
-          manual seria indistinguivel de uma derivada da populacao.
+          'reference' when the base size came from that warehouse's adult population,
+          'cli' when someone passed --count. Without this column, a base generated with a manual
+          override would be indistinguishable from one derived from population.
         tests:
           - not_null
           - accepted_values:
@@ -156,40 +156,40 @@ models:
                 values: [reference, cli]
       - name: min_customer_age
         description: >
-          Idade minima para existir como titular de conta, lida da referencia. Nao e o
-          mesmo que order_premises.min_buyer_age: aquela governa quem PODE PEDIR, esta
-          governa quem EXISTE. A Fase 5 confundiu as duas e a base seguiu com 18,01% de
-          menores.
+          Minimum age to exist as an account holder, read from the reference. It is not the
+          same as order_premises.min_buyer_age: that one governs who MAY ORDER, this one
+          governs who EXISTS. Phase 5 confused the two and the base kept 18.01%
+          minors.
         tests: [not_null]
       - name: penetration_pct
         description: >
-          A taxa que dimensionou a base, em percentual da populacao adulta servida. Viaja
-          aqui pela mesma razao da seed: muda-la troca as pessoas por tras dos mesmos ids.
+          The rate that sized the base, as a percentage of the adult population served. It travels
+          here for the same reason as the seed: changing it swaps the people behind the same ids.
         tests: [not_null]
       - name: allocation_rule
         tests: [not_null]
       - name: customer_target
         description: >
-          Quantos clientes a referencia pedia para este armazem. Ao lado de
-          requested_count responde "a base tem o tamanho que a populacao pedia?" sem
-          refazer a conta.
+          How many customers the reference asked for this warehouse. Next to
+          requested_count it answers "is the base the size the population asked for?" without
+          redoing the calculation.
         tests: [not_null]
       - name: declared_customer_rows
         tests: [not_null]
       - name: callejero_ingestion_date
-        description: Linhagem — de qual extracao do Callejero vieram os enderecos.
+        description: Lineage — which Callejero extraction the addresses came from.
         tests: [not_null]
       - name: population_ingestion_date
-        description: Linhagem — de qual extracao da tabela 29005 veio o peso municipal.
+        description: Lineage — which extraction of table 29005 the municipal weight came from.
         tests: [not_null]
       - name: population_series_ingestion_date
-        description: Linhagem — de qual extracao da tabela 31304 veio a piramide etaria.
+        description: Lineage — which extraction of table 31304 the age pyramid came from.
         tests: [not_null]
       - name: previous_runs
         description: >
-          Quantas execucoes anteriores esta particao acumulou via --overwrite. Cada uma
-          guarda sua seed e seu count, para que uma regeracao com outra seed nao troque as
-          pessoas por tras dos mesmos ids sem deixar rastro.
+          How many previous runs this partition accumulated via --overwrite. Each one
+          keeps its seed and its count, so that a regeneration with another seed does not swap the
+          people behind the same ids without leaving a trace.
         tests: [not_null]
       - name: schema_fingerprint
         tests: [not_null]

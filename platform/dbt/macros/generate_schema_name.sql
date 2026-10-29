@@ -1,21 +1,21 @@
 {#
-    NOME DE SCHEMA ABSOLUTO, nao concatenado.
+    ABSOLUTE SCHEMA NAME, not concatenated.
 
-    O comportamento PADRAO do dbt e prefixar: com `schema: GOLD` no profile e
-    `+schema: MART` no modelo, o resultado e `GOLD_MART`. Isso existe para que varios
-    desenvolvedores compartilhem um banco sem colidir — cada um com seu prefixo.
+    dbt's DEFAULT behavior is to prefix: with `schema: GOLD` in the profile and
+    `+schema: MART` on the model, the result is `GOLD_MART`. That exists so that several
+    developers can share a database without colliding — each with their own prefix.
 
-    Aqui esse padrao esta errado, e foi medido: a primeira execucao criou RETAIL.GOLD_GOLD
-    e RETAIL.GOLD_MART ao lado dos schemas GOLD e MART que `ensure_schemas` (em
-    snowflake_load.py) tinha acabado de criar com comentario e destino de grant. Ficaram
-    quatro schemas para duas camadas, e os testes nao achavam as tabelas.
+    Here that default is wrong, and it was measured: the first run created RETAIL.GOLD_GOLD
+    and RETAIL.GOLD_MART next to the GOLD and MART schemas that `ensure_schemas` (in
+    snowflake_load.py) had just created with a comment and as grant targets. There were
+    four schemas for two layers, and the tests could not find the tables.
 
-    GOLD, MART e STAGE nao sao schemas de desenvolvedor: sao as CAMADAS do modelo, com
-    nome fixo, criadas e comentadas pela plataforma e alvo dos grants por role. Um prefixo
-    de sessao nao tem o que fazer neles. Quando fizer sentido isolar execucoes (CI, mais de
-    uma pessoa), o isolamento certo e por DATABASE — trocar SNOWFLAKE_DATABASE — e nao por
-    nome de schema, porque so assim as tres camadas continuam se chamando do mesmo jeito
-    em qualquer ambiente.
+    GOLD, MART and STAGE are not developer schemas: they are the model's LAYERS, with a
+    fixed name, created and commented by the platform and targeted by per-role grants. A
+    session prefix has no business on them. When it makes sense to isolate runs (CI, more
+    than one person), the right isolation is per DATABASE — switch SNOWFLAKE_DATABASE — and
+    not per schema name, because only then do the three layers keep the same names in any
+    environment.
 #}
 {% macro generate_schema_name(custom_schema_name, node) -%}
     {%- if custom_schema_name is none -%}

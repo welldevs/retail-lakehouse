@@ -1,35 +1,35 @@
-"""O portao do `dbt build` do Silver: o que EXCLUIR e que VAR passar, decidido num lugar so.
+"""The Silver `dbt build` gate: what to EXCLUDE and which VAR to pass, decided in one place.
 
-POR QUE ESTE MODULO EXISTE, e o defeito concreto que o criou.
+WHY THIS MODULE EXISTS, and the concrete defect that created it.
 
-O projeto dbt do Silver tem 21 modelos, e nem todos podem ser construidos sempre. Dois
-motivos, e os dois sao legitimos:
+The Silver dbt project has 21 models, and not all of them can always be built. Two
+reasons, both legitimate:
 
-  1. UMA SOURCE QUE AINDA NAO ATERRISSOU NADA. `read_json` sobre um prefixo vazio nao
-     devolve zero linhas — ele FALHA. Um repositorio recem-clonado, ou uma source nova,
-     derrubaria o build inteiro por causa de uma arvore que nem deveria existir ainda.
-  2. A PROJECAO ICEBERG. `silver_live_order_state` le por `metadata_location`, e esse
-     caminho vem do CATALOGO, nunca de uma varredura do storage — o DuckDB recusa adivinhar,
-     e a recusa esta certa. Sem o plano de stream de pe, nao ha catalogo a quem perguntar.
+  1. A SOURCE THAT HAS NOT LANDED ANYTHING YET. `read_json` over an empty prefix does not
+     return zero rows — it FAILS. A freshly cloned repository, or a new source, would
+     bring the whole build down because of a tree that shouldn't even exist yet.
+  2. THE ICEBERG PROJECTION. `silver_live_order_state` reads by `metadata_location`, and
+     that path comes from the CATALOG, never from a storage scan — DuckDB refuses to guess,
+     and the refusal is right. Without the stream plane up, there is no catalog to ask.
 
-Ate 2026-08-31 essa decisao existia em SEIS lugares: o alvo `silver` do Makefile, com os
-cinco portoes; e cada uma das cinco DAGs, com um portao so — o da propria source. Nenhuma
-tinha o do Iceberg.
+Until 2026-08-31 this decision lived in SIX places: the Makefile `silver` target, with all
+five gates; and each of the five DAGs, with a single gate — its own source's. None of them
+had the Iceberg one.
 
-O RESULTADO FOI EXATAMENTE O QUE SE ESPERA DE LOGICA DUPLICADA: a DAG
-`mercadona_catalog_daily` nao tinha portao NENHUM (a Mercadona sempre tem dado, entao
-ninguem sentiu falta) e passou a reprovar todo dia assim que `silver_live_order_state`
-nasceu, no Marco 6 — 4 armazens extraidos, validados e aterrissados com sucesso, e o
-`silver` caindo no fim com "no version-hint could be found". O dado estava certo; o portao
-e que morava no arquivo errado.
+THE RESULT WAS EXACTLY WHAT ONE EXPECTS FROM DUPLICATED LOGIC: the
+`mercadona_catalog_daily` DAG had NO gate at all (Mercadona always has data, so nobody
+missed it) and started failing every day as soon as `silver_live_order_state` was born, in
+Milestone 6 — 4 warehouses extracted, validated and landed successfully, and `silver`
+falling over at the end with "no version-hint could be found". The data was right; the
+gate just lived in the wrong file.
 
-Agora ha um lugar. `plan()` e PURA — recebe o que foi observado e devolve os argumentos —
-para que a decisao inteira seja testavel sem rede, sem MinIO e sem catalogo. `resolve()` faz
-a observacao. `build()` roda o dbt. Makefile e DAGs chamam o mesmo verbo.
+Now there is one place. `plan()` is PURE — it receives what was observed and returns the
+arguments — so the whole decision is testable without network, MinIO or catalog.
+`resolve()` does the observing. `build()` runs dbt. Makefile and DAGs call the same verb.
 
-O QUE ESTE MODULO NAO FAZ: nao decide o que e um erro. Se uma source TEM dado e o modelo
-dela falha, o build reprova — como deve. Excluir e para o que ainda nao existe, nunca para o
-que esta quebrado.
+WHAT THIS MODULE DOES NOT DO: it does not decide what an error is. If a source HAS data and
+its model fails, the build fails — as it should. Excluding is for what doesn't exist yet,
+never for what is broken.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ from __future__ import annotations
 import os
 import subprocess
 
-# Cada source com o prefixo que a identifica no RAW e os modelos que morrem sem ele.
-# A ordem e a de chegada das sources, e os nomes sao os que o dbt conhece.
+# Each source with the prefix that identifies it in RAW and the models that die without it.
+# The order is the order in which the sources arrived, and the names are the ones dbt knows.
 SOURCE_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("mercadona_catalog_api", (
         "silver_product_price", "silver_category", "silver_price_change", "raw_manifest",
@@ -56,32 +56,32 @@ SOURCE_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
     ("simulated_orders", (
         "silver_order_event", "silver_order", "silver_order_line", "silver_orders_manifest",
-        # O teste do selo le `silver_orders_manifest`; sem particao de pedido aterrissada ele
-        # tentaria `ref()` de algo que nao foi construido — mesmo motivo dos nos do Iceberg.
+        # The seal test reads `silver_orders_manifest`; with no order partition landed it
+        # would try to `ref()` something that was not built — same reason as the Iceberg nodes.
         "assert_raw_matches_the_frozen_capture",
     )),
 )
 
-# AS TABELAS ICEBERG, e os nos que morrem sem cada uma.
+# THE ICEBERG TABLES, and the nodes that die without each one.
 #
-# Modelo e teste entram e saem JUNTOS: excluir so o modelo deixaria o teste tentando
-# `ref()` de algo que nao foi construido.
+# Model and test go in and out TOGETHER: excluding only the model would leave the test
+# trying to `ref()` something that was not built.
 #
-# POR QUE ISTO VIROU UMA LISTA NA FASE 7. Era um par de constantes, porque so havia a
-# projecao viva. Quando o ledger de estoque chegou, as opcoes eram um segundo par de
-# constantes com a mesma logica escrita de novo — que e como o portao tinha nascido
-# espalhado por seis arquivos — ou uma lista. O ganho pratico e que a terceira tabela
-# Iceberg, se existir, e uma linha aqui e nada mais.
+# WHY THIS BECAME A LIST IN PHASE 7. It used to be a pair of constants, because there was
+# only the live projection. When the stock ledger arrived, the options were a second pair
+# of constants with the same logic written again — which is how the gate had ended up
+# scattered across six files — or a list. The practical gain is that a third Iceberg
+# table, if it ever exists, is one line here and nothing else.
 #
-# Cada entrada e (chave, var do dbt, nos). A CHAVE e o que o `resolve()` usa para pedir o
-# metadado; a VAR e como o dbt recebe o caminho.
+# Each entry is (key, dbt var, nodes). The KEY is what `resolve()` uses to ask for the
+# metadata; the VAR is how dbt receives the path.
 ICEBERG_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("live_order_state", "live_order_state_metadata", (
         "silver_live_order_state", "assert_live_projection_matches_batch_fold",
     )),
-    # O LEDGER DE ESTOQUE E ESCRITO PELO SPARK, que e opcional por decisao. Um repositorio
-    # onde ninguem rodou `make stock-ledger` constroi o Silver inteiro sem ele — e essa e
-    # a propriedade que faz o Spark nao entrar no caminho padrao do projeto.
+    # THE STOCK LEDGER IS WRITTEN BY SPARK, which is optional by decision. A repository
+    # where nobody ran `make stock-ledger` builds the whole Silver without it — and that is
+    # the property that keeps Spark out of the project's default path.
     ("stock_ledger", "stock_ledger_metadata", (
         "silver_stock_ledger",
         "assert_stock_ledger_conserves_the_balance",
@@ -90,110 +90,110 @@ ICEBERG_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     )),
 )
 
-# Compatibilidade com quem so precisa da projecao viva.
+# Compatibility for callers that only need the live projection.
 ICEBERG_NODES = ICEBERG_TABLES[0][2]
 ICEBERG_VAR = ICEBERG_TABLES[0][1]
 
 
 def plan(landed: dict, iceberg_metadata) -> list[str]:
-    """Argumentos do `dbt build`, dado o que foi observado. PURA: nao olha nada.
+    """`dbt build` arguments, given what was observed. PURE: it looks at nothing.
 
-    `landed` mapeia prefixo da source -> se ha objeto aterrissado. Prefixo ausente do dicio-
-    nario conta como NAO aterrissado, que e o lado seguro: excluir um modelo que poderia ter
-    sido construido custa uma execucao; tentar construir um que nao pode custa o build.
+    `landed` maps source prefix -> whether there is a landed object. A prefix missing from
+    the dictionary counts as NOT landed, which is the safe side: excluding a model that
+    could have been built costs one run; trying to build one that can't costs the build.
 
-    `iceberg_metadata` mapeia chave de ICEBERG_TABLES -> caminho do metadado, ou None. Uma
-    string simples continua aceita e vale para a projecao viva, que era o unico caso ate a
-    Fase 7 — as DAGs e o Makefile chamam `build()`, nunca `plan()`, entao a forma antiga so
-    sobrevive por causa dos testes que a exercitam.
+    `iceberg_metadata` maps an ICEBERG_TABLES key -> metadata path, or None. A plain string
+    is still accepted and applies to the live projection, which was the only case until
+    Phase 7 — the DAGs and the Makefile call `build()`, never `plan()`, so the old form only
+    survives because of the tests that exercise it.
     """
     if iceberg_metadata is None or isinstance(iceberg_metadata, str):
         iceberg_metadata = {ICEBERG_TABLES[0][0]: iceberg_metadata}
 
-    excluir: list[str] = []
-    for prefixo, modelos in SOURCE_MODELS:
-        if not landed.get(prefixo):
-            excluir.extend(modelos)
+    exclude: list[str] = []
+    for prefix, models in SOURCE_MODELS:
+        if not landed.get(prefix):
+            exclude.extend(models)
 
-    variaveis: dict[str, str] = {}
-    for chave, var, nos in ICEBERG_TABLES:
-        caminho = iceberg_metadata.get(chave)
-        if caminho:
-            variaveis[var] = caminho
+    variables: dict[str, str] = {}
+    for key, var, nodes in ICEBERG_TABLES:
+        path = iceberg_metadata.get(key)
+        if path:
+            variables[var] = path
         else:
-            excluir.extend(nos)
+            exclude.extend(nodes)
 
-    argumentos: list[str] = []
-    if excluir:
-        argumentos += ["--exclude", *excluir]
-    if variaveis:
-        # `--vars` como YAML inline. O caminho e uma URI s3:// com barras e dois-pontos,
-        # entao vai entre aspas: sem elas o YAML le `s3:` como chave e o var chega vazio.
-        corpo = ", ".join(f'{var}: "{caminho}"' for var, caminho in sorted(variaveis.items()))
-        argumentos += ["--vars", f"{{{corpo}}}"]
-    return argumentos
+    arguments: list[str] = []
+    if exclude:
+        arguments += ["--exclude", *exclude]
+    if variables:
+        # `--vars` as inline YAML. The path is an s3:// URI with slashes and colons, so it
+        # goes in quotes: without them YAML reads `s3:` as a key and the var arrives empty.
+        body = ", ".join(f'{var}: "{path}"' for var, path in sorted(variables.items()))
+        arguments += ["--vars", f"{{{body}}}"]
+    return arguments
 
 
 def has_landed(prefix: str, config=None) -> bool:
-    """Existe ao menos um objeto sob <raw_bucket>/<prefixo>/?"""
+    """Is there at least one object under <raw_bucket>/<prefix>/?"""
     from .config import from_env
 
     config = config or from_env()
-    resposta = config.client().list_objects_v2(
+    response = config.client().list_objects_v2(
         Bucket=config.raw_bucket, Prefix=prefix.rstrip("/") + "/", MaxKeys=1
     )
-    return resposta.get("KeyCount", 0) > 0
+    return response.get("KeyCount", 0) > 0
 
 
 def iceberg_metadata() -> dict:
-    """Caminho do metadado corrente de cada tabela, ou None onde o catalogo nao responder.
+    """Path of each table's current metadata, or None where the catalog doesn't answer.
 
-    Ausencia NAO e erro aqui, e por dois motivos diferentes: o plano de stream sobe sob
-    demanda (`make stream-up`), e o Spark e opcional por decisao. Um `make silver` sem
-    nenhum dos dois deve construir todos os outros modelos em paz.
+    Absence is NOT an error here, for two different reasons: the stream plane comes up on
+    demand (`make stream-up`), and Spark is optional by decision. A `make silver` with
+    neither of them must build all the other models in peace.
     """
-    saida: dict[str, str | None] = {}
+    result: dict[str, str | None] = {}
     try:
         from .orders_projection import metadata_location
 
-        saida["live_order_state"] = metadata_location() or None
+        result["live_order_state"] = metadata_location() or None
     except Exception:
-        saida["live_order_state"] = None
+        result["live_order_state"] = None
     try:
-        from .stock_ledger import metadata_location as estoque
+        from .stock_bridge import metadata_location as stock_metadata_location
 
-        saida["stock_ledger"] = estoque() or None
+        result["stock_ledger"] = stock_metadata_location() or None
     except Exception:
-        saida["stock_ledger"] = None
-    return saida
+        result["stock_ledger"] = None
+    return result
 
 
 def resolve(config=None) -> tuple[list[str], dict]:
-    """Observa o mundo e devolve (argumentos do dbt, o que foi observado)."""
+    """Observes the world and returns (dbt arguments, what was observed)."""
     from .config import from_env
 
     config = config or from_env()
     landed = {}
-    for prefixo, _ in SOURCE_MODELS:
+    for prefix, _ in SOURCE_MODELS:
         try:
-            landed[prefixo] = has_landed(prefixo, config)
+            landed[prefix] = has_landed(prefix, config)
         except Exception:
-            # Object storage fora do ar e problema de verdade — mas quem reporta e o dbt,
-            # com a mensagem do motor, e nao um portao que engoliu a excecao.
-            landed[prefixo] = False
-    metadado = iceberg_metadata()
-    return plan(landed, metadado), {"landed": landed, "iceberg_metadata": metadado}
+            # Object storage being down is a real problem — but the one who reports it is
+            # dbt, with the engine's message, not a gate that swallowed the exception.
+            landed[prefix] = False
+    metadata = iceberg_metadata()
+    return plan(landed, metadata), {"landed": landed, "iceberg_metadata": metadata}
 
 
 def build(project_dir: str, profiles_dir: str, *, dbt: str = None,
           extra: list[str] = None, config=None) -> tuple[int, list[str], dict]:
-    """Roda `dbt build` com o portao aplicado. Devolve (codigo, argumentos, observado)."""
-    argumentos, observado = resolve(config)
-    executavel = dbt or os.environ.get("RETAIL_DBT", "dbt")
-    comando = [
-        executavel, "build",
+    """Runs `dbt build` with the gate applied. Returns (code, arguments, observed)."""
+    arguments, observed = resolve(config)
+    executable = dbt or os.environ.get("RETAIL_DBT", "dbt")
+    command = [
+        executable, "build",
         "--project-dir", project_dir,
         "--profiles-dir", profiles_dir,
-        *argumentos, *(extra or []),
+        *arguments, *(extra or []),
     ]
-    return subprocess.call(comando), argumentos, observado
+    return subprocess.call(command), arguments, observed

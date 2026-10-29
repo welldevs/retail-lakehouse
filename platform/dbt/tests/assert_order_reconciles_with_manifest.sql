@@ -1,16 +1,16 @@
--- Fecha manifesto -> RAW -> parquet, e fecha o FOLD por dois caminhos independentes.
+-- Closes manifest -> RAW -> parquet, and closes the FOLD along two independent paths.
 --
--- O QUE TORNA ESTE TESTE DIFERENTE do irmao de clientes. La o manifesto declara uma contagem
--- de linhas de um arquivo, e o Silver reconta as mesmas linhas. Aqui o manifesto declara
--- `order_rows`, `net_amount_picked` e `substituted_lines` — numeros que so existem depois de
--- DOBRAR o log. A Source os calculou em Python, percorrendo eventos; o Silver os recalcula em
--- SQL, com window functions. Sao duas implementacoes do mesmo fold, e uma divergencia
--- significa que uma delas esta errada.
+-- WHAT MAKES THIS TEST DIFFERENT from its customer sibling. There the manifest declares a row count
+-- of a file, and Silver recounts the same rows. Here the manifest declares
+-- `order_rows`, `net_amount_picked` and `substituted_lines` — numbers that only exist after
+-- FOLDING the log. The Source computed them in Python, walking the events; Silver recomputes them in
+-- SQL, with window functions. They are two implementations of the same fold, and a divergence
+-- means one of them is wrong.
 --
--- POR QUE VALOR MONETARIO ENTRA. Contar linhas nao pega uma perda PARCIAL de payload: um
--- evento `order_picked` cujo `picked_amount` se perdeu na travessia manteria a contagem e
--- zeraria a receita. Somar dinheiro pega. Mesmo motivo pelo qual o teste de clientes confere
--- `house_number_null` alem de `customer_rows`.
+-- WHY MONETARY VALUE COMES IN. Counting rows does not catch a PARTIAL loss of payload: an
+-- `order_picked` event whose `picked_amount` got lost in transit would keep the count and
+-- zero out the revenue. Summing money catches it. Same reason the customer test checks
+-- `house_number_null` in addition to `customer_rows`.
 with observado as (
 
     select

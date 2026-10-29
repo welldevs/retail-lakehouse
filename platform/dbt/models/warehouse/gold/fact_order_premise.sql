@@ -1,30 +1,30 @@
--- 30 LINHAS QUE IMPEDEM UM MART MEDIR CONTRA UM LIMIAR QUE NINGUEM USOU.
+-- 30 ROWS THAT KEEP A MART FROM MEASURING AGAINST A THRESHOLD NOBODY USED.
 --
--- GRAO: premise_key. TIPO: synthetic — e a coluna `label` afirma isso em toda linha.
+-- GRAIN: premise_key. TYPE: synthetic — and the `label` column states that on every row.
 --
--- IRMA DIRETA DE FACT_INGESTION_RUN, e pelo mesmo motivo: metadado promovido a fato de
--- proposito, porque sem ele o mart a jusante nao tem como ser honesto. La distinguem-se
--- "nao houve preco" de "nao houve observacao"; aqui, "nenhum pedido violou o SLA" de
--- "o SLA foi medido contra o numero errado".
+-- DIRECT SIBLING OF FACT_INGESTION_RUN, and for the same reason: metadata promoted to a
+-- fact on purpose, because without it the downstream mart has no way to be honest. There
+-- it distinguishes "there was no price" from "there was no observation"; here, "no order
+-- breached the SLA" from "the SLA was measured against the wrong number".
 --
--- MART_FULFILLMENT_SLA conta violacoes de `sla_minutes_picking`. Esse limiar tem dono: o
--- seed que o gerador leu, cujo sha256 esta no manifesto de cada particao do RAW. E o valor
--- dele MUDA — na Fase 7 caiu de 90 para 60, porque 90 estava acima do teto aritmetico da
--- separacao e o alerta era inexercivel. Cravar o numero aqui teria transformado essa
--- correcao num defeito silencioso. Reescreve-lo
--- como var do dbt criaria a segunda copia que diverge na primeira edicao — e nada
--- reprovaria, porque contar zero violacao contra o limiar errado tem exatamente a mesma
--- aparencia de contar zero contra o certo.
+-- MART_FULFILLMENT_SLA counts breaches of `sla_minutes_picking`. That threshold has an
+-- owner: the seed the generator read, whose sha256 is in the manifest of every RAW
+-- partition. And its value CHANGES — in Phase 7 it dropped from 90 to 60, because 90 was
+-- above the arithmetic ceiling of picking and the alert could never fire. Hard-coding the
+-- number here would have turned that fix into a silent defect. Rewriting it
+-- as a dbt var would create the second copy that diverges on the first edit — and nothing
+-- would fail, because counting zero breaches against the wrong threshold looks exactly the
+-- same as counting zero against the right one.
 --
--- NAO E DIMENSAO. Nenhum fato aponta para ela, nada se junta a ela por chave. E uma tabela
--- de PARAMETROS DECLARADOS lida por escalar. Chama-se FACT_ pelo precedente de
--- FACT_INGESTION_RUN, que tambem nao e medida de negocio nenhuma; inventar um terceiro
--- prefixo para dois casos seria vocabulario novo sem ganho.
+-- IT IS NOT A DIMENSION. No fact points to it, nothing joins it by key. It is a table of
+-- DECLARED PARAMETERS read as scalars. It is called FACT_ following the precedent of
+-- FACT_INGESTION_RUN, which is not a business measure either; inventing a third prefix for
+-- two cases would be new vocabulary with no gain.
 --
--- `label` E SEMPRE 'synthetic', NUNCA 'proxy'. Um proxy e medido em outro lugar e usado
--- aqui; estes numeros nao sao medidos em lugar nenhum. Nenhuma fonte deste repo mede
--- cesta, cadencia de compra ou disponibilidade — e a Source recusa exportar a referencia
--- se o seed trouxer qualquer outro rotulo.
+-- `label` IS ALWAYS 'synthetic', NEVER 'proxy'. A proxy is measured elsewhere and used
+-- here; these numbers are not measured anywhere. No source in this repo measures basket,
+-- purchase cadence or availability — and the Source refuses to export the reference if the
+-- seed carries any other label.
 {{ config(materialized = 'table') }}
 
 select

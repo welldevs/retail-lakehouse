@@ -1,26 +1,26 @@
--- TODO PEDIDO RESOLVE PARA UMA VERSAO DE CLIENTE — E E A MESMA QUE A SOURCE DECLAROU.
+-- EVERY ORDER RESOLVES TO A CUSTOMER VERSION — AND IT IS THE SAME ONE THE SOURCE DECLARED.
 --
--- O QUE PEGA, e o que a variante obvia nao pegaria. A variante obvia seria `customer_sk
--- is not null`. Ela reprovaria se o range join nao casasse nada — mas passaria alegremente
--- se casasse a versao ERRADA, que e o modo de falha real de um SCD2: intervalo com
--- fronteira fechada nos dois lados faz o pedido do dia da virada casar DUAS versoes, o
--- join vira fanout, e a contagem de pedidos infla sem que `is not null` perceba.
+-- WHAT IT CATCHES, and what the obvious variant would not. The obvious variant would be `customer_sk
+-- is not null`. It would fail if the range join matched nothing — but it would happily pass
+-- if it matched the WRONG version, which is the real failure mode of an SCD2: an interval with
+-- a boundary closed on both sides makes the order on the changeover day match TWO versions, the
+-- join fans out, and the order count inflates without `is not null` noticing.
 --
--- Este teste faz tres afirmacoes de uma vez:
+-- This test makes three assertions at once:
 --
---   1. TODO pedido resolve (customer_sk nao nulo);
---   2. a data do pedido cai DENTRO de [valid_from, valid_to) da versao resolvida;
---   3. a versao resolvida e a MESMA que a Source gravou em `customer_ingestion_date`
---      dentro do evento order_placed.
+--   1. EVERY order resolves (customer_sk not null);
+--   2. the order date falls WITHIN [valid_from, valid_to) of the resolved version;
+--   3. the resolved version is the SAME one the Source wrote in `customer_ingestion_date`
+--      inside the order_placed event.
 --
--- A terceira e a que vale. Sao dois caminhos independentes chegando ao mesmo lugar: a
--- escolha do roster no gerador (Python, no momento da geracao) e uma juncao por intervalo
--- (SQL, no warehouse, meses depois). Medido: coincidem nos 6.400 pedidos. Enquanto
--- coincidirem, o SCD2 esta sendo resolvido do jeito que a Fase 3 prometeu; quando
--- divergirem, um dos dois lados mudou de ideia sobre o que "versao vigente" significa, e
--- isso precisa ser uma falha e nao uma descoberta em dashboard.
+-- The third is the one that counts. They are two independent paths reaching the same place: the
+-- roster choice in the generator (Python, at generation time) and an interval join
+-- (SQL, in the warehouse, months later). Measured: they coincide on all 6,400 orders. While they
+-- coincide, the SCD2 is being resolved the way Phase 3 promised; when they
+-- diverge, one of the two sides changed its mind about what "current version" means, and
+-- that needs to be a failure and not a discovery on a dashboard.
 --
--- Falha com uma linha por pedido, dizendo qual das tres afirmacoes caiu.
+-- Fails with one row per order, saying which of the three assertions fell.
 select
     f.order_id,
     f.order_date,

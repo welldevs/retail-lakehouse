@@ -1,22 +1,22 @@
--- O FUNIL FECHA CONTRA O FATO, E COBRE TODO DIA-ARMAZEM QUE EXISTE NO FATO.
+-- THE FUNNEL CLOSES AGAINST THE FACT, AND COVERS EVERY DAY-WAREHOUSE THAT EXISTS IN THE FACT.
 --
--- O QUE PEGA, e por que a variante obvia nao pegaria. A variante obvia compararia
--- `sum(orders_placed)` do mart com `count(*)` do fato. Ela passa por engano em dois casos
--- reais e opostos:
+-- WHAT IT CATCHES, and why the obvious variant would not. The obvious variant would compare
+-- the mart's `sum(orders_placed)` with the fact's `count(*)`. It passes by mistake in two real
+-- and opposite cases:
 --
---   * um dia-armazem SUMINDO do mart (o `cross join` de um limiar ausente esvaziando a
---     agregacao, um join interno com DIM_DATE perdendo uma data fora do calendario) e
---     outro dia INFLANDO pelo mesmo fanout — os dois erros se cancelam no total;
---   * o mart contando entregas por `order_status` em vez de por marco. Medido: sao 5.985
---     contra 6.046, os 61 pedidos devolvidos que TAMBEM foram entregues. Um total geral
---     continua batendo em `orders_placed` enquanto `orders_delivered` mente.
+--   * a day-warehouse VANISHING from the mart (the `cross join` of a missing threshold emptying the
+--     aggregation, an inner join with DIM_DATE losing a date outside the calendar) and
+--     another day INFLATING from the same fanout — the two errors cancel out in the total;
+--   * the mart counting deliveries by `order_status` instead of by milestone. Measured: 5,985
+--     against 6,046, the 61 returned orders that WERE ALSO delivered. A grand total
+--     keeps matching on `orders_placed` while `orders_delivered` lies.
 --
--- Por isso o teste e um FULL OUTER JOIN linha a linha, recalculando cada etapa do funil
--- direto de FACT_ORDER: linha faltando de um lado reprova, linha sobrando reprova, e cada
--- etapa e conferida separadamente contra a contagem por MARCO — que e a definicao que o
--- mart declara usar.
+-- That is why the test is a row-by-row FULL OUTER JOIN, recomputing each funnel stage
+-- straight from FACT_ORDER: a row missing on one side fails, an extra row fails, and each
+-- stage is checked separately against the count by MILESTONE — which is the definition the
+-- mart declares it uses.
 --
--- Falha com uma linha por (dia, armazem) que nao fecha.
+-- Fails with one row per (day, warehouse) that does not close.
 with esperado as (
 
     select

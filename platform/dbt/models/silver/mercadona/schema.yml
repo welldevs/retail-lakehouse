@@ -3,9 +3,9 @@ version: 2
 models:
   - name: raw_manifest
     description: >
-      O _manifest.json da Source como fonte modelada. Existe para que a reconciliacao
-      entre o que a Source declarou e o que o Silver produziu seja um TESTE, e nao um
-      script solto. Ver tests/assert_silver_reconciles_with_manifest.sql.
+      The Source's _manifest.json as a modeled source. It exists so that the reconciliation
+      between what the Source declared and what Silver produced is a TEST, and not a
+      loose script. See tests/assert_silver_reconciles_with_manifest.sql.
     columns:
       - name: ingestion_date
         tests: [not_null]
@@ -14,7 +14,7 @@ models:
       - name: run_id
         tests: [not_null, unique]
       - name: complete
-        description: A plataforma so consome particao completa; falso aqui e erro de ingestao.
+        description: The platform only consumes complete partitions; false here is an ingestion error.
         tests:
           - not_null
           - accepted_values:
@@ -22,7 +22,7 @@ models:
                 values: [true]
                 quote: false
       - name: failure_count
-        description: Garantia 16 do contrato — falha registrada reprova a particao.
+        description: Contract guarantee 16 — a recorded failure fails the partition.
         tests:
           - accepted_values:
               arguments:
@@ -34,29 +34,29 @@ models:
         tests: [not_null]
 
   - name: silver_category
-    description: "Arvore de categorias achatada: nivel 1 (26) > nivel 2 (151), por particao."
+    description: "Flattened category tree: level 1 (26) > level 2 (151), per partition."
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: warehouse
         tests: [not_null]
       - name: category_id
-        description: Id de nivel 2. Unico dentro da particao.
+        description: Level-2 id. Unique within the partition.
         tests: [not_null]
       - name: category_name
         tests: [not_null]
       - name: parent_category_id
-        description: Nivel 1. Nao e acessivel na API (404/410); existe so nesta arvore.
+        description: Level 1. Not accessible through the API (404/410); it only exists in this tree.
         tests: [not_null]
       - name: parent_category_name
         tests: [not_null]
 
   - name: silver_product_price
     description: >
-      Projecao fiel e tipada de cada snapshot. GRAO:
+      Faithful, typed projection of each snapshot. GRAIN:
       (ingestion_date, warehouse, category_id, subgroup_id, source_product_id).
-      NAO e source_product_id — CONTRACT.md 4.8: o produto repete entre categorias e
-      subgrupos, ~270 linhas por particao. A unicidade do grao esta em
+      It is NOT source_product_id — CONTRACT.md 4.8: the product repeats across categories and
+      subgroups, ~270 rows per partition. The grain uniqueness is in
       tests/assert_product_price_grain_is_unique.sql.
     columns:
       - name: ingestion_date
@@ -69,25 +69,25 @@ models:
         tests: [not_null]
       - name: source_product_id
         description: >
-          CHAVE DA FONTE (CONTRACT.md 4.5), nao identidade de negocio. String, nao
-          inteiro. Consistente dentro do snapshot; sem garantia entre snapshots.
+          SOURCE KEY (CONTRACT.md 4.5), not a business identity. A string, not an
+          integer. Consistent within a snapshot; no guarantee across snapshots.
         tests: [not_null]
       - name: display_name
-        description: NAO identifica o produto — nomes repetem entre formatos, com precos diferentes.
+        description: Does NOT identify the product — names repeat across formats, with different prices.
         tests: [not_null]
       - name: unit_price
         description: >
-          DECIMAL(10,2). Vem string da fonte; converter para float perderia precisao.
-          NEM SEMPRE E PRECO DE UNIDADE COMPRAVEL — veja price_basis e
-          purchasable_unit_price. Preservado como a fonte devolveu, de proposito.
+          DECIMAL(10,2). Comes as a string from the source; converting to float would lose precision.
+          IT IS NOT ALWAYS THE PRICE OF A PURCHASABLE UNIT — see price_basis and
+          purchasable_unit_price. Preserved as the source returned it, on purpose.
         tests: [not_null]
       - name: price_basis
         description: >
-          Como o preco desta linha se forma, MEDIDO na fonte (CONTRACT.md 4.5):
-          `bunch` = selling_method 1 com unit_size nulo, onde
-          unit_price = reference_price * 99 e NAO serve (105 linhas);
-          `piece` = peca inteira, unit_price = reference_price * unit_size, preco legitimo;
-          `unit` = embalagem de consumo, o caso normal.
+          How this row's price is formed, MEASURED at the source (CONTRACT.md 4.5):
+          `bunch` = selling_method 1 with null unit_size, where
+          unit_price = reference_price * 99 and is NOT usable (105 rows);
+          `piece` = whole piece, unit_price = reference_price * unit_size, a legitimate price;
+          `unit` = consumer package, the normal case.
         tests:
           - not_null
           - accepted_values:
@@ -95,60 +95,60 @@ models:
                 values: ['unit', 'piece', 'bunch']
       - name: purchasable_unit_price
         description: >
-          Preco da porcao comprável. Igual a unit_price em tudo menos nas linhas `bunch`,
-          onde e reference_price * min_bunch_amount — dois campos observados, nenhuma
-          estimativa. Medido: max 5,55 em `bunch` contra 3.663,00 do unit_price da fonte.
-          A ancora tem teste proprio em
+          Price of the purchasable portion. Equal to unit_price everywhere except on `bunch` rows,
+          where it is reference_price * min_bunch_amount — two observed fields, no
+          estimate. Measured: max 5.55 on `bunch` against the source unit_price's 3,663.00.
+          The anchor has its own test in
           tests/assert_purchasable_price_is_anchored_in_the_bunch_amount.sql.
         tests: [not_null]
       - name: purchasable_unit_size
         description: >
-          Tamanho da porcao comprável em reference_format. min_bunch_amount nas linhas
-          `bunch`, unit_size da fonte no resto (nulo quando a fonte nao a declara).
+          Size of the purchasable portion in reference_format. min_bunch_amount on
+          `bunch` rows, the source's unit_size elsewhere (null when the source does not declare it).
       - name: min_bunch_amount
         description: >
-          Porcao minima do seletor de peso, em reference_format. Sempre estivera no RAW e
-          este modelo a descartava — e era o unico caminho para um preco comprável nas
-          linhas de granel. Nenhuma reingestao foi necessaria para traze-la.
+          Minimum portion of the weight selector, in reference_format. It had always been in RAW and
+          this model discarded it — and it was the only path to a purchasable price on
+          loose-item rows. No re-ingestion was needed to bring it in.
       - name: net_content_kg_l
         description: >
-          Conteudo da porcao comprável em kg ou litro, derivado de
-          purchasable_unit_price / reference_price. NULO DE PROPOSITO quando
-          reference_format nao e massa nem volume (`ud`, `dz`, `lv`, `dc`, `m`): converter
-          ovos para kg exigiria um peso por ovo que nenhuma fonte deste repo mede.
-          Cobertura medida em 2026-08-31: 83,3% das linhas.
+          Content of the purchasable portion in kg or litres, derived from
+          purchasable_unit_price / reference_price. NULL ON PURPOSE when
+          reference_format is neither mass nor volume (`ud`, `dz`, `lv`, `dc`, `m`): converting
+          eggs to kg would require a weight per egg that no source in this repo measures.
+          Coverage measured on 2026-08-31: 83.3% of rows.
       - name: tax_percentage
-        description: O campo preenchido. `iva` e nulo em 100% das linhas e nao foi projetado.
+        description: The populated field. `iva` is null in 100% of rows and was not projected.
         tests: [not_null]
       - name: price_decreased
         description: >
-          Preservado por fidelidade, mas FALSO em 100% das linhas nas tres particoes
-          enquanto 152 precos mudaram. Nao serve para detectar variacao — e por isso que
-          silver_price_change existe.
+          Preserved for fidelity, but FALSE in 100% of rows across the three partitions
+          while 152 prices changed. It does not serve to detect changes — which is why
+          silver_price_change exists.
 
   - name: silver_price_change
     description: >
-      O unico modelo que cruza datas. Compara cada particao com a ANTERIOR EXISTENTE
-      (lag sobre a sequencia de particoes, nao aritmetica de data), o que o mantem
-      correto no vao de 8 dias entre 08-16 e 08-24.
+      The only model that crosses dates. It compares each partition with the PREVIOUS EXISTING one
+      (lag over the partition sequence, not date arithmetic), which keeps it
+      correct across the 8-day gap between 08-16 and 08-24.
     columns:
       - name: ingestion_date
         tests: [not_null]
       - name: previous_ingestion_date
-        description: Nunca nulo — a primeira particao de cada armazem e excluida por nao ter anterior.
+        description: Never null — each warehouse's first partition is excluded for having no predecessor.
         tests: [not_null]
       - name: source_product_id
         tests: [not_null]
       - name: purchasable_unit_price
         description: >
-          O preco comparavel entre particoes — igual a unit_price em tudo, exceto nas
-          linhas `bunch` (ver purchasable_unit_price em silver_product_price). change_type
-          e os deltas purchasable_* comparam esta coluna, nunca a unit_price crua. NULO
-          em linhas `saiu` (nao ha preco atual), mesma regra de `unit_price`.
+          The price comparable across partitions — equal to unit_price everywhere, except on
+          `bunch` rows (see purchasable_unit_price in silver_product_price). change_type
+          and the purchasable_* deltas compare this column, never the raw unit_price. NULL
+          on `saiu` rows (there is no current price), the same rule as `unit_price`.
       - name: change_type
         description: >
-          Classificado contra purchasable_unit_price, nao unit_price crua — "o preco
-          mudou" tem de significar isso, nao "o teto do seletor de peso mudou".
+          Classified against purchasable_unit_price, not the raw unit_price — "the price
+          changed" must mean that, not "the weight selector's ceiling changed".
         tests:
           - not_null
           - accepted_values:
@@ -156,7 +156,7 @@ models:
                 values: ['entrou', 'saiu', 'preco_alterado', 'estavel']
       - name: name_seen_before
         description: >
-          ARMADILHA DE IDENTIDADE DE NEGOCIO. Id novo cujo display_name ja existia na
-          particao anterior. A fonte nao diz se e o mesmo item rechaveado ou um item
-          retirado e outro lancado; estes casos sao fila de revisao, nao "produto novo".
+          BUSINESS IDENTITY TRAP. A new id whose display_name already existed in the
+          previous partition. The source does not say whether it is the same item re-keyed or an item
+          withdrawn and another launched; these cases are a review queue, not a "new product".
         tests: [not_null]

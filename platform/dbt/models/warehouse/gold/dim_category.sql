@@ -1,17 +1,17 @@
--- A ARVORE DE CATEGORIAS, achatada em dois niveis.
+-- THE CATEGORY TREE, flattened into two levels.
 --
--- GRAO: uma categoria de nivel 2 (151). CHAVE: category_id.
--- TIPO: observed.
+-- GRAIN: one level-2 category (151). KEY: category_id.
+-- TYPE: observed.
 --
--- GLOBAL, sem eixo de armazem nem de data: medido que a arvore tem exatamente 151
--- categorias de nivel 2 em CADA um dos 4 armazens, identicas. Dar um eixo `wh` a esta
--- dimensao criaria 604 linhas para representar 151 coisas.
+-- GLOBAL, with no warehouse or date axis: measured that the tree has exactly 151
+-- level-2 categories in EACH of the 4 warehouses, identical. Giving this dimension a `wh`
+-- axis would create 604 rows to represent 151 things.
 --
--- DOIS NIVEIS E FINAL, nao simplificacao: verificado nos snapshots que nenhum no de nivel
--- 2 carrega filhos. E o nivel 1 (26 categorias) existe APENAS nesta arvore — a API
--- responde 404/410 para ids de nivel 1 (CONTRACT.md secao 6), entao ele nao e uma
--- entidade consultavel, so um agrupamento. Por isso vira atributo achatado e nao uma
--- dimensao propria com chave estrangeira.
+-- TWO LEVELS IS FINAL, not a simplification: verified in the snapshots that no level-2
+-- node carries children. And level 1 (26 categories) exists ONLY in this tree — the API
+-- responds 404/410 for level-1 ids (CONTRACT.md section 6), so it is not a queryable
+-- entity, just a grouping. That is why it becomes a flattened attribute and not its own
+-- dimension with a foreign key.
 {{ config(materialized = 'table') }}
 
 select

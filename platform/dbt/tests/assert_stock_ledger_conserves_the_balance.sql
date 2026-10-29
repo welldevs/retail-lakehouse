@@ -1,23 +1,23 @@
--- O SALDO FECHA, TODO DIA, EM TODA SERIE.
+-- THE BALANCE CLOSES, EVERY DAY, IN EVERY SERIES.
 --
--- TRES INVARIANTES QUE NAO SE IMPLICAM, e por isso viajam juntas num teste so:
+-- THREE INVARIANTS THAT DO NOT IMPLY EACH OTHER, which is why they travel together in one test:
 --
---   1. CONSERVACAO       fechamento = abertura + recebido - atendido
---   2. NAO-NEGATIVIDADE  fechamento >= 0
---   3. RUPTURA HONESTA   se faltou alguma coisa, a prateleira tem de estar vazia
+--   1. CONSERVATION      closing = opening + received - served
+--   2. NON-NEGATIVITY    closing >= 0
+--   3. HONEST STOCKOUT   if something was short, the shelf must be empty
 --
--- POR QUE A TERCEIRA E A QUE PEGA ERRO DE VERDADE. As duas primeiras um `sum()` errado ainda
--- passa: um job que simplesmente ignorasse a demanda que nao cabe conservaria o saldo e
--- nunca ficaria negativo — e reportaria ruptura zero para sempre. A terceira amarra as duas
--- pontas: `units_short > 0` so e legitimo com `closing_balance = 0`. Ruptura com saldo
--- sobrando significa que o job deixou de atender o que tinha como atender.
+-- WHY THE THIRD IS THE ONE THAT CATCHES REAL ERRORS. A wrong `sum()` still passes the first
+-- two: a job that simply ignored the demand that does not fit would conserve the balance and
+-- never go negative — and would report zero stockout forever. The third ties both
+-- ends together: `units_short > 0` is only legitimate with `closing_balance = 0`. A stockout with balance
+-- left over means the job failed to serve what it was able to serve.
 --
--- E A QUARTA, sobre a demanda: atendido + faltou = pedido. Sem ela, perder uma unidade no
--- caminho nao quebraria nenhuma das outras tres.
+-- AND THE FOURTH, about demand: served + short = ordered. Without it, losing a unit along
+-- the way would break none of the other three.
 --
--- SOMA NENHUMA DENUNCIA ESTA CLASSE DE DEFEITO — e a mesma licao da densidade da base de
--- clientes na Fase 6. O total de unidades consumidas continuaria batendo com o Silver com
--- qualquer uma destas invariantes quebrada; o que quebra e a REPARTICAO no tempo.
+-- NO SUM REVEALS THIS CLASS OF DEFECT — it is the same lesson as the customer base density
+-- in Phase 6. The total units consumed would still match Silver with
+-- any of these invariants broken; what breaks is the ALLOCATION over time.
 select
     wh,
     source_product_id,

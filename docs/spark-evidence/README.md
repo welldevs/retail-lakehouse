@@ -14,7 +14,7 @@ Two reasons, and performance is not one of them.
 **1. It is the Iceberg catalog's third writer, and the first outside Python.**
 Iceberg was justified by *interop between engines* since Phase 3, and that half of
 the justification was **claimed and never demonstrated**: both writers were Python
-using the same library. `make spike-spark-iceberg` was the gate that tested this
+using the same library. `make check-spark-iceberg` was the gate that tested this
 before any line of this phase existed — with both outcomes declared in advance,
 including erasing the interop clause if it didn't hold up.
 
@@ -82,7 +82,7 @@ of any affinity analysis. Measured in DuckDB, on a single node:
 
 | Pairs | Distinct pairs | Seconds | Peak RSS (GB) |
 |---|---|---|---|
-| 37.899.395 | 8.789.258 | 1.49 | 2.38 |
+| 37,899,395 | 8,789,258 | 1.49 | 2.38 |
 
 **The volume trigger did not fire, and it is measured.** ARCHITECTURE
 declares Spark's trigger as *"a partition DuckDB can't hold in

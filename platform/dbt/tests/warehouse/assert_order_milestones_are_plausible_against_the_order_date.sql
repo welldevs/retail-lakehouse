@@ -1,40 +1,40 @@
--- TODO MARCO DE UM PEDIDO CAI DENTRO DA JANELA DO PROPRIO PEDIDO.
+-- EVERY MILESTONE OF AN ORDER FALLS WITHIN THE ORDER'S OWN WINDOW.
 --
--- POR QUE ESTE TESTE EXISTE, e ele existe por um defeito real e nao por precaucao. Na
--- primeira carga do Marco 7 TODO timestamp atravessou a fronteira no ANO 56.648.666: o
--- DuckDB anota a unidade do timestamp so no LogicalType moderno do parquet e deixa o
--- ConvertedType legado em NONE, e o leitor do Snowflake caia no legado e assumia
--- milissegundos onde havia microssegundos.
+-- WHY THIS TEST EXISTS, and it exists because of a real defect, not out of caution. On the
+-- first Milestone 7 load EVERY timestamp crossed the boundary in the YEAR 56,648,666: DuckDB
+-- annotates the timestamp unit only in parquet's modern LogicalType and leaves the
+-- legacy ConvertedType as NONE, and the Snowflake reader fell back to the legacy one and assumed
+-- milliseconds where there were microseconds.
 --
--- O QUE NAO PEGOU O DEFEITO, e e essa lista que justifica o teste:
+-- WHAT DID NOT CATCH THE DEFECT, and this list is what justifies the test:
 --
---   * a reconferencia do carregador — compara CONTAGEM de linhas, e ela estava certa;
---   * os 166 nos do dbt, todos verdes — as duracoes viraram numeros grandes, nao nulos
---     nem erros, e nenhum tipo mudou;
---   * assert_gold_grains_are_unique — o grao continuou unico;
---   * assert_order_funnel_totals_match_fact_order — um funil e feito de
---     `count_if(marco is not null)`, e "nao nulo" continua exato quando o instante esta
---     56 milhoes de anos deslocado;
---   * assert_fact_order_amount_equals_sum_of_items — dinheiro nao passa por timestamp.
+--   * the loader's re-check — it compares ROW COUNTS, and those were right;
+--   * the 166 dbt nodes, all green — durations became big numbers, not nulls
+--     or errors, and no type changed;
+--   * assert_gold_grains_are_unique — the grain stayed unique;
+--   * assert_order_funnel_totals_match_fact_order — a funnel is made of
+--     `count_if(marco is not null)`, and "not null" stays exact when the instant is
+--     shifted 56 million years;
+--   * assert_fact_order_amount_equals_sum_of_items — money does not go through a timestamp.
 --
--- Quem apontou foi um humano lendo 80.000.060 minutos de separacao num mart. Este teste e
--- o que substitui "alguem olhar" por "a construcao reprova".
+-- What pointed it out was a human reading 80,000,060 minutes of picking time in a mart. This test is
+-- what replaces "someone looking" with "the build fails".
 --
--- O QUE ELE AFIRMA. `placed_at` cai no dia do pedido (o eixo de particao E a data da
--- colocacao, por contrato); nenhum marco antecede a colocacao; e nenhum marco passa de 7
--- dias depois dela. O teto de 7 dias vem das premissas declaradas, nao de gosto: o maior
--- intervalo possivel e minutes_to_return_max = 2.880 minutos (2 dias) somado aos marcos
--- anteriores, e 7 dias deixa folga sem deixar de reprovar um erro de UNIDADE, que desloca
--- em ordens de grandeza e nunca em horas.
+-- WHAT IT ASSERTS. `placed_at` falls on the order day (the partition axis IS the
+-- placement date, by contract); no milestone precedes placement; and no milestone goes beyond 7
+-- days after it. The 7-day ceiling comes from the declared premises, not from taste: the largest
+-- possible interval is minutes_to_return_max = 2,880 minutes (2 days) added to the previous
+-- milestones, and 7 days leaves slack while still failing a UNIT error, which shifts
+-- by orders of magnitude and never by hours.
 --
--- POR QUE A VARIANTE OBVIA NAO SERVE. `placed_at is not null` ja e testado por not_null e
--- nao diz nada sobre o valor. E comparar marcos entre si (picked_at >= picking_started_at)
--- passaria alegremente no defeito real: os dois estavam deslocados pelo MESMO fator, entao
--- a ordem relativa entre eles continuava certa. So ancorar contra uma data que veio por
--- OUTRO caminho — `order_date`, que viaja como date32 e nao tem ambiguidade de unidade —
--- torna o deslocamento visivel.
+-- WHY THE OBVIOUS VARIANT DOES NOT DO. `placed_at is not null` is already tested by not_null and
+-- says nothing about the value. And comparing milestones with each other (picked_at >= picking_started_at)
+-- would happily pass the real defect: both were shifted by the SAME factor, so
+-- their relative order stayed right. Only anchoring against a date that came along
+-- ANOTHER path — `order_date`, which travels as date32 and has no unit ambiguity —
+-- makes the shift visible.
 --
--- Falha com uma linha por pedido implausivel.
+-- Fails with one row per implausible order.
 {% set marcos = [
     'confirmed_at', 'payment_failed_at', 'cancelled_at', 'picking_started_at',
     'picked_at', 'dispatched_at', 'delivered_at', 'delivery_failed_at', 'returned_at'

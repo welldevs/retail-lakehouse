@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Prova que os testes do warehouse de Orders sabem REPROVAR.
+"""Proves that the Orders warehouse tests know how to FAIL.
 
     make warehouse-prove-tests
 
-POR QUE ESTE SCRIPT EXISTE. "Verificação que nunca falhou não é verificação" é a regra do
-repo, e o Marco 7 acabou de mostrar por quê: a primeira carga do STAGE colocou TODO
-timestamp no ano 56.648.666, e os 166 nós do dbt construíram em VERDE. Contagem de linhas
-batia, tipo nenhum mudava, grão continuava único, e um funil feito de `count_if(marco is
-not null)` continua exato quando o instante está 56 milhões de anos deslocado. O defeito foi
-achado por um humano lendo 80.000.060 minutos de separação num mart.
+WHY THIS SCRIPT EXISTS. "A check that never failed is not a check" is the repo's rule,
+and Milestone 7 just showed why: the first STAGE load put EVERY timestamp in the year
+56,648,666, and the 166 dbt nodes built GREEN. Row counts matched, no type changed, the
+grain stayed unique, and a funnel made of `count_if(marco is not null)` stays exact when the
+instant is shifted 56 million years. The defect was found by a human reading 80,000,060
+minutes of picking time in a mart.
 
-Um teste verde só significa alguma coisa depois de se ter visto ele vermelho. Este script
-injeta, no dado REAL do warehouse, o defeito específico que cada teste diz pegar; exige que
-o teste reprove; desfaz; e exige que ele volte a passar. Os cinco são exercidos no mesmo
-dado que a operação usa — não numa fixture que já concorda com a expectativa.
+A green test only means something after it has been seen red. This script injects, into
+the REAL warehouse data, the specific defect each test claims to catch; demands that the
+test fail; undoes it; and demands that it pass again. All five are exercised on the same
+data the operation uses — not on a fixture that already agrees with the expectation.
 
-SEGURO POR CONSTRUÇÃO: tudo que este script edita vive em GOLD e MART, que são
-INTEIRAMENTE reconstruíveis por `dbt build` a partir do STAGE. Nada aqui toca o STAGE, o
-RAW ou o Lakehouse. Ainda assim, cada injeção é desfeita pelo seu próprio par de comandos e
-o script termina reconstruindo o que tocou — e uma sentinela confere, no fim, que as
-contagens voltaram ao que eram.
+SAFE BY CONSTRUCTION: everything this script edits lives in GOLD and MART, which are
+ENTIRELY rebuildable by `dbt build` from STAGE. Nothing here touches STAGE,
+RAW or the Lakehouse. Even so, each injection is undone by its own pair of commands and
+the script ends by rebuilding what it touched — and a sentinel checks, at the end, that the
+counts went back to what they were.
 """
 
 from __future__ import annotations
@@ -41,79 +41,79 @@ DB = os.environ.get("SNOWFLAKE_DATABASE", DEFAULT_DATABASE)
 GOLD = f"{DB}.GOLD"
 MART = f"{DB}.MART"
 
-# Cada caso é (teste, o defeito que ele diz pegar, injeção, reparo). A injeção é sempre a
-# MENOR mudança possível — uma linha, uma coluna — porque um teste que só reprova diante de
-# estrago grosseiro não protege de nada.
-CASOS = [
+# Each case is (test, the defect it claims to catch, injection, repair). The injection is always
+# the SMALLEST possible change — one row, one column — because a test that only fails in the
+# face of gross damage protects against nothing.
+CASES = [
     {
-        "teste": "assert_every_order_has_a_customer_version",
-        "pega": "o SCD2 resolvido para outra versão que não a vigente na data do pedido",
-        "injetar": [
+        "test": "assert_every_order_has_a_customer_version",
+        "catches": "SCD2 resolved to a version other than the one in effect on the order date",
+        "inject": [
             f"update {GOLD}.FACT_ORDER set customer_version_from = dateadd(day, -30, customer_version_from) "
             f"where order_id = 'ord_mad1_20260827_000010'",
         ],
-        "reparar": [
+        "repair": [
             f"update {GOLD}.FACT_ORDER set customer_version_from = customer_ingestion_date "
             f"where order_id = 'ord_mad1_20260827_000010'",
         ],
     },
     {
-        "teste": "assert_fact_order_amount_equals_sum_of_items",
-        "pega": "fanout numa das duas junções com DIM_PRODUCT, ou net_amount preenchido "
-                "para pedido que nunca foi separado",
-        "injetar": [
+        "test": "assert_fact_order_amount_equals_sum_of_items",
+        "catches": "fanout in one of the two joins with DIM_PRODUCT, or net_amount filled "
+                   "for an order that was never picked",
+        "inject": [
             f"update {GOLD}.FACT_ORDER set net_amount = net_amount + 0.01 "
             f"where order_id = 'ord_bcn1_20260825_000005' and net_amount is not null",
         ],
-        "reparar": [
+        "repair": [
             f"update {GOLD}.FACT_ORDER set net_amount = net_amount - 0.01 "
             f"where order_id = 'ord_bcn1_20260825_000005' and net_amount is not null",
         ],
     },
     {
-        "teste": "assert_order_item_price_matches_price_snapshot",
-        "pega": "preço pago que não é o preço publicado naquele armazém naquele dia — "
-                "o fecho cruzado entre a source sintética e a API real",
-        "injetar": [
+        "test": "assert_order_item_price_matches_price_snapshot",
+        "catches": "a paid price that is not the price published at that warehouse on that day — "
+                   "the cross-check between the synthetic source and the real API",
+        "inject": [
             f"update {GOLD}.FACT_ORDER_ITEM set unit_price_paid = unit_price_paid + 0.10 "
             f"where order_id = 'ord_svq1_20260826_000003' and line_no = 1 "
             f"and fulfilled_source_product_id is not null",
         ],
-        "reparar": [
+        "repair": [
             f"update {GOLD}.FACT_ORDER_ITEM set unit_price_paid = unit_price_paid - 0.10 "
             f"where order_id = 'ord_svq1_20260826_000003' and line_no = 1 "
             f"and fulfilled_source_product_id is not null",
         ],
     },
     {
-        "teste": "assert_order_funnel_totals_match_fact_order",
-        "pega": "dia-armazém sumindo do mart, e entrega contada por STATUS em vez de por "
-                "MARCO — os 61 pedidos devolvidos que também foram entregues",
-        "injetar": [
-            # As DUAS metades do que o teste promete: uma linha somem, outra passa a contar
-            # entregas por status. Um total geral continuaria batendo nas duas.
+        "test": "assert_order_funnel_totals_match_fact_order",
+        "catches": "a day-warehouse vanishing from the mart, and deliveries counted by STATUS "
+                   "instead of by MILESTONE — the 61 returned orders that were also delivered",
+        "inject": [
+            # BOTH halves of what the test promises: one row disappears, another starts counting
+            # deliveries by status. A grand total would still match in both cases.
             f"delete from {MART}.MART_ORDER_FUNNEL "
             f"where order_date = '2026-08-24' and wh = 'mad1'",
             f"update {MART}.MART_ORDER_FUNNEL set orders_delivered = orders_delivered - orders_returned "
             f"where order_date = '2026-08-25' and wh = 'bcn1'",
         ],
-        "reparar": [],   # só um rebuild devolve a linha apagada
+        "repair": [],   # only a rebuild brings the deleted row back
         "rebuild": "mart_order_funnel",
     },
     {
-        "teste": "assert_order_milestones_are_plausible_against_the_order_date",
-        "pega": "erro de UNIDADE no timestamp ao atravessar a fronteira — o defeito real "
-                "que colocou os 6.400 pedidos no ano 56.648.666",
-        "injetar": [
-            # Reproduz o deslocamento de microssegundos-lidos-como-milissegundos num
-            # pedido só. Marcos entre si continuam na ordem certa: é por isso que comparar
-            # marcos uns com os outros não pegaria, e só ancorar em order_date pega.
+        "test": "assert_order_milestones_are_plausible_against_the_order_date",
+        "catches": "a UNIT error in the timestamp when crossing the boundary — the real defect "
+                   "that put the 6,400 orders in the year 56,648,666",
+        "inject": [
+            # Reproduces the microseconds-read-as-milliseconds shift on a single order.
+            # Milestones stay in the right order relative to each other: that is why comparing
+            # milestones with one another would not catch it, and only anchoring on order_date does.
             f"update {GOLD}.FACT_ORDER set "
             f"  placed_at = dateadd(year, 1000, placed_at), "
             f"  picked_at = dateadd(year, 1000, picked_at) "
             f"where order_id = 'ord_vlc1_20260824_000007'",
         ],
-        "reparar": [
+        "repair": [
             f"update {GOLD}.FACT_ORDER set "
             f"  placed_at = dateadd(year, -1000, placed_at), "
             f"  picked_at = dateadd(year, -1000, picked_at) "
@@ -122,105 +122,105 @@ CASOS = [
     },
 ]
 
-SENTINELA = [
+SENTINEL = [
     (f"{GOLD}.FACT_ORDER", 6400),
     (f"{GOLD}.FACT_ORDER_ITEM", 120693),
     (f"{MART}.MART_ORDER_FUNNEL", 16),
 ]
 
 
-def executar(cursor, comandos):
-    for sql in comandos:
+def execute(cursor, statements):
+    for sql in statements:
         cursor.execute(sql)
 
 
-def rodar_teste(nome: str) -> int:
+def run_test(name: str) -> int:
     return subprocess.run(
-        [DBT, "test", *PROJECT, "--select", nome],
+        [DBT, "test", *PROJECT, "--select", name],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ).returncode
 
 
-def rebuild(alvo: str) -> None:
-    subprocess.run([DBT, "build", *PROJECT, "--select", alvo],
+def rebuild(target: str) -> None:
+    subprocess.run([DBT, "build", *PROJECT, "--select", target],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 
 def main() -> int:
-    conexao = connect()
-    cursor = conexao.cursor()
+    conn = connect()
+    cursor = conn.cursor()
 
-    print("sentinela antes ..", end=" ")
-    antes = {}
-    for tabela, esperado in SENTINELA:
-        cursor.execute(f"select count(*) from {tabela}")
-        antes[tabela] = cursor.fetchone()[0]
-        if antes[tabela] != esperado:
-            print(f"\nRECUSADO: {tabela} tem {antes[tabela]} linhas, esperado {esperado}. "
-                  f"A base já está fora do estado conhecido — rode `make warehouse-refresh` "
-                  f"antes. Injetar defeito sobre base suja produz falso positivo.")
+    print("sentinel before ..", end=" ")
+    before = {}
+    for table, expected in SENTINEL:
+        cursor.execute(f"select count(*) from {table}")
+        before[table] = cursor.fetchone()[0]
+        if before[table] != expected:
+            print(f"\nREFUSED: {table} has {before[table]} rows, expected {expected}. "
+                  f"The base is already outside the known state — run `make warehouse-refresh` "
+                  f"first. Injecting a defect on a dirty base produces a false positive.")
             return 1
     print("ok")
     print()
 
-    falhas = []
-    for caso in CASOS:
-        nome = caso["teste"]
-        print(f"{nome}")
-        print(f"  pega ......... {caso['pega']}")
+    failures = []
+    for case in CASES:
+        name = case["test"]
+        print(f"{name}")
+        print(f"  catches ...... {case['catches']}")
 
-        if rodar_teste(nome) != 0:
-            print("  RECUSADO: o teste já reprova ANTES da injeção. Um vermelho que já "
-                  "era vermelho não prova nada.")
-            falhas.append(nome)
+        if run_test(name) != 0:
+            print("  REFUSED: the test already fails BEFORE the injection. A red that was "
+                  "already red proves nothing.")
+            failures.append(name)
             continue
 
-        executar(cursor, caso["injetar"])
-        codigo = rodar_teste(nome)
-        print(f"  com o defeito  exit={codigo} "
-              f"{'REPROVOU (esperado)' if codigo else 'PASSOU — o teste é cego'}")
-        if codigo == 0:
-            falhas.append(nome)
+        execute(cursor, case["inject"])
+        code = run_test(name)
+        print(f"  with defect    exit={code} "
+              f"{'FAILED (expected)' if code else 'PASSED — the test is blind'}")
+        if code == 0:
+            failures.append(name)
 
-        executar(cursor, caso["reparar"])
-        if caso.get("rebuild"):
-            rebuild(caso["rebuild"])
-        limpo = rodar_teste(nome)
-        print(f"  restaurado ... exit={limpo} "
-              f"{'passa de novo' if limpo == 0 else 'AINDA REPROVA — o reparo não fechou'}")
-        if limpo != 0:
-            falhas.append(nome)
+        execute(cursor, case["repair"])
+        if case.get("rebuild"):
+            rebuild(case["rebuild"])
+        clean = run_test(name)
+        print(f"  restored ..... exit={clean} "
+              f"{'passes again' if clean == 0 else 'STILL FAILS — the repair did not close'}")
+        if clean != 0:
+            failures.append(name)
         print()
 
-    # O script mexeu no dado real. Terminar sem reconferir o CONJUNTO deixaria o warehouse
-    # num estado que só as cinco checagens acima viram — e cada uma olhou uma coisa só.
-    print("suite inteira do warehouse ..", end=" ", flush=True)
-    completo = subprocess.run([DBT, "test", *PROJECT],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("verde" if completo.returncode == 0 else "REPROVOU")
-    if completo.returncode != 0:
-        falhas.append("suite completa apos os reparos")
+    # The script touched real data. Ending without re-checking the WHOLE SET would leave the
+    # warehouse in a state only the five checks above saw — and each one looked at one thing only.
+    print("whole warehouse suite ..", end=" ", flush=True)
+    full = subprocess.run([DBT, "test", *PROJECT],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print("green" if full.returncode == 0 else "FAILED")
+    if full.returncode != 0:
+        failures.append("full suite after the repairs")
     print()
 
-    print("sentinela depois .", end=" ")
-    for tabela, _ in SENTINELA:
-        cursor.execute(f"select count(*) from {tabela}")
-        depois = cursor.fetchone()[0]
-        if depois != antes[tabela]:
-            print(f"\nRECUSADO: {tabela} saiu de {antes[tabela]} para {depois}.")
-            falhas.append(f"sentinela:{tabela}")
-    conexao.close()
-    if not falhas:
+    print("sentinel after ...", end=" ")
+    for table, _ in SENTINEL:
+        cursor.execute(f"select count(*) from {table}")
+        after = cursor.fetchone()[0]
+        if after != before[table]:
+            print(f"\nREFUSED: {table} went from {before[table]} to {after}.")
+            failures.append(f"sentinel:{table}")
+    conn.close()
+    if not failures:
         print("ok")
 
     print()
-    if falhas:
-        print(f"REPROVADO — {len(set(falhas))} teste(s) não provaram saber reprovar:")
-        for nome in sorted(set(falhas)):
-            print(f"  - {nome}")
+    if failures:
+        print(f"FAILED — {len(set(failures))} test(s) did not prove they can fail:")
+        for name in sorted(set(failures)):
+            print(f"  - {name}")
         return 1
-    print(f"APROVADO: os {len(CASOS)} testes do warehouse de Orders reprovam diante do "
-          f"defeito que cada um diz pegar, e voltam a passar depois do reparo.")
+    print(f"PASSED: the {len(CASES)} Orders warehouse tests fail in the face of the "
+          f"defect each one claims to catch, and pass again after the repair.")
     return 0
 
 

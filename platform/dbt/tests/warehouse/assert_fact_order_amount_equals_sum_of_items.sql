@@ -1,24 +1,24 @@
--- O VALOR DO PEDIDO FECHA COM A SOMA DAS SUAS LINHAS — NOS DOIS SENTIDOS.
+-- THE ORDER AMOUNT CLOSES WITH THE SUM OF ITS LINES — IN BOTH DIRECTIONS.
 --
--- O QUE PEGA: fanout. FACT_ORDER_ITEM entra em DUAS juncoes com DIM_PRODUCT (o produto
--- pedido e o cumprido), cada uma por intervalo de validade. Um intervalo com fronteira
--- fechada dos dois lados, ou uma versao duplicada na dimensao, multiplica linhas — e
--- nenhuma soma reprova sozinha, so fica maior. Comparar contra um total calculado por
--- outro caminho e o unico jeito barato de ver isso.
+-- WHAT IT CATCHES: fanout. FACT_ORDER_ITEM goes into TWO joins with DIM_PRODUCT (the ordered
+-- product and the fulfilled one), each by validity interval. An interval with a boundary
+-- closed on both sides, or a duplicated version in the dimension, multiplies rows — and
+-- no sum fails on its own, it just gets bigger. Comparing against a total computed along
+-- another path is the only cheap way to see it.
 --
--- POR QUE A VARIANTE OBVIA NAO PEGARIA. Comparar so `net_amount` deixaria passar o caso em
--- que o fanout atinge apenas linhas removidas (que contribuem zero) ou apenas pedidos nunca
--- separados (net_amount nulo). Por isso as DUAS somas sao comparadas: o valor COLOCADO
--- (que toda linha tem, inclusive removida) e o valor SEPARADO.
+-- WHY THE OBVIOUS VARIANT WOULD NOT CATCH IT. Comparing only `net_amount` would let through the case
+-- where fanout hits only removed lines (which contribute zero) or only orders never
+-- picked (null net_amount). That is why BOTH sums are compared: the PLACED value
+-- (which every line has, including removed ones) and the PICKED value.
 --
--- E POR QUE `net_amount` NULO NAO E ERRO. 298 pedidos morreram antes da separacao —
--- cancelamento ou pagamento recusado. Neles a soma das linhas e exatamente zero, porque
--- `line_amount` mede o que a linha entregou e elas nao entregaram nada. O teste exige essa
--- combinacao (nulo de um lado, zero do outro) em vez de ignora-la: preencher net_amount com
--- o valor colocado foi um defeito real, achado no Marco 4 comparando dois folds
--- independentes, e este teste e o que impede sua volta.
+-- AND WHY A NULL `net_amount` IS NOT AN ERROR. 298 orders died before picking —
+-- cancellation or payment refused. For them the sum of the lines is exactly zero, because
+-- `line_amount` measures what the line delivered and they delivered nothing. The test requires that
+-- combination (null on one side, zero on the other) instead of ignoring it: filling net_amount with
+-- the placed value was a real defect, found in Milestone 4 by comparing two independent
+-- folds, and this test is what keeps it from coming back.
 --
--- Falha com uma linha por pedido que nao fecha.
+-- Fails with one row per order that does not close.
 with por_pedido as (
 
     select

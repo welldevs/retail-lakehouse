@@ -1,8 +1,8 @@
-"""O selo da captura: o que ele cobre, o que ele ignora, e o que ele reprova.
+"""The capture seal: what it covers, what it ignores, and what it fails.
 
-TODOS OFFLINE, com o S3 falso — porque um teste de selo que exigisse MinIO de pe so rodaria
-onde o problema ja e visivel. A logica de `collect`, `capture_id` e `comparar` e pura o
-bastante para ser exercida contra um cliente em memoria.
+ALL OFFLINE, with the fake S3 — because a seal test that required MinIO up would only run
+where the problem is already visible. The logic of `collect`, `capture_id` and `comparar` is
+pure enough to be exercised against an in-memory client.
 """
 
 from __future__ import annotations
@@ -22,34 +22,34 @@ from fake_s3 import FakeS3Client  # noqa: E402
 from retail_platform import freeze  # noqa: E402
 
 
-class ConfigFalsa:
+class FakeConfig:
     raw_bucket = "retail-raw"
 
-    def __init__(self, cliente):
-        self._cliente = cliente
+    def __init__(self, client):
+        self._client = client
 
     def client(self):
-        return self._cliente
+        return self._client
 
 
-def manifesto(arquivos, **execucao) -> bytes:
-    """Manifesto minimo. `execucao` injeta os campos que o selo TEM de ignorar."""
-    corpo = {
+def manifest(files, **run_fields) -> bytes:
+    """Minimal manifest. `run_fields` injects the fields the seal MUST ignore."""
+    body = {
         "manifest_version": 1,
         "partition": {"ingestion_date": "2026-08-24"},
-        "files": arquivos,
-        "totals": {"bytes": sum(f["bytes"] for f in arquivos)},
+        "files": files,
+        "totals": {"bytes": sum(f["bytes"] for f in files)},
         "run_id": "20260824T000000Z_a",
         "started_at_utc": "2026-08-24T00:00:00Z",
         "finished_at_utc": "2026-08-24T00:00:03Z",
         "duration_seconds": 3.0,
         "history": [],
     }
-    corpo.update(execucao)
-    return json.dumps(corpo).encode("utf-8")
+    body.update(run_fields)
+    return json.dumps(body).encode("utf-8")
 
 
-ARQUIVOS = [
+FILES = [
     {"path": "ingestion_date=2026-08-24/a.json", "sha256": "aa" * 32,
      "bytes": 10, "records": 2},
     {"path": "ingestion_date=2026-08-24/b.json", "sha256": "bb" * 32,
@@ -57,172 +57,178 @@ ARQUIVOS = [
 ]
 
 
-def montar(mapa: dict) -> ConfigFalsa:
-    cliente = FakeS3Client()
-    for chave, corpo in mapa.items():
-        cliente.put_object(Bucket="retail-raw", Key=chave, Body=corpo)
-    return ConfigFalsa(cliente)
+def build(objects: dict) -> FakeConfig:
+    client = FakeS3Client()
+    for key, body in objects.items():
+        client.put_object(Bucket="retail-raw", Key=key, Body=body)
+    return FakeConfig(client)
 
 
-UMA_PARTICAO = {"fonte_a/ingestion_date=2026-08-24/_manifest.json": manifesto(ARQUIVOS)}
+ONE_PARTITION = {"source_a/ingestion_date=2026-08-24/_manifest.json": manifest(FILES)}
 
 
-class ColetaTest(unittest.TestCase):
-    def test_uma_linha_por_manifesto_com_o_agregado_dos_arquivos(self):
-        registros = freeze.collect(montar(UMA_PARTICAO))
-        self.assertEqual(len(registros), 1)
-        self.assertEqual(registros[0]["source"], "fonte_a")
-        self.assertEqual(registros[0]["partition_key"], "ingestion_date=2026-08-24")
-        self.assertEqual((registros[0]["files"], registros[0]["records"],
-                          registros[0]["bytes"]), (2, 5, 30))
+class CollectTest(unittest.TestCase):
+    def test_one_row_per_manifest_with_the_file_aggregate(self):
+        records = freeze.collect(build(ONE_PARTITION))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["source"], "source_a")
+        self.assertEqual(records[0]["partition_key"], "ingestion_date=2026-08-24")
+        self.assertEqual((records[0]["files"], records[0]["records"],
+                          records[0]["bytes"]), (2, 5, 30))
 
-    def test_objeto_que_nao_e_manifesto_e_ignorado(self):
-        """Varrer o bucket inteiro e pegar `_SUCCESS` ou o `.log` faria o selo cobrir
-        arquivos de controle, que mudam a cada execucao sem nenhum dado mudar."""
-        mapa = dict(UMA_PARTICAO)
-        mapa["fonte_a/ingestion_date=2026-08-24/_SUCCESS"] = b""
-        mapa["fonte_a/ingestion_date=2026-08-24/_run.log"] = b"linha"
-        mapa["fonte_a/ingestion_date=2026-08-24/a.json"] = b"{}"
-        self.assertEqual(len(freeze.collect(montar(mapa))), 1)
+    def test_object_that_is_not_a_manifest_is_ignored(self):
+        """Scanning the whole bucket and picking up `_SUCCESS` or the `.log` would make the
+        seal cover control files, which change on every run without any data changing."""
+        objects = dict(ONE_PARTITION)
+        objects["source_a/ingestion_date=2026-08-24/_SUCCESS"] = b""
+        objects["source_a/ingestion_date=2026-08-24/_run.log"] = b"line"
+        objects["source_a/ingestion_date=2026-08-24/a.json"] = b"{}"
+        self.assertEqual(len(freeze.collect(build(objects))), 1)
 
-    def test_bucket_vazio_e_erro_com_instrucao(self):
+    def test_empty_bucket_is_an_error_with_instructions(self):
         with self.assertRaises(freeze.FreezeError) as ctx:
-            freeze.collect(montar({}))
+            freeze.collect(build({}))
         self.assertIn("make daily", str(ctx.exception))
 
-    def test_a_ordem_e_estavel_entre_execucoes(self):
-        """O `capture_id` e um hash sobre a lista; ordem instavel produziria um id novo a
-        cada coleta, sem nada ter mudado."""
-        mapa = {
-            "z/ingestion_date=2026-08-24/_manifest.json": manifesto(ARQUIVOS),
-            "a/ingestion_date=2026-08-25/_manifest.json": manifesto(ARQUIVOS),
-            "a/ingestion_date=2026-08-24/_manifest.json": manifesto(ARQUIVOS),
+    def test_order_is_stable_across_runs(self):
+        """`capture_id` is a hash over the list; an unstable order would produce a new id on
+        every collection, with nothing having changed."""
+        objects = {
+            "z/ingestion_date=2026-08-24/_manifest.json": manifest(FILES),
+            "a/ingestion_date=2026-08-25/_manifest.json": manifest(FILES),
+            "a/ingestion_date=2026-08-24/_manifest.json": manifest(FILES),
         }
-        chaves = [(r["source"], r["partition_key"]) for r in freeze.collect(montar(mapa))]
-        self.assertEqual(chaves, sorted(chaves))
+        keys = [(r["source"], r["partition_key"]) for r in freeze.collect(build(objects))]
+        self.assertEqual(keys, sorted(keys))
 
 
-class OQueOSeloIgnoraTest(unittest.TestCase):
-    """A decisao central do modulo, e a razao de ela existir.
+class WhatTheSealIgnoresTest(unittest.TestCase):
+    """The module's central decision, and the reason it exists.
 
-    Se o selo cobrisse o manifesto inteiro, um re-land de dado BYTE-IDENTICO quebraria — o
-    `run_id` e os instantes mudam sempre. Um alarme que dispara num no-op treina quem revisa
-    a ignora-lo, que e o mesmo defeito do carimbo de data no CONTRACT do painel.
+    If the seal covered the whole manifest, a BYTE-IDENTICAL re-land of the data would break
+    it — `run_id` and the timestamps always change. An alarm that fires on a no-op trains
+    reviewers to ignore it, which is the same defect as the date stamp on the panel's contract.
     """
 
-    def test_run_id_e_instantes_NAO_mudam_o_selo(self):
-        antes = freeze.collect(montar(UMA_PARTICAO))
-        depois = freeze.collect(montar({
-            "fonte_a/ingestion_date=2026-08-24/_manifest.json": manifesto(
-                ARQUIVOS,
+    def test_run_id_and_timestamps_do_NOT_change_the_seal(self):
+        before = freeze.collect(build(ONE_PARTITION))
+        after = freeze.collect(build({
+            "source_a/ingestion_date=2026-08-24/_manifest.json": manifest(
+                FILES,
                 run_id="20260901T235959Z_z",
                 started_at_utc="2026-09-01T23:59:00Z",
                 finished_at_utc="2026-09-01T23:59:59Z",
                 duration_seconds=99.9,
-                history=[{"run_id": "outro"}],
+                history=[{"run_id": "other"}],
             )}))
-        self.assertEqual(antes[0]["content_sha256"], depois[0]["content_sha256"])
-        self.assertEqual(freeze.capture_id(antes), freeze.capture_id(depois))
+        self.assertEqual(before[0]["content_sha256"], after[0]["content_sha256"])
+        self.assertEqual(freeze.capture_id(before), freeze.capture_id(after))
 
-    def test_a_ORDEM_dos_arquivos_no_manifesto_NAO_muda_o_selo(self):
-        """Duas execucoes com o mesmo dado podem enumerar os arquivos em ordem diferente."""
-        invertido = {"fonte_a/ingestion_date=2026-08-24/_manifest.json":
-                     manifesto(list(reversed(ARQUIVOS)))}
-        self.assertEqual(freeze.collect(montar(UMA_PARTICAO))[0]["content_sha256"],
-                         freeze.collect(montar(invertido))[0]["content_sha256"])
+    def test_ORDER_of_files_in_the_manifest_does_NOT_change_the_seal(self):
+        """Two runs over the same data may enumerate the files in a different order."""
+        reversed_files = {"source_a/ingestion_date=2026-08-24/_manifest.json":
+                          manifest(list(reversed(FILES)))}
+        self.assertEqual(freeze.collect(build(ONE_PARTITION))[0]["content_sha256"],
+                         freeze.collect(build(reversed_files))[0]["content_sha256"])
 
-    def test_um_byte_de_dado_MUDA_o_selo(self):
-        alterado = [dict(ARQUIVOS[0]), dict(ARQUIVOS[1])]
-        alterado[1]["sha256"] = "cc" * 32
-        depois = freeze.collect(montar(
-            {"fonte_a/ingestion_date=2026-08-24/_manifest.json": manifesto(alterado)}))
-        self.assertNotEqual(freeze.collect(montar(UMA_PARTICAO))[0]["content_sha256"],
-                            depois[0]["content_sha256"])
+    def test_one_byte_of_data_CHANGES_the_seal(self):
+        changed = [dict(FILES[0]), dict(FILES[1])]
+        changed[1]["sha256"] = "cc" * 32
+        after = freeze.collect(build(
+            {"source_a/ingestion_date=2026-08-24/_manifest.json": manifest(changed)}))
+        self.assertNotEqual(freeze.collect(build(ONE_PARTITION))[0]["content_sha256"],
+                            after[0]["content_sha256"])
 
-    def test_contagem_de_registros_faz_parte_do_selo(self):
-        """Um arquivo com o mesmo sha256 e outra contagem declarada e um manifesto mentindo
-        sobre si mesmo — o selo tem de pegar."""
-        alterado = [dict(ARQUIVOS[0]), dict(ARQUIVOS[1])]
-        alterado[0]["records"] = 999
-        depois = freeze.collect(montar(
-            {"fonte_a/ingestion_date=2026-08-24/_manifest.json": manifesto(alterado)}))
-        self.assertNotEqual(freeze.collect(montar(UMA_PARTICAO))[0]["content_sha256"],
-                            depois[0]["content_sha256"])
+    def test_record_count_is_part_of_the_seal(self):
+        """A file with the same sha256 and a different declared count is a manifest lying
+        about itself — the seal has to catch it."""
+        changed = [dict(FILES[0]), dict(FILES[1])]
+        changed[0]["records"] = 999
+        after = freeze.collect(build(
+            {"source_a/ingestion_date=2026-08-24/_manifest.json": manifest(changed)}))
+        self.assertNotEqual(freeze.collect(build(ONE_PARTITION))[0]["content_sha256"],
+                            after[0]["content_sha256"])
 
 
-class ComparacaoTest(unittest.TestCase):
-    """As tres formas de a captura mudar, e nenhuma pode passar em silencio."""
+class CompareTest(unittest.TestCase):
+    """The three ways the capture can change, and none may pass silently."""
 
     def setUp(self):
-        self.selado = freeze.collect(montar({
-            "a/ingestion_date=2026-08-24/_manifest.json": manifesto(ARQUIVOS),
-            "a/ingestion_date=2026-08-25/_manifest.json": manifesto(ARQUIVOS),
+        self.sealed = freeze.collect(build({
+            "a/ingestion_date=2026-08-24/_manifest.json": manifest(FILES),
+            "a/ingestion_date=2026-08-25/_manifest.json": manifest(FILES),
         }))
 
-    def test_captura_intacta_nao_produz_problema(self):
-        self.assertEqual(freeze.comparar(self.selado, list(self.selado)), [])
+    def test_intact_capture_produces_no_problem(self):
+        self.assertEqual(freeze.comparar(self.sealed, list(self.sealed)), [])
 
-    def test_particao_selada_que_sumiu(self):
-        problemas = freeze.comparar(self.selado, self.selado[:1])
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("MISSING from RAW", problemas[0])
+    def test_sealed_partition_that_disappeared(self):
+        problems = freeze.comparar(self.sealed, self.sealed[:1])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("MISSING from RAW", problems[0])
 
-    def test_particao_nova_fora_do_selo(self):
-        """UMA JANELA QUE CRESCE DEPOIS DO FECHAMENTO invalida todo numero ja publicado
-        sobre ela — e nao quebra soma nenhuma, que e o que a torna perigosa."""
-        atual = self.selado + [dict(self.selado[0], partition_key="ingestion_date=2026-08-26")]
-        problemas = freeze.comparar(self.selado, atual)
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("NEW partition, outside the seal", problemas[0])
+    def test_new_partition_outside_the_seal(self):
+        """A WINDOW THAT GROWS AFTER CLOSING invalidates every number already published about
+        it — and breaks no sum, which is what makes it dangerous."""
+        current = self.sealed + [dict(self.sealed[0], partition_key="ingestion_date=2026-08-26")]
+        problems = freeze.comparar(self.sealed, current)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("NEW partition, outside the seal", problems[0])
 
-    def test_conteudo_alterado_numa_particao_selada(self):
-        atual = [dict(self.selado[0], content_sha256="ff" * 32), self.selado[1]]
-        problemas = freeze.comparar(self.selado, atual)
-        self.assertEqual(len(problemas), 1)
-        self.assertIn("content CHANGED", problemas[0])
+    def test_content_changed_in_a_sealed_partition(self):
+        current = [dict(self.sealed[0], content_sha256="ff" * 32), self.sealed[1]]
+        problems = freeze.comparar(self.sealed, current)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("content CHANGED", problems[0])
 
 
 class SeedTest(unittest.TestCase):
-    def test_o_seed_e_a_pagina_saem_da_mesma_coleta(self):
-        """O markdown nao e legivel por SQL e o CSV nao e legivel por gente. Os dois saem do
-        MESMO `collect`, no mesmo comando — se saissem de coletas diferentes, haveria um
-        segundo lugar onde a verdade mora, e ele divergiria."""
-        registros = freeze.collect(montar(UMA_PARTICAO))
+    def test_seed_and_page_come_from_the_same_collection(self):
+        """The markdown isn't readable by SQL and the CSV isn't readable by people. Both
+        come from the SAME `collect`, in the same command — if they came from different
+        collections, there would be a second place where the truth lives, and it would
+        diverge."""
+        records = freeze.collect(build(ONE_PARTITION))
         with tempfile.TemporaryDirectory() as tmp:
-            seed = freeze.escrever_seed(registros, os.path.join(tmp, "s.csv"))
-            pagina = freeze.escrever_pagina(registros, os.path.join(tmp, "F.md"))
-            lido = freeze.ler_seed(seed)
-            self.assertEqual(lido, registros)
-            with open(pagina, encoding="utf-8") as arquivo:
-                texto = arquivo.read()
-            self.assertIn(freeze.capture_id(registros), texto)
-            self.assertIn(registros[0]["content_sha256"][:24], texto)
+            seed = freeze.escrever_seed(records, os.path.join(tmp, "s.csv"))
+            page = freeze.escrever_pagina(records, os.path.join(tmp, "F.md"))
+            read_back = freeze.ler_seed(seed)
+            self.assertEqual(read_back, records)
+            with open(page, encoding="utf-8") as handle:
+                text = handle.read()
+            # capture_id is the hash of every content_sha256: it alone ties the page to the
+            # collection. The per-partition detail lives only in the seed, and the page
+            # points to it instead of duplicating the table.
+            self.assertIn(freeze.capture_id(records), text)
+            self.assertNotIn(records[0]["content_sha256"][:24], text)
+            self.assertIn("frozen_capture_seed.csv", text)
 
-    def test_a_pagina_NAO_carrega_relogio_no_corpo_do_selo(self):
-        """A data do selo aparece uma vez, como informacao. O `capture_id` NAO depende dela —
-        senao regerar a pagina sobre a mesma captura produziria um id novo."""
-        registros = freeze.collect(montar(UMA_PARTICAO))
-        self.assertEqual(freeze.capture_id(registros), freeze.capture_id(list(registros)))
+    def test_page_does_NOT_carry_a_clock_in_the_seal_body(self):
+        """The seal date appears once, as information. `capture_id` does NOT depend on it —
+        otherwise regenerating the page over the same capture would produce a new id."""
+        records = freeze.collect(build(ONE_PARTITION))
+        self.assertEqual(freeze.capture_id(records), freeze.capture_id(list(records)))
 
-    def test_seed_ausente_e_erro_com_instrucao(self):
+    def test_missing_seed_is_an_error_with_instructions(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(freeze.FreezeError) as ctx:
-                freeze.ler_seed(os.path.join(tmp, "nao-existe.csv"))
+                freeze.ler_seed(os.path.join(tmp, "does-not-exist.csv"))
         self.assertIn("make freeze", str(ctx.exception))
 
 
 class CaptureIdTest(unittest.TestCase):
-    def test_o_id_muda_quando_qualquer_particao_muda(self):
-        base = freeze.collect(montar(UMA_PARTICAO))
-        outro = [dict(base[0], content_sha256="ff" * 32)]
-        self.assertNotEqual(freeze.capture_id(base), freeze.capture_id(outro))
+    def test_id_changes_when_any_partition_changes(self):
+        base = freeze.collect(build(ONE_PARTITION))
+        other = [dict(base[0], content_sha256="ff" * 32)]
+        self.assertNotEqual(freeze.capture_id(base), freeze.capture_id(other))
 
-    def test_o_id_nao_depende_de_bytes_nem_de_contagem(self):
-        """Ele agrega os SELOS, e o selo ja cobre bytes e registros. Somar essas colunas
-        de novo aqui nao acrescentaria deteccao e faria o id mudar por arredondamento."""
-        base = freeze.collect(montar(UMA_PARTICAO))
-        mesmo_selo = [dict(base[0], bytes=999, records=999, files=99)]
-        self.assertEqual(freeze.capture_id(base), freeze.capture_id(mesmo_selo))
+    def test_id_does_not_depend_on_bytes_or_counts(self):
+        """It aggregates the SEALS, and the seal already covers bytes and records. Summing
+        those columns again here would add no detection and would make the id change by
+        rounding."""
+        base = freeze.collect(build(ONE_PARTITION))
+        same_seal = [dict(base[0], bytes=999, records=999, files=99)]
+        self.assertEqual(freeze.capture_id(base), freeze.capture_id(same_seal))
 
 
 if __name__ == "__main__":

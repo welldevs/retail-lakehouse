@@ -1,5 +1,5 @@
--- Unicidade do GRAO COMPOSTO. "year" sozinho nao basta: cada serie tem 2 pontos por
--- ano (fk_periodo 26 e 27, referencia 31/12 e 30/06) — ver comentario do modelo.
+-- Uniqueness of the COMPOSITE GRAIN. "year" alone is not enough: each series has 2 points per
+-- year (fk_periodo 26 and 27, reference dates 31/12 and 30/06) — see the model comment.
 select
     ingestion_date,
     table_id,

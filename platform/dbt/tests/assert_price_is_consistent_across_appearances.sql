@@ -1,10 +1,10 @@
--- PREMISSA QUE O silver_price_change DEPENDE.
+-- A PREMISE silver_price_change DEPENDS ON.
 --
--- Ele reduz as aparicoes repetidas de um id com any_value(unit_price). Isso so e seguro
--- porque o preco NAO divergre entre as aparicoes do mesmo id na mesma particao (medido:
--- 0 divergencias; apenas o array categories[] difere, em 198 e 199 casos). Se a fonte
--- passar a devolver precos diferentes por categoria, any_value viraria escolha
--- arbitraria e silenciosa — este teste falha antes disso acontecer.
+-- It reduces the repeated appearances of an id with any_value(unit_price). That is only safe
+-- because the price does NOT diverge across appearances of the same id in the same partition (measured:
+-- 0 divergences; only the categories[] array differs, in 198 and 199 cases). If the source
+-- starts returning different prices per category, any_value would become an arbitrary and
+-- silent choice — this test fails before that happens.
 select
     ingestion_date,
     warehouse,

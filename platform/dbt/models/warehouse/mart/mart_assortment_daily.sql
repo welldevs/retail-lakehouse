@@ -1,33 +1,33 @@
--- GRAO: (snapshot_date, wh, category_id) — uma linha por categoria de nivel 2, armazem e
---        dia OBSERVADO.
+-- GRAIN: (snapshot_date, wh, category_id) — one row per level-2 category, warehouse and
+--        OBSERVED day.
 --
--- PERGUNTA QUE RESPONDE: quanto de catalogo cada armazem tem em cada categoria, a que
--- preco, e o quanto disso e exclusivo dele.
+-- QUESTION IT ANSWERS: how much catalog each warehouse has in each category, at what
+-- price, and how much of it is exclusive to that warehouse.
 --
--- SORTIMENTO E DERIVADO DA PRESENCA DA LINHA no fato de preco, nao de uma tabela propria:
--- uma linha em FACT_PRICE_SNAPSHOT afirma que o produto estava no catalogo daquele armazem
--- naquele dia. Medido que isso varia de verdade — 4.283 a 4.335 produtos por armazem, so
--- 3.859 nos quatro.
+-- ASSORTMENT IS DERIVED FROM THE ROW'S PRESENCE in the price fact, not from a table of its own:
+-- a row in FACT_PRICE_SNAPSHOT asserts that the product was in that warehouse's catalog
+-- on that day. Measured that this really varies — 4,283 to 4,335 products per warehouse, only
+-- 3,859 in all four.
 --
--- products_in_all_warehouses e o denominador honesto de qualquer comparacao entre
--- armazens: comparar preco medio de catalogos diferentes mede a diferenca de catalogo,
--- nao de preco.
+-- products_in_all_warehouses is the honest denominator for any comparison across
+-- warehouses: comparing the average price of different catalogs measures the catalog
+-- difference, not the price difference.
 --
--- OS QUATRO min/max/avg/median_unit_price SAO SOBRE purchasable_unit_price, NAO sobre
--- unit_price cru. Medido: em ~10 combinacoes produto x armazem vendidas a granel sem
--- unit_size, a API devolve unit_price = reference_price * 99 (o teto do seletor de peso,
--- nunca um preco de consumo) — um congelado de 37 EUR/kg chegava a inflar o MAXIMO da
--- categoria "Marisco y pescado" para 3.663,00 EUR. purchasable_unit_price e o mesmo valor
--- em todas as outras linhas e so diverge nessas ~10 (ver silver_product_price.sql e
--- DECISIONS.md, "Demand calibration against MAPA 2025") — usa-lo aqui e a mesma correcao
--- que fact_price_snapshot.unit_price_ex_tax ja aplica, nao uma segunda decisao.
+-- THE FOUR min/max/avg/median_unit_price ARE OVER purchasable_unit_price, NOT over raw
+-- unit_price. Measured: in ~10 product x warehouse combinations sold loose without
+-- unit_size, the API returns unit_price = reference_price * 99 (the ceiling of the weight
+-- selector, never a consumer price) — a 37 EUR/kg frozen item inflated the category MAXIMUM
+-- of "Marisco y pescado" to 3,663.00 EUR. purchasable_unit_price is the same value
+-- on every other row and only diverges on those ~10 (see silver_product_price.sql and
+-- DECISIONS.md, "Demand calibration against MAPA 2025") — using it here is the same correction
+-- fact_price_snapshot.unit_price_ex_tax already applies, not a second decision.
 {{ config(materialized = 'table') }}
 
 with universal as (
 
-    -- Produtos presentes nos QUATRO armazens naquele dia. Calculado por dia, e nao uma
-    -- vez so, porque o catalogo muda: um produto pode ser universal numa data e nao em
-    -- outra, e congelar isso numa lista fixa mentiria sobre as datas antigas.
+    -- Products present in ALL FOUR warehouses on that day. Computed per day, and not
+    -- once, because the catalog changes: a product may be universal on one date and not on
+    -- another, and freezing that into a fixed list would lie about the older dates.
     select snapshot_date, source_product_id
     from {{ ref('fact_price_snapshot') }}
     group by 1, 2

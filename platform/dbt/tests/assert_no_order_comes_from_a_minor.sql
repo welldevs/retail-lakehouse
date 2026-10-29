@@ -1,26 +1,26 @@
--- NENHUM PEDIDO NASCE DE UM MENOR DE IDADE.
+-- NO ORDER IS PLACED BY A MINOR.
 --
--- O ACHADO QUE ISTO CONGELA. Medido em 2026-08-31: 18,01% dos clientes tinham menos de 18
--- anos — 3.602 de 20.000 — com `age_at_ingestion` indo de 0 a 100. Havia titular de conta
--- recem-nascido. Isso nao era defeito da Source de OLTP, que declara no contrato que a
--- idade vem da distribuicao POPULACIONAL provincial do INE e entrega exatamente isso; o que
--- nunca fora declarado era a diferenca entre RESIDENTE e QUEM COLOCA UM PEDIDO.
+-- THE FINDING THIS FREEZES. Measured on 2026-08-31: 18.01% of customers were under 18
+-- — 3,602 of 20,000 — with `age_at_ingestion` ranging from 0 to 100. There were newborn
+-- account holders. That was not a defect of the OLTP Source, which declares in its contract that
+-- age comes from INE's provincial POPULATION distribution and delivers exactly that; what
+-- had never been declared was the difference between a RESIDENT and WHOEVER PLACES AN ORDER.
 --
--- POR QUE ISTO VIRA TESTE, e nao so uma premissa. Enquanto a idade nao fazia nada, um
--- comprador de tres anos era inofensivo. A partir do momento em que ela governa a demanda,
--- 18% da base entraria na faixa '-35 anos' do MAPA sendo crianca — e a calibracao ficaria
--- errada por construcao, sem nenhum total quebrar. Um teste aqui e o que impede a premissa
--- de ser silenciosamente revertida por quem nao souber por que ela existe.
+-- WHY THIS BECOMES A TEST, and not only a premise. While age did nothing, a
+-- three-year-old buyer was harmless. From the moment it governs demand,
+-- 18% of the base would fall into MAPA's 'under 35' band while being children — and the calibration would be
+-- wrong by construction, with no total breaking. A test here is what keeps the premise
+-- from being silently reverted by someone who does not know why it exists.
 --
--- A IDADE MINIMA NAO E CONSTANTE NESTE ARQUIVO: vem de `order_premises`, que projeta o
--- proprio seed. Repeti-la aqui criaria um segundo lugar para muda-la, e os dois divergiriam.
+-- THE MINIMUM AGE IS NOT A CONSTANT IN THIS FILE: it comes from `order_premises`, which projects the
+-- seed itself. Repeating it here would create a second place to change it, and the two would diverge.
 --
--- MEDIDO AO ESCREVER ESTE TESTE: baixar `min_buyer_age` para 0 no seed faz este teste
--- passar, porque com o limiar em zero nao existe menor. Ler a premissa e o comportamento
--- certo — o teste verifica que o DADO obedece o que foi declarado — mas sozinho ele nao
--- protege a premissa de ser revertida. Por isso a segunda metade abaixo: um PISO, e nao uma
--- copia do valor. O seed pode subir a idade minima quando quiser; abaixo de 18 ele nao pode
--- ir em silencio, porque foi exatamente ai que a base tinha titular de conta de tres anos.
+-- MEASURED WHEN WRITING THIS TEST: lowering `min_buyer_age` to 0 in the seed makes this test
+-- pass, because with the threshold at zero there are no minors. Reading the premise is the right
+-- behavior — the test checks that the DATA obeys what was declared — but on its own it does not
+-- protect the premise from being reverted. Hence the second half below: a FLOOR, not a
+-- copy of the value. The seed may raise the minimum age whenever it wants; below 18 it cannot
+-- go silently, because that is exactly where the base had three-year-old account holders.
 with limite as (
 
     select cast(value as integer) as min_buyer_age
@@ -46,9 +46,9 @@ where year(o.ingestion_date) - c.birth_year < l.min_buyer_age
 
 union all
 
--- O PISO DA PROPRIA PREMISSA. Devolve uma linha — e portanto reprova — se alguem baixar
--- min_buyer_age abaixo de 18. As colunas casam com as da consulta acima porque `union all`
--- exige; o que importa e a ultima.
+-- THE PREMISE'S OWN FLOOR. Returns a row — and therefore fails — if someone lowers
+-- min_buyer_age below 18. The columns match those of the query above because `union all`
+-- requires it; what matters is the last one.
 select
     'PREMISSA'                                          as order_id,
     '-'                                                 as wh,

@@ -1,15 +1,15 @@
--- PSEUDOVIAS do Callejero (arquivo PSEU): pontos endereçaveis fora de uma rua
--- convencional -- caixas de correio agrupadas ("BUZON..."), estacionamentos, conjuntos
--- de edificios com nome proprio. Nao e auxiliar de VIAS: sao identidades e codigos
--- proprios, sem correspondencia 1:1 com nenhuma rua -- por isso vira modelo Silver
--- proprio, nao so uma coluna extra em silver_callejero_streets.
+-- PSEUDO-STREETS of the Callejero (PSEU file): addressable points outside a conventional
+-- street -- grouped mailboxes ("BUZON..."), car parks, named building complexes. It is
+-- not an auxiliary of VIAS: they are their own identities and codes, with no 1:1
+-- correspondence with any street -- which is why it becomes its own Silver model, not
+-- just an extra column in silver_callejero_streets.
 --
--- GRAO: (ingestion_date, pseudo_address_code). Codigo (10 digitos) ja e unico dentro de
--- uma ingestion_date.
+-- GRAIN: (ingestion_date, pseudo_address_code). The code (10 digits) is already unique
+-- within an ingestion_date.
 --
--- Layout medido (CONTRACT.md da source, secao 2): linha de 127 chars, codigo em [0:10]
--- (provincia 2 + municipio 3 + id 5), nome em [10:63], data em [63:71], nome completo
--- em [77:127]. Sem campo de tipo de via -- pseudovias nao sao classificadas por tipo.
+-- Measured layout (the source's CONTRACT.md, section 2): 127-char line, code at [0:10]
+-- (province 2 + municipality 3 + id 5), name at [10:63], date at [63:71], full name
+-- at [77:127]. No street-type field -- pseudo-streets are not classified by type.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_pseudo_addresses.parquet',
     options = {'overwrite_or_ignore': 1}
@@ -37,13 +37,13 @@ with raw as (
 
 select
     ingestion_date,
-    -- Uma reextracao da MESMA publicacao do INE cria outra ingestion_date com linhas
-    -- equivalentes, e este modelo empilha todas (o historico e deliberado). Sem uma
-    -- marca explicita, quem consultar sem filtrar conta em dobro — ja aconteceu com
-    -- silver_ine_population_series, que ficou com 1.547.496 linhas em CADA uma de duas
-    -- ingestion_date. `where is_latest_ingestion` e a forma certa de ler o estado atual;
-    -- sem o filtro, le-se o historico inteiro, e isso passa a ser uma escolha e nao um
-    -- acidente.
+    -- A re-extraction of the SAME INE publication creates another ingestion_date with
+    -- equivalent rows, and this model stacks them all (the history is deliberate). Without an
+    -- explicit marker, whoever queries without filtering double-counts — it already happened
+    -- with silver_ine_population_series, which ended up with 1,547,496 rows in EACH of two
+    -- ingestion_dates. `where is_latest_ingestion` is the right way to read the current
+    -- state; without the filter, the whole history is read, and that becomes a choice rather
+    -- than an accident.
     ingestion_date = max(ingestion_date) over () as is_latest_ingestion,
     'PSEU'                                          as source_dataset,
     source_file,

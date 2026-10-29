@@ -1,15 +1,16 @@
-"""A EVIDENCIA DO STREAM, conferida sem broker, sem Postgres e sem Iceberg.
+"""THE STREAM EVIDENCE, checked without a broker, without Postgres and without Iceberg.
 
-O relatorio existe porque a metade em streaming e divida declarada: `make test` roda sem
-rede, entao os motores so existem enquanto `make stream-up` estiver de pe. Isso torna o
-relatorio o unico registro de que a SEMANTICA deles foi exercida — e o modo de falha que
-importa nao e "quebrou", e "escreveu algo plausivel e errado".
+The report exists because the streaming half is declared debt: `make test` runs without
+network, so the engines only exist while `make stream-up` is up. That makes the report the
+only record that their SEMANTICS were exercised — and the failure mode that matters is not
+"it broke", it is "it wrote something plausible and wrong".
 
-Os testes abaixo miram exatamente nisso, e a assimetria com a evidencia do warehouse e
-deliberada: la a captura ou acontece inteira ou nao acontece, porque e uma conexao so; aqui
-sao TRES planos independentes, e o caso normal e um deles estar fora do ar. O que nao pode
-acontecer e um plano ausente virar um zero — "o outbox tem 0 eventos" e uma afirmacao muito
-diferente de "o OLTP nao respondeu", e as duas cabem na mesma celula de tabela.
+The tests below aim exactly at that, and the asymmetry with the warehouse evidence is
+deliberate: there the capture either happens whole or not at all, because it is a single
+connection; here there are THREE independent planes, and the normal case is one of them
+being down. What must not happen is an absent plane turning into a zero — "the outbox has
+0 events" is a very different claim from "the OLTP did not answer", and both fit in the
+same table cell.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ def _broker():
     }
 
 
-def _projecao():
+def _projection():
     return {
         "table": "projection.live_order_state",
         "metadata_location": "s3://retail-lakehouse/iceberg/.../00052-abc.metadata.json",
@@ -64,7 +65,7 @@ def _projecao():
     }
 
 
-def _reconciliacao(ok=True):
+def _reconciliation(ok=True):
     if ok:
         return {"orders": {"iceberg": 6400, "silver": 6400, "oltp": 6400},
                 "compared": 6400, "missing": {}, "divergences": [],
@@ -78,126 +79,126 @@ def _reconciliacao(ok=True):
     }
 
 
-def _dados(**substituir):
+def _data(**overrides):
     base = {
         "capturado_em": "2026-08-29 13:32:28 UTC",
         "oltp": _oltp(),
         "broker": _broker(),
-        "projecao": _projecao(),
-        "reconciliacao": _reconciliacao(),
+        "projecao": _projection(),
+        "reconciliacao": _reconciliation(),
     }
-    base.update(substituir)
+    base.update(overrides)
     return base
 
 
-class PlanoCompletoTest(unittest.TestCase):
+class FullPlaneTest(unittest.TestCase):
     def setUp(self):
-        self.texto = render(_dados())
+        self.text = render(_data())
 
-    def test_a_data_da_captura_aparece(self):
-        """Sem data, o relatorio nao e evidencia — e afirmacao."""
-        self.assertIn("2026-08-29 13:32:28 UTC", self.texto)
+    def test_capture_date_appears(self):
+        """Without a date, the report is not evidence — it is a claim."""
+        self.assertIn("2026-08-29 13:32:28 UTC", self.text)
 
-    def test_os_tres_planos_aparecem(self):
-        for cabecalho in ("Transactional plane", "Transport — Kafka", "Projection — Iceberg",
+    def test_all_three_planes_appear(self):
+        for heading in ("Transactional plane", "Transport — Kafka", "Projection — Iceberg",
                           "The three folds"):
-            self.assertIn(cabecalho, self.texto)
+            self.assertIn(heading, self.text)
 
-    def test_o_total_do_topico_e_somado_e_nao_escrito(self):
-        """11.306 + 11.164 = 22.470. Um total escrito a mao envelhece na primeira execucao."""
-        self.assertIn("22,470 messages", self.texto)
+    def test_topic_total_is_summed_not_written(self):
+        """11,306 + 11,164 = 22,470. A hand-written total goes stale on the first run."""
+        self.assertIn("22,470 messages", self.text)
 
-    def test_a_proveniencia_dos_dois_escritores_e_publicada(self):
-        """`written_by` e a unica prova CONSULTAVEL de que ha dois escritores. Sem ela, o
-        gatilho do Iceberg ("um segundo engine precisar escrever a mesma tabela") vira
-        anedota."""
-        self.assertIn("`rebuild`", self.texto)
-        self.assertIn("4,800", self.texto)
-        self.assertIn("`stream`", self.texto)
-        self.assertIn("1,600", self.texto)
+    def test_provenance_of_both_writers_is_published(self):
+        """`written_by` is the only QUERYABLE proof that there are two writers. Without it,
+        the Iceberg trigger ("a second engine needs to write the same table") becomes an
+        anecdote."""
+        self.assertIn("`rebuild`", self.text)
+        self.assertIn("4,800", self.text)
+        self.assertIn("`stream`", self.text)
+        self.assertIn("1,600", self.text)
 
-    def test_o_lag_de_cada_grupo_e_separado(self):
-        """Um lag somado esconderia justamente o ponto de desacoplamento: o sink Iceberg
-        pode estar 306 mensagens atras sem que isso afete o sink Postgres."""
-        self.assertIn("`orders-projector`", self.texto)
-        self.assertIn("`orders-projector-iceberg`", self.texto)
-        self.assertIn("Total lag: **306**", self.texto)
-        self.assertIn("Total lag: **0**", self.texto)
+    def test_each_group_lag_is_separate(self):
+        """A summed lag would hide precisely the decoupling point: the Iceberg sink can be
+        306 messages behind without that affecting the Postgres sink."""
+        self.assertIn("`orders-projector`", self.text)
+        self.assertIn("`orders-projector-iceberg`", self.text)
+        self.assertIn("Total lag: **306**", self.text)
+        self.assertIn("Total lag: **0**", self.text)
 
-    def test_o_metadado_corrente_e_publicado_com_o_caminho_completo(self):
-        """E o que permite ao DuckDB ler a tabela sem adivinhar — e o que prova que o
-        caminho veio do CATALOGO."""
-        self.assertIn("00052-abc.metadata.json", self.texto)
+    def test_current_metadata_is_published_with_full_path(self):
+        """It is what lets DuckDB read the table without guessing — and what proves the
+        path came from the CATALOG."""
+        self.assertIn("00052-abc.metadata.json", self.text)
 
-    def test_o_acordo_dos_tres_folds_e_declarado_como_acordo(self):
-        self.assertIn("all three agree", self.texto)
-        self.assertIn("6,400 orders", self.texto)
-
-
-class DivergenciaTest(unittest.TestCase):
-    def test_divergencia_aparece_com_a_linha_e_a_coluna(self):
-        """O modo de falha mais caro deste relatorio seria uma divergencia virar um resumo.
-        Quem le precisa do order_id e da coluna para ir olhar."""
-        texto = render(_dados(reconciliacao=_reconciliacao(ok=False)))
-        self.assertIn("**Divergences: 1.**", texto)
-        self.assertIn("ord_vlc1_20260824_000001", texto)
-        self.assertIn("net_amount", texto)
-        self.assertNotIn("all three agree", texto)
-
-    def test_pedido_ausente_de_uma_fonte_aparece_nomeado(self):
-        texto = render(_dados(reconciliacao=_reconciliacao(ok=False)))
-        self.assertIn("missing from `oltp`", texto)
-        self.assertIn("ord_mad1_20260827_000010", texto)
+    def test_agreement_of_three_folds_is_declared_as_agreement(self):
+        self.assertIn("all three agree", self.text)
+        self.assertIn("6,400 orders", self.text)
 
 
-class PlanoDesligadoTest(unittest.TestCase):
-    """O caso NORMAL, e nao o excepcional: os tres planos sobem sob demanda."""
+class DivergenceTest(unittest.TestCase):
+    def test_divergence_shows_row_and_column(self):
+        """The most expensive failure mode of this report would be a divergence turning into a
+        summary. The reader needs the order_id and the column to go and look."""
+        text = render(_data(reconciliacao=_reconciliation(ok=False)))
+        self.assertIn("**Divergences: 1.**", text)
+        self.assertIn("ord_vlc1_20260824_000001", text)
+        self.assertIn("net_amount", text)
+        self.assertNotIn("all three agree", text)
 
-    def test_plano_ausente_aparece_como_ausencia_e_nunca_como_zero(self):
-        """"O outbox tem 0 eventos" e "o OLTP nao respondeu" cabem na mesma celula de
-        tabela e significam coisas opostas. A primeira e uma medicao; a segunda e a falta
-        de uma. Um relatorio que as confunde e pior que nenhum relatorio."""
-        texto = render(_dados(oltp={"erro": "connection refused"}))
-        self.assertIn("**OLTP not observed.**", texto)
-        self.assertIn("connection refused", texto)
-        self.assertIn("make stream-up", texto)
-        self.assertNotIn("| events in `outbox` | 0 |", texto)
+    def test_order_missing_from_a_source_is_named(self):
+        text = render(_data(reconciliacao=_reconciliation(ok=False)))
+        self.assertIn("missing from `oltp`", text)
+        self.assertIn("ord_mad1_20260827_000010", text)
 
-    def test_um_plano_fora_nao_derruba_os_outros(self):
-        """Evidencia parcial e util; evidencia que nao existe nao e."""
-        texto = render(_dados(broker={"erro": "broker nao existe"}))
-        self.assertIn("**Broker not observed.**", texto)
-        self.assertIn("| orders in `orders` | 6,400 |", texto)
-        self.assertIn("`rebuild`", texto)
 
-    def test_grupo_que_falhou_nao_se_disfarca_de_lag_zero(self):
-        """Lag zero e a MELHOR noticia possivel; um grupo ilegivel nao pode se passar por
-        ela. E a mesma armadilha da amostra vazia na evidencia do warehouse."""
+class PlaneDownTest(unittest.TestCase):
+    """The NORMAL case, not the exceptional one: the three planes come up on demand."""
+
+    def test_absent_plane_shows_as_absence_never_as_zero(self):
+        """"The outbox has 0 events" and "the OLTP did not answer" fit in the same table cell
+        and mean opposite things. The first is a measurement; the second is the lack of
+        one. A report that confuses them is worse than no report."""
+        text = render(_data(oltp={"erro": "connection refused"}))
+        self.assertIn("**OLTP not observed.**", text)
+        self.assertIn("connection refused", text)
+        self.assertIn("make stream-up", text)
+        self.assertNotIn("| events in `outbox` | 0 |", text)
+
+    def test_one_plane_down_does_not_bring_down_the_others(self):
+        """Partial evidence is useful; evidence that does not exist is not."""
+        text = render(_data(broker={"erro": "broker does not exist"}))
+        self.assertIn("**Broker not observed.**", text)
+        self.assertIn("| orders in `orders` | 6,400 |", text)
+        self.assertIn("`rebuild`", text)
+
+    def test_failed_group_does_not_pose_as_zero_lag(self):
+        """Zero lag is the BEST possible news; an unreadable group must not pass for it. It is
+        the same trap as the empty sample in the warehouse evidence."""
         broker = _broker()
-        broker["lags"]["orders-projector-iceberg"] = {"erro": "grupo desconhecido"}
-        texto = render(_dados(broker=broker))
-        self.assertIn("not observed: `grupo desconhecido`", texto)
+        broker["lags"]["orders-projector-iceberg"] = {"erro": "unknown group"}
+        text = render(_data(broker=broker))
+        self.assertIn("not observed: `unknown group`", text)
 
-    def test_todos_os_planos_fora_ainda_produz_um_relatorio_legivel(self):
-        texto = render(_dados(oltp={"erro": "a"}, broker={"erro": "b"},
+    def test_all_planes_down_still_produces_a_readable_report(self):
+        text = render(_data(oltp={"erro": "a"}, broker={"erro": "b"},
                               projecao={"erro": "c"}, reconciliacao={"erro": "d"}))
-        self.assertEqual(texto.count("not observed"), 4)
-        self.assertIn("2026-08-29 13:32:28 UTC", texto)
+        self.assertEqual(text.count("not observed"), 4)
+        self.assertIn("2026-08-29 13:32:28 UTC", text)
 
 
-class EscritaTest(unittest.TestCase):
-    def test_escreve_atomicamente_e_nao_deixa_temporario(self):
-        """Um relatorio truncado por interrupcao nao pode parecer completo — mesma
-        disciplina do parquet do recorte e do landing."""
+class WriteTest(unittest.TestCase):
+    def test_writes_atomically_and_leaves_no_temp_file(self):
+        """A report truncated by an interruption must not look complete — same discipline as
+        the cut's parquet and the landing."""
         with tempfile.TemporaryDirectory() as tmp:
-            destino = os.path.join(tmp, "sub", "README.md")
-            escrito = write(_dados(), destino)
-            self.assertTrue(os.path.exists(escrito))
+            target = os.path.join(tmp, "sub", "README.md")
+            written = write(_data(), target)
+            self.assertTrue(os.path.exists(written))
             self.assertEqual(
-                [f for f in os.listdir(os.path.dirname(escrito)) if f.endswith(".tmp")], []
+                [f for f in os.listdir(os.path.dirname(written)) if f.endswith(".tmp")], []
             )
             self.assertIn("Stream plane evidence",
-                          open(escrito, encoding="utf-8").read())
+                          open(written, encoding="utf-8").read())
 
 
 if __name__ == "__main__":

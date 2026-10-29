@@ -1,27 +1,27 @@
--- AS PREMISSAS DE ESTOQUE NAO PODEM SE CONTRADIZER ENTRE SI.
+-- THE STOCK PREMISES MUST NOT CONTRADICT EACH OTHER.
 --
--- IRMA DIRETA DE assert_order_premises_are_internally_coherent, e escrita ANTES de o
--- primeiro saldo existir — de proposito. La o defeito viveu tres fases porque ninguem
--- cruzou duas premissas declaradas separadamente; aqui as quatro nascem cruzadas.
+-- A DIRECT SIBLING OF assert_order_premises_are_internally_coherent, and written BEFORE the
+-- first balance existed — on purpose. There the defect lived for three phases because nobody
+-- crossed two separately declared premises; here all four are born crossed.
 --
--- AS TRES CONTRADICOES POSSIVEIS, e o que cada uma faria com a medicao:
+-- THE THREE POSSIBLE CONTRADICTIONS, and what each would do to the measurement:
 --
---   ponto de reposicao <= prazo do fornecedor
---       A ordem chega DEPOIS de a prateleira esvaziar, sempre. A ruptura que aparecesse
---       mediria aritmetica do seed, e nao variacao de demanda — exatamente o que
---       `slot_adherence_rate` media antes da Fase 7.
+--   reorder point <= supplier lead time
+--       The order arrives AFTER the shelf empties, always. Any stockout that appeared
+--       would measure the seed's arithmetic, not demand variation — exactly what
+--       `slot_adherence_rate` measured before Phase 7.
 --
---   nivel alvo <= ponto de reposicao
---       A ordem de compra nasce com quantidade zero ou negativa: repor ate um nivel abaixo
---       do gatilho e uma instrucao que nao se pode obedecer.
+--   target level <= reorder point
+--       The purchase order is born with zero or negative quantity: replenishing up to a level below
+--       the trigger is an instruction that cannot be obeyed.
 --
---   estoque inicial <= ponto de reposicao
---       Toda serie comeca ja precisando repor. O primeiro dia da janela viraria um pico
---       artificial de ordens de compra que nao diz nada sobre a operacao.
+--   opening stock <= reorder point
+--       Every series starts already needing replenishment. The first day of the window would become an
+--       artificial spike of purchase orders that says nothing about the operation.
 --
--- NAO HA AQUI NENHUMA ASSERCAO SOBRE RUPTURA, GIRO OU COBERTURA. Mesma regra do teste
--- irmao: afere-se a coerencia das ENTRADAS, nunca o resultado. Um teste que olhasse a taxa
--- de ruptura abencoaria quem ajustasse `opening_days_of_demand` ate ela ficar bonita.
+-- THERE IS NO ASSERTION HERE ABOUT STOCKOUT, TURNOVER OR COVER. Same rule as the sibling
+-- test: the coherence of the INPUTS is checked, never the result. A test that looked at the stockout
+-- rate would bless whoever tuned `opening_days_of_demand` until it looked nice.
 with p as (
 
     select premise_key, cast(value as double) as v

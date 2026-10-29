@@ -1,28 +1,28 @@
--- O DEFEITO MAIS CARO JA MEDIDO NESTE REPO, e o teste que impede sua volta.
+-- THE MOST EXPENSIVE DEFECT EVER MEASURED IN THIS REPO, and the test that keeps it from coming back.
 --
--- Quando `selling_method = 1` e `unit_size` e nulo, a fonte devolve
--- `unit_price = reference_price * 99` — o preco do TETO do seletor de peso, e nao de nada
--- que um domicilio compre. Medido em 2026-08-31: 10 linhas, fator exatamente 99,000, com
--- `unit_price` chegando a 3.663,00 EUR para um congelado a 37,00 EUR/kg. Usadas por um
--- gerador de cesta indiferente ao preco, essas 10 linhas produziram 16,6% de TODA a
--- receita simulada, e nenhum dos 947 testes existentes reprovou.
+-- When `selling_method = 1` and `unit_size` is null, the source returns
+-- `unit_price = reference_price * 99` — the price of the weight selector's CEILING, not of anything
+-- a household buys. Measured on 2026-08-31: 10 rows, a factor of exactly 99.000, with
+-- `unit_price` reaching 3,663.00 EUR for a frozen item at 37.00 EUR/kg. Used by a
+-- price-indifferent basket generator, those 10 rows produced 16.6% of ALL the
+-- simulated revenue, and none of the 947 existing tests failed.
 --
--- POR QUE A VARIANTE OBVIA NAO PEGARIA
--- ------------------------------------
--- Um teto absoluto (`purchasable_unit_price < 600`) passaria em silencio no dia em que a
--- fonte trouxer um granel a 3,00 EUR/kg: 3,00 * 99 = 297, confortavelmente abaixo do teto,
--- e o defeito voltaria valendo 297 EUR por unidade. O limiar tem de ser RELACIONAL —
--- ancorado nos dois campos observados que definem a porcao — e nao um numero escolhido.
+-- WHY THE OBVIOUS VARIANT WOULD NOT CATCH IT
+-- ------------------------------------------
+-- An absolute ceiling (`purchasable_unit_price < 600`) would pass silently the day the
+-- source brings a loose item at 3.00 EUR/kg: 3.00 * 99 = 297, comfortably below the ceiling,
+-- and the defect would come back worth 297 EUR per unit. The threshold must be RELATIONAL —
+-- anchored on the two observed fields that define the portion — not a chosen number.
 --
--- AS DUAS METADES, e por que ambas sao necessarias
--- ------------------------------------------------
---   1. toda linha `bunch` tem de valer `reference_price * min_bunch_amount`. Pega tanto a
---      volta do teto de 99 quanto qualquer "simplificacao" que faca
+-- THE TWO HALVES, and why both are needed
+-- ---------------------------------------
+--   1. every `bunch` row must equal `reference_price * min_bunch_amount`. It catches both the
+--      return of the 99 ceiling and any "simplification" that makes
 --      purchasable_unit_price = unit_price.
---   2. nenhuma linha que NAO e `bunch` pode ter preco diferente de `unit_price`. Delimita
---      o raio de acao da derivacao: ela corrige 10 linhas, e nao pode comecar a reescrever
---      as outras 18.550 sem que alguem note. Sem esta metade, um erro de sinal no CASE
---      passaria pela primeira.
+--   2. no row that is NOT `bunch` may have a price different from `unit_price`. It bounds
+--      the derivation's blast radius: it fixes 10 rows, and must not start rewriting
+--      the other 18,550 without anyone noticing. Without this half, a sign error in the CASE
+--      would get past the first.
 with bunch_desancorado as (
 
     select

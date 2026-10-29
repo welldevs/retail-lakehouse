@@ -1,19 +1,19 @@
--- TESTE INVERTIDO: reprova quando NADA deu errado.
+-- INVERTED TEST: fails when NOTHING went wrong.
 --
--- Irmao de assert_geography_postal_code_is_not_a_key, e pelo mesmo motivo. Aquele reprova
--- quando nenhum CEP cruza municipio, ou seja, quando o grao composto de DIM_GEOGRAPHY perde a
--- justificativa. Este reprova quando nenhuma cesta muda entre a colocacao e a separacao — ou
--- seja, quando `net_amount` passa a ser derivavel de `gross_amount_placed`.
+-- Sibling of assert_geography_postal_code_is_not_a_key, and for the same reason. That one fails
+-- when no postal code crosses municipalities, that is, when DIM_GEOGRAPHY's composite grain loses its
+-- justification. This one fails when no basket changes between placement and picking — that
+-- is, when `net_amount` becomes derivable from `gross_amount_placed`.
 --
--- POR QUE ISSO E UM DEFEITO E NAO UM DIA CALMO. Se o fold e trivial, o log de eventos nao
--- carrega nenhuma informacao que uma tabela de pedidos nao carregaria, e o modelo inteiro —
--- a Source que grava log em vez de estado, o Silver que dobra, o broker que transporta —
--- deixa de se justificar. O ARCHITECTURE.md ja recusou explicitamente a versao decorativa
--- disto: "publicar o proprio output batch num topico e consumir de volta adicionaria um
--- broker para manter e zero informacao".
+-- WHY THAT IS A DEFECT AND NOT A QUIET DAY. If the fold is trivial, the event log carries
+-- no information an orders table would not carry, and the whole model —
+-- the Source that writes a log instead of state, the Silver that folds it, the broker that carries it —
+-- stops being justified. ARCHITECTURE.md already explicitly refused the decorative version
+-- of this: "publishing the batch output itself to a topic and consuming it back would add a
+-- broker to maintain and zero information".
 --
--- Medido na janela de 2026-08-24 a 08-27: 4.670 linhas substituidas e 2.321 removidas em
--- 120.693, e 5.166 pedidos com valor separado diferente do colocado.
+-- Measured on the 2026-08-24 to 08-27 window: 4,670 substituted lines and 2,321 removed out of
+-- 120,693, and 5,166 orders with a picked value different from the placed one.
 select
     count(*)                                                        as pedidos_com_separacao,
     sum(case when substituted_lines > 0 or removed_lines > 0 then 1 else 0 end)

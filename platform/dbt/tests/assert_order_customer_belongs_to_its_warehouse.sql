@@ -1,16 +1,16 @@
--- Um cliente de W so pede de W. Restricao 1 das cinco que o FAQ ja tinha escrito antes de
--- Orders existir, e a mais facil de quebrar em silencio.
+-- A customer of W only orders from W. Constraint 1 of the five the FAQ had already written before
+-- Orders existed, and the easiest to break silently.
 --
--- Medido na Fase 1: 0 CEPs cruzam armazem — a area de servico de cada um e disjunta. Logo um
--- pedido cujo cliente pertence a outro armazem nao e "um caso raro", e defeito.
+-- Measured in Phase 1: 0 postal codes cross warehouses — each one's service area is disjoint. So an
+-- order whose customer belongs to another warehouse is not "a rare case", it is a defect.
 --
--- ESTE E O TERCEIRO CHECK DA MESMA REGRA, e os tres sao independentes de proposito: o gerador
--- so escolhe entre clientes daquele armazem, `orders-validate` reconfere contra a referencia,
--- e este olha o dado DEPOIS de atravessar RAW e parquet. Mesma escada de
+-- THIS IS THE THIRD CHECK OF THE SAME RULE, and the three are independent on purpose: the generator
+-- only chooses among that warehouse's customers, `orders-validate` re-checks against the reference,
+-- and this one looks at the data AFTER it crosses RAW and parquet. Same ladder as
 -- assert_customer_lives_in_its_warehouse_service_area.
 --
--- O JOIN E POR ID, e a comparacao e de `wh`. Nao ha nome envolvido: a licao dos 370 de 370
--- municipios grafados diferente pelas duas fontes do INE vale aqui tambem.
+-- THE JOIN IS BY ID, and the comparison is on `wh`. No name is involved: the lesson of the 370 of 370
+-- municipalities spelled differently by INE's two sources applies here too.
 select
     o.order_id,
     o.wh          as warehouse_do_pedido,

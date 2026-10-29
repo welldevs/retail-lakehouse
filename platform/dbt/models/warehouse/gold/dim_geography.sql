@@ -1,35 +1,35 @@
--- A GEOGRAFIA ANALITICA: onde o cliente mora e para onde se entrega.
+-- THE ANALYTICAL GEOGRAPHY: where the customer lives and where deliveries go.
 --
--- GRAO: (province_code, municipality_code, postal_code) — 699 linhas, destiladas de
--- 304.952 tramos do Callejero.
--- CHAVE: geography_sk (surrogate). Chave natural: as tres colunas acima.
--- TIPO: observed (INE Callejero + INE 29005).
+-- GRAIN: (province_code, municipality_code, postal_code) — 699 rows, distilled from
+-- 304,952 Callejero segments.
+-- KEY: geography_sk (surrogate). Natural key: the three columns above.
+-- TYPE: observed (INE Callejero + INE 29005).
 --
--- POR QUE O GRAO E ESSE, medido:
---   * postal_code SOZINHO NAO SERVE — 29 CEPs cruzam fronteira de municipio. Chavear so
---     pelo CEP fundiria dois municipios numa linha e a soma por municipio ficaria errada.
---   * municipality sozinho perde a granularidade de entrega, que e onde a roteirizacao
---     acontece.
---   * (municipio, CEP) e o menor grao que responde as duas perguntas. E `wh` e FUNCAO
---     desse par, nao mais uma dimensao: medido que 0 CEPs cruzam armazem, entao a
---     atribuicao e inequivoca.
+-- WHY THE GRAIN IS THIS ONE, measured:
+--   * postal_code ALONE DOES NOT WORK — 29 postcodes cross a municipality border. Keying
+--     only by postcode would merge two municipalities into one row and the per-municipality
+--     sum would be wrong.
+--   * municipality alone loses the delivery granularity, which is where routing happens.
+--   * (municipality, postcode) is the smallest grain that answers both questions. And `wh`
+--     is a FUNCTION of that pair, not another dimension: measured that 0 postcodes cross a
+--     warehouse, so the assignment is unambiguous.
 --
--- OS DOIS NOMES DE MUNICIPIO viajam juntos com rotulos distintos porque os dois produtos
--- do INE grafam o MESMO municipio de forma diferente em 370 de 370 casos: o Callejero usa
--- caixa alta com artigo entre parenteses ("BRUC (EL)"), a tabela 29005 usa caixa mista com
--- artigo posposto ("Bruc, El"). Isso foi descoberto quando a validacao da Fase 1 reprovou
--- 200/200 clientes. Deixar so um nome esconderia a divergencia; dar o mesmo rotulo aos
--- dois seria armadilha. O que se compara entre fontes e sempre o CODIGO.
+-- THE TWO MUNICIPALITY NAMES travel together with distinct labels because the two INE
+-- products spell the SAME municipality differently in 370 of 370 cases: the Callejero uses
+-- upper case with the article in parentheses ("BRUC (EL)"), table 29005 uses mixed case
+-- with a postponed article ("Bruc, El"). This was discovered when Phase 1 validation failed
+-- 200/200 customers. Keeping only one name would hide the divergence; giving both the same
+-- label would be a trap. What is compared across sources is always the CODE.
 --
--- O QUE ESTA DIMENSAO DELIBERADAMENTE NAO TEM: section_code, street_id, faixa de
--- numeracao. Sao 517 mil linhas de resolucao de endereco que servem ao GERADOR de
--- clientes, nao ao analista, e ficam no S3. Gatilho para um DIM_CENSUS_SECTION: uma
--- pergunta real por seccao censitaria (seriam 10.030 linhas no escopo).
+-- WHAT THIS DIMENSION DELIBERATELY DOES NOT HAVE: section_code, street_id, numbering
+-- range. Those are 517 thousand address-resolution rows that serve the customer
+-- GENERATOR, not the analyst, and they stay in S3. Trigger for a DIM_CENSUS_SECTION: a
+-- real question per census section (it would be 10,030 rows in scope).
 --
--- municipality_population e o valor do ANO CORRENTE, atributo de TAMANHO. A serie
--- historica (1996-2025) e fato e vive em FACT_POPULATION_MUNICIPALITY. Somar esta coluna
--- sobre varias linhas do mesmo municipio conta a mesma populacao varias vezes — reduza ao
--- municipio distinto antes.
+-- municipality_population is the CURRENT YEAR's value, a SIZE attribute. The historical
+-- series (1996-2025) is a fact and lives in FACT_POPULATION_MUNICIPALITY. Summing this
+-- column over several rows of the same municipality counts the same population several
+-- times — reduce to the distinct municipality first.
 {{ config(materialized = 'table') }}
 
 select

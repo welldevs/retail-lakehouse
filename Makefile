@@ -1,22 +1,21 @@
-# Plataforma Retail: catalogo da Mercadona + populacao e Callejero do INE.
+# Retail Platform: Mercadona + INE (population, Callejero) + simulated customers and orders.
 #
-# Este Makefile e o ponto de entrada da PLATAFORMA. Cada Source tem o seu proprio
-# Makefile (sources/mercadona-catalog-source/, sources/ine-population-source/,
-# sources/ine-callejero-source/), e continua utilizavel de forma isolada — e isso e a
-# fronteira: nada aqui altera arquivo delas.
+# This Makefile is the entry point of the PLATFORM. Each of the five Sources has its own
+# Makefile (sources/*/Makefile) and remains usable in isolation — and that is the
+# boundary: nothing here changes their files.
 #
-#   make up             sobe o object storage
+#   make up             starts the object storage
 #   make daily          Mercadona: extract -> validate -> land -> verify -> silver
-#   make ine-refresh    INE populacao: mesma cadeia, sob demanda (sem cron)
-#   make callejero-refresh  INE Callejero: sem API, incorpora arquivos ja baixados
-#   make test           suite de cada Source (sem rede) + suite da plataforma (sem rede)
+#   make ine-refresh    INE population: same chain, on demand (no cron)
+#   make callejero-refresh  INE Callejero: no API, ingests files already downloaded
+#   make test           each Source's suite (offline) + the platform suite (offline)
 
 -include .env
-# Identidade do Snowflake em arquivo PROPRIO, e opcional: toda a metade Lakehouse (up,
-# daily, silver, test) roda sem ele. Separado do .env porque tem ciclo de vida diferente —
-# trocar de conta Snowflake nao deveria exigir tocar na configuracao do MinIO. Copie de
-# .env.snowflake.example. Nao guarda segredo: a chave privada mora fora do repo e o que
-# viaja aqui e o CAMINHO dela.
+# Snowflake identity lives in its OWN file, and it is optional: the whole Lakehouse half (up,
+# daily, silver, test) runs without it. Kept apart from .env because it has a different
+# lifecycle — switching Snowflake accounts should not require touching the MinIO
+# configuration. Copy from .env.snowflake.example. It holds no secret: the private key lives
+# outside the repo and what travels here is its PATH.
 -include .env.snowflake
 export
 
@@ -25,9 +24,9 @@ MERCADONA_SOURCE_DIR ?= sources/mercadona-catalog-source
 MERCADONA_SOURCE_SRC  = $(MERCADONA_SOURCE_DIR)/src
 PLATFORM_PY   ?= platform/.venv/bin/python
 DBT           ?= platform/.venv/bin/dbt
-# --env-file e OBRIGATORIO: o project dir do compose e infra/, entao sem isto o .env da
-# raiz nao e lido e ${AIRFLOW_UID} cai no default 50000 — o container roda como outro
-# usuario e nao consegue ler os arquivos da particao, que a Source grava com modo 600.
+# --env-file is MANDATORY: the compose project dir is infra/, so without it the root .env
+# is not read and ${AIRFLOW_UID} falls back to the default 50000 — the container runs as a
+# different user and cannot read the partition files, which the Source writes with mode 600.
 COMPOSE       ?= docker compose --env-file .env -f infra/docker-compose.yml
 
 MERCADONA_DATA_ROOT ?= data/mercadona
@@ -35,27 +34,27 @@ WH            ?= mad1
 DATE          ?= $(shell date -u +%F)
 MERCADONA_PARTITION = $(MERCADONA_DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
 
-# Segunda source, independente da Mercadona: sem eixo de armazem, particao so por
-# ingestion_date. Ver sources/ine-population-source/.
-# 31304 = populacao por provincia+idade+sexo (Fase inicial); 29005 = populacao por
-# municipio+sexo, sem idade (Fase A do plano de granularidade municipal) — mesmo
-# mecanismo generico de fetch, so muda o table_id. Ver CONTRACT.md da source, secao 2.
+# Second source, independent of Mercadona: no warehouse axis, partitioned only by
+# ingestion_date. See sources/ine-population-source/.
+# 31304 = population by province+age+sex (initial phase); 29005 = population by
+# municipality+sex, no age (Phase A of the municipal-granularity plan) — same generic
+# fetch mechanism, only the table_id changes. See the source's CONTRACT.md, section 2.
 INE_SOURCE_DIR ?= sources/ine-population-source
 INE_SOURCE_SRC  = $(INE_SOURCE_DIR)/src
 INE_DATA_ROOT  ?= data/ine
 INE_TABLES     ?= 31304,29005
 INE_PARTITION   = $(INE_DATA_ROOT)/ingestion_date=$(DATE)
-# O default da Source e 30s por requisicao, dimensionado para uma chamada de API comum.
-# Estas duas tabelas nao sao comuns: MEDIDO em disco, 31304 devolve 264 MB e 29005 outros
-# 125 MB num unico GET. Com 30s a extracao estola sem nunca completar; com 240s ela passa,
-# e ainda assim ja foi observada uma resposta truncar no meio (JSON corrompido por volta do
-# byte 154.000.000), que so o retry resolveu. A Source continua com o default generico —
-# quem sabe o tamanho da tabela e quem a pede, e e aqui que isso fica escrito.
+# The Source default is 30s per request, sized for an ordinary API call.
+# These two tables are not ordinary: MEASURED on disk, 31304 returns 264 MB and 29005 another
+# 125 MB in a single GET. With 30s the extraction stalls and never completes; with 240s it
+# passes, and even so a response has been seen truncating midway (JSON corrupted around
+# byte 154,000,000), which only the retry fixed. The Source keeps the generic default —
+# whoever asks for the table knows its size, and this is where that gets written down.
 INE_TIMEOUT     ?= 240
 INE_MAX_RETRIES ?= 3
 
-# Terceira source: Callejero do INE. Sem API — "extract" incorpora arquivos ja
-# baixados manualmente do site do INE em CALLEJERO_IN. Ver sources/ine-callejero-source/.
+# Third source: INE Callejero. No API — "extract" ingests files already downloaded
+# by hand from the INE website into CALLEJERO_IN. See sources/ine-callejero-source/.
 CALLEJERO_SOURCE_DIR ?= sources/ine-callejero-source
 CALLEJERO_SOURCE_SRC  = $(CALLEJERO_SOURCE_DIR)/src
 CALLEJERO_IN         ?= temp
@@ -63,67 +62,68 @@ CALLEJERO_DATA_ROOT  ?= data/callejero
 CALLEJERO_PROVINCES  ?= 08,28,41,46
 CALLEJERO_PARTITION   = $(CALLEJERO_DATA_ROOT)/ingestion_date=$(DATE)
 
-# Quarta source: OLTP simulado. A PRIMEIRA source derivada — as outras tres sao upstream
-# de dado externo, esta consome o Silver que elas produziram. Como toda Source e FROZEN
-# (dependencies = []) e nao pode falar com o Lakehouse, a plataforma materializa antes o
-# que ela precisa em tres JSON planos (`oltp-export-reference`), e a Source os le so com
-# a stdlib. Ver sources/simulated-oltp-source/CONTRACT.md secao 2.
+# Fourth source: simulated OLTP. The FIRST derived source — the other three are upstream
+# external data, this one consumes the Silver they produced. Since every Source is FROZEN
+# (dependencies = []) and cannot talk to the Lakehouse, the platform first materializes
+# what it needs into three flat JSON files (`oltp-export-reference`), and the Source reads
+# them with the stdlib only. See sources/simulated-oltp-source/CONTRACT.md section 2.
 OLTP_SOURCE_DIR      ?= sources/simulated-oltp-source
 OLTP_SOURCE_SRC       = $(OLTP_SOURCE_DIR)/src
 OLTP_DATA_ROOT       ?= data/oltp
 OLTP_REFERENCE_ROOT  ?= data/oltp-reference
 OLTP_REFERENCE        = $(OLTP_REFERENCE_ROOT)/ingestion_date=$(DATE)
-# VAZIO POR PADRAO, e isso e deliberado. Ate a Fase 5 este numero era 5.000 para os quatro
-# armazens — o mesmo para AUFs que diferem por 4,6x em populacao. Vazio, o `extract` usa o
-# alvo que `oltp-export-reference` derivou da populacao ADULTA de cada armazem vezes a taxa de
-# penetracao (customer_premises_seed). Definir a variavel continua funcionando e vira override
-# explicito, registrado como `count_source: cli` no manifesto.
+# EMPTY BY DEFAULT, and that is deliberate. Until Phase 5 this number was 5,000 for all four
+# warehouses — the same for AUFs whose populations differ by 4.6x. When empty, `extract` uses
+# the target that `oltp-export-reference` derived from each warehouse's ADULT population times
+# the penetration rate (customer_premises_seed). Setting the variable still works and becomes
+# an explicit override, recorded as `count_source: cli` in the manifest.
 OLTP_CUSTOMERS_PER_WH ?=
-# Seed fixa por padrao, e nao aleatoria: a mesma data com a mesma referencia tem de
-# reproduzir a mesma particao. Passe SEED=... para gerar outra populacao sintetica.
+# Fixed seed by default, not random: the same date with the same reference must reproduce
+# the same partition. Pass SEED=... to generate another synthetic population.
 OLTP_SEED            ?= 20260827
 OLTP_PARTITION        = $(OLTP_DATA_ROOT)/ingestion_date=$(DATE)/wh=$(WH)
-# Regerar a base de clientes deliberadamente. Sem isto, uma particao completa e imutavel
-# como nas outras tres sources. Crescer a base e ADITIVO: o gerador consome uma unica
-# random.Random(seed) em ordem fixa e nada antes do laco depende de count, entao os
-# primeiros N clientes de uma geracao maior sao byte a byte os mesmos de antes (provado em
-# tests/test_customers_generator.py::test_aumentar_count_e_aditivo_nao_reembaralha). O
-# manifesto guarda a seed e o count de cada execucao anterior em `history`.
+# Regenerate the customer base deliberately. Without this, a complete partition is immutable
+# as in the other three sources. Growing the base is ADDITIVE: the generator consumes a single
+# random.Random(seed) in fixed order and nothing before the loop depends on count, so the
+# first N customers of a larger generation are byte-for-byte the same as before (proven in
+# tests/test_customers_generator.py::test_aumentar_count_e_aditivo_nao_reembaralha). The
+# manifest keeps the seed and count of every previous run in `history`.
 OLTP_OVERWRITE       ?=
 
-# Quinta source: pedidos simulados como LOG DE EVENTOS. Segunda source derivada, como a de
-# clientes — e pelo mesmo mecanismo: a plataforma materializa cliente, catalogo, calendario de
-# preco e premissas em quatro JSON planos (`orders-export-reference`), e a Source os le so com
-# a stdlib. Ver sources/simulated-orders-source/CONTRACT.md.
+# Fifth source: simulated orders as an EVENT LOG. Second derived source, like the customer
+# one — and through the same mechanism: the platform materializes customer, catalog, price
+# calendar and premises into four flat JSON files (`orders-export-reference`), and the Source
+# reads them with the stdlib only. See sources/simulated-orders-source/CONTRACT.md.
 ORDERS_SOURCE_DIR      ?= sources/simulated-orders-source
 ORDERS_SOURCE_SRC       = $(ORDERS_SOURCE_DIR)/src
 ORDERS_DATA_ROOT       ?= data/orders
 ORDERS_REFERENCE_ROOT  ?= data/orders-reference
 ORDERS_REFERENCE        = $(ORDERS_REFERENCE_ROOT)/ingestion_date=$(ORDERS_TO)
-# A JANELA E DECLARADA, e nao derivada de "hoje". Quem sabe de quando ate quando os pedidos
-# existem e quem opera; adivinhar produziria uma base de fatos diferente a cada execucao.
+# THE WINDOW IS DECLARED, not derived from "today". Whoever operates knows from when to when
+# the orders exist; guessing would produce a different fact base on every run.
 #
-# O FIM DA JANELA E UM TETO EXTERNO: 2026-09-01 e ate onde o catalogo observado da Mercadona
-# alcanca nos quatro armazens. Nao e um numero escolhido.
+# THE END OF THE WINDOW IS AN EXTERNAL CEILING: 2026-09-01 is as far as the observed Mercadona
+# catalog reaches across the four warehouses. It is not a chosen number.
 #
-# O COMECO VEM DE UMA EXIGENCIA DA MEDICAO, e nao de gosto. A janela precisa ser MAIOR que
-# `opening_days_of_demand` (7) do seed de estoque — senao o estoque inicial cobre o periodo
-# inteiro e a ruptura e zero POR CONSTRUCAO, que foi exatamente o que a primeira execucao do
-# ledger acusou com 4 dias. De 08-24 a 09-01 sao 9 dias de pedido, e o ledger enxerga 10
-# (a separacao de um pedido colocado tarde cai no dia seguinte). 10 > 7.
+# THE START COMES FROM A MEASUREMENT REQUIREMENT, not from taste. The window must be LONGER
+# than the stock seed's `opening_days_of_demand` (7) — otherwise the opening stock covers the
+# whole period and stockouts are zero BY CONSTRUCTION, which is exactly what the first ledger
+# run flagged with 4 days. From 08-24 to 09-01 there are 9 order days, and the ledger sees 10
+# (the picking of an order placed late falls on the next day). 10 > 7.
 #
-# UM CICLO DE REPOSICAO FECHA NESSA JANELA, DOIS NAO. Com cobertura de 7 dias, ponto em 3 e
-# prazo de 2, a primeira ordem sai por volta do dia 5 e chega no 7; a segunda cairia fora.
-# Isso fica declarado em vez de corrigido: a alternativa seria baixar a cobertura ate caber
-# dois ciclos, e escolher uma premissa pelo que ela faz com o grafico e o que este projeto
-# recusa. `assert_stock_window_can_exercise_replenishment` guarda o limite que importa.
+# ONE REPLENISHMENT CYCLE CLOSES IN THIS WINDOW, TWO DO NOT. With 7 days of cover, reorder
+# point at 3 and lead time of 2, the first order goes out around day 5 and arrives on day 7;
+# the second would fall outside. This is declared instead of corrected: the alternative would
+# be lowering the cover until two cycles fit, and choosing a premise for what it does to the
+# chart is what this project refuses. `assert_stock_window_can_exercise_replenishment` guards
+# the limit that matters.
 #
-# Medido em 2026-09-01: os 4 armazens tem catalogo de 08-24 a 09-01, com o dia 30 AUSENTE —
-# esse dia gera preco `carried_forward`, que era um caminho declarado e nunca exercido.
+# Measured on 2026-09-01: the 4 warehouses have catalog from 08-24 to 09-01, with day 30
+# MISSING — that day produces a `carried_forward` price, a declared path that had never run.
 ORDERS_FROM            ?= 2026-08-24
 ORDERS_TO              ?= 2026-09-01
 ORDERS_SEED            ?= 20260828
-# AQUI ingestion_date E A DATA DO PEDIDO, nao o dia da extracao.
+# HERE ingestion_date IS THE ORDER DATE, not the extraction day.
 ORDERS_PARTITION        = $(ORDERS_DATA_ROOT)/ingestion_date=$(ORDERS_DATE)/wh=$(WH)
 ORDERS_DATE            ?= $(ORDERS_FROM)
 ORDERS_OVERWRITE       ?=
@@ -141,8 +141,8 @@ ORDERS_OVERWRITE       ?=
         stream-up stream-down stream-logs orders-oltp-ddl orders-oltp-init \
         orders-apply orders-apply-all orders-outbox orders-prove-atomicity \
         orders-projection-init orders-publish orders-project orders-lag \
-        orders-replay orders-topic orders-prove-stream spike-iceberg \
-        spike-spark-iceberg spark-build stock-consumption stock-ledger \
+        orders-replay orders-topic orders-prove-stream \
+        check-spark-iceberg spark-build stock-consumption stock-ledger \
         spark-evidence freeze freeze-check \
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
@@ -153,186 +153,180 @@ ORDERS_OVERWRITE       ?=
         warehouse-snowflake warehouse-snowflake-refresh warehouse-snowflake-evidence \
         warehouse-snowflake-prove-tests \
         observability-prove-signals \
-        dashboard dashboard-venv dashboard-contract dashboard-check \
-        price-dashboard price-dashboard-contract price-dashboard-check \
+        dashboard dashboard-venv indicators-contract dashboard-check price-dashboard \
         demand-reality-check demand-check-mapping \
         seed-province-map seed-service-area seed-municipality-codes \
         seed-ambiguous-series
 
 help:
 	@echo "infra"
-	@echo "  up              sobe o MinIO e cria os buckets (so o plano de dados)"
-	@echo "  down            derruba tudo (mantem os volumes)"
-	@echo "  status          estado dos containers e conteudo dos buckets"
-	@echo "  logs            ultimas 50 linhas de todos os containers"
+	@echo "  up              starts MinIO and creates the buckets (data plane only)"
+	@echo "  down            stops everything (keeps the volumes)"
+	@echo "  status          container state and bucket contents"
+	@echo "  logs            last 50 lines from every container"
 	@echo ""
-	@echo "orquestracao"
-	@echo "  airflow         builda e sobe Postgres + scheduler + webserver (:8080)"
-	@echo "  airflow-trigger dispara o DAG de hoje e acompanha"
-	@echo "  airflow-logs    logs do scheduler"
-	@echo "  airflow-down    derruba so o Airflow, mantendo o MinIO de pe"
+	@echo "orchestration"
+	@echo "  airflow         builds and starts Postgres + scheduler + webserver (:8080)"
+	@echo "  airflow-trigger triggers today's DAG run and follows it"
+	@echo "  airflow-logs    scheduler logs"
+	@echo "  airflow-down    stops only Airflow, keeping MinIO up"
 	@echo ""
 	@echo "pipeline (DATE=$(DATE) WH=$(WH))"
-	@echo "  extract         extrai um snapshot para $(MERCADONA_PARTITION)"
-	@echo "  validate        valida a particao em modo --strict"
-	@echo "  land            sobe a particao para o object storage, com sha256 conferido"
-	@echo "  verify-landing  rele do object storage e reconfere"
-	@echo "  silver          dbt build (modelos + testes)"
-	@echo "  daily           os cinco acima, em ordem"
+	@echo "  extract         extracts a snapshot into $(MERCADONA_PARTITION)"
+	@echo "  validate        validates the partition in --strict mode"
+	@echo "  land            uploads the partition to object storage, sha256-checked"
+	@echo "  verify-landing  re-reads from object storage and re-checks"
+	@echo "  silver          dbt build (models + tests)"
+	@echo "  daily           the five above, in order"
 	@echo ""
-	@echo "populacao do INE (DATE=$(DATE) TABLES=$(INE_TABLES)) — sem cadencia fixa,"
-	@echo "roda quando alguem decide rodar, nao num cron (publicacao do INE e irregular)"
-	@echo "  ine-extract         extrai um snapshot para $(INE_PARTITION)"
-	@echo "  ine-validate        valida a particao (sem --strict — ver comentario do alvo)"
-	@echo "  ine-land            sobe a particao para o object storage"
-	@echo "  ine-verify-landing  rele do object storage e reconfere"
-	@echo "  ine-refresh         os quatro acima + silver, em ordem"
-	@echo "  ine-trigger         dispara a DAG sob demanda no Airflow e acompanha"
+	@echo "INE population (DATE=$(DATE) TABLES=$(INE_TABLES)) — no fixed cadence,"
+	@echo "runs when someone decides to run it, not on a cron (INE publishing is irregular)"
+	@echo "  ine-extract         extracts a snapshot into $(INE_PARTITION)"
+	@echo "  ine-validate        validates the partition (no --strict — see the target's comment)"
+	@echo "  ine-land            uploads the partition to object storage"
+	@echo "  ine-verify-landing  re-reads from object storage and re-checks"
+	@echo "  ine-refresh         the four above + silver, in order"
+	@echo "  ine-trigger         triggers the on-demand DAG in Airflow and follows it"
 	@echo ""
-	@echo "callejero do INE (CALLEJERO_IN=$(CALLEJERO_IN) PROVINCES=$(CALLEJERO_PROVINCES)) —"
-	@echo "sem API: extract incorpora arquivos ja baixados manualmente, sem cadencia fixa"
-	@echo "  callejero-extract         incorpora CALLEJERO_IN para $(CALLEJERO_PARTITION)"
-	@echo "  callejero-validate        valida a particao em modo --strict"
-	@echo "  callejero-land            sobe a particao para o object storage"
-	@echo "  callejero-verify-landing  rele do object storage e reconfere"
-	@echo "  callejero-refresh         os quatro acima + silver, em ordem"
-	@echo "  callejero-trigger         dispara a DAG sob demanda no Airflow e acompanha"
+	@echo "INE callejero (CALLEJERO_IN=$(CALLEJERO_IN) PROVINCES=$(CALLEJERO_PROVINCES)) —"
+	@echo "no API: extract ingests files already downloaded by hand, no fixed cadence"
+	@echo "  callejero-extract         ingests CALLEJERO_IN into $(CALLEJERO_PARTITION)"
+	@echo "  callejero-validate        validates the partition in --strict mode"
+	@echo "  callejero-land            uploads the partition to object storage"
+	@echo "  callejero-verify-landing  re-reads from object storage and re-checks"
+	@echo "  callejero-refresh         the four above + silver, in order"
+	@echo "  callejero-trigger         triggers the on-demand DAG in Airflow and follows it"
 	@echo ""
-	@echo "OLTP simulado (WH=$(WH) COUNT=$(or $(OLTP_CUSTOMERS_PER_WH),da referencia) SEED=$(OLTP_SEED)) —"
-	@echo "clientes sinteticos com endereco real; sem rede, derivado do Silver:"
-	@echo "  oltp-export-reference     materializa o Silver em $(OLTP_REFERENCE) (roda 1x, cobre os 4 wh)"
-	@echo "  oltp-extract              gera os clientes de $(WH) em $(OLTP_PARTITION)"
-	@echo "  oltp-validate             valida a particao e a coerencia geografica"
-	@echo "  oltp-land                 sobe a particao para o object storage"
-	@echo "  oltp-verify-landing       rele do object storage e reconfere"
-	@echo "  oltp-refresh              os quatro acima + silver, em ordem"
-	@echo "  oltp-refresh-all          os quatro wh, e silver uma vez no fim"
-	@echo "  oltp-trigger              dispara a DAG sob demanda no Airflow e acompanha"
-	@echo "  ...o tamanho da base:     vem da referencia (populacao adulta x taxa), nao daqui."
-	@echo "                            OLTP_CUSTOMERS_PER_WH=N so para override explicito."
-	@echo "  ...aumentar a base:       OLTP_CUSTOMERS_PER_WH=N OLTP_OVERWRITE=1 (aditivo:"
-	@echo "                            os clientes que ja existem sao preservados)"
+	@echo "simulated OLTP (WH=$(WH) COUNT=$(or $(OLTP_CUSTOMERS_PER_WH),from reference) SEED=$(OLTP_SEED)) —"
+	@echo "synthetic customers with real addresses; offline, derived from Silver:"
+	@echo "  oltp-export-reference     materializes Silver into $(OLTP_REFERENCE) (run once, covers all 4 wh)"
+	@echo "  oltp-extract              generates the customers of $(WH) into $(OLTP_PARTITION)"
+	@echo "  oltp-validate             validates the partition and its geographic coherence"
+	@echo "  oltp-land                 uploads the partition to object storage"
+	@echo "  oltp-verify-landing       re-reads from object storage and re-checks"
+	@echo "  oltp-refresh              the four above + silver, in order"
+	@echo "  oltp-refresh-all          all four wh, and silver once at the end"
+	@echo "  oltp-trigger              triggers the on-demand DAG in Airflow and follows it"
+	@echo "  ...base size:             comes from the reference (adult population x rate), not from here."
+	@echo "                            OLTP_CUSTOMERS_PER_WH=N only for an explicit override."
+	@echo "  ...growing the base:      OLTP_CUSTOMERS_PER_WH=N OLTP_OVERWRITE=1 (additive:"
+	@echo "                            existing customers are preserved)"
 	@echo ""
-	@echo "pedidos simulados (ORDERS_FROM=$(ORDERS_FROM) ORDERS_TO=$(ORDERS_TO) SEED=$(ORDERS_SEED)) —"
-	@echo "log de eventos com cliente, produto e preco reais; sem rede, derivado do Silver:"
-	@echo "  orders-export-reference   cliente + catalogo + calendario de preco + premissas (1x)"
-	@echo "  orders-extract            gera o log de $(WH) no dia $(ORDERS_DATE)"
-	@echo "  orders-validate           valida a particao e a coerencia com catalogo e cliente"
-	@echo "  orders-land               sobe a particao para o object storage"
-	@echo "  orders-verify-landing     rele do object storage e reconfere"
-	@echo "  orders-refresh            os quatro acima + silver, para um (armazem, dia)"
-	@echo "  orders-refresh-all        a janela inteira: 4 armazens x N dias, silver no fim"
-	@echo "  orders-trigger            dispara a DAG simulated_orders_events"
-	@echo "  ...a janela e limitada pelo catalogo: um dia sem snapshot anterior ou igual"
-	@echo "     para aquele armazem RECUSA, em vez de inventar preco."
+	@echo "simulated orders (ORDERS_FROM=$(ORDERS_FROM) ORDERS_TO=$(ORDERS_TO) SEED=$(ORDERS_SEED)) —"
+	@echo "event log with real customer, product and price; offline, derived from Silver:"
+	@echo "  orders-export-reference   customer + catalog + price calendar + premises (once)"
+	@echo "  orders-extract            generates the log of $(WH) on $(ORDERS_DATE)"
+	@echo "  orders-validate           validates the partition and its coherence with catalog and customer"
+	@echo "  orders-land               uploads the partition to object storage"
+	@echo "  orders-verify-landing     re-reads from object storage and re-checks"
+	@echo "  orders-refresh            the four above + silver, for one (warehouse, day)"
+	@echo "  orders-refresh-all        the whole window: 4 warehouses x N days, silver at the end"
+	@echo "  orders-trigger            triggers the simulated_orders_events DAG"
+	@echo "  ...the window is bounded by the catalog: a day with no snapshot on or before it"
+	@echo "     for that warehouse is REFUSED, instead of inventing a price."
 	@echo ""
-	@echo "plano de stream (nao sobe com \`make up\`) — OLTP de pedidos e outbox transacional:"
-	@echo "  stream-up                 sobe o oltp-postgres e cria orders/order_line/outbox"
-	@echo "  stream-down               derruba so o plano de stream (mantem o volume)"
-	@echo "  stream-logs               logs do oltp-postgres e do kafka"
-	@echo "  orders-oltp-ddl           imprime a DDL do OLTP (sem conectar em nada)"
-	@echo "  orders-oltp-init          cria as tres tabelas; OLTP_RESET=--reset derruba antes"
-	@echo "  orders-apply              replica o log de $(WH)/$(ORDERS_DATE) no OLTP"
-	@echo "  orders-apply-all          a janela inteira: 4 armazens x N dias"
-	@echo "  orders-outbox             estado do outbox; PARTITION=... reconstitui o log"
-	@echo "  orders-prove-atomicity    injeta falha e prova que estado e evento caem juntos"
+	@echo "stream plane (not started by \`make up\`) — orders OLTP and transactional outbox:"
+	@echo "  stream-up                 starts oltp-postgres and creates orders/order_line/outbox"
+	@echo "  stream-down               stops only the stream plane (keeps the volume)"
+	@echo "  stream-logs               oltp-postgres and kafka logs"
+	@echo "  orders-oltp-ddl           prints the OLTP DDL (connects to nothing)"
+	@echo "  orders-oltp-init          creates the three tables; OLTP_RESET=--reset drops them first"
+	@echo "  orders-apply              replays the log of $(WH)/$(ORDERS_DATE) into the OLTP"
+	@echo "  orders-apply-all          the whole window: 4 warehouses x N days"
+	@echo "  orders-outbox             outbox state; PARTITION=... rebuilds the log"
+	@echo "  orders-prove-atomicity    injects a failure and proves state and event fall together"
 	@echo ""
-	@echo "transporte (Kafka) — at-least-once no produtor, idempotente no consumidor:"
-	@echo "  orders-publish            drena o outbox para $(KAFKA_TOPIC)"
-	@echo "  orders-project            consome e mantem live_order_state"
-	@echo "  orders-lag                lag do grupo, particao a particao"
-	@echo "  orders-replay             rebobina o grupo (NAO apaga a projecao)"
-	@echo "  orders-topic              descreve o topico no broker"
-	@echo "  orders-prove-stream       prova transporte, duplicata, replay e buraco"
-	@echo "  spike-iceberg             experimento fechado: Iceberg + catalogo + DuckDB"
-	@echo "  spike-spark-iceberg       PORTAO: o Spark le/escreve o catalogo do pyiceberg?"
-	@echo "  spark-build               constroi a imagem do Spark (perfil spark)"
-	@echo "  stock-consumption         exporta o consumo observado do Silver p/ o catalogo"
-	@echo "  stock-ledger              o job Spark: saldo, ruptura e reposicao (perfil spark)"
-	@echo "  spark-evidence            roda o ledger nos DOIS motores e publica os dois tempos"
-	@echo "  freeze                    sela a captura do RAW (docs/FREEZE.md + seed)"
-	@echo "  freeze-check              rele o RAW e reprova se a captura selada mudou"
+	@echo "transport (Kafka) — at-least-once at the producer, idempotent at the consumer:"
+	@echo "  orders-publish            drains the outbox into $(KAFKA_TOPIC)"
+	@echo "  orders-project            consumes and maintains live_order_state"
+	@echo "  orders-lag                group lag, partition by partition"
+	@echo "  orders-replay             rewinds the group (does NOT delete the projection)"
+	@echo "  orders-topic              describes the topic on the broker"
+	@echo "  orders-prove-stream       proves transport, duplicate, replay and gap"
+	@echo "  check-spark-iceberg       GATE: can Spark read/write the pyiceberg catalog?"
+	@echo "  spark-build               builds the Spark image (spark profile)"
+	@echo "  stock-consumption         exports observed consumption from Silver to the catalog"
+	@echo "  stock-ledger              the Spark job: balance, stockout and replenishment (spark profile)"
+	@echo "  spark-evidence            runs the ledger on BOTH engines and publishes both timings"
+	@echo "  freeze                    seals the RAW capture (docs/FREEZE.md + seed)"
+	@echo "  freeze-check              re-reads RAW and fails if the sealed capture changed"
 	@echo ""
-	@echo "projecao viva (Iceberg) — dois escritores na mesma tabela, um leitor:"
-	@echo "  iceberg-init              catalogo SQL + tabela live_order_state"
-	@echo "  iceberg-metadata          imprime o metadado CORRENTE, lido do catalogo"
-	@echo "  orders-projection-init    cria o read model no Postgres da projecao"
-	@echo "  orders-project-iceberg    o consumidor escrevendo no Iceberg (escritor 1)"
-	@echo "  orders-rebuild-projection reconstroi do RAW na MESMA tabela (escritor 2)"
-	@echo "  orders-reconcile          Iceberg x Silver x OLTP; sai 1 se divergirem"
-	@echo "  orders-prove-projection   concorrencia, fusao monotonica e snapshot isolation"
-	@echo "  stream-evidence           registra OLTP, broker, projecao e os tres folds, datado"
+	@echo "live projection (Iceberg) — two writers on the same table, one reader:"
+	@echo "  iceberg-init              SQL catalog + live_order_state table"
+	@echo "  iceberg-metadata          prints the CURRENT metadata, read from the catalog"
+	@echo "  orders-projection-init    creates the read model in the projection Postgres"
+	@echo "  orders-project-iceberg    the consumer writing to Iceberg (writer 1)"
+	@echo "  orders-rebuild-projection rebuilds from RAW into the SAME table (writer 2)"
+	@echo "  orders-reconcile          Iceberg x Silver x OLTP; exits 1 if they diverge"
+	@echo "  orders-prove-projection   concurrency, monotonic merge and snapshot isolation"
+	@echo "  stream-evidence           records OLTP, broker, projection and the three folds, dated"
 	@echo ""
-	@echo "calibracao da demanda (MAPA 2025):"
-	@echo "  demand-reality-check      ANTES | MAPA | DEPOIS nas tres dimensoes"
-	@echo "  demand-reality-check SNAPSHOT=before_mapa_2025_v1   congela o ANTES"
-	@echo "  demand-check-mapping      confere as 444 trincas do catalogo contra o de-para"
+	@echo "demand calibration (MAPA 2025):"
+	@echo "  demand-reality-check      BEFORE | MAPA | AFTER across the three dimensions"
+	@echo "  demand-reality-check SNAPSHOT=before_mapa_2025_v1   freezes the BEFORE"
+	@echo "  demand-check-mapping      checks the catalog's 444 triples against the mapping"
 	@echo ""
-	@echo "warehouse analitico (Postgres local, DB=$(WAREHOUSE_PG_DB)) — ALVO PADRAO —"
-	@echo "recebe um RECORTE do Silver por escopo geografico, nunca o Silver inteiro. O"
-	@echo "Snowflake era o alvo padrao ate o trial vencer; ver o par -snowflake abaixo."
-	@echo "  warehouse-postgres-up     sobe o container (perfil warehouse-postgres do compose)"
-	@echo "  warehouse-bootstrap       schemas, papeis e grants no Postgres local (idempotente)"
-	@echo "  warehouse-export          recorta o Silver para parquet em $(SNOWFLAKE_STAGE_DIR)"
-	@echo "  warehouse-load            drop+create das tabelas STAGE + COPY FROM STDIN"
+	@echo "analytical warehouse (local Postgres, DB=$(WAREHOUSE_PG_DB)) — DEFAULT TARGET —"
+	@echo "receives a CUT of Silver by geographic scope, never the whole Silver. Snowflake"
+	@echo "was the default target until the trial expired; see the -snowflake pair below."
+	@echo "  warehouse-postgres-up     starts the container (compose warehouse-postgres profile)"
+	@echo "  warehouse-bootstrap       schemas, roles and grants on the local Postgres (idempotent)"
+	@echo "  warehouse-export          cuts Silver into parquet under $(WAREHOUSE_CUT_DIR)"
+	@echo "  warehouse-load            drop+create of the STAGE tables + COPY FROM STDIN"
 	@echo "  warehouse                 dbt build --target postgres (STAGE -> GOLD -> MART)"
-	@echo "  warehouse-refresh         os quatro acima, em ordem"
-	@echo "  warehouse-trigger         dispara a DAG do warehouse no Airflow e acompanha"
+	@echo "  warehouse-refresh         the four above, in order"
+	@echo "  warehouse-trigger         triggers the warehouse DAG in Airflow and follows it"
 	@echo ""
-	@echo "warehouse analitico (Snowflake, DB=$(SNOWFLAKE_DATABASE)) — EM PAUSA, trial vencido —"
-	@echo "mesmo recorte de cima, contra a conta que um dia substituir o trial:"
-	@echo "  warehouse-snowflake-bootstrap    database, schemas, papeis e grants (1x, ACCOUNTADMIN)"
-	@echo "  warehouse-snowflake-ddl          imprime o DDL do STAGE (sem conectar em nada)"
-	@echo "  warehouse-snowflake-load         PUT em stage interno + COPY INTO + reconferencia"
+	@echo "analytical warehouse (Snowflake, DB=$(SNOWFLAKE_DATABASE)) — OPTIONAL, account in .env.snowflake —"
+	@echo "same cut as above, against the account configured in ~/.snowflake/config.toml:"
+	@echo "  warehouse-snowflake-bootstrap    database, schemas, roles and grants (once, ACCOUNTADMIN)"
+	@echo "  warehouse-snowflake-ddl          prints the STAGE DDL (connects to nothing)"
+	@echo "  warehouse-snowflake-load         PUT to an internal stage + COPY INTO + re-check"
 	@echo "  warehouse-snowflake             dbt build --target snowflake (STAGE -> GOLD -> MART)"
-	@echo "  warehouse-snowflake-refresh      os tres acima, em ordem"
-	@echo "  warehouse-snowflake-prove-tests  injeta o defeito que cada teste diz pegar, exige o vermelho"
-	@echo "  warehouse-snowflake-evidence     registra posse, volume e isolamento do destino, datado"
-	@echo "  ...trocar de conta:       edite .env.snowflake (veja .env.snowflake.example) e"
-	@echo "                            ~/.snowflake/config.toml; nenhum modelo ou teste muda"
+	@echo "  warehouse-snowflake-refresh      the three above, in order"
+	@echo "  warehouse-snowflake-prove-tests  injects the defect each test claims to catch, demands red"
+	@echo "  warehouse-snowflake-evidence     records ownership, volume and isolation of the target, dated"
+	@echo "  ...switching accounts:    edit .env.snowflake (see .env.snowflake.example) and"
+	@echo "                            ~/.snowflake/config.toml; no model or test changes"
 	@echo ""
-	@echo "painel estrategico (Streamlit sobre o MART, papel retail_reader) —"
-	@echo "  dashboard-venv            instala streamlit/pandas/altair (extra, fora da imagem)"
-	@echo "  dashboard                 sobe o painel em http://localhost:$(DASHBOARD_PORT)"
-	@echo "  dashboard-contract        regenera streamlit/CONTRACT.md (sem conectar em nada)"
-	@echo "  dashboard-check           roda o painel de verdade e exige zero excecao (exige conta)"
+	@echo "indicator catalog and panels (Streamlit over the MART, retail_reader role) —"
+	@echo "  indicators-contract       regenerates docs/indicators/ from the catalog (no connection)"
+	@echo "  dashboard-venv            installs streamlit/pandas/altair (extra, outside the image)"
+	@echo "  dashboard                 operations panel at http://localhost:$(DASHBOARD_PORT)"
+	@echo "  price-dashboard           prices panel at http://localhost:$(PRICE_DASHBOARD_PORT)"
+	@echo "  dashboard-check           renders both panels and demands zero exceptions (live warehouse)"
 	@echo ""
-	@echo "painel de precos (Streamlit sobre o MART, EXCLUSIVO — so oscilacao de preco) —"
-	@echo "  price-dashboard           sobe o painel em http://localhost:$(PRICE_DASHBOARD_PORT)"
-	@echo "  price-dashboard-contract  regenera streamlit/PRICE_CONTRACT.md (sem conectar em nada)"
-	@echo "  price-dashboard-check     roda o painel de verdade e exige zero excecao (exige conta)"
+	@echo "derived seeds (on demand; the versioned CSV is the truth, the script is the provenance) —"
+	@echo "  seed-province-map         wh -> province/municipality, re-checked against the Callejero"
+	@echo "  seed-service-area         wh -> AUF municipalities (AUF_XLSX=$(AUF_XLSX))"
+	@echo "  seed-municipality-codes   name (Tempus3) -> official code   [network: INE API]"
+	@echo "  seed-ambiguous-series     series -> code, for homonyms      [network: INE API]"
 	@echo ""
-	@echo "seeds derivados (sob demanda; o CSV versionado e a verdade, o script e a procedencia) —"
-	@echo "  seed-province-map         wh -> provincia/municipio, reconferido no Callejero"
-	@echo "  seed-service-area         wh -> municipios da AUF (AUF_XLSX=$(AUF_XLSX))"
-	@echo "  seed-municipality-codes   nome (Tempus3) -> codigo oficial   [rede: API do INE]"
-	@echo "  seed-ambiguous-series     serie -> codigo, para homonimo     [rede: API do INE]"
+	@echo "disk space —"
+	@echo "  data-usage                how much the local scratch (data/) is taking"
+	@echo "  prune-local PARTITION=…   deletes the local copy, only if it is intact at the target"
 	@echo ""
-	@echo "espaco em disco —"
-	@echo "  data-usage                quanto o scratch local (data/) esta ocupando"
-	@echo "  prune-local PARTITION=…   apaga a copia local, so se ela estiver integra no destino"
+	@echo "query"
+	@echo "  query           queries Silver.  make query SQL=\"select ...\""
+	@echo "  duckdb-secret   writes the secret to open the .duckdb in any client"
+	@echo "  clean-duckdb    deletes the .duckdb and the dbt artifacts (local state only; the data lives in S3)"
 	@echo ""
-	@echo "consulta"
-	@echo "  query           consulta o Silver.  make query SQL=\"select ...\""
-	@echo "  duckdb-secret   grava o secret para abrir o .duckdb em qualquer cliente"
-	@echo "  clean-duckdb    apaga o .duckdb e os artefatos do dbt (só estado local; o dado vive no S3)"
-	@echo ""
-	@echo "testes"
+	@echo "tests"
 	@echo "  test            source-test + platform-test"
-	@echo "  source-test     suite das cinco Sources (sem rede, sem dependencias)"
-	@echo "  platform-test   testes da plataforma, sem rede"
+	@echo "  source-test     suite of the five Sources (offline, no dependencies)"
+	@echo "  platform-test   platform tests, offline"
 	@echo ""
-	@echo "observabilidade — a prova exigida (BACKLOG.md) antes de instrumentar qualquer"
-	@echo "coisa: os sinais ja existem, ou faltam de verdade?"
-	@echo "  observability-prove-signals   le o sistema real (data/, SQL, DAGs) e devolve"
-	@echo "                                SIM/PARCIAL/NAO por sinal, com --warehouse opcional"
+	@echo "observability — the proof required (BACKLOG.md) before instrumenting anything:"
+	@echo "do the signals already exist, or are they really missing?"
+	@echo "  observability-prove-signals   reads the real system (data/, SQL, DAGs) and returns"
+	@echo "                                YES/PARTIAL/NO per signal, with optional --warehouse"
 	@echo ""
-	@echo "  venv            cria platform/.venv e instala a plataforma"
-	@echo "  secrets         gera AIRFLOW_SECRET_KEY e AIRFLOW_FERNET_KEY no .env"
+	@echo "  venv            creates platform/.venv and installs the platform"
+	@echo "  secrets         generates AIRFLOW_SECRET_KEY and AIRFLOW_FERNET_KEY in .env"
 
 # ---- infra -----------------------------------------------------------------
-# So o plano de dados. O Airflow e ~2 GB de RAM e nao e necessario para iterar num
-# modelo dbt ou rodar `make daily` a mao.
+# Data plane only. Airflow is ~2 GB of RAM and is not needed to iterate on a
+# dbt model or to run `make daily` by hand.
 up:
 	$(COMPOSE) up -d minio mc
 	@echo "MinIO: http://localhost:$(or $(MINIO_CONSOLE_PORT),9001) (console)"
@@ -343,9 +337,9 @@ down:
 logs:
 	$(COMPOSE) logs --tail=50
 
-# ---- orquestracao ----------------------------------------------------------
-# airflow-init roda antes e cria o pool mercadona_api com 1 slot. Sem ele o
-# LocalExecutor rodaria varios extract em paralelo e dobraria a taxa contra a fonte.
+# ---- orchestration ---------------------------------------------------------
+# airflow-init runs first and creates the mercadona_api pool with 1 slot. Without it the
+# LocalExecutor would run several extracts in parallel and double the rate against the source.
 airflow: up
 	$(COMPOSE) up -d --build airflow-scheduler airflow-webserver
 	@echo ""
@@ -361,29 +355,29 @@ airflow-logs:
 airflow-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause mercadona_catalog_daily
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger mercadona_catalog_daily
-	@echo "disparado. acompanhe com: make airflow-logs"
+	@echo "triggered. follow with: make airflow-logs"
 
-# Sem schedule: a DAG so roda quando disparada, nunca sozinha (ver docstring da DAG).
-# unpause continua necessario para o trigger executar de fato, nao so entrar na fila.
+# No schedule: the DAG only runs when triggered, never on its own (see the DAG docstring).
+# unpause is still needed for the trigger to actually execute, not just get queued.
 ine-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause ine_population_on_demand
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger ine_population_on_demand
-	@echo "disparado. acompanhe com: make airflow-logs"
+	@echo "triggered. follow with: make airflow-logs"
 
 callejero-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause ine_callejero_on_demand
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger ine_callejero_on_demand
-	@echo "disparado. acompanhe com: make airflow-logs"
+	@echo "triggered. follow with: make airflow-logs"
 
-# A base de clientes muda quando alguem decide muda-la, nunca sozinha. Para REGERAR
-# (mais clientes, ou outra seed), passe os parametros no disparo:
+# The customer base changes when someone decides to change it, never on its own. To
+# REGENERATE (more customers, or another seed), pass the parameters on the trigger:
 #   make oltp-trigger OLTP_DAG_CONF='{"customers_per_wh":20000,"overwrite":true}'
 OLTP_DAG_CONF ?=
 oltp-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause simulated_oltp_customers
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger simulated_oltp_customers \
 	  $(if $(OLTP_DAG_CONF),--conf '$(OLTP_DAG_CONF)',)
-	@echo "disparado. acompanhe com: make airflow-logs"
+	@echo "triggered. follow with: make airflow-logs"
 
 ORDERS_DAG_CONF ?=
 orders-trigger:
@@ -396,17 +390,17 @@ status:
 	@echo ""
 	@$(COMPOSE) run --rm --entrypoint sh mc -c \
 	  'mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null && \
-	   echo "objetos em retail-raw:       $$(mc ls -r local/$$RAW_BUCKET | wc -l)" && \
-	   echo "objetos em retail-lakehouse: $$(mc ls -r local/$$LAKEHOUSE_BUCKET | wc -l)"'
+	   echo "objects in retail-raw:       $$(mc ls -r local/$$RAW_BUCKET | wc -l)" && \
+	   echo "objects in retail-lakehouse: $$(mc ls -r local/$$LAKEHOUSE_BUCKET | wc -l)"'
 
 # ---- pipeline ---------------------------------------------------------------
-# A particao completa e IMUTAVEL: reexecutar extract sobre ela retorna exit 2
-# (partition.py -> PartitionError). Um `make daily` que nao checasse _SUCCESS primeiro
-# abortaria num dia que deu certo. Esta guarda e a mesma logica do short-circuit do DAG.
+# A complete partition is IMMUTABLE: re-running extract on it returns exit 2
+# (partition.py -> PartitionError). A `make daily` that did not check _SUCCESS first
+# would abort on a day that went fine. This guard is the same logic as the DAG short-circuit.
 extract:
 	@if [ -f "$(MERCADONA_PARTITION)/_SUCCESS" ]; then \
-	  echo "particao ja completa e imutavel: $(MERCADONA_PARTITION)"; \
-	  echo "extract pulado (nao e falha)."; \
+	  echo "partition already complete and immutable: $(MERCADONA_PARTITION)"; \
+	  echo "extract skipped (not a failure)."; \
 	else \
 	  PYTHONPATH=$(MERCADONA_SOURCE_SRC) $(PYTHON) -m mercadona_catalog_source extract \
 	    --out $(MERCADONA_DATA_ROOT) --wh $(WH) --date $(DATE); \
@@ -421,55 +415,55 @@ land:
 verify-landing:
 	$(PLATFORM_PY) -m retail_platform verify-landing $(MERCADONA_PARTITION)
 
-# O DuckDB e single-writer. Um cliente com o arquivo aberto em leitura-escrita (DBeaver
-# faz isso por padrao) faz o dbt abortar com 20 linhas de traceback para um problema que
-# se resolve fechando uma conexao. A guarda troca isso por uma linha acionavel.
+# DuckDB is single-writer. A client holding the file open read-write (DBeaver does this
+# by default) makes dbt abort with 20 lines of traceback for a problem that is solved by
+# closing a connection. The guard replaces that with one actionable line.
 DUCKDB_PATH   ?= platform/dbt/retail.duckdb
-# `dbt build` compila o projeto INTEIRO de uma vez: se uma source recem-adicionada ainda
-# nao aterrissou nada (clone novo, ou INE antes do primeiro `make ine-refresh`), o
-# read_json dela falha com "no files found" e derruba o build de TODAS as sources, nao so
-# a vazia. A guarda exclui do build o modelo de uma source sem dado ainda, em vez de
-# ensinar o SQL do modelo a fingir que existe uma particao vazia (medido: o proprio
-# materialization `external` do dbt-duckdb, ao lidar com relacao vazia, grava uma linha
-# sentinela que reaparece como fantasma na primeira execucao com dado real).
+# `dbt build` compiles the WHOLE project at once: if a newly added source has not landed
+# anything yet (fresh clone, or INE before the first `make ine-refresh`), its read_json
+# fails with "no files found" and brings down the build of ALL sources, not just the
+# empty one. The guard excludes from the build the model of a source with no data yet,
+# instead of teaching the model SQL to pretend an empty partition exists (measured: the
+# dbt-duckdb `external` materialization itself, when handling an empty relation, writes a
+# sentinel row that reappears as a ghost on the first run with real data).
 silver:
 	@$(PLATFORM_PY) -c "import duckdb; duckdb.connect('$(DUCKDB_PATH)').close()" 2>/dev/null || { \
-	  echo "ERRO: outro processo tem $(DUCKDB_PATH) aberto em escrita."; \
-	  echo "      O DuckDB e single-writer. Feche a conexao (DBeaver, notebook, CLI) e"; \
-	  echo "      tente de novo, ou use: make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb"; \
-	  echo "      O arquivo so guarda views: nada se perde ao recria-lo."; \
+	  echo "ERROR: another process has $(DUCKDB_PATH) open for writing."; \
+	  echo "      DuckDB is single-writer. Close the connection (DBeaver, notebook, CLI) and"; \
+	  echo "      try again, or use: make silver DUCKDB_PATH=/tmp/retail-scratch.duckdb"; \
+	  echo "      The file only holds views: nothing is lost by recreating it."; \
 	  exit 2; }
-# O PORTAO MORA EM UM LUGAR SO: retail_platform/silver_gate.py. Ele decidia o que excluir
-# aqui E, em copia parcial, dentro de cada uma das cinco DAGs — seis lugares, nenhum igual
-# ao outro. A DAG da Mercadona nao tinha portao nenhum e reprovava todo dia desde que
-# `silver_live_order_state` nasceu. Um `--exclude` a mais neste arquivo nao chega no Airflow.
+# THE GATE LIVES IN ONE PLACE ONLY: retail_platform/silver_gate.py. It used to decide what
+# to exclude here AND, as a partial copy, inside each of the five DAGs — six places, no two
+# alike. The Mercadona DAG had no gate at all and failed every day since
+# `silver_live_order_state` was born. One more `--exclude` in this file does not reach Airflow.
 	RETAIL_DBT=$(DBT) $(PLATFORM_PY) -m retail_platform silver-build \
 	  --project-dir platform/dbt --profiles-dir platform/dbt
 
 daily: extract validate land verify-landing silver
 	@echo ""
-	@echo "daily OK para ingestion_date=$(DATE) wh=$(WH)"
+	@echo "daily OK for ingestion_date=$(DATE) wh=$(WH)"
 
-# ---- populacao do INE --------------------------------------------------------
-# Mesma imutabilidade de particao da Mercadona (extract.py -> PartitionError), mesma
-# guarda. Sem eixo de armazem: um nivel de particao a menos que $(MERCADONA_PARTITION) acima.
+# ---- INE population ----------------------------------------------------------
+# Same partition immutability as Mercadona (extract.py -> PartitionError), same
+# guard. No warehouse axis: one partition level less than $(MERCADONA_PARTITION) above.
 ine-extract:
 	@if [ -f "$(INE_PARTITION)/_SUCCESS" ]; then \
-	  echo "particao ja completa e imutavel: $(INE_PARTITION)"; \
-	  echo "extract pulado (nao e falha)."; \
+	  echo "partition already complete and immutable: $(INE_PARTITION)"; \
+	  echo "extract skipped (not a failure)."; \
 	else \
 	  PYTHONPATH=$(INE_SOURCE_SRC) $(PYTHON) -m ine_population_source extract \
 	    --out $(INE_DATA_ROOT) --tables $(INE_TABLES) --date $(DATE) \
 	    --timeout $(INE_TIMEOUT) --max-retries $(INE_MAX_RETRIES); \
 	fi
 
-# Sem --strict: medido que table_id=29005 tem 6 series (de ~8.200 municipios da
-# Espanha inteira) sem NENHUM ponto de dado — "Gatova" (Castellon, 12) e "Palmerola"
-# (Girona, 17), nenhum dos dois dentro do escopo desta plataforma (08/28/41/46; nao
-# aparecem em ine_municipality_codes_seed). --strict e opcional por contrato (CONTRACT.md
-# da source, "Qualidade"); reprovar a particao por 2 municipios fora do escopo, sempre
-# que a extracao rodar, nao protegeria nada real. A contagem continua REPORTADA no
-# output do validate mesmo sem --strict (nao fica silenciosa).
+# No --strict: measured that table_id=29005 has 6 series (out of ~8,200 municipalities in
+# all of Spain) with NO data point at all — "Gatova" (Castellon, 12) and "Palmerola"
+# (Girona, 17), neither within this platform's scope (08/28/41/46; they do not appear
+# in ine_municipality_codes_seed). --strict is optional by contract (the source's
+# CONTRACT.md, "Quality"); failing the partition over 2 out-of-scope municipalities every
+# time the extraction runs would protect nothing real. The count is still REPORTED in
+# the validate output even without --strict (it does not go silent).
 ine-validate:
 	PYTHONPATH=$(INE_SOURCE_SRC) $(PYTHON) -m ine_population_source validate $(INE_PARTITION)
 
@@ -479,22 +473,22 @@ ine-land:
 ine-verify-landing:
 	$(PLATFORM_PY) -m retail_platform verify-landing $(INE_PARTITION)
 
-# Nome deliberadamente sem "daily": isto roda quando alguem decide rodar (make
-# ine-refresh, ou a DAG sob demanda), nunca numa cadencia fixa — ver Makefile help e a
-# docstring de orchestration/airflow/dags/ine_population_on_demand.py.
+# Name deliberately without "daily": this runs when someone decides to run it (make
+# ine-refresh, or the on-demand DAG), never on a fixed cadence — see Makefile help and the
+# docstring of orchestration/airflow/dags/ine_population_on_demand.py.
 ine-refresh: ine-extract ine-validate ine-land ine-verify-landing silver
 	@echo ""
-	@echo "ine-refresh OK para ingestion_date=$(DATE)"
+	@echo "ine-refresh OK for ingestion_date=$(DATE)"
 
-# ---- callejero do INE ---------------------------------------------------------
-# Sem API: "extract" nao busca rede, incorpora arquivos de CALLEJERO_IN (baixados
-# manualmente do site do INE). Mesma imutabilidade de particao das outras duas
-# sources, mesma guarda. Particao so por ingestion_date (decisao do plano: o artefato
-# e um intake do dataset oficial inteiro, nao um recorte por warehouse/provincia).
+# ---- INE callejero ------------------------------------------------------------
+# No API: "extract" does not hit the network, it ingests files from CALLEJERO_IN (downloaded
+# by hand from the INE website). Same partition immutability as the other two
+# sources, same guard. Partitioned only by ingestion_date (plan decision: the artifact
+# is an intake of the whole official dataset, not a cut by warehouse/province).
 callejero-extract:
 	@if [ -f "$(CALLEJERO_PARTITION)/_SUCCESS" ]; then \
-	  echo "particao ja completa e imutavel: $(CALLEJERO_PARTITION)"; \
-	  echo "extract pulado (nao e falha)."; \
+	  echo "partition already complete and immutable: $(CALLEJERO_PARTITION)"; \
+	  echo "extract skipped (not a failure)."; \
 	else \
 	  PYTHONPATH=$(CALLEJERO_SOURCE_SRC) $(PYTHON) -m ine_callejero_source extract \
 	    --in $(CALLEJERO_IN) --out $(CALLEJERO_DATA_ROOT) --provinces $(CALLEJERO_PROVINCES) --date $(DATE); \
@@ -509,28 +503,28 @@ callejero-land:
 callejero-verify-landing:
 	$(PLATFORM_PY) -m retail_platform verify-landing $(CALLEJERO_PARTITION)
 
-# Nome deliberadamente sem "daily": roda quando alguem decide rodar (o Callejero e
-# publicado semestralmente, sem API para verificar se ha algo novo) — ver Makefile
-# help e a docstring de orchestration/airflow/dags/ine_callejero_on_demand.py.
+# Name deliberately without "daily": runs when someone decides to run it (the Callejero is
+# published twice a year, with no API to check whether there is anything new) — see Makefile
+# help and the docstring of orchestration/airflow/dags/ine_callejero_on_demand.py.
 callejero-refresh: callejero-extract callejero-validate callejero-land callejero-verify-landing silver
 	@echo ""
-	@echo "callejero-refresh OK para ingestion_date=$(DATE)"
+	@echo "callejero-refresh OK for ingestion_date=$(DATE)"
 
-# ---- OLTP simulado ----------------------------------------------------------
-# Sem rede em nenhum passo. `oltp-export-reference` roda UMA vez e cobre os quatro
-# warehouses de uma so consulta ao Silver: por isso ele NAO entra em `oltp-refresh`,
-# que e por warehouse — encadea-lo faria a mesma consulta pesada quatro vezes.
+# ---- simulated OLTP ---------------------------------------------------------
+# No network in any step. `oltp-export-reference` runs ONCE and covers all four
+# warehouses with a single query against Silver: that is why it is NOT part of `oltp-refresh`,
+# which is per warehouse — chaining it would run the same heavy query four times.
 #
-#   make oltp-export-reference     (uma vez, depois de callejero-refresh e ine-refresh)
-#   make oltp-refresh WH=mad1      (repetir para bcn1, svq1, vlc1 — ou oltp-refresh-all)
+#   make oltp-export-reference     (once, after callejero-refresh and ine-refresh)
+#   make oltp-refresh WH=mad1      (repeat for bcn1, svq1, vlc1 — or oltp-refresh-all)
 oltp-export-reference:
 	$(PLATFORM_PY) -m retail_platform export-oltp-reference \
 	  --out $(OLTP_REFERENCE_ROOT) --date $(DATE)
 
 oltp-extract:
 	@if [ -f "$(OLTP_PARTITION)/_SUCCESS" ] && [ -z "$(OLTP_OVERWRITE)" ]; then \
-	  echo "particao ja completa e imutavel: $(OLTP_PARTITION)"; \
-	  echo "extract pulado (nao e falha). Use OLTP_OVERWRITE=1 para regerar a base."; \
+	  echo "partition already complete and immutable: $(OLTP_PARTITION)"; \
+	  echo "extract skipped (not a failure). Use OLTP_OVERWRITE=1 to regenerate the base."; \
 	else \
 	  PYTHONPATH=$(OLTP_SOURCE_SRC) $(PYTHON) -m simulated_oltp_source extract \
 	    --reference $(OLTP_REFERENCE) --out $(OLTP_DATA_ROOT) --wh $(WH) --date $(DATE) \
@@ -538,9 +532,9 @@ oltp-extract:
 	    $(if $(OLTP_OVERWRITE),--overwrite,); \
 	fi
 
-# --reference nao e opcional aqui, diferente das outras tres sources: a garantia central
-# desta Source — todo cliente mora num endereco real da AUF do seu warehouse — so pode
-# ser reconferida relendo a mesma referencia que gerou a particao.
+# --reference is not optional here, unlike the other three sources: this Source's central
+# guarantee — every customer lives at a real address within its warehouse's AUF — can only
+# be re-checked by re-reading the same reference that generated the partition.
 oltp-validate:
 	PYTHONPATH=$(OLTP_SOURCE_SRC) $(PYTHON) -m simulated_oltp_source validate \
 	  $(OLTP_PARTITION) --reference $(OLTP_REFERENCE) --strict
@@ -553,11 +547,11 @@ oltp-verify-landing:
 
 oltp-refresh: oltp-extract oltp-validate oltp-land oltp-verify-landing silver
 	@echo ""
-	@echo "oltp-refresh OK para ingestion_date=$(DATE) wh=$(WH)"
+	@echo "oltp-refresh OK for ingestion_date=$(DATE) wh=$(WH)"
 
-# `silver` UMA vez no fim, nao dentro do laco: `dbt build` cobre o projeto inteiro, entao
-# encadea-lo por armazem repetiria os mesmos 215 modelos e testes quatro vezes para chegar
-# ao mesmo resultado. Por isso o laco chama a cadeia de aterrissagem, nao `oltp-refresh`.
+# `silver` ONCE at the end, not inside the loop: `dbt build` covers the whole project, so
+# chaining it per warehouse would repeat the same 215 models and tests four times to reach
+# the same result. That is why the loop calls the landing chain, not `oltp-refresh`.
 oltp-refresh-all:
 	@for wh in mad1 bcn1 svq1 vlc1; do \
 	  $(MAKE) --no-print-directory oltp-extract oltp-validate oltp-land oltp-verify-landing \
@@ -565,19 +559,19 @@ oltp-refresh-all:
 	done
 	@$(MAKE) --no-print-directory silver
 
-# ---- quinta source: pedidos simulados (log de eventos) ----------------------
-# Roda UMA vez e cobre os quatro armazens e a janela inteira. Encadea-lo no orders-refresh
-# (que e por armazem e por dia) repetiria a mesma consulta pesada 16 vezes. Mesmo motivo pelo
-# qual oltp-export-reference nao entra em oltp-refresh.
-# CONGELA o ANTES. Passo separado de proposito: depois de `orders-refresh-all --overwrite`
-# o estado anterior nao existe mais em lugar nenhum, e um reality check sem ANTES so
-# consegue dizer "e assim hoje", que e metade da pergunta.
+# ---- fifth source: simulated orders (event log) -----------------------------
+# Runs ONCE and covers all four warehouses and the whole window. Chaining it into
+# orders-refresh (which is per warehouse and per day) would repeat the same heavy query 16
+# times. Same reason oltp-export-reference is not part of oltp-refresh.
+# FREEZES the BEFORE. A separate step on purpose: after `orders-refresh-all --overwrite`
+# the previous state no longer exists anywhere, and a reality check without a BEFORE can
+# only say "this is how it is today", which is half the question.
 demand-reality-check:
 	$(PLATFORM_PY) -m retail_platform demand-reality-check \
 	  $(if $(SNAPSHOT),--snapshot $(SNAPSHOT),)
 
-# Confere o de-para contra a ARVORE de categorias, nao contra o recorte: o dedup do catalogo
-# esconde trincas que existem na fonte, e conferir contra ele mediria o desempate.
+# Checks the mapping against the category TREE, not against the cut: the catalog dedup
+# hides triples that exist in the source, and checking against it would measure the tie-break.
 demand-check-mapping:
 	$(PLATFORM_PY) -m retail_platform export-orders-reference \
 	  --out $(ORDERS_REFERENCE_ROOT) --date $(ORDERS_TO) \
@@ -590,8 +584,8 @@ orders-export-reference:
 
 orders-extract:
 	@if [ -f "$(ORDERS_PARTITION)/_SUCCESS" ] && [ -z "$(ORDERS_OVERWRITE)" ]; then \
-	  echo "particao ja completa e imutavel: $(ORDERS_PARTITION)"; \
-	  echo "extract pulado (nao e falha). Use ORDERS_OVERWRITE=1 para regerar."; \
+	  echo "partition already complete and immutable: $(ORDERS_PARTITION)"; \
+	  echo "extract skipped (not a failure). Use ORDERS_OVERWRITE=1 to regenerate."; \
 	else \
 	  PYTHONPATH=$(ORDERS_SOURCE_SRC) $(PYTHON) -m simulated_orders_source extract \
 	    --reference $(ORDERS_REFERENCE) --out $(ORDERS_DATA_ROOT) --wh $(WH) \
@@ -611,10 +605,10 @@ orders-verify-landing:
 
 orders-refresh: orders-extract orders-validate orders-land orders-verify-landing silver
 	@echo ""
-	@echo "orders-refresh OK para ingestion_date=$(ORDERS_DATE) wh=$(WH)"
+	@echo "orders-refresh OK for ingestion_date=$(ORDERS_DATE) wh=$(WH)"
 
-# A janela inteira: 4 armazens x N dias, com o silver UMA vez no fim. O laco de datas usa
-# `date -d`, que aceita a aritmetica de dia sem precisar de Python aqui.
+# The whole window: 4 warehouses x N days, with silver ONCE at the end. The date loop uses
+# `date -d`, which handles day arithmetic without needing Python here.
 orders-refresh-all:
 	@dia="$(ORDERS_FROM)"; \
 	while [ "$$dia" != "$$(date -u -d "$(ORDERS_TO) +1 day" +%F)" ]; do \
@@ -626,23 +620,23 @@ orders-refresh-all:
 	done
 	@$(MAKE) --no-print-directory silver
 
-# ---- plano de stream: OLTP de pedidos e outbox --------------------------------
-# NAO SOBE COM `make up`, e isso e promessa do README: o plano de dados continua sendo so
-# o MinIO. O `--profile stream` do compose e o que mantem essa separacao no arquivo, em vez
-# de na memoria de quem opera.
+# ---- stream plane: orders OLTP and outbox -------------------------------------
+# NOT STARTED BY `make up`, and that is a README promise: the data plane remains just
+# MinIO. The compose `--profile stream` is what keeps that separation in the file, instead
+# of in the operator's memory.
 #
-# O QUE ESTE BLOCO PROVA, e por que ele precede qualquer linha de Kafka: que o evento nasce
-# DENTRO da transacao que muda o pedido. Sem isso, um topico seria o output do lote com
-# passos a mais — que e exatamente o que ARCHITECTURE.md ja recusou por escrito.
+# WHAT THIS BLOCK PROVES, and why it comes before any line of Kafka: that the event is born
+# INSIDE the transaction that changes the order. Without that, a topic would be the batch
+# output with extra steps — which is exactly what ARCHITECTURE.md already refused in writing.
 OLTP_DSN  ?= postgresql://oltp:oltp@localhost:$(or $(OLTP_PORT),5433)/oltp
-# OLTP_RESET=--reset derruba as tres tabelas antes de criar. Diferente de `prune-local`,
-# que nao tem `--force`: la o alvo e uma particao aterrissada, que pode ser a unica copia;
-# aqui e uma REPLICA do log, que `orders-apply` reconstroi em minutos.
+# OLTP_RESET=--reset drops the three tables before creating them. Unlike `prune-local`,
+# which has no `--force`: there the target is a landed partition, which may be the only copy;
+# here it is a REPLICA of the log, which `orders-apply` rebuilds in minutes.
 OLTP_RESET ?=
 
 stream-up:
 	$(COMPOSE) --profile stream up -d oltp-postgres kafka
-	@echo "aguardando o OLTP e o broker ficarem saudaveis..."
+	@echo "waiting for the OLTP and the broker to become healthy..."
 	@for i in $$(seq 1 60); do \
 	  pg=$$($(COMPOSE) ps --format '{{.Health}}' oltp-postgres 2>/dev/null); \
 	  kf=$$($(COMPOSE) ps --format '{{.Health}}' kafka 2>/dev/null); \
@@ -652,9 +646,9 @@ stream-up:
 	@$(MAKE) --no-print-directory orders-oltp-init orders-projection-init iceberg-init
 	@echo ""
 	@echo "OLTP ......... $(OLTP_DSN)"
-	@echo "projecao ..... $(PROJECTION_DSN)   (banco separado: e um read model)"
-	@echo "broker ....... $(KAFKA_BOOTSTRAP)  topico $(KAFKA_TOPIC)"
-	@echo "iceberg ...... $(ICEBERG_WAREHOUSE)  catalogo SQL no proprio OLTP"
+	@echo "projection ... $(PROJECTION_DSN)   (separate database: it is a read model)"
+	@echo "broker ....... $(KAFKA_BOOTSTRAP)  topic $(KAFKA_TOPIC)"
+	@echo "iceberg ...... $(ICEBERG_WAREHOUSE)  SQL catalog in the OLTP itself"
 
 stream-down:
 	$(COMPOSE) --profile stream stop oltp-postgres kafka
@@ -664,13 +658,13 @@ stream-logs:
 	$(COMPOSE) --profile stream logs --tail=60 oltp-postgres kafka
 
 orders-oltp-ddl:
-	@$(PLATFORM_PY) -m retail_platform.cli orders-oltp-ddl
+	@$(PLATFORM_PY) -m retail_platform orders-oltp-ddl
 
 orders-oltp-init:
-	$(PLATFORM_PY) -m retail_platform.cli orders-oltp-init --dsn "$(OLTP_DSN)" $(OLTP_RESET)
+	$(PLATFORM_PY) -m retail_platform orders-oltp-init --dsn "$(OLTP_DSN)" $(OLTP_RESET)
 
 orders-apply:
-	$(PLATFORM_PY) -m retail_platform.cli orders-apply "$(ORDERS_PARTITION)" \
+	$(PLATFORM_PY) -m retail_platform orders-apply "$(ORDERS_PARTITION)" \
 	  --dsn "$(OLTP_DSN)"
 
 orders-apply-all:
@@ -682,108 +676,102 @@ orders-apply-all:
 	  dia="$$(date -u -d "$$dia +1 day" +%F)"; \
 	done
 
-# Com PARTITION=..., reconstitui o log a partir das linhas do outbox e compara o sha256
-# com o manifesto. Contar linhas nao provaria fidelidade; reproduzir os bytes prova.
+# With PARTITION=..., rebuilds the log from the outbox rows and compares the sha256
+# with the manifest. Counting rows would not prove fidelity; reproducing the bytes does.
 orders-outbox:
-	$(PLATFORM_PY) -m retail_platform.cli orders-outbox --dsn "$(OLTP_DSN)" \
+	$(PLATFORM_PY) -m retail_platform orders-outbox --dsn "$(OLTP_DSN)" \
 	  $(if $(PARTITION),--verify "$(PARTITION)",)
 
-# A PROVA DO MARCO 4. Injeta um trigger que faz o insert explodir — no outbox e depois em
-# orders — e confere que o outro lado tambem nao sobreviveu. A injecao e no BANCO, nao no
-# codigo: e uma falha que o applier nao pode prever nem tratar, que e o tipo de falha
-# contra a qual a transacao existe. Ver o cabecalho do script.
+# THE MILESTONE 4 PROOF. Injects a trigger that makes the insert blow up — in the outbox and
+# then in orders — and checks that the other side did not survive either. The injection is
+# in the DATABASE, not in the code: it is a failure the applier can neither foresee nor
+# handle, which is the kind of failure transactions exist for. See the script header.
 orders-prove-atomicity:
 	@$(PLATFORM_PY) scripts/prove_oltp_atomicity.py "$(ORDERS_PARTITION)"
 
-# ---- transporte: Kafka, replay e consumo idempotente --------------------------
-# ISTO NAO E "INSTALAR KAFKA E PUBLICAR MENSAGEM". As quatro propriedades que este bloco
-# existe para tornar demonstraveis, e onde cada uma e provada:
+# ---- transport: Kafka, replay and idempotent consumption ----------------------
+# THIS IS NOT "INSTALL KAFKA AND PUBLISH A MESSAGE". The four properties this block
+# exists to make demonstrable, and where each one is proven:
 #
-#   transporte fiel        o topico relido reproduz o sha256 dos 16 manifestos
-#   semantica de entrega   at-least-once do outbox ao broker, DEMONSTRADO (nao afirmado):
-#                          matar o publisher no meio do drain produz duplicata de verdade
-#   consumo idempotente    dedup por (order_id, sequence_no) contra o estado — sem conjunto
-#                          de event_id crescendo sem limite; buraco vira RECUSA, nao no-op
-#   replay                 rebobinar o grupo e reprocessar deixa o digest identico
+#   faithful transport     the re-read topic reproduces the sha256 of the 16 manifests
+#   delivery semantics     at-least-once from outbox to broker, DEMONSTRATED (not claimed):
+#                          killing the publisher mid-drain produces a real duplicate
+#   idempotent consumption dedup by (order_id, sequence_no) against the state — no set
+#                          of event_ids growing without bound; a gap becomes a REFUSAL, not a no-op
+#   replay                 rewinding the group and reprocessing leaves the digest identical
 KAFKA_BOOTSTRAP ?= localhost:$(or $(KAFKA_PORT),9092)
 KAFKA_TOPIC     ?= retail.orders.events.v1
 KAFKA_GROUP     ?= orders-projector
 PROJECTION_DSN  ?= postgresql://oltp:oltp@localhost:$(or $(OLTP_PORT),5433)/projection
 
 orders-projection-init:
-	$(PLATFORM_PY) -m retail_platform.cli orders-projection-init \
+	$(PLATFORM_PY) -m retail_platform orders-projection-init \
 	  --projection-dsn "$(PROJECTION_DSN)"
 
 orders-publish:
-	$(PLATFORM_PY) -m retail_platform.cli orders-publish --dsn "$(OLTP_DSN)" \
+	$(PLATFORM_PY) -m retail_platform orders-publish --dsn "$(OLTP_DSN)" \
 	  --bootstrap "$(KAFKA_BOOTSTRAP)" --topic "$(KAFKA_TOPIC)" $(PUBLISH_ARGS)
 
 orders-project:
-	$(PLATFORM_PY) -m retail_platform.cli orders-project \
+	$(PLATFORM_PY) -m retail_platform orders-project \
 	  --bootstrap "$(KAFKA_BOOTSTRAP)" --topic "$(KAFKA_TOPIC)" --group "$(KAFKA_GROUP)" \
 	  --projection-dsn "$(PROJECTION_DSN)" --from-beginning $(PROJECT_ARGS)
 
 orders-lag:
-	$(PLATFORM_PY) -m retail_platform.cli orders-lag \
+	$(PLATFORM_PY) -m retail_platform orders-lag \
 	  --bootstrap "$(KAFKA_BOOTSTRAP)" --topic "$(KAFKA_TOPIC)" --group "$(KAFKA_GROUP)"
 
 orders-replay:
-	$(PLATFORM_PY) -m retail_platform.cli orders-replay \
+	$(PLATFORM_PY) -m retail_platform orders-replay \
 	  --bootstrap "$(KAFKA_BOOTSTRAP)" --topic "$(KAFKA_TOPIC)" --group "$(KAFKA_GROUP)"
 
 orders-topic:
 	$(COMPOSE) --profile stream exec kafka /opt/kafka/bin/kafka-topics.sh \
 	  --bootstrap-server kafka:19092 --describe --topic "$(KAFKA_TOPIC)"
 
-# EXPERIMENTO FECHADO, rodado ANTES de construir a projecao concorrente. O plano da Fase 3
-# registrou "o DuckDB pode nao ler o catalogo SQL do pyiceberg" como a premissa mais fragil;
-# isto responde nove perguntas contra o stack de verdade, limpa o que criou, e devolve um
-# veredito. Se reprovar, nao se constroi a projecao — se contorna ou se muda de plano.
-spike-iceberg:
-	@$(PLATFORM_PY) scripts/spike_iceberg_duckdb.py
-
-# ---- Spark: o experimento fechado que decide se ele entra ----------------------
+# ---- Spark: the live interop check against the catalog ---------------------------
 #
-# ESTE PORTAO E SOBRE O ICEBERG, e nao sobre o Spark. O ARCHITECTURE justifica o Iceberg
-# com duas propriedades: commit atomico com concorrencia otimista, que `orders-prove-iceberg`
-# demonstra; e INTEROP ENTRE ENGINES, que esta afirmada e nunca foi demonstrada, porque os
-# dois escritores sao Python e usam a mesma biblioteca.
+# THIS GATE IS ABOUT ICEBERG, not about Spark. ARCHITECTURE justifies Iceberg with two
+# properties: atomic commit with optimistic concurrency, which `orders-prove-iceberg`
+# demonstrates; and INTEROP ACROSS ENGINES, which is claimed and was never demonstrated,
+# because both writers are Python and use the same library.
 #
-# O Spark e o terceiro escritor, e o primeiro fora do Python. Se ele nao ler o catalogo que
-# o pyiceberg escreveu, o Spark nao entra E a clausula de interop sai do ARCHITECTURE.
+# Spark is the third writer, and the first outside Python. If it cannot read the catalog
+# pyiceberg wrote, Spark does not get in AND the interop clause leaves ARCHITECTURE.
 #
-# O `depends_on` do servico nao pode cobrar `oltp-postgres` porque os perfis sao
-# independentes — o compose recusaria a referencia. Entao o pre-requisito e cobrado aqui,
-# com a mensagem que diz o que fazer, como a trava do DuckDB em `make silver`.
-spike-spark-iceberg:
+# The service's `depends_on` cannot require `oltp-postgres` because the profiles are
+# independent — compose would refuse the reference. So the prerequisite is enforced here,
+# with a message that says what to do, like the DuckDB lock check in `make silver`.
+check-spark-iceberg:
 	@docker ps --format '{{.Names}}' | grep -qx retail-oltp-postgres || { \
-	  echo "ERRO: o catalogo Iceberg mora no oltp-postgres, e ele nao esta de pe."; \
-	  echo "      O plano de stream nao sobe com \`make up\`. Rode: make stream-up"; \
+	  echo "ERROR: the Iceberg catalog lives in oltp-postgres, and it is not running."; \
+	  echo "      The stream plane is not started by \`make up\`. Run: make stream-up"; \
 	  exit 2; }
 	@$(COMPOSE) --profile spark build spark
-	@$(PLATFORM_PY) scripts/spike_spark_iceberg.py
+	@$(PLATFORM_PY) scripts/check_spark_iceberg.py
 
 spark-build:
 	@$(COMPOSE) --profile spark build spark
 
-# ---- estoque: o consumo observado vira saldo, e quem calcula e o Spark -------
+# ---- stock: observed consumption becomes a balance, and Spark computes it --------
 #
-# DOIS PASSOS, E O PRIMEIRO E PRE-REQUISITO DO SEGUNDO DE PROPOSITO. Rodar o job sobre um
-# consumo velho produziria um ledger plausivel e errado — a classe de defeito que nenhum
-# teste pega, porque o saldo continuaria fechando. O export e barato; deixa-lo opcional
-# economizaria segundos e custaria confianca.
+# TWO STEPS, AND THE FIRST IS A PREREQUISITE OF THE SECOND ON PURPOSE. Running the job on
+# stale consumption would produce a plausible and wrong ledger — the class of defect no
+# test catches, because the balance would still close. The export is cheap; making it
+# optional would save seconds and cost confidence.
 stock-consumption:
 	@$(PLATFORM_PY) -m retail_platform stock-consumption
 
-# ---- freeze: a disciplina vira verificacao ------------------------------------
+# ---- freeze: discipline becomes verification -----------------------------------
 #
-# "Nao mexa no RAW depois de fechar" foi respeitado por ATENCAO ate a Fase 7, e atencao nao
-# reprova build nenhum — as tres ultimas revisoes de documentacao existiram porque uma
-# regeracao mudou numeros ja escritos e nada avisou.
+# "Do not touch RAW after closing" was honored by ATTENTION until Phase 7, and attention
+# fails no build — the last three documentation reviews existed because a regeneration
+# changed numbers already written and nothing warned.
 #
-# `freeze` sela; `freeze-check` confere. O selo cobre o DADO (path, sha256, bytes, records
-# de cada arquivo declarado) e NAO a execucao: incluir run_id e timestamps faria um re-land
-# de dado identico quebrar o selo, e alarme que dispara sem causa e pior que nenhum alarme.
+# `freeze` seals; `freeze-check` verifies. The seal covers the DATA (path, sha256, bytes,
+# records of each declared file) and NOT the run: including run_id and timestamps would make
+# a re-land of identical data break the seal, and an alarm that fires without cause is worse
+# than no alarm.
 freeze:
 	@$(PLATFORM_PY) -m retail_platform freeze
 
@@ -791,16 +779,16 @@ freeze-check:
 	@$(PLATFORM_PY) -m retail_platform freeze-check
 
 SPARK_EVIDENCE ?= docs/spark-evidence/README.md
-# A EVIDENCIA RODA OS DOIS MOTORES e publica os dois tempos, seja qual for o vencedor. Ela
-# existe para sustentar uma afirmacao NEGATIVA — "o Spark nao foi adotado por desempenho" —
-# e negativa sem benchmark e a mesma doenca do numero copiado a mao, com o sinal trocado.
+# THE EVIDENCE RUNS BOTH ENGINES and publishes both timings, whoever wins. It exists to
+# support a NEGATIVE claim — "Spark was not adopted for performance" — and a negative claim
+# without a benchmark is the same disease as a hand-copied number, with the sign flipped.
 spark-evidence:
 	@$(PLATFORM_PY) -m retail_platform spark-evidence --out $(SPARK_EVIDENCE)
 
 stock-ledger: stock-consumption
 	@docker ps --format '{{.Names}}' | grep -qx retail-oltp-postgres || { \
-	  echo "ERRO: o catalogo Iceberg mora no oltp-postgres, e ele nao esta de pe."; \
-	  echo "      O plano de stream nao sobe com \`make up\`. Rode: make stream-up"; \
+	  echo "ERROR: the Iceberg catalog lives in oltp-postgres, and it is not running."; \
+	  echo "      The stream plane is not started by \`make up\`. Run: make stream-up"; \
 	  exit 2; }
 	@$(COMPOSE) --profile spark run --rm --no-deps spark \
 	  python3 jobs/spark/stock_ledger.py
@@ -808,84 +796,86 @@ stock-ledger: stock-consumption
 orders-prove-stream:
 	@$(PLATFORM_PY) scripts/prove_stream_semantics.py
 
-# ---- projecao viva em Iceberg: dois escritores, um leitor ---------------------
-# O GATILHO DO ICEBERG DISPAROU POR CONCORRENCIA, NAO POR VOLUME. Neste volume um parquet
-# reescrito com `os.replace` atomico funcionaria; o que o Iceberg compra e isolamento de
-# snapshot entre DOIS ESCRITORES (o consumidor em streaming e a reconstrucao em lote) e um
-# leitor concorrente (o DuckDB), mais time travel na projecao.
+# ---- live projection in Iceberg: two writers, one reader ----------------------
+# THE ICEBERG TRIGGER FIRED ON CONCURRENCY, NOT ON VOLUME. At this volume a parquet file
+# rewritten with an atomic `os.replace` would work; what Iceberg buys is snapshot isolation
+# between TWO WRITERS (the streaming consumer and the batch rebuild) and a concurrent
+# reader (DuckDB), plus time travel on the projection.
 #
-# `make spike-iceberg` mediu isso antes de qualquer linha deste bloco existir.
+# A closed experiment measured this before this block existed (removed in CR-012; see the
+# git history). Today the proof is `make orders-prove-projection`.
 ICEBERG_WAREHOUSE ?= s3://retail-lakehouse/iceberg
 
 iceberg-init:
-	$(PLATFORM_PY) -m retail_platform.cli iceberg-init --warehouse "$(ICEBERG_WAREHOUSE)"
+	$(PLATFORM_PY) -m retail_platform iceberg-init --warehouse "$(ICEBERG_WAREHOUSE)"
 
-# O caminho do metadado CORRENTE, perguntado ao catalogo. O `silver` chama isto sozinho.
+# The path of the CURRENT metadata, asked of the catalog. `silver` calls this on its own.
 iceberg-metadata:
-	@$(PLATFORM_PY) -m retail_platform.cli iceberg-metadata
+	@$(PLATFORM_PY) -m retail_platform iceberg-metadata
 
-# O consumidor escrevendo no Iceberg em vez do Postgres: a costura do Marco 5, exercida.
+# The consumer writing to Iceberg instead of Postgres: the Milestone 5 seam, exercised.
 #
-# GRUPO PROPRIO, e nao o mesmo do sink Postgres. Nao e detalhe de configuracao: dois grupos
-# lendo o MESMO topico, cada um no proprio offset e no proprio ritmo, e exatamente o ponto de
-# desacoplamento que o Kafka comprou. Compartilhar o grupo faria os dois competirem pelas
-# particoes e cada evento chegaria a um so — que e o oposto do que se quer aqui.
+# ITS OWN GROUP, not the same as the Postgres sink. This is not a configuration detail: two
+# groups reading the SAME topic, each at its own offset and its own pace, is exactly the
+# decoupling point Kafka bought. Sharing the group would make both compete for the
+# partitions and each event would reach only one — the opposite of what is wanted here.
 KAFKA_GROUP_ICEBERG ?= orders-projector-iceberg
 
 orders-project-iceberg:
-	$(PLATFORM_PY) -m retail_platform.cli orders-project --sink iceberg \
+	$(PLATFORM_PY) -m retail_platform orders-project --sink iceberg \
 	  --bootstrap "$(KAFKA_BOOTSTRAP)" --topic "$(KAFKA_TOPIC)" \
 	  --group "$(KAFKA_GROUP_ICEBERG)" --from-beginning $(PROJECT_ARGS)
 
-# O SEGUNDO escritor da mesma tabela.
-# PROJECTION_RESET=1 apaga e recria a tabela antes de reconstruir. Necessario quando a Source
-# foi regerada com outra seed, referencia, premissas ou demand_model_version: o merge da
-# projecao e monotonico e assume que um order_id sempre e o mesmo pedido — e depois de uma
-# regeracao nao e. Sem o reset, o rebuild descarta as linhas novas como "velhas" e a projecao
-# fica com dois universos misturados (medido: 4.028 linhas descartadas em 2026-08-31).
+# The SECOND writer of the same table.
+# PROJECTION_RESET=1 drops and recreates the table before rebuilding. Needed when the Source
+# was regenerated with another seed, reference, premises or demand_model_version: the
+# projection merge is monotonic and assumes an order_id is always the same order — and after
+# a regeneration it is not. Without the reset, the rebuild discards the new rows as "old" and
+# the projection ends up with two universes mixed together (measured: 4,028 rows discarded
+# on 2026-08-31).
 orders-rebuild-projection:
-	$(PLATFORM_PY) -m retail_platform.cli orders-rebuild-projection --root "$(ORDERS_DATA_ROOT)" \
+	$(PLATFORM_PY) -m retail_platform orders-rebuild-projection --root "$(ORDERS_DATA_ROOT)" \
 	  $(if $(PROJECTION_RESET),--reset,)
 
-# Tres folds, uma comparacao. Sai 1 em qualquer divergencia.
+# Three folds, one comparison. Exits 1 on any divergence.
 orders-reconcile:
-	$(PLATFORM_PY) -m retail_platform.cli orders-reconcile --dsn "$(OLTP_DSN)"
+	$(PLATFORM_PY) -m retail_platform orders-reconcile --dsn "$(OLTP_DSN)"
 
-# A PROVA DO MARCO 6: dois escritores concorrentes com leitor ativo, fusao monotonica,
-# isolamento de snapshot e time travel — contra o Iceberg de verdade.
+# THE MILESTONE 6 PROOF: two concurrent writers with an active reader, monotonic merge,
+# snapshot isolation and time travel — against real Iceberg.
 orders-prove-projection:
 	@$(PLATFORM_PY) scripts/prove_iceberg_projection.py
 
-# A METADE EM STREAMING NAO E COBERTA OFFLINE, e isso e divida declarada, nao descuido:
-# `make test` roda sem rede — invariante do repo — entao broker, OLTP e Iceberg so existem
-# enquanto `make stream-up` estiver de pe. Os duplos em memoria cobrem a FORMA do codigo
-# (ordem da transacao, protocolo de dedup, construcao do SQL); a SEMANTICA dos motores
-# reais so pode ser exercida contra eles. Este alvo registra que foi.
+# THE STREAMING HALF IS NOT COVERED OFFLINE, and that is declared debt, not carelessness:
+# `make test` runs offline — a repo invariant — so broker, OLTP and Iceberg only exist
+# while `make stream-up` is running. The in-memory doubles cover the SHAPE of the code
+# (transaction order, dedup protocol, SQL construction); the SEMANTICS of the real engines
+# can only be exercised against them. This target records that it was.
 #
-# Nao reprova com o plano meio de pe: cada secao ausente aparece como ausencia DECLARADA,
-# nunca como numero inventado. Reprova so quando nenhum dos tres responde.
+# It does not fail with the plane half up: each missing section shows up as a DECLARED
+# absence, never as an invented number. It fails only when none of the three responds.
 STREAM_EVIDENCE ?= docs/stream-evidence/README.md
 stream-evidence:
 	@$(PLATFORM_PY) -m retail_platform stream-evidence \
 	  --dsn "$(OLTP_DSN)" --out $(STREAM_EVIDENCE)
 
-# ---- warehouse analitico: recorte do Silver (compartilhado pelos dois motores) --
-# O recorte por ESCOPO GEOGRAFICO nao tem nada de especifico ao motor de destino — so o
-# nome do diretorio e um resquicio historico do dia em que so existia o alvo Snowflake (ver
-# DECISIONS.md CR-006). Os dois carregadores abaixo leem o MESMO parquet.
-# Ver platform/src/retail_platform/snowflake_export.py.
-SNOWFLAKE_STAGE_DIR ?= data/snowflake-stage
+# ---- analytical warehouse: Silver cut (shared by both engines) ------------------
+# The cut by GEOGRAPHIC SCOPE has nothing specific to the target engine — only the
+# directory name is a historical leftover from the day when only the Snowflake target
+# existed (see DECISIONS.md CR-006). Both loaders below read the SAME parquet.
+# See platform/src/retail_platform/warehouse_cut.py.
+WAREHOUSE_CUT_DIR ?= data/warehouse-cut
 
 warehouse-export:
-	$(PLATFORM_PY) -m retail_platform export-snowflake --out $(SNOWFLAKE_STAGE_DIR)
+	$(PLATFORM_PY) -m retail_platform export-cut --out $(WAREHOUSE_CUT_DIR)
 
-# ---- warehouse analitico (Postgres local) — ALVO PADRAO desde 2026-09 -----------
-# O Snowflake era um TRIAL, com prazo, e o prazo venceu: a DAG `warehouse_load` passou a
-# falhar de autenticacao ("Your free trial has ended..."). Os alvos SEM sufixo de motor
-# atendem agora o Postgres local — exatamente a troca que este segundo alvo dbt existia
-# para provar barata (ver DECISIONS.md CR-006 e CR-007). O par Snowflake continua logo
-# abaixo, com sufixo -snowflake, pronto para o dia em que outra conta substituir o trial —
-# nenhum modelo dbt muda nesse dia, so o --target e o carregador.
+# ---- analytical warehouse (local Postgres) — DEFAULT TARGET since 2026-09 -------
+# Snowflake was a TRIAL, with a deadline, and the deadline passed: the `warehouse_load` DAG
+# started failing authentication ("Your free trial has ended..."). The targets WITHOUT an
+# engine suffix now serve the local Postgres — exactly the switch this second dbt target
+# existed to prove cheap (see DECISIONS.md CR-006 and CR-007). The Snowflake pair remains
+# right below, with the -snowflake suffix, ready for the day another account replaces the
+# trial — no dbt model changes on that day, only the --target and the loader.
 #
 #   docker compose -f infra/docker-compose.yml --profile warehouse-postgres up -d warehouse-postgres
 #   make warehouse-bootstrap
@@ -903,95 +893,96 @@ warehouse-bootstrap:
 
 warehouse-load:
 	$(PLATFORM_PY) -m retail_platform load-postgres \
-	  --stage-dir $(SNOWFLAKE_STAGE_DIR) \
+	  --stage-dir $(WAREHOUSE_CUT_DIR) \
 	  --host $(WAREHOUSE_PG_HOST) --port $(WAREHOUSE_PG_PORT) --dbname $(WAREHOUSE_PG_DB)
 
-# `--target postgres` usa o MESMO guard `+enabled` do dbt_project.yml que `--target
-# snowflake` ja usava — nenhum modelo, teste ou regra de negocio muda entre os dois.
+# `--target postgres` uses the SAME `+enabled` guard from dbt_project.yml that `--target
+# snowflake` already used — no model, test or business rule changes between the two.
 warehouse:
 	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target postgres
 
 warehouse-refresh: warehouse-export warehouse-bootstrap warehouse-load warehouse
 	@echo ""
-	@echo "warehouse-refresh OK: STAGE carregado e GOLD/MART reconstruidos no Postgres local"
+	@echo "warehouse-refresh OK: STAGE loaded and GOLD/MART rebuilt on the local Postgres"
 
-# ---- warehouse analitico (Snowflake) — EM PAUSA, trial vencido em 2026-09 -------
-# O Snowflake foi o QUARTO consumidor que nao alcanca o Lakehouse — os outros tres sao as
-# Sources FROZEN. Nao recebia o Silver inteiro: recebia um RECORTE por ESCOPO GEOGRAFICO
-# (o mesmo `warehouse-export` de cima). Fica pronto para o dia em que outra conta (paga, ou
-# um trial novo) substituir esta — nenhum modelo dbt muda nesse dia. Ver DECISIONS.md CR-007.
+# ---- analytical warehouse (Snowflake) — OPTIONAL, one --target away ----------------
+# Snowflake is the FOURTH consumer that cannot reach the Lakehouse — the other three are the
+# FROZEN Sources. It does not receive the whole Silver: it receives a CUT by GEOGRAPHIC SCOPE
+# (the same `warehouse-export` as above). The original trial expired in 2026-09 (CR-007); on
+# 2026-10-29 a new account took over without any dbt model changing (CR-008).
 SNOWFLAKE_CONNECTION ?= spark_retail
-# Deliberadamente com o MESMO nome que profiles.yml le: por causa do `export` da linha 15,
-# mudar isto aqui muda o destino do COPY INTO e o target do dbt de uma vez so. E o jeito de
-# isolar uma execucao (CI, uma segunda pessoa) — por DATABASE, nao por prefixo de schema.
+# Deliberately with the SAME name profiles.yml reads: because of the bare `export` at the top
+# of the file, changing it here changes the COPY INTO destination and the dbt target at once.
+# It is the way to isolate a run (CI, a second person) — by DATABASE, not by schema prefix.
 SNOWFLAKE_DATABASE  ?= RETAIL
 
-# Uma vez por conta, exige ACCOUNTADMIN. Cria database, os tres schemas e os tres papeis,
-# aplica os grants e PROVA o isolamento papel a papel — com `use secondary roles none`, sem
-# o qual a verificacao passaria por engano num usuario que tambem tem ACCOUNTADMIN.
+# Once per account, requires ACCOUNTADMIN. Creates the database, the three schemas and the
+# three roles, applies the grants and PROVES isolation role by role — with
+# `use secondary roles none`, without which the check would pass by mistake for a user that
+# also has ACCOUNTADMIN.
 #
-# CUIDADO AO NOMEAR VARIAVEL AQUI. A linha 15 deste arquivo tem um `export` nu: TODA
-# variavel do make vira variavel de ambiente dos subprocessos. Um `SNOWFLAKE_USER ?=`
-# (vazio) chegava ao dbt como variavel PRESENTE E VAZIA, e `env_var('SNOWFLAKE_USER',
-# 'default')` devolve o vazio nesse caso, nao o default — o dbt morria com "'user' is a
-# required property" enquanto `dbt debug` fora do make passava. Dai o prefixo proprio:
-# nenhum nome daqui pode colidir com os que profiles.yml le.
+# CAREFUL WHEN NAMING A VARIABLE HERE. The top of this file has a bare `export`: EVERY
+# make variable becomes an environment variable of the subprocesses. A `SNOWFLAKE_USER ?=`
+# (empty) reached dbt as a variable that was PRESENT AND EMPTY, and `env_var('SNOWFLAKE_USER',
+# 'default')` returns the empty value in that case, not the default — dbt died with "'user' is
+# a required property" while `dbt debug` outside make passed. Hence the dedicated prefix:
+# no name here may collide with the ones profiles.yml reads.
 SNOWFLAKE_GRANT_USER ?=
 warehouse-snowflake-bootstrap:
 	$(PLATFORM_PY) -m retail_platform snowflake-bootstrap \
 	  --database $(SNOWFLAKE_DATABASE) --connection $(SNOWFLAKE_CONNECTION) \
 	  $(if $(SNOWFLAKE_GRANT_USER),--grant-to-user $(SNOWFLAKE_GRANT_USER),)
 
-# Sem conexao nenhuma: o DDL e derivado do proprio recorte, entao pode ser revisado antes
-# de qualquer coisa tocar o Snowflake.
+# No connection at all: the DDL is derived from the cut itself, so it can be reviewed before
+# anything touches Snowflake.
 warehouse-snowflake-ddl:
 	@$(PLATFORM_PY) -m retail_platform snowflake-ddl --database $(SNOWFLAKE_DATABASE)
 
 warehouse-snowflake-load:
 	$(PLATFORM_PY) -m retail_platform load-snowflake \
-	  --stage-dir $(SNOWFLAKE_STAGE_DIR) --database $(SNOWFLAKE_DATABASE) \
+	  --stage-dir $(WAREHOUSE_CUT_DIR) --database $(SNOWFLAKE_DATABASE) \
 	  --connection $(SNOWFLAKE_CONNECTION)
 
 warehouse-snowflake:
 	$(DBT) build --project-dir platform/dbt --profiles-dir platform/dbt --target snowflake
 
-# A metade Snowflake nao e reproduzivel offline como a metade Lakehouse: depende de uma
-# conta viva — e a usada aqui era um trial, que venceu. Este alvo registra o resultado da
-# execucao REAL — posse, volume, isolamento e amostra — com data e identidade da conta, para
-# que os modelos do warehouse continuem tendo prova depois que a conta expirar. Regeneravel:
-# vincular outra conta e rodar isto produz a evidencia daquela conta.
+# The Snowflake half is not reproducible offline like the Lakehouse half: it depends on a
+# live account — and the one used here was a trial, which expired. This target records the
+# result of the REAL run — ownership, volume, isolation and sample — with the date and account
+# identity, so that the warehouse models still have proof after the account expires.
+# Regenerable: linking another account and running this produces that account's evidence.
 SNOWFLAKE_EVIDENCE ?= docs/warehouse-evidence/README.md
 warehouse-snowflake-evidence:
 	@$(PLATFORM_PY) -m retail_platform snowflake-evidence \
 	  --database $(SNOWFLAKE_DATABASE) --connection $(SNOWFLAKE_CONNECTION) \
 	  --out $(SNOWFLAKE_EVIDENCE)
 
-# "Verificacao que nunca falhou nao e verificacao" — e o Marco 7 mostrou por que a regra
-# existe: a primeira carga do STAGE pos TODO timestamp no ano 56.648.666 e os 166 nos do
-# dbt construiram em VERDE (contagem certa, tipo certo, grao unico, e um funil feito de
-# `count_if(marco is not null)` continua exato com o instante 56 milhoes de anos deslocado).
-# Este alvo injeta, no dado REAL do warehouse, o defeito que cada teste diz pegar, exige o
-# vermelho, desfaz e exige o verde de volta. So mexe em GOLD e MART, que sao inteiramente
-# reconstruiveis por `dbt build`.
+# "A check that never failed is not a check" — and Milestone 7 showed why the rule exists:
+# the first STAGE load put EVERY timestamp in the year 56,648,666 and the 166 dbt nodes
+# built GREEN (right count, right type, unique grain, and a funnel made of
+# `count_if(marco is not null)` stays exact with the instant shifted 56 million years).
+# This target injects, into the REAL warehouse data, the defect each test claims to catch,
+# demands red, undoes it and demands green again. It only touches GOLD and MART, which are
+# fully rebuildable by `dbt build`.
 #
-# SO CONTRA O SNOWFLAKE (a injecao usa `dateadd`/`number`, Snowflake-only): o par Postgres
-# fica registrado como backlog em DECISIONS.md CR-007, nao bloqueia a troca do alvo padrao —
-# os 178 testes de dado do dbt ja rodam, verdes, contra os dois motores.
+# SNOWFLAKE ONLY (the injection uses `dateadd`/`number`, Snowflake-only): the Postgres
+# counterpart is recorded as backlog in DECISIONS.md CR-007, and does not block switching the
+# default target — the 178 dbt data tests already run, green, against both engines.
 warehouse-snowflake-prove-tests:
 	@$(PLATFORM_PY) scripts/prove_warehouse_orders_tests.py
 
 warehouse-snowflake-refresh: warehouse-export warehouse-snowflake-load warehouse-snowflake
 	@echo ""
-	@echo "warehouse-snowflake-refresh OK: STAGE carregado e GOLD/MART reconstruidos"
+	@echo "warehouse-snowflake-refresh OK: STAGE loaded and GOLD/MART rebuilt"
 
-# ---- painel estrategico (Streamlit sobre o MART) -----------------------------
-# Bancada de CONFERENCIA dos indicadores antes de reconstrui-los no Power BI. Le so o MART, e
-# veste `retail_reader` — o papel de BI, que este painel e o primeiro consumidor a vestir de
-# verdade (a carga ja vestia `retail_loader` e o dbt `retail_transformer`).
+# ---- strategic panel (Streamlit over the MART) -------------------------------
+# A CHECKING bench for the indicators before rebuilding them in Power BI. It reads only the
+# MART, and wears `retail_reader` — the BI role, which this panel is the first consumer to
+# actually wear (the load already wore `retail_loader` and dbt `retail_transformer`).
 #
-# As dependencias vivem em [project.optional-dependencies] de platform/pyproject.toml, FORA de
-# `dependencies`: o Dockerfile.airflow instala exatamente aquela lista, e ~150 MB de UI nao tem
-# o que fazer numa imagem que nao renderiza dashboard.
+# The dependencies live in [project.optional-dependencies] of platform/pyproject.toml, OUTSIDE
+# `dependencies`: Dockerfile.airflow installs exactly that list, and ~150 MB of UI has no
+# business in an image that renders no dashboard.
 DASHBOARD_PORT ?= 8501
 dashboard-venv:
 	$(PLATFORM_PY) -m pip install --quiet -e "platform[dashboard]"
@@ -999,52 +990,43 @@ dashboard-venv:
 	  print(f'dashboard venv OK: streamlit {streamlit.__version__}, pandas {pandas.__version__}, altair {altair.__version__}')"
 
 dashboard:
-	$(PLATFORM_PY) -m streamlit run streamlit/app.py \
+	$(PLATFORM_PY) -m streamlit run streamlit/operations_app.py \
 	  --server.port $(DASHBOARD_PORT) --server.headless true
 
-# Sem conexao nenhuma: o CONTRACT e derivado de indicators.py, entao pode ser revisado antes
-# de qualquer coisa tocar o warehouse — mesma propriedade de `make warehouse-snowflake-ddl`.
-dashboard-contract:
-	@$(PLATFORM_PY) streamlit/contract.py
+# No connection at all: docs/indicators/ is derived from the catalog, so it can be reviewed
+# before anything touches the warehouse — same property as `make warehouse-snowflake-ddl`.
+indicators-contract:
+	@$(PLATFORM_PY) -m retail_platform.indicators.contract
 
-# EXIGE CONTA VIVA, e por isso fica fora de `make test`. Roda o script do Streamlit de verdade
-# e exige zero excecao: um `curl` no /health nao serve, porque o Streamlit devolve HTTP 200 com
-# o esqueleto da pagina mesmo quando o script morre no primeiro `select` — a renderizacao e no
-# cliente. As 21 consultas (18 indicadores + 3 auxiliares) so sao exercitadas assim.
+# REQUIRES A LIVE ACCOUNT, and that is why it stays out of `make test`. It runs the actual
+# Streamlit script and demands zero exceptions: a `curl` on /health does not do, because
+# Streamlit returns HTTP 200 with the page skeleton even when the script dies on the first
+# `select` — rendering happens on the client. Every indicator's queries are only exercised
+# this way.
 dashboard-check:
 	@$(PLATFORM_PY) streamlit/smoke.py
 
-# ---- painel de precos (Streamlit sobre o MART) — EXCLUSIVO, nao uma aba a mais -----
-# Pedido como painel PROPRIO: oscilacao de preco do catalogo Mercadona, e mais nada — sem
-# funil, sem cesta, sem estoque. Mesma sessao (`connection.py`, `retail_reader`) do painel
-# de operacoes acima; catalogo de consultas proprio em price_indicators.py, porque as
-# perguntas sao outras. Ver streamlit/PRICE_CONTRACT.md.
+# ---- prices panel — DEDICATED, not one more tab -----------------------------------
+# Price movement in the Mercadona catalog, and nothing else. Same session (`connection.py`,
+# `retail_reader`) as the operations panel; its own catalog in indicators/prices.py.
 PRICE_DASHBOARD_PORT ?= 8502
 price-dashboard:
-	$(PLATFORM_PY) -m streamlit run streamlit/price_app.py \
+	$(PLATFORM_PY) -m streamlit run streamlit/prices_app.py \
 	  --server.port $(PRICE_DASHBOARD_PORT) --server.headless true
-
-# Sem conexao nenhuma, mesma propriedade de `dashboard-contract`.
-price-dashboard-contract:
-	@$(PLATFORM_PY) streamlit/price_contract.py
-
-# Mesmo motivo de `dashboard-check`: EXIGE CONTA VIVA, fora de `make test`.
-price-dashboard-check:
-	@$(PLATFORM_PY) streamlit/price_smoke.py
 
 warehouse-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause warehouse_load
 	$(COMPOSE) exec airflow-scheduler airflow dags trigger warehouse_load
-	@echo "disparado. acompanhe com: make airflow-logs"
+	@echo "triggered. follow with: make airflow-logs"
 
-# ---- derivacao de seed -------------------------------------------------------
-# Os quatro seeds abaixo sao DERIVADOS de uma fonte e depois VERSIONADOS: o CSV e a
-# verdade do repositorio, e o script e como ele foi obtido. Rodam sob demanda, nao no
-# pipeline — a fonte de cada um muda uma vez por semestre ou nunca.
+# ---- seed derivation ---------------------------------------------------------
+# The four seeds below are DERIVED from a source and then VERSIONED: the CSV is the
+# repository's truth, and the script is how it was obtained. They run on demand, not in the
+# pipeline — the source of each changes once a semester or never.
 #
-# EXISTIREM COMO ALVO E O PONTO. Sem isto, "de onde saiu este CSV" so se responde lendo o
-# docstring de um script que ninguem sabe que existe, e um seed sem procedencia executavel
-# e indistinguivel de um numero digitado.
+# EXISTING AS TARGETS IS THE POINT. Without this, "where did this CSV come from" can only be
+# answered by reading the docstring of a script nobody knows exists, and a seed without
+# executable provenance is indistinguishable from a typed-in number.
 CALLEJERO_ROOT ?= $(CALLEJERO_IN)
 AUF_XLSX       ?= temp/AUF_mun.xlsx
 
@@ -1054,20 +1036,20 @@ seed-province-map:
 seed-service-area:
 	$(PYTHON) scripts/derive_warehouse_service_area.py "$(AUF_XLSX)" "$(CALLEJERO_ROOT)"
 
-# Estes dois consultam a API Tempus3 do INE ao vivo — os unicos alvos de derivacao que
-# usam rede. O `derive_ambiguous_series` so consulta as series cujo NOME e ambiguo na
-# Espanha inteira E existe nas 4 provincias (hoje 3 nomes, 18 series), nao as ~8.200.
+# These two query the INE Tempus3 API live — the only derivation targets that use the
+# network. `derive_ambiguous_series` only queries the series whose NAME is ambiguous across
+# all of Spain AND exists in the 4 provinces (today 3 names, 18 series), not the ~8,200.
 seed-municipality-codes:
 	$(PYTHON) scripts/derive_municipality_codes.py
 
 seed-ambiguous-series:
 	$(PYTHON) scripts/derive_ambiguous_series.py
 
-# ---- consulta ---------------------------------------------------------------
-# O retail.duckdb guarda apenas VIEWs sobre o parquet do object storage — nao contem
-# dado. Por isso abri-lo com um cliente qualquer falha com NoSuchBucket: a sessao nova
-# nao sabe o endpoint. Este alvo abre com tudo configurado; `duckdb-secret` resolve de
-# vez, para qualquer cliente.
+# ---- query ------------------------------------------------------------------
+# retail.duckdb holds only VIEWs over the object-storage parquet — it contains no
+# data. That is why opening it with an arbitrary client fails with NoSuchBucket: the new
+# session does not know the endpoint. This target opens it with everything configured;
+# `duckdb-secret` fixes it for good, for any client.
 SQL ?=
 query:
 	@$(PLATFORM_PY) -m retail_platform query $(if $(SQL),"$(SQL)",)
@@ -1075,57 +1057,57 @@ query:
 duckdb-secret:
 	@$(PLATFORM_PY) -m retail_platform duckdb-secret
 
-# ---- espaco em disco ---------------------------------------------------------
-# `data/` e scratch de extracao: depois de land + verify-landing, o object storage e a
-# verdade e a copia local e redundante. Ela nao e pequena — uma particao do INE ocupa
-# entre 264 e 384 MB — e nada nunca era apagado.
+# ---- disk space --------------------------------------------------------------
+# `data/` is extraction scratch: after land + verify-landing, the object storage is the
+# truth and the local copy is redundant. It is not small — an INE partition takes
+# between 264 and 384 MB — and nothing was ever deleted.
 #
-# Deliberadamente NAO encadeado em nenhum *-refresh: apagar dado e decisao de quem opera,
-# nao efeito colateral de um pipeline. A verificacao roda ANTES da remocao e, se reprovar,
-# nada e apagado — nao ha --force.
+# Deliberately NOT chained into any *-refresh: deleting data is the operator's decision,
+# not a side effect of a pipeline. The verification runs BEFORE the removal and, if it
+# fails, nothing is deleted — there is no --force.
 #
 #   make prune-local PARTITION=data/ine/ingestion_date=2026-08-25
 PARTITION ?=
 prune-local:
 	@if [ -z "$(PARTITION)" ]; then \
-	  echo "uso: make prune-local PARTITION=<caminho da particao>"; \
-	  echo "ex.: make prune-local PARTITION=$(INE_DATA_ROOT)/ingestion_date=$(DATE)"; \
+	  echo "usage: make prune-local PARTITION=<partition path>"; \
+	  echo "e.g.:  make prune-local PARTITION=$(INE_DATA_ROOT)/ingestion_date=$(DATE)"; \
 	  exit 2; \
 	fi
 	$(PLATFORM_PY) -m retail_platform prune-local $(PARTITION)
 
 data-usage:
-	@echo "espaco ocupado pelo scratch local (data/):"
-	@du -sh data/* 2>/dev/null | sort -h || echo "  (data/ vazio)"
+	@echo "space taken by the local scratch (data/):"
+	@du -sh data/* 2>/dev/null | sort -h || echo "  (data/ empty)"
 	@echo ""
-	@echo "libere uma particao ja aterrissada com: make prune-local PARTITION=<caminho>"
+	@echo "free an already-landed partition with: make prune-local PARTITION=<path>"
 
-# ---- testes ----------------------------------------------------------------
+# ---- tests -----------------------------------------------------------------
 test: source-test platform-test
 
-# Roda no Python do sistema, sem venv: se este alvo passar, cada Source continua sem
-# nenhuma dependencia de terceiros. E a fronteira sendo verificada, nao afirmada. Duas
-# chamadas explicitas, nao um loop sobre sources/*: a mesma preferencia por repeticao
-# clara em vez de abstracao prematura que ja existia neste Makefile antes do INE.
+# Runs on the system Python, no venv: if this target passes, every Source still has no
+# third-party dependency at all. It is the boundary being verified, not claimed. Two
+# explicit calls, not a loop over sources/*: the same preference for clear repetition
+# over premature abstraction that already existed in this Makefile before INE.
 source-test:
-	@echo "--- Mercadona Catalog Source (sem dependencias) ---"
+	@echo "--- Mercadona Catalog Source (no dependencies) ---"
 	$(MAKE) -C $(MERCADONA_SOURCE_DIR) test
-	@echo "--- INE Population Source (sem dependencias) ---"
+	@echo "--- INE Population Source (no dependencies) ---"
 	$(MAKE) -C $(INE_SOURCE_DIR) test
-	@echo "--- INE Callejero Source (sem dependencias) ---"
+	@echo "--- INE Callejero Source (no dependencies) ---"
 	$(MAKE) -C $(CALLEJERO_SOURCE_DIR) test
-	@echo "--- Simulated OLTP Source (sem dependencias) ---"
+	@echo "--- Simulated OLTP Source (no dependencies) ---"
 	$(MAKE) -C $(OLTP_SOURCE_DIR) test
-	@echo "--- Simulated Orders Source (sem dependencias) ---"
+	@echo "--- Simulated Orders Source (no dependencies) ---"
 	$(MAKE) -C $(ORDERS_SOURCE_DIR) test
 
 platform-test:
-	@echo "--- Plataforma ---"
+	@echo "--- Platform ---"
 	cd platform && ../$(PLATFORM_PY) -m unittest discover -s tests -t .
 
-# So leitura: le data/, o SQL da plataforma e as DAGs, e devolve SIM/PARCIAL/NAO por sinal.
-# E o gatilho que BACKLOG.md exige antes de montar qualquer coletor —
-# "prove useful signals exist" antes de "application -> OTel -> Collector -> backend".
+# Read-only: reads data/, the platform SQL and the DAGs, and returns YES/PARTIAL/NO per signal.
+# It is the trigger BACKLOG.md requires before building any collector —
+# "prove useful signals exist" before "application -> OTel -> Collector -> backend".
 observability-prove-signals:
 	@$(PLATFORM_PY) scripts/prove_observability_signals.py
 
@@ -1134,12 +1116,12 @@ venv:
 	$(PYTHON) -m venv platform/.venv
 	$(PLATFORM_PY) -m pip install --quiet --upgrade pip
 	$(PLATFORM_PY) -m pip install --quiet -e platform/
-	@$(PLATFORM_PY) -c "import boto3, duckdb; print('plataforma pronta')"
+	@$(PLATFORM_PY) -c "import boto3, duckdb; print('platform ready')"
 
-# Chaves aleatorias no .env (que esta no .gitignore). O compose recusa subir sem elas,
-# entao nao existe caminho em que um valor de exemplo vire a chave real por esquecimento.
+# Random keys in .env (which is in .gitignore). Compose refuses to start without them,
+# so there is no path where an example value becomes the real key by oversight.
 secrets:
-	@$(PYTHON) scripts/gen-secrets.py
+	@$(PYTHON) scripts/gen_secrets.py
 
 clean-duckdb:
 	rm -f platform/dbt/retail.duckdb

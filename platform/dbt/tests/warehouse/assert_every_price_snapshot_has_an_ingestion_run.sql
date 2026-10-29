@@ -1,23 +1,23 @@
--- Todo dia com preco tem uma execucao de ingestao correspondente, e vice-versa.
+-- Every day with prices has a corresponding ingestion run, and vice versa.
 --
--- E o que mantem honesta a leitura das lacunas. FACT_INGESTION_RUN e a unica tabela que
--- distingue "nao houve preco" de "nao houve observacao" — mas ela so serve para isso se
--- realmente cobrir todos os dias observados. Duas direcoes, dois erros diferentes:
+-- It is what keeps the reading of gaps honest. FACT_INGESTION_RUN is the only table that
+-- distinguishes "there was no price" from "there was no observation" — but it only serves that purpose if it
+-- really covers every observed day. Two directions, two different errors:
 --
---   * preco sem execucao: dado apareceu sem rastro de como chegou — proveniencia
---     quebrada, e a lacuna deixa de ser explicavel;
---   * execucao completa sem preco: a Source declarou ter aterrissado a particao e o fato
---     esta vazio — perda entre o RAW e o modelo dimensional.
+--   * price without a run: data showed up with no trace of how it arrived — broken
+--     provenance, and the gap is no longer explainable;
+--   * complete run without prices: the Source declared it landed the partition and the fact
+--     is empty — loss between RAW and the dimensional model.
 --
--- So a source do catalogo entra: a de OLTP nao produz preco, e cobrar dela um fato de
--- preco seria comparar coisas diferentes.
+-- Only the catalog source comes in: the OLTP one produces no prices, and demanding a price fact
+-- from it would be comparing different things.
 --
--- O nome e 'mercadona_catalog_api', com o sufixo — e o valor que a Source grava em
--- source.name do manifesto, MEDIDO, nao o nome curto que se imagina ao escrever o teste.
--- Errar isso nao faz o teste falhar por engano: faz o join inteiro nao casar, e o teste
--- reprova TODAS as 14 particoes de uma vez, como se o modelo estivesse quebrado.
+-- The name is 'mercadona_catalog_api', with the suffix — it is the value the Source writes to
+-- source.name in the manifest, MEASURED, not the short name one imagines when writing the test.
+-- Getting this wrong does not make the test fail by mistake: it makes the whole join not match, and the test
+-- fails ALL 14 partitions at once, as if the model were broken.
 --
--- Falha com uma linha por dia/armazem que exista de um lado so.
+-- Fails with one row per day/warehouse that exists on only one side.
 with precos as (
 
     select distinct snapshot_date as ingestion_date, wh

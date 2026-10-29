@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Prova de atomicidade do outbox, contra um Postgres de verdade.
+"""Outbox atomicity proof, against a real Postgres.
 
-POR QUE ESTE ARQUIVO EXISTE, E POR QUE ELE NAO E UM TESTE DE `make test`.
+WHY THIS FILE EXISTS, AND WHY IT IS NOT A `make test` TEST.
 
-`make test` e sem rede — e invariante do repositorio. O duplo em `platform/tests/fake_pg.py`
-prova, offline, que `apply_event` emite a linha do outbox e as mudancas de estado entre o
-mesmo inicio e o mesmo commit. Isso pega o defeito que se comete de verdade (um `commit()`
-a mais no meio), mas NAO prova que `rollback` desfaz alguma coisa: um duplo que desfaz so
-demonstra que o duplo desfaz.
+`make test` is offline — a repository invariant. The double in `platform/tests/fake_pg.py`
+proves, offline, that `apply_event` emits the outbox row and the state changes between the
+same begin and the same commit. That catches the defect people actually make (one extra
+`commit()` in the middle), but it does NOT prove that `rollback` undoes anything: a double
+that undoes only demonstrates that the double undoes.
 
-Atomicidade e propriedade do MOTOR. So se prova contra o motor. E a forma correta de
-prova-la e a mesma que o repositorio ja usa para `verify-landing` e para cada teste dbt:
-FAZER FALHAR DE PROPOSITO e conferir que o estrago nao sobreviveu.
+Atomicity is a property of the ENGINE. It can only be proven against the engine. And the
+right way to prove it is the same the repository already uses for `verify-landing` and for
+every dbt test: MAKE IT FAIL ON PURPOSE and check that the damage did not survive.
 
-A injecao nao mexe no codigo da plataforma — mexe no BANCO. Um trigger que levanta excecao
-no insert do outbox e uma falha que o applier nao pode prever nem tratar, que e exatamente
-o tipo de falha contra a qual a transacao existe.
+The injection does not touch the platform code — it touches the DATABASE. A trigger that
+raises an exception on the outbox insert is a failure the applier can neither foresee nor
+handle, which is exactly the kind of failure transactions exist for.
 
     make orders-prove-atomicity
 """
@@ -40,7 +40,7 @@ from retail_platform.orders_oltp import (  # noqa: E402
 
 BOOM = """
 create or replace function retail_injected_boom() returns trigger
-language plpgsql as $$ begin raise exception 'falha injetada em %', TG_TABLE_NAME; end $$;
+language plpgsql as $$ begin raise exception 'injected failure on %', TG_TABLE_NAME; end $$;
 create trigger retail_injected_boom before insert on {table}
 for each row execute function retail_injected_boom();
 """
@@ -51,7 +51,7 @@ failures = []
 
 
 def check(label: str, condition: bool, detail: str = "") -> None:
-    mark = "OK   " if condition else "FALHA"
+    mark = "OK  " if condition else "FAIL"
     print(f"  [{mark}] {label}{(' — ' + detail) if detail else ''}")
     if not condition:
         failures.append(label)
@@ -82,123 +82,125 @@ def remove(connection, table: str) -> None:
 
 def main(partition: str) -> int:
     events = len(read_log(partition))
-    print(f"particao ......... {partition}")
-    print(f"eventos no log ... {events}")
+    print(f"partition ....... {partition}")
+    print(f"events in log ... {events}")
     print()
 
     with connect() as connection:
-        print("preparando um OLTP vazio...")
+        print("preparing an empty OLTP...")
         drop_schema(connection)
         create_schema(connection)
-        check("o OLTP comeca vazio", counts(connection) == (0, 0, 0))
+        check("the OLTP starts empty", counts(connection) == (0, 0, 0))
         print()
 
-        # ---- 1. a falha esta no OUTBOX; o ESTADO nao pode sobreviver ----------------
-        print("1. trigger que faz o insert no OUTBOX explodir")
+        # ---- 1. the failure is in the OUTBOX; the STATE must not survive -------------
+        print("1. trigger that makes the OUTBOX insert blow up")
         inject(connection, "outbox")
         try:
             apply_partition(connection, partition)
-            check("orders-apply reprovou", False, "aplicou sem erro, o que e o defeito")
+            check("orders-apply failed", False, "applied without error, which is the defect")
         except Exception as exc:
-            check("orders-apply reprovou", True, f"{type(exc).__name__}")
+            check("orders-apply failed", True, f"{type(exc).__name__}")
         remove(connection, "outbox")
         orders, lines, outbox = counts(connection)
-        check("nenhum pedido sobreviveu", orders == 0, f"orders={orders}")
-        check("nenhuma linha sobreviveu", lines == 0, f"order_line={lines}")
-        check("nenhuma linha de outbox", outbox == 0, f"outbox={outbox}")
+        check("no order survived", orders == 0, f"orders={orders}")
+        check("no line survived", lines == 0, f"order_line={lines}")
+        check("no outbox row", outbox == 0, f"outbox={outbox}")
         print()
 
-        # ---- 2. a falha esta no ESTADO; o OUTBOX nao pode sobreviver ----------------
-        # A direcao inversa importa tanto quanto a primeira, e e a que se esquece: um
-        # outbox que sobrevivesse a um estado que nao mudou PUBLICARIA UM EVENTO QUE NUNCA
-        # ACONTECEU. Provar so um dos lados provaria metade do padrao.
-        print("2. trigger que faz o insert em ORDERS explodir")
+        # ---- 2. the failure is in the STATE; the OUTBOX must not survive -------------
+        # The reverse direction matters as much as the first, and it is the one people forget:
+        # an outbox that survived a state that did not change WOULD PUBLISH AN EVENT THAT NEVER
+        # HAPPENED. Proving only one side would prove half of the pattern.
+        print("2. trigger that makes the ORDERS insert blow up")
         inject(connection, "orders")
         try:
             apply_partition(connection, partition)
-            check("orders-apply reprovou", False, "aplicou sem erro, o que e o defeito")
+            check("orders-apply failed", False, "applied without error, which is the defect")
         except Exception as exc:
-            check("orders-apply reprovou", True, f"{type(exc).__name__}")
+            check("orders-apply failed", True, f"{type(exc).__name__}")
         remove(connection, "orders")
         orders, lines, outbox = counts(connection)
-        check("nenhum pedido sobreviveu", orders == 0, f"orders={orders}")
-        check("NENHUMA linha de outbox sobreviveu", outbox == 0, f"outbox={outbox}")
+        check("no order survived", orders == 0, f"orders={orders}")
+        check("NO outbox row survived", outbox == 0, f"outbox={outbox}")
         print()
 
-        # ---- 3. sem injecao: a particao inteira entra --------------------------------
-        print("3. sem injecao — a particao inteira")
+        # ---- 3. no injection: the whole partition goes in ----------------------------
+        print("3. no injection — the whole partition")
         result = apply_partition(connection, partition)
         orders, lines, outbox = counts(connection)
-        check("todo evento do log virou linha de outbox", outbox == events,
+        check("every log event became an outbox row", outbox == events,
               f"outbox={outbox} log={events}")
-        check("exatamente 1 linha de outbox por evento", result.applied == events,
-              f"aplicados={result.applied}")
-        check("nada foi pulado nesta primeira aplicacao", result.skipped == 0)
-        check("os pedidos existem", orders == result.orders, f"orders={orders}")
+        check("exactly 1 outbox row per event", result.applied == events,
+              f"applied={result.applied}")
+        check("nothing was skipped on this first apply", result.skipped == 0)
+        check("the orders exist", orders == result.orders, f"orders={orders}")
         proof = verify_outbox(connection, partition)
-        check("o outbox reconstitui o log byte a byte", proof["matches"],
+        check("the outbox rebuilds the log byte for byte", proof["matches"],
               f"sha256 {proof['outbox_sha256'][:16]}... vs {proof['declared_sha256'][:16]}...")
         print()
 
-        # ---- 4. replay: idempotencia por event_id unico ------------------------------
-        print("4. replay da MESMA particao")
+        # ---- 4. replay: idempotency through unique event_id ---------------------------
+        print("4. replay of the SAME partition")
         again = apply_partition(connection, partition)
         orders2, lines2, outbox2 = counts(connection)
-        check("nada foi aplicado de novo", again.applied == 0, f"aplicados={again.applied}")
-        check("tudo foi reconhecido como ja aplicado", again.skipped == events)
-        check("o outbox nao cresceu", outbox2 == outbox, f"{outbox} -> {outbox2}")
-        check("o estado nao mudou", (orders2, lines2) == (orders, lines))
-        check("o log reconstituido continua identico",
+        check("nothing was applied again", again.applied == 0, f"applied={again.applied}")
+        check("everything was recognized as already applied", again.skipped == events)
+        check("the outbox did not grow", outbox2 == outbox, f"{outbox} -> {outbox2}")
+        check("the state did not change", (orders2, lines2) == (orders, lines))
+        check("the rebuilt log is still identical",
               verify_outbox(connection, partition)["matches"])
         print()
 
-        # ---- 5. a guarda de ordem: o OLTP RECUSA evento fora de ordem ----------------
-        # E esta propriedade que da sentido a `key = order_id` no Kafka do Marco 5. Se o
-        # OLTP aceitasse evento fora de ordem, preservar ordem por pedido no broker seria
-        # enfeite; e porque ele RECUSA que a chave de particao vira exigencia.
-        print("5. guarda de ordem — evento fora de sequencia num pedido novo")
+        # ---- 5. the order guard: the OLTP REFUSES out-of-order events -----------------
+        # This property is what gives meaning to `key = order_id` in the Milestone 5 Kafka. If the
+        # OLTP accepted out-of-order events, preserving per-order ordering in the broker would be
+        # decoration; it is because it REFUSES them that the partition key becomes a requirement.
+        print("5. order guard — out-of-sequence event on a new order")
         log = read_log(partition)
-        futuro = next(
+        future = next(
             ((e, line) for e, line in log if e["sequence_no"] == 2), None
         )
-        if futuro is None:
-            check("ha um evento seq=2 no log para injetar", False)
+        if future is None:
+            check("there is a seq=2 event in the log to inject", False)
         else:
-            evento, linha = futuro
-            forjado = dict(evento)
-            forjado["order_id"] = "ord_inexistente_00000000_999999"
-            forjado["event_id"] = "f" * 32
+            source_event, _source_line = future
+            forged = dict(source_event)
+            forged["order_id"] = "ord_inexistente_00000000_999999"
+            forged["event_id"] = "f" * 32
             import json as _json
-            linha_forjada = _json.dumps(forjado, ensure_ascii=False, sort_keys=True)
+            forged_line = _json.dumps(forged, ensure_ascii=False, sort_keys=True)
             from retail_platform.orders_oltp import apply_event
             try:
-                apply_event(connection, forjado, linha_forjada)
-                check("o OLTP recusou o evento orfao", False, "aceitou, o que e o defeito")
+                apply_event(connection, forged, forged_line)
+                check("the OLTP refused the orphan event", False, "accepted it, which is the defect")
             except OrdersOltpError as exc:
-                check("o OLTP recusou o evento orfao", "fora de ordem" in str(exc),
+                # "fora de ordem" stays in Portuguese: it is the literal message raised by
+                # retail_platform.orders_oltp (pinned by platform/tests/test_orders_oltp.py).
+                check("the OLTP refused the orphan event", "fora de ordem" in str(exc),
                       str(exc)[:80])
             orders3, _, outbox3 = counts(connection)
-            check("a recusa nao deixou linha de outbox para tras", outbox3 == outbox,
+            check("the refusal left no outbox row behind", outbox3 == outbox,
                   f"{outbox} -> {outbox3}")
         print()
 
     print("=" * 78)
     if failures:
-        print(f"REPROVADO: {len(failures)} conferencia(s) falharam:")
+        print(f"FAILED: {len(failures)} check(s) failed:")
         for name in failures:
             print(f"  - {name}")
         return 1
-    print("APROVADO: estado e evento sao atomicos nas duas direcoes, o outbox reconstitui")
-    print("o log byte a byte, o replay e idempotente e evento fora de ordem e recusado.")
+    print("PASSED: state and event are atomic in both directions, the outbox rebuilds")
+    print("the log byte for byte, replay is idempotent and out-of-order events are refused.")
     return 0
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("uso: prove_oltp_atomicity.py <particao-de-pedidos>")
+        print("usage: prove_oltp_atomicity.py <orders-partition>")
         raise SystemExit(2)
     try:
         raise SystemExit(main(sys.argv[1]))
     except OrdersOltpError as exc:
-        print(f"ERRO: {exc}")
+        print(f"ERROR: {exc}")
         raise SystemExit(2)

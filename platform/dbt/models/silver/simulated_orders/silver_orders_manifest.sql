@@ -1,17 +1,18 @@
--- O MANIFESTO COMO TABELA, para que o Silver seja reconciliavel contra o que a Source
--- declarou. Irmao de raw_manifest.sql e de silver_oltp_manifest.sql.
+-- THE MANIFEST AS A TABLE, so that Silver can be reconciled against what the Source
+-- declared. Sibling of raw_manifest.sql and silver_oltp_manifest.sql.
 --
--- GRAO: (ingestion_date, wh). Uma particao, uma linha.
+-- GRAIN: (ingestion_date, wh). One partition, one row.
 --
--- POR QUE ISTO IMPORTA MAIS AQUI DO QUE NAS OUTRAS SOURCES. Nas outras o manifesto declara
--- contagem de linhas de um arquivo; aqui ele declara o FOLD — order_rows, net_amount_picked,
--- substituted_lines. Sao numeros que so existem depois de dobrar o log, e a Source os calculou
--- em Python enquanto o Silver os recalcula em SQL, por caminhos independentes. O teste que
--- cruza os dois fecha manifesto -> RAW -> parquet, e uma divergencia significa que o fold de
--- um dos dois lados esta errado.
+-- WHY THIS MATTERS MORE HERE THAN IN THE OTHER SOURCES. In the others the manifest declares
+-- a file's row count; here it declares the FOLD — order_rows, net_amount_picked,
+-- substituted_lines. These are numbers that only exist after folding the log, and the
+-- Source computed them in Python while Silver recomputes them in SQL, along independent
+-- paths. The test that crosses the two closes manifest -> RAW -> parquet, and a divergence
+-- means the fold on one of the two sides is wrong.
 --
--- `declared_` como prefixo em tudo que veio de `totals`: o nome diz que aquilo e uma
--- AFIRMACAO da Source, e nao uma medida deste modelo. Mesma convencao de silver_oltp_manifest.
+-- `declared_` as a prefix on everything that came from `totals`: the name says it is a
+-- CLAIM by the Source, and not a measurement by this model. Same convention as
+-- silver_oltp_manifest.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_orders_manifest.parquet',
     options = {'overwrite_or_ignore': 1}

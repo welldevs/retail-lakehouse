@@ -1,11 +1,11 @@
--- CADA GRAO DECLARADO NO CABECALHO DO MODELO E, DE FATO, UNICO.
+-- EVERY GRAIN DECLARED IN THE MODEL HEADER IS, IN FACT, UNIQUE.
 --
--- Um grao escrito num comentario e uma promessa; este teste e o que a torna verificavel.
--- Sao os graos que nenhum teste `unique` de coluna unica alcanca, porque sao compostos —
--- e e exatamente onde um join a mais se esconde: o fanout nao falha, so multiplica linhas
--- e infla toda soma a jusante em silencio.
+-- A grain written in a comment is a promise; this test is what makes it verifiable.
+-- They are the grains no single-column `unique` test reaches, because they are composite —
+-- and that is exactly where an extra join hides: fanout does not fail, it just multiplies rows
+-- and silently inflates every downstream sum.
 --
--- Falha com uma linha por chave repetida, dizendo em qual modelo.
+-- Fails with one row per repeated key, saying in which model.
 {% set graos = [
     ('fact_price_snapshot',      ['snapshot_date', 'wh', 'source_product_id']),
     ('fact_price_change',        ['snapshot_date', 'previous_snapshot_date', 'wh', 'source_product_id']),

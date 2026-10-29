@@ -1,24 +1,24 @@
--- A FAIXA CARIMBADA E A QUE A IDADE DO CLIENTE PRODUZ, e este teste a recalcula do zero.
+-- THE STAMPED BAND IS THE ONE THE CUSTOMER'S AGE PRODUCES, and this test recomputes it from scratch.
 --
--- `buyer_age_band` chega ao Silver de dentro do payload de `order_placed`, e nao de um join
--- com `silver_customer`. Isso e deliberado e esta certo — o que importa e a faixa que valia
--- NO MOMENTO DO PEDIDO — mas tem o mesmo preco de `demand_group`: o carimbo nao se corrige
--- sozinho, e um carimbo errado nao quebra nada visivel.
+-- `buyer_age_band` reaches Silver from inside the `order_placed` payload, not from a join
+-- with `silver_customer`. That is deliberate and right — what matters is the band that held
+-- AT THE TIME OF THE ORDER — but it carries the same price as `demand_group`: the stamp does not
+-- correct itself, and a wrong stamp breaks nothing visible.
 --
--- O MODO DE FALHA QUE ISTO PEGA. A faixa e o que ESCOLHE o vetor de pesos que sorteia a
--- cesta. Carimbar `35_49` num cliente de 70 anos faria aquele pedido sair com o mix de uma
--- coorte que nao e a dele: sem erro, sem nulo, com todos os totais fechando, e com um
--- `MART_DEMAND_COHORT` que atribui a fatia errada a faixa errada — exatamente a leitura que
--- o mart existe para permitir.
+-- THE FAILURE MODE THIS CATCHES. The band is what CHOOSES the weight vector that draws the
+-- basket. Stamping `35_49` on a 70-year-old customer would make that order come out with the mix
+-- of a cohort that is not theirs: no error, no null, all totals closing, and a
+-- `MART_DEMAND_COHORT` that assigns the wrong slice to the wrong band — exactly the reading
+-- the mart exists to allow.
 --
--- POR QUE A VARIANTE OBVIA NAO PEGARIA. `buyer_age_band is not null` passaria com folga, e
--- `accepted_values` tambem: um carimbo trocado continua sendo uma das quatro faixas
--- validas. So recalcular contra `birth_year` distingue as duas coisas.
+-- WHY THE OBVIOUS VARIANT WOULD NOT CATCH IT. `buyer_age_band is not null` would pass easily, and
+-- so would `accepted_values`: a swapped stamp is still one of the four valid
+-- bands. Only recomputing against `birth_year` tells the two apart.
 --
--- A IDADE E A DIFERENCA DE ANOS, e nao a data completa. E a mesma convencao com que
--- `birth_year` foi construido na Source de OLTP (`reference_year - idade`) e a mesma que o
--- gerador usa. Comparar com data completa aqui produziria uma segunda definicao de idade e
--- este teste reprovaria por convencao, nao por defeito.
+-- AGE IS THE DIFFERENCE IN YEARS, not the full date. It is the same convention with which
+-- `birth_year` was built in the OLTP Source (`reference_year - age`) and the same the
+-- generator uses. Comparing with the full date here would produce a second definition of age and
+-- this test would fail by convention, not by defect.
 with pedido as (
 
     select

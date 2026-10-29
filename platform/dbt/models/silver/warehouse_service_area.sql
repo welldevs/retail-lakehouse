@@ -1,18 +1,18 @@
--- PASSAGEM do seed para o object storage — mesmo motivo/mecanismo de
--- warehouse_province_map.sql (query.py so escaneia parquet sob silver/, nunca tabela
--- nativa do .duckdb local).
+-- PASS-THROUGH of the seed to object storage — same reason/mechanism as
+-- warehouse_province_map.sql (query.py only scans parquet under silver/, never a native
+-- table of the local .duckdb).
 --
--- warehouse_province_map = ONDE o armazem fica (1 municipio por wh).
--- warehouse_service_area = QUAIS municipios estao na mesma Area Urbana Funcional (INE)
--- do armazem — N municipios por wh, incluindo o proprio municipio-sede
--- (is_home_municipality = true). Derivado e cross-validado contra o Callejero real em
--- scripts/derive_warehouse_service_area.py — ver o docstring de la para a fonte (AUF do
--- INE) e a limitacao conhecida (municipios de fronteira de Madrid/Barcelona fora das
--- provincias 08/28/41/46 nao entram, porque nao foram baixados).
+-- warehouse_province_map = WHERE the warehouse is (1 municipality per wh).
+-- warehouse_service_area = WHICH municipalities are in the same Functional Urban Area (INE)
+-- as the warehouse — N municipalities per wh, including the home municipality itself
+-- (is_home_municipality = true). Derived and cross-validated against the real Callejero in
+-- scripts/derive_warehouse_service_area.py — see the docstring there for the source (INE
+-- FUA) and the known limitation (border municipalities of Madrid/Barcelona outside
+-- provinces 08/28/41/46 are not included, because they were not downloaded).
 --
--- Nao pertence a mercadona/ nem a ine_population/ nem a ine_callejero/: e uma tabela de
--- referencia (dimensao) ortogonal as sources, por isso fica direto sob silver/, igual
--- warehouse_province_map.
+-- It does not belong in mercadona/ nor ine_population/ nor ine_callejero/: it is a
+-- reference table (dimension) orthogonal to the sources, so it sits directly under silver/,
+-- like warehouse_province_map.
 {{ config(
     location = 's3://retail-lakehouse/silver/warehouse_service_area.parquet',
     options = {'overwrite_or_ignore': 1}
