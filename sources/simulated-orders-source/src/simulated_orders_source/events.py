@@ -1,26 +1,26 @@
-"""Vocabulario de eventos, maquina de estados e envelope.
+"""Event vocabulary, state machine and envelope.
 
-E o CONTRATO em codigo. O gerador emite a partir daqui e o validate reconfere a partir daqui
-— um so lugar define o que e um evento valido, entao os dois nao podem divergir.
+This is the CONTRACT in code. The generator emits from here and validate re-checks from here
+— a single place defines what a valid event is, so the two cannot diverge.
 
-O ENVELOPE E DETERMINISTICO E SEM RELOGIO
------------------------------------------
-`event_id` e `sha256(order_id|sequence_no)`, nunca `uuid4()`: nao ha entropia nem relogio
-nesta Source. `occurred_at` deriva da data da particao e dos offsets declarados nas
-premissas, nunca de `datetime.now()`. E a mesma garantia 5 do contrato da Fase 1
-("birth_year deriva de ingestion_date, nunca do relogio"), aplicada ao tempo do evento.
+THE ENVELOPE IS DETERMINISTIC AND CLOCK-FREE
+--------------------------------------------
+`event_id` is `sha256(order_id|sequence_no)`, never `uuid4()`: there is no entropy and no clock
+in this Source. `occurred_at` derives from the partition date and the offsets declared in the
+premises, never from `datetime.now()`. It is the same as guarantee 5 of the Phase 1 contract
+("birth_year derives from ingestion_date, never from the clock"), applied to event time.
 
-`recorded_at` NAO EXISTE aqui, de proposito. Atraso e reordenacao sao propriedades do
-TRANSPORTE, e quem os mede e quem consome — do outro lado do broker, com o proprio relogio.
-Carimba-los aqui seria inventar um atraso que ninguem observou, e ainda destruiria a
-reprodutibilidade byte a byte do log.
+`recorded_at` does NOT exist here, on purpose. Delay and reordering are properties of the
+TRANSPORT, and whoever consumes measures them — on the other side of the broker, with their own
+clock. Stamping them here would invent a delay nobody observed, and would also destroy the
+byte-for-byte reproducibility of the log.
 
-VOCABULARIO: PRESERVAR, NAO PROMETER
--------------------------------------
-`order_line_removed` carrega `reason = "unavailable"`, e nao "out_of_stock". Nao existe fato
-de estoque em nenhuma fonte desta plataforma; nomear como se existisse prometeria um dado que
-ninguem mediu. Mesma disciplina que fez a Fase 1 preservar `numbering_type` do INE em vez de
-inventar um `address_precision`.
+VOCABULARY: PRESERVE, DO NOT PROMISE
+------------------------------------
+`order_line_removed` carries `reason = "unavailable"`, not "out_of_stock". There is no stock
+fact in any source of this platform; naming it as if there were would promise data nobody
+measured. Same discipline that made Phase 1 preserve INE's `numbering_type` instead of
+inventing an `address_precision`.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 
 # ---------------------------------------------------------------------------------
-# Estados
+# States
 # ---------------------------------------------------------------------------------
 
 PLACED = "PLACED"
@@ -55,19 +55,19 @@ STATES = (
     RETURNED,
 )
 
-# Sentinela para um log ADULTERADO ou incompleto. Nao e um estado do dominio: nenhum pedido
-# nasce ou termina aqui. Existe para que CONTAR eventos de um log quebrado seja possivel sem
-# levantar excecao — quem reporta a transicao invalida e a checagem da maquina de estados, e
-# um contador que explode transformaria "particao invalida" (codigo 1) em "excecao nao
-# tratada" (codigo 3), apagando a diferenca entre dado ruim e bug do validador.
+# Sentinel for a TAMPERED or incomplete log. It is not a domain state: no order is born or
+# ends here. It exists so that COUNTING events of a broken log is possible without raising —
+# the state machine check is what reports the invalid transition, and a counter that blows up
+# would turn "invalid partition" (code 1) into "unhandled exception" (code 3), erasing the
+# difference between bad data and a validator bug.
 INVALID = "INVALID"
 
-# Estados dos quais nenhum evento pode sair. `DELIVERED` NAO esta aqui: uma devolucao ainda
-# pode acontecer depois dele, e e justamente por isso que ele nao encerra o pedido.
+# States no event can leave. `DELIVERED` is NOT here: a return can still happen after it,
+# which is exactly why it does not close the order.
 TERMINAL_STATES = (PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED)
 
 # ---------------------------------------------------------------------------------
-# Tipos de evento
+# Event types
 # ---------------------------------------------------------------------------------
 
 ORDER_PLACED = "order_placed"
@@ -98,8 +98,8 @@ EVENT_TYPES = (
     ORDER_RETURNED,
 )
 
-# Estado do pedido DEPOIS de cada evento. Os dois eventos de linha nao mudam o estado do
-# pedido — eles mudam a CESTA, que e o que torna o fold nao-trivial.
+# Order state AFTER each event. The two line events do not change the order state — they
+# change the BASKET, which is what makes the fold non-trivial.
 STATE_AFTER = {
     ORDER_PLACED: PLACED,
     ORDER_PAYMENT_AUTHORIZED: CONFIRMED,
@@ -115,7 +115,7 @@ STATE_AFTER = {
     ORDER_RETURNED: RETURNED,
 }
 
-# Estado exigido ANTES de cada evento. `None` para o evento que abre o agregado.
+# State required BEFORE each event. `None` for the event that opens the aggregate.
 STATE_BEFORE = {
     ORDER_PLACED: (None,),
     ORDER_PAYMENT_AUTHORIZED: (PLACED,),
@@ -131,7 +131,7 @@ STATE_BEFORE = {
     ORDER_RETURNED: (DELIVERED,),
 }
 
-# Campos do envelope, presentes em TODO evento e sempre com estes nomes.
+# Envelope fields, present in EVERY event and always with these names.
 ENVELOPE_FIELDS = (
     "event_id",
     "event_type",
@@ -146,7 +146,7 @@ ENVELOPE_FIELDS = (
 
 EVENT_VERSION = 1
 
-# Vocabularios fechados dos payloads.
+# Closed payload vocabularies.
 CANCELLED_BY = ("customer", "system")
 CANCEL_REASONS = ("changed_mind", "slot_no_longer_suitable", "duplicate_order")
 DECLINE_REASONS = ("insufficient_funds", "card_expired", "issuer_declined")
@@ -161,15 +161,15 @@ LINE_STATUSES = (LINE_FULFILLED, LINE_SUBSTITUTED, LINE_REMOVED)
 
 
 class EventError(Exception):
-    """Evento fora do vocabulario, ou transicao que a maquina de estados nao permite."""
+    """Event outside the vocabulary, or a transition the state machine does not allow."""
 
 
 def event_id(order_id: str, sequence_no: int) -> str:
-    """Identidade deterministica do evento.
+    """Deterministic event identity.
 
-    Derivada do agregado e da posicao, e nao de relogio ou entropia: reexecutar a mesma
-    (referencia, premissas, seed, dia, armazem) tem de produzir os MESMOS event_id, senao o
-    consumidor a jusante nao consegue deduplicar entre replays.
+    Derived from the aggregate and the position, not from a clock or entropy: re-running the
+    same (reference, premises, seed, day, warehouse) must produce the SAME event_id, otherwise
+    the downstream consumer cannot deduplicate across replays.
     """
     blob = f"{order_id}|{sequence_no}".encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:32]
@@ -185,7 +185,7 @@ def envelope(
     producer: str,
 ) -> dict:
     if event_type not in STATE_AFTER:
-        raise EventError(f"tipo de evento fora do vocabulario: {event_type!r}")
+        raise EventError(f"event type outside the vocabulary: {event_type!r}")
     return {
         "event_id": event_id(order_id, sequence_no),
         "event_type": event_type,
@@ -200,36 +200,36 @@ def envelope(
 
 
 def apply_transition(state, event_type: str) -> str:
-    """Aplica um evento a um estado. Levanta EventError se a transicao nao existir.
+    """Apply an event to a state. Raises EventError if the transition does not exist.
 
-    E a mesma funcao que o gerador usa para construir e que o validate usa para reconferir,
-    de proposito: um gerador que emitisse uma transicao invalida seria pego pelo seu proprio
-    vocabulario, e nao apenas por um teste dbt tres camadas adiante.
+    It is the same function the generator uses to build and validate uses to re-check, on
+    purpose: a generator that emitted an invalid transition would be caught by its own
+    vocabulary, not only by a dbt test three layers further down.
     """
     allowed = STATE_BEFORE.get(event_type)
     if allowed is None:
-        raise EventError(f"tipo de evento fora do vocabulario: {event_type!r}")
+        raise EventError(f"event type outside the vocabulary: {event_type!r}")
     if state in TERMINAL_STATES:
         raise EventError(
-            f"evento {event_type!r} depois do estado terminal {state!r}: um agregado "
-            f"encerrado nao recebe mais evento"
+            f"event {event_type!r} after terminal state {state!r}: a closed "
+            f"aggregate receives no more events"
         )
     if state not in allowed:
         raise EventError(
-            f"transicao invalida: {event_type!r} exige estado em {allowed}, mas o pedido "
-            f"esta em {state!r}"
+            f"invalid transition: {event_type!r} requires a state in {allowed}, but the order "
+            f"is in {state!r}"
         )
     return STATE_AFTER[event_type]
 
 
 def fold(events, strict: bool = True) -> str:
-    """Estado resultante de uma sequencia de eventos de UM pedido, em ordem.
+    """Resulting state of a sequence of events of ONE order, in order.
 
-    `strict=True` (padrao) levanta EventError na primeira transicao invalida: e o que o
-    gerador usa, porque emitir uma transicao impossivel e bug do gerador.
+    `strict=True` (default) raises EventError on the first invalid transition: that is what the
+    generator uses, because emitting an impossible transition is a generator bug.
 
-    `strict=False` devolve o sentinela INVALID e para: e o que um CONTADOR usa, porque contar
-    um log adulterado tem de produzir um numero divergente, e nao uma excecao.
+    `strict=False` returns the INVALID sentinel and stops: that is what a COUNTER uses, because
+    counting a tampered log must produce a diverging number, not an exception.
     """
     state = None
     for event in events:

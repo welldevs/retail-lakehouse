@@ -1,9 +1,9 @@
-"""O sorteio ponderado do grupo de demanda.
+"""The weighted draw of the demand group.
 
-Cada teste aqui nomeia o modo de falha que pega E por que a variante obvia nao pegaria. A
-classe de defeito que ronda este modulo e sempre a mesma: uma CDF errada, um peso trocado ou
-uma ordem instavel produzem um mix PLAUSIVEL. Nada estoura, nenhum total fecha errado, e o
-erro so aparece meses depois num grafico que ninguem sabe explicar.
+Each test here names the failure mode it catches AND why the obvious variant would not catch
+it. The class of defect that haunts this module is always the same: a wrong CDF, a swapped
+weight or an unstable order produce a PLAUSIBLE mix. Nothing blows up, no total comes out
+wrong, and the error only shows up months later in a chart nobody can explain.
 """
 
 from __future__ import annotations
@@ -21,140 +21,140 @@ from .support import WH, demand_payload
 PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
-class CargaTest(unittest.TestCase):
-    def test_perfil_valido_carrega(self):
-        modelo = DemandModel(demand_payload())
-        self.assertEqual(modelo.version, "fixture_v1")
-        self.assertEqual(modelo.groups, ("GRUPO_A", "GRUPO_B", "GRUPO_C"))
-        self.assertAlmostEqual(sum(modelo.weights.values()), 1.0)
+class LoadTest(unittest.TestCase):
+    def test_valid_profile_loads(self):
+        model = DemandModel(demand_payload())
+        self.assertEqual(model.version, "fixture_v1")
+        self.assertEqual(model.groups, ("GROUP_A", "GROUP_B", "GROUP_C"))
+        self.assertAlmostEqual(sum(model.weights.values()), 1.0)
 
-    def test_pesos_que_nao_somam_um_reprovam(self):
-        # PERFIL TRUNCADO. Este e o defeito mais provavel de todos: alguem edita o seed,
-        # remove uma linha e o resto continua parecendo certo. Sem esta checagem o sorteio
-        # simplesmente ignoraria o grupo que sumiu, e o mix seria plausivel.
+    def test_weights_not_summing_to_one_fail(self):
+        # TRUNCATED PROFILE. This is the most likely defect of all: someone edits the seed,
+        # removes a row and the rest still looks right. Without this check the draw would
+        # simply ignore the group that vanished, and the mix would look plausible.
         with self.assertRaises(DemandError) as caught:
-            DemandModel(demand_payload(weights={"GRUPO_A": "0.6", "GRUPO_B": "0.3"}))
-        self.assertIn("somam", str(caught.exception))
+            DemandModel(demand_payload(weights={"GROUP_A": "0.6", "GROUP_B": "0.3"}))
+        self.assertIn("sum to", str(caught.exception))
 
-    def test_peso_negativo_reprova(self):
+    def test_negative_weight_fails(self):
         with self.assertRaises(DemandError):
-            DemandModel(demand_payload(weights={"GRUPO_A": "1.3", "GRUPO_B": "-0.3"}))
+            DemandModel(demand_payload(weights={"GROUP_A": "1.3", "GROUP_B": "-0.3"}))
 
-    def test_perfil_sem_versao_reprova(self):
+    def test_profile_without_version_fails(self):
         payload = demand_payload()
         del payload["demand_model_version"]
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
         self.assertIn("demand_model_version", str(caught.exception))
 
-    def test_grupo_repetido_reprova(self):
+    def test_duplicate_group_fails(self):
         payload = demand_payload()
-        payload["groups"].append({"demand_group": "GRUPO_A", "line_weight": "0.0"})
+        payload["groups"].append({"demand_group": "GROUP_A", "line_weight": "0.0"})
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
-        self.assertIn("repetido", str(caught.exception))
+        self.assertIn("duplicate", str(caught.exception))
 
-    def test_grupo_sem_peso_reprova_na_consulta(self):
-        # NAO EXISTE PESO PADRAO. Um `.get(grupo, 0)` aqui seria uma premissa de demanda nao
-        # declarada — o grupo desapareceria da cesta sem que nada avisasse.
-        modelo = DemandModel(demand_payload())
+    def test_group_without_weight_fails_on_lookup(self):
+        # THERE IS NO DEFAULT WEIGHT. A `.get(group, 0)` here would be an undeclared demand
+        # premise — the group would vanish from the basket without any warning.
+        model = DemandModel(demand_payload())
         with self.assertRaises(DemandError) as caught:
-            modelo.weight_of("GRUPO_INEXISTENTE")
-        self.assertIn("nao tem peso", str(caught.exception))
+            model.weight_of("NONEXISTENT_GROUP")
+        self.assertIn("has no weight", str(caught.exception))
 
 
-class SorteioTest(unittest.TestCase):
+class DrawTest(unittest.TestCase):
     def setUp(self):
-        self.modelo = DemandModel(demand_payload())
-        self.disponiveis = self.modelo.groups
-        self.cdf = self.modelo.cumulative(self.disponiveis)
+        self.model = DemandModel(demand_payload())
+        self.available = self.model.groups
+        self.cdf = self.model.cumulative(self.available)
 
-    def test_cdf_termina_em_um_e_e_crescente(self):
+    def test_cdf_ends_at_one_and_is_increasing(self):
         self.assertAlmostEqual(self.cdf[-1], 1.0)
         self.assertEqual(list(self.cdf), sorted(self.cdf))
 
-    def test_converge_para_os_pesos_declarados(self):
-        # O TESTE CENTRAL. Uma CDF invertida, um indice deslocado em um ou uma normalizacao
-        # pelo total errado produzem todos um sorteio que FUNCIONA — devolve grupos validos,
-        # nunca estoura — com as proporcoes erradas. Comparar contra os pesos declarados e a
-        # unica forma de distinguir.
+    def test_converges_to_declared_weights(self):
+        # THE CENTRAL TEST. An inverted CDF, an off-by-one index or a normalization by the
+        # wrong total all produce a draw that WORKS — returns valid groups, never blows up —
+        # with the wrong proportions. Comparing against the declared weights is the only way
+        # to tell them apart.
         #
-        # A variante obvia ("sorteia sem erro") passaria em todas as tres implementacoes
-        # erradas. 60.000 extracoes deixam o erro amostral em torno de 0,2 ponto para o
-        # grupo de 0,6; a tolerancia de 1 ponto e folgada o suficiente para nao piscar e
-        # estreita o suficiente para pegar uma troca de pesos entre dois grupos.
+        # The obvious variant ("draws without error") would pass on all three wrong
+        # implementations. 60,000 draws leave the sampling error around 0.2 points for the
+        # 0.6 group; the 1-point tolerance is loose enough not to flicker and tight enough
+        # to catch a weight swap between two groups.
         rng = random.Random(20260831)
-        contagem = {g: 0 for g in self.disponiveis}
-        extracoes = 60000
-        for _ in range(extracoes):
-            contagem[self.modelo.pick(rng, self.disponiveis, self.cdf)] += 1
-        for grupo, esperado in (("GRUPO_A", 0.6), ("GRUPO_B", 0.3), ("GRUPO_C", 0.1)):
-            observado = contagem[grupo] / extracoes
+        counts = {g: 0 for g in self.available}
+        draws = 60000
+        for _ in range(draws):
+            counts[self.model.pick(rng, self.available, self.cdf)] += 1
+        for group, expected in (("GROUP_A", 0.6), ("GROUP_B", 0.3), ("GROUP_C", 0.1)):
+            observed = counts[group] / draws
             self.assertAlmostEqual(
-                observado, esperado, delta=0.01,
-                msg=f"{grupo}: esperado ~{esperado}, observado {observado:.4f}",
+                observed, expected, delta=0.01,
+                msg=f"{group}: expected ~{expected}, observed {observed:.4f}",
             )
 
-    def test_pesos_trocados_entre_si_sao_detectados(self):
-        # Prova que o teste acima REPROVA de fato, e nao passa por ser frouxo: com A e C
-        # trocados, a proporcao de A cai de 0,6 para 0,1.
-        modelo = DemandModel(
-            demand_payload(weights={"GRUPO_A": "0.1", "GRUPO_B": "0.3", "GRUPO_C": "0.6"})
+    def test_swapped_weights_are_detected(self):
+        # Proves the test above actually FAILS, and does not pass by being loose: with A and C
+        # swapped, A's share drops from 0.6 to 0.1.
+        model = DemandModel(
+            demand_payload(weights={"GROUP_A": "0.1", "GROUP_B": "0.3", "GROUP_C": "0.6"})
         )
-        cdf = modelo.cumulative(modelo.groups)
+        cdf = model.cumulative(model.groups)
         rng = random.Random(20260831)
-        contagem = {g: 0 for g in modelo.groups}
+        counts = {g: 0 for g in model.groups}
         for _ in range(20000):
-            contagem[modelo.pick(rng, modelo.groups, cdf)] += 1
-        self.assertLess(contagem["GRUPO_A"] / 20000, 0.2)
+            counts[model.pick(rng, model.groups, cdf)] += 1
+        self.assertLess(counts["GROUP_A"] / 20000, 0.2)
 
-    def test_subconjunto_e_renormalizado(self):
-        # Um grupo pode nao ter produto num (armazem, dia). O peso dele tem de ser
-        # redistribuido na PROPORCAO dos presentes, nao dividido igualmente: dividir igual
-        # apagaria a calibracao justamente no armazem com sortimento menor.
-        parcial = ("GRUPO_A", "GRUPO_B")
-        cdf = self.modelo.cumulative(parcial)
+    def test_subset_is_renormalized(self):
+        # A group may have no product in a (warehouse, day). Its weight must be redistributed
+        # in PROPORTION to those present, not split equally: splitting equally would erase the
+        # calibration precisely in the warehouse with the smaller assortment.
+        partial = ("GROUP_A", "GROUP_B")
+        cdf = self.model.cumulative(partial)
         self.assertAlmostEqual(cdf[0], 0.6 / 0.9, places=6)
         self.assertAlmostEqual(cdf[-1], 1.0)
 
-    def test_subconjunto_de_peso_zero_reprova(self):
-        modelo = DemandModel(
-            demand_payload(weights={"GRUPO_A": "1.0", "GRUPO_B": "0.0", "GRUPO_C": "0.0"})
+    def test_zero_weight_subset_fails(self):
+        model = DemandModel(
+            demand_payload(weights={"GROUP_A": "1.0", "GROUP_B": "0.0", "GROUP_C": "0.0"})
         )
         with self.assertRaises(DemandError) as caught:
-            modelo.cumulative(("GRUPO_B", "GRUPO_C"))
-        self.assertIn("peso zero", str(caught.exception))
+            model.cumulative(("GROUP_B", "GROUP_C"))
+        self.assertIn("zero weight", str(caught.exception))
 
-    def test_lista_vazia_reprova(self):
+    def test_empty_list_fails(self):
         with self.assertRaises(DemandError):
-            self.modelo.cumulative(())
+            self.model.cumulative(())
 
-    def test_uma_extracao_de_rng_por_sorteio(self):
-        # A reprodutibilidade por seed depende de QUANTAS vezes o rng e chamado, nao apenas
-        # de com que seed ele comecou. Se `pick` passar a consumir duas extracoes, todo
-        # pedido gerado depois dele muda — e o sha256 da particao muda sem que nada no
-        # modelo tenha mudado.
-        class Contador:
+    def test_one_rng_draw_per_pick(self):
+        # Per-seed reproducibility depends on HOW MANY times the rng is called, not only on
+        # which seed it started with. If `pick` started consuming two draws, every order
+        # generated after it would change — and the partition sha256 would change without
+        # anything in the model having changed.
+        class Counter:
             def __init__(self):
-                self.chamadas = 0
+                self.calls = 0
                 self._rng = random.Random(1)
 
             def random(self):
-                self.chamadas += 1
+                self.calls += 1
                 return self._rng.random()
 
-        contador = Contador()
+        counter = Counter()
         for _ in range(50):
-            self.modelo.pick(contador, self.disponiveis, self.cdf)
-        self.assertEqual(contador.chamadas, 50)
+            self.model.pick(counter, self.available, self.cdf)
+        self.assertEqual(counter.calls, 50)
 
 
-class DeterminismoTest(unittest.TestCase):
-    def test_nao_depende_de_pythonhashseed(self):
-        # A CDF e construida a partir de uma TUPLA ORDENADA, nunca da iteracao de um dict.
-        # O hash de str em CPython e aleatorizado por processo: uma CDF montada na ordem de
-        # iteracao de um dicionario faria a saida depender da variavel de ambiente, e o
-        # defeito apareceria como divergencia ENTRE MAQUINAS — a mais caro de diagnosticar.
+class DeterminismTest(unittest.TestCase):
+    def test_does_not_depend_on_pythonhashseed(self):
+        # The CDF is built from a SORTED TUPLE, never from iterating a dict. CPython's str
+        # hash is randomized per process: a CDF built in a dictionary's iteration order would
+        # make the output depend on the environment variable, and the defect would show up as
+        # divergence ACROSS MACHINES — the most expensive kind to diagnose.
         code = (
             "import sys, random, json; sys.path.insert(0, 'src'); sys.path.insert(0, '.');"
             "from simulated_orders_source.demand import DemandModel;"
@@ -164,7 +164,7 @@ class DeterminismoTest(unittest.TestCase):
             "r = random.Random(99);"
             "print(''.join(m.pick(r, m.groups, cdf)[-1] for _ in range(200)))"
         )
-        saidas = {
+        outputs = {
             subprocess.run(
                 [sys.executable, "-c", code],
                 capture_output=True,
@@ -174,148 +174,149 @@ class DeterminismoTest(unittest.TestCase):
             ).stdout.strip()
             for seed in (0, 13, 5150)
         }
-        self.assertEqual(len(saidas), 1, f"sorteio variou entre processos: {saidas}")
-        self.assertTrue(saidas.pop(), "o subprocesso nao produziu saida")
+        self.assertEqual(len(outputs), 1, f"draw varied across processes: {outputs}")
+        self.assertTrue(outputs.pop(), "the subprocess produced no output")
 
 
-class SazonalidadeTest(unittest.TestCase):
-    def test_perfil_neutro_e_no_op(self):
-        modelo = DemandModel(demand_payload())
+class SeasonalityTest(unittest.TestCase):
+    def test_neutral_profile_is_no_op(self):
+        model = DemandModel(demand_payload())
         self.assertEqual(
-            [modelo.seasonal_factor(m) for m in range(1, 13)], [1.0] * 12
+            [model.seasonal_factor(m) for m in range(1, 13)], [1.0] * 12
         )
 
-    def test_perfil_nao_neutro_muda_a_saida(self):
-        # O PAR COM O TESTE ACIMA E O QUE VALE. Sozinho, "neutro e no-op" passaria tambem
-        # numa implementacao que IGNORA o perfil sazonal — um slot inerte, entregue como se
-        # funcionasse. Este teste prova que o mecanismo existe; o outro prova que o perfil
-        # entregue esta neutro de proposito.
-        fatores = {m: (1.4 if m == 12 else 1.0) for m in range(1, 13)}
-        modelo = DemandModel(demand_payload(seasonality=fatores))
-        self.assertEqual(modelo.seasonal_factor(12), 1.4)
-        self.assertEqual(modelo.seasonal_factor(8), 1.0)
+    def test_non_neutral_profile_changes_the_output(self):
+        # THE PAIR WITH THE TEST ABOVE IS WHAT COUNTS. Alone, "neutral is a no-op" would also
+        # pass on an implementation that IGNORES the seasonal profile — an inert slot,
+        # delivered as if it worked. This test proves the mechanism exists; the other proves
+        # the delivered profile is neutral on purpose.
+        factors = {m: (1.4 if m == 12 else 1.0) for m in range(1, 13)}
+        model = DemandModel(demand_payload(seasonality=factors))
+        self.assertEqual(model.seasonal_factor(12), 1.4)
+        self.assertEqual(model.seasonal_factor(8), 1.0)
 
-    def test_perfil_sazonal_incompleto_reprova(self):
+    def test_incomplete_seasonal_profile_fails(self):
         payload = demand_payload()
         del payload["seasonality"]["7"]
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
-        self.assertIn("12 meses", str(caught.exception))
+        self.assertIn("12 months", str(caught.exception))
 
-    def test_mes_ausente_na_consulta_reprova(self):
-        modelo = DemandModel(demand_payload())
+    def test_missing_month_on_lookup_fails(self):
+        model = DemandModel(demand_payload())
         with self.assertRaises(DemandError):
-            modelo.seasonal_factor(13)
+            model.seasonal_factor(13)
 
 
-class CoorteTest(unittest.TestCase):
-    """A propensao por coorte: (faixa etaria x comunidade autonoma) -> pesos.
+class CohortTest(unittest.TestCase):
+    """Per-cohort propensity: (age band x autonomous community) -> weights.
 
-    O modo de falha que ronda esta secao e o mais barato de cometer e o mais caro de
-    encontrar: o codigo LE a coorte, ignora, e continua sorteando pelo vetor agregado. Tudo
-    soma 1, nenhum total quebra, e o painel mostra um mix perfeitamente plausivel em que
-    idoso e jovem compram exatamente a mesma coisa.
+    The failure mode that haunts this section is the cheapest to commit and the most expensive
+    to find: the code READS the cohort, ignores it, and keeps drawing from the aggregate
+    vector. Everything sums to 1, no total breaks, and the dashboard shows a perfectly
+    plausible mix in which old and young buy exactly the same thing.
     """
 
-    def test_pesos_de_toda_coorte_somam_um(self):
-        modelo = DemandModel(demand_payload())
-        for coorte in modelo.cohorts:
-            total = sum(modelo.cohort_weights[coorte].values())
-            self.assertAlmostEqual(total, 1.0, places=9, msg=coorte)
+    def test_every_cohort_weights_sum_to_one(self):
+        model = DemandModel(demand_payload())
+        for cohort in model.cohorts:
+            total = sum(model.cohort_weights[cohort].values())
+            self.assertAlmostEqual(total, 1.0, places=9, msg=cohort)
 
-    def test_coorte_com_vetor_truncado_reprova(self):
-        # Um vetor que perde um grupo NAO soma 1, e sortear com ele daria mais peso a todos
-        # os outros — plausivel, e invisivel num total por armazem.
+    def test_cohort_with_truncated_vector_fails(self):
+        # A vector that loses a group does NOT sum to 1, and drawing with it would give more
+        # weight to all the others — plausible, and invisible in a per-warehouse total.
         payload = demand_payload()
         payload["cohorts"]["weights"][0]["groups"].pop()
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
-        self.assertIn("somam", str(caught.exception))
+        self.assertIn("sum to", str(caught.exception))
 
-    def test_perfil_sem_secao_de_coorte_reprova(self):
-        # Sem isto, um perfil da versao anterior carregaria sob a versao nova e o sorteio
-        # cairia no vetor agregado. Seria um no-op silencioso — o pior resultado possivel
-        # para uma camada cujo criterio de sucesso e nao mover o agregado.
+    def test_profile_without_cohort_section_fails(self):
+        # Without this, a previous-version profile would load under the new version and the
+        # draw would fall back to the aggregate vector. It would be a silent no-op — the worst
+        # possible outcome for a layer whose success criterion is not moving the aggregate.
         payload = demand_payload()
         del payload["cohorts"]
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
         self.assertIn("cohorts", str(caught.exception))
 
-    def test_faixa_etaria_pela_idade(self):
-        modelo = DemandModel(demand_payload())
-        self.assertEqual(modelo.band_of(18), "LT35")
-        self.assertEqual(modelo.band_of(34), "LT35")
-        self.assertEqual(modelo.band_of(35), "35_49")
-        self.assertEqual(modelo.band_of(49), "35_49")
-        self.assertEqual(modelo.band_of(50), "50_64")
-        self.assertEqual(modelo.band_of(64), "50_64")
-        self.assertEqual(modelo.band_of(65), "GE65")
-        self.assertEqual(modelo.band_of(101), "GE65")
+    def test_age_band_by_age(self):
+        model = DemandModel(demand_payload())
+        self.assertEqual(model.band_of(18), "LT35")
+        self.assertEqual(model.band_of(34), "LT35")
+        self.assertEqual(model.band_of(35), "35_49")
+        self.assertEqual(model.band_of(49), "35_49")
+        self.assertEqual(model.band_of(50), "50_64")
+        self.assertEqual(model.band_of(64), "50_64")
+        self.assertEqual(model.band_of(65), "GE65")
+        self.assertEqual(model.band_of(101), "GE65")
 
-    def test_faixas_sem_topo_aberto_reprovam(self):
-        # Sem exatamente uma faixa de teto nulo, `band_of` nao teria onde por quem passa do
-        # ultimo limite — e devolver a ultima faixa por acaso da ordem do JSON seria pior.
+    def test_bands_without_open_top_fail(self):
+        # Without exactly one band with a null ceiling, `band_of` would have nowhere to put
+        # whoever is past the last bound — and returning the last band by accident of JSON
+        # order would be worse.
         payload = demand_payload()
-        for banda in payload["cohorts"]["age_bands"]:
-            if banda["max_age"] is None:
-                banda["max_age"] = 99
+        for band in payload["cohorts"]["age_bands"]:
+            if band["max_age"] is None:
+                band["max_age"] = 99
         with self.assertRaises(DemandError) as caught:
             DemandModel(payload)
-        self.assertIn("aberta", str(caught.exception))
+        self.assertIn("open", str(caught.exception))
 
-    def test_coorte_desconhecida_reprova(self):
-        modelo = DemandModel(demand_payload())
+    def test_unknown_cohort_fails(self):
+        model = DemandModel(demand_payload())
         with self.assertRaises(DemandError):
-            modelo.cumulative(modelo.groups, "GE65|99")
+            model.cumulative(model.groups, "GE65|99")
         with self.assertRaises(DemandError) as caught:
-            modelo.region_of("wh_inexistente")
-        self.assertIn("comunidade", str(caught.exception))
+            model.region_of("wh_nonexistent")
+        self.assertIn("community", str(caught.exception))
 
-    def test_matriz_plana_reproduz_o_sorteio_agregado(self):
-        # Prova que a mudanca esta no PERFIL, e nao escondida no codigo: com todas as
-        # coortes carregando o vetor agregado, a sequencia sorteada tem de ser identica a
-        # que o sorteio sem coorte produziria com a mesma seed.
-        modelo = DemandModel(demand_payload())
-        disponiveis = modelo.groups
+    def test_flat_matrix_reproduces_the_aggregate_draw(self):
+        # Proves the change is in the PROFILE, not hidden in the code: with every cohort
+        # carrying the aggregate vector, the drawn sequence must be identical to what the
+        # cohort-less draw would produce with the same seed.
+        model = DemandModel(demand_payload())
+        available = model.groups
 
         rng_a = random.Random(20260901)
-        agregado = modelo.cumulative(disponiveis)
-        saida_a = [modelo.pick(rng_a, disponiveis, agregado) for _ in range(500)]
+        aggregate = model.cumulative(available)
+        output_a = [model.pick(rng_a, available, aggregate) for _ in range(500)]
 
         rng_b = random.Random(20260901)
-        por_coorte = modelo.cumulative(disponiveis, f"GE65|{modelo.region_of(WH)}")
-        saida_b = [modelo.pick(rng_b, disponiveis, por_coorte) for _ in range(500)]
+        per_cohort = model.cumulative(available, f"GE65|{model.region_of(WH)}")
+        output_b = [model.pick(rng_b, available, per_cohort) for _ in range(500)]
 
-        self.assertEqual(saida_a, saida_b)
+        self.assertEqual(output_a, output_b)
 
-    def test_duas_coortes_com_pesos_diferentes_sorteiam_diferente(self):
-        # O PAR COM O TESTE ACIMA E O QUE VALE, exatamente como no perfil sazonal. Sozinho,
-        # "matriz plana reproduz o agregado" passaria tambem numa implementacao que IGNORA a
-        # coorte. Este prova que o mecanismo existe.
-        jovem = {"GRUPO_A": "0.1", "GRUPO_B": "0.2", "GRUPO_C": "0.7"}
-        idoso = {"GRUPO_A": "0.8", "GRUPO_B": "0.15", "GRUPO_C": "0.05"}
-        vetores = {}
+    def test_two_cohorts_with_different_weights_draw_differently(self):
+        # THE PAIR WITH THE TEST ABOVE IS WHAT COUNTS, exactly as with the seasonal profile.
+        # Alone, "flat matrix reproduces the aggregate" would also pass on an implementation
+        # that IGNORES the cohort. This one proves the mechanism exists.
+        young = {"GROUP_A": "0.1", "GROUP_B": "0.2", "GROUP_C": "0.7"}
+        old = {"GROUP_A": "0.8", "GROUP_B": "0.15", "GROUP_C": "0.05"}
+        vectors = {}
         for ccaa in ("13", "09"):
-            for banda in ("LT35", "35_49", "50_64", "GE65"):
-                vetores[f"{banda}|{ccaa}"] = idoso if banda == "GE65" else jovem
-        modelo = DemandModel(demand_payload(cohort_weights=vetores))
+            for band in ("LT35", "35_49", "50_64", "GE65"):
+                vectors[f"{band}|{ccaa}"] = old if band == "GE65" else young
+        model = DemandModel(demand_payload(cohort_weights=vectors))
 
-        def mix(coorte):
+        def mix(cohort):
             rng = random.Random(7)
-            cdf = modelo.cumulative(modelo.groups, coorte)
-            saida = [modelo.pick(rng, modelo.groups, cdf) for _ in range(4000)]
-            return saida.count("GRUPO_A") / len(saida)
+            cdf = model.cumulative(model.groups, cohort)
+            output = [model.pick(rng, model.groups, cdf) for _ in range(4000)]
+            return output.count("GROUP_A") / len(output)
 
         self.assertGreater(mix("GE65|13"), 0.7)
         self.assertLess(mix("LT35|13"), 0.2)
 
-    def test_cdf_por_coorte_nao_depende_de_pythonhashseed(self):
-        # Mesma armadilha do sorteio agregado, um nivel acima. O alvo e a iteracao de um
-        # `set`: o hash de `str` em CPython e aleatorizado por processo, entao uma tupla de
-        # coortes ou de faixas derivada de um set sai em ordem diferente a cada execucao. A
-        # saida so muda entre PROCESSOS, nunca dentro de um — por isso o teste roda tres
-        # subprocessos com PYTHONHASHSEED distinto em vez de repetir a chamada aqui.
+    def test_per_cohort_cdf_does_not_depend_on_pythonhashseed(self):
+        # Same trap as the aggregate draw, one level up. The target is iterating a `set`:
+        # CPython's `str` hash is randomized per process, so a tuple of cohorts or bands
+        # derived from a set comes out in a different order on each run. The output only
+        # changes across PROCESSES, never within one — that is why the test runs three
+        # subprocesses with distinct PYTHONHASHSEED instead of repeating the call here.
         script = (
             "import json,random;"
             "from simulated_orders_source.demand import DemandModel;"
@@ -329,21 +330,21 @@ class CoorteTest(unittest.TestCase):
         )
         import json as _json
         payload = _json.dumps(demand_payload())
-        saidas = set()
-        for semente in ("0", "1", "424242"):
-            ambiente = dict(os.environ, PYTHONHASHSEED=semente, PYTHONPATH="src")
-            resultado = subprocess.run(
+        outputs = set()
+        for seed_value in ("0", "1", "424242"):
+            environment = dict(os.environ, PYTHONHASHSEED=seed_value, PYTHONPATH="src")
+            result = subprocess.run(
                 [sys.executable, "-c", script],
-                cwd=PACKAGE_DIR, env=ambiente, input=payload,
+                cwd=PACKAGE_DIR, env=environment, input=payload,
                 capture_output=True, text=True, check=True,
             )
-            saidas.add(resultado.stdout.strip())
-        self.assertEqual(len(saidas), 1, f"saidas divergentes: {saidas}")
+            outputs.add(result.stdout.strip())
+        self.assertEqual(len(outputs), 1, f"diverging outputs: {outputs}")
 
-    def test_indice_de_frequencia_e_por_armazem(self):
-        modelo = DemandModel(demand_payload(frequency={"13": "0.9", "09": "1.1"}))
-        self.assertAlmostEqual(modelo.frequency_index("mad1"), 0.9)
-        self.assertAlmostEqual(modelo.frequency_index("bcn1"), 1.1)
+    def test_frequency_index_is_per_warehouse(self):
+        model = DemandModel(demand_payload(frequency={"13": "0.9", "09": "1.1"}))
+        self.assertAlmostEqual(model.frequency_index("mad1"), 0.9)
+        self.assertAlmostEqual(model.frequency_index("bcn1"), 1.1)
 
 
 if __name__ == "__main__":

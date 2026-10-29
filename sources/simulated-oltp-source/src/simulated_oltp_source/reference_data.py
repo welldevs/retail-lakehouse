@@ -1,15 +1,15 @@
-"""Leitura e validacao estrutural do arquivo de referencia geografica/demografica.
+"""Reading and structural validation of the geographic/demographic reference file.
 
-A Source nao fala com o Lakehouse: ela le tres JSON planos que a plataforma escreveu com
-`retail-platform export-oltp-reference`. Este modulo e a unica porta de entrada desse
-insumo, e ele desconfia do arquivo: um export truncado, de um schema antigo, ou vazio
-para um warehouse tem de REPROVAR a geracao, nunca produzir clientes enviesados em
-silencio.
+The Source does not talk to the Lakehouse: it reads three flat JSON files the platform
+wrote with `retail-platform export-oltp-reference`. This module is the only entry point for
+that input, and it distrusts the file: an export that is truncated, from an old schema, or
+empty for a warehouse must FAIL the generation, never silently produce biased customers.
 
-ORDEM IMPORTA. A posicao de cada linha em `address_candidates.json` e o `candidate_index`
-que o cliente carrega, e e o que torna a linhagem auditavel ate o tramo exato. Por isso
-tudo aqui e lista, na ordem do arquivo — nunca `set` nem `dict` reconstruido fora de
-ordem, cuja iteracao depende de PYTHONHASHSEED e quebraria a reprodutibilidade por seed.
+ORDER MATTERS. The position of each row in `address_candidates.json` is the
+`candidate_index` the customer carries, and it is what makes lineage auditable down to the
+exact tramo. That is why everything here is a list, in file order — never a `set` or a
+`dict` rebuilt out of order, whose iteration depends on PYTHONHASHSEED and would break
+reproducibility by seed.
 """
 
 from __future__ import annotations
@@ -31,10 +31,11 @@ CANDIDATE_FIELDS = (
     "wh",
     "province_code",
     "municipality_code",
-    # O Callejero renderiza o nome do municipio de forma diferente da tabela 29005 em 370
-    # de 370 casos no escopo ("BRUC (EL)" contra "Bruc, El"). Os dois nomes convivem na
-    # referencia com rotulos distintos; o cliente carrega o da 29005, que e o legivel e o
-    # mesmo de warehouse_service_area_seed. A chave comparavel e o CODIGO, nunca o nome.
+    # The Callejero renders the municipality name differently from table 29005 in 370 of
+    # 370 cases in scope ("BRUC (EL)" vs "Bruc, El"). Both names coexist in the reference
+    # under distinct labels; the customer carries the 29005 one, which is the readable one
+    # and the same as warehouse_service_area_seed. The comparable key is the CODE, never
+    # the name.
     "municipality_name_callejero",
     "street_name",
     "is_pseudo_address",
@@ -54,57 +55,57 @@ WEIGHT_FIELDS = (
 )
 AGE_FIELDS = ("province_code", "age", "proportion")
 
-# Cabecalhos que a referencia PRECISA trazer desde que o cadastro deixou de ser uma projecao
-# da populacao residente. Ausencia significa referencia de schema antigo — gerada antes de
-# min_customer_age existir — e ela nao pode ser usada em silencio: produziria de novo uma base
-# com titular de conta recem-nascido, que e exatamente o defeito que o corte existe para
-# fechar. Ver CONTRACT.md secao 2.
+# Headers the reference MUST carry since the customer base stopped being a projection of
+# the resident population. Absence means an old-schema reference — generated before
+# min_customer_age existed — and it cannot be used silently: it would again produce a base
+# with newborn account holders, which is exactly the defect the cutoff exists to close.
+# See CONTRACT.md section 2.
 MIN_AGE_HEADER = "min_customer_age"
 ALLOCATION_HEADER = "customer_allocation"
 ALLOCATION_ROWS = "by_warehouse"
 
 
 class ReferenceError(Exception):
-    """Referencia ausente, ilegivel, incompleta ou incoerente."""
+    """Reference missing, unreadable, incomplete or inconsistent."""
 
 
 def _load_file(directory: str, name: str) -> dict:
     path = os.path.join(directory, name)
     if not os.path.exists(path):
         raise ReferenceError(
-            f"arquivo de referencia ausente: {path}. Gere-o com "
-            f"`make oltp-export-reference` antes de extrair."
+            f"reference file missing: {path}. Generate it with "
+            f"`make oltp-export-reference` before extracting."
         )
     try:
         with open(path, "rb") as handle:
             payload = json.loads(handle.read().decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise ReferenceError(f"{path}: JSON invalido ({exc})") from exc
+        raise ReferenceError(f"{path}: invalid JSON ({exc})") from exc
     if not isinstance(payload, dict):
-        raise ReferenceError(f"{path}: raiz nao e um objeto JSON")
+        raise ReferenceError(f"{path}: root is not a JSON object")
     rows = payload.get("rows")
     if not isinstance(rows, list) or not rows:
-        raise ReferenceError(f"{path}: sem a lista 'rows' ou lista vazia")
+        raise ReferenceError(f"{path}: missing 'rows' list or list is empty")
     return payload
 
 
 def _require_fields(path: str, rows: list, fields: tuple, limit: int = 200) -> None:
-    """Confere os campos obrigatorios. Amostra as primeiras linhas e nao o arquivo todo.
+    """Check required fields. Samples the first rows rather than the whole file.
 
-    `address_candidates.json` tem centenas de milhares de linhas: varrer tudo a cada
-    execucao custaria mais do que protege. Um export truncado ou de schema antigo se
-    denuncia nas primeiras linhas, e o resto e coberto na hora de usar cada campo.
+    `address_candidates.json` has hundreds of thousands of rows: scanning all of it on every
+    run would cost more than it protects. A truncated or old-schema export gives itself away
+    in the first rows, and the rest is covered when each field is used.
     """
     for position, row in enumerate(rows[:limit]):
         if not isinstance(row, dict):
-            raise ReferenceError(f"{path}: linha {position} nao e um objeto JSON")
+            raise ReferenceError(f"{path}: row {position} is not a JSON object")
         missing = [field for field in fields if field not in row]
         if missing:
-            raise ReferenceError(f"{path}: linha {position} sem o(s) campo(s) {missing}")
+            raise ReferenceError(f"{path}: row {position} is missing field(s) {missing}")
 
 
 class Reference:
-    """Indice imutavel sobre os tres arquivos, pronto para amostragem deterministica."""
+    """Immutable index over the three files, ready for deterministic sampling."""
 
     def __init__(self, directory: str, candidates: dict, weights: dict, ages: dict):
         self.directory = directory
@@ -117,9 +118,10 @@ class Reference:
         self.age_reference_date = ages.get("reference_date")
         self.age_fk_periodo = ages.get("fk_periodo")
 
-        # A IDADE MINIMA E DA REFERENCIA, nao desta Source. Quem decide quem pode ter cadastro
-        # e a plataforma, em customer_premises_seed; aqui ela e lida, registrada no manifesto
-        # e RECONFERIDA — a distribuicao entregue nao pode conter idade abaixo dela.
+        # THE MINIMUM AGE BELONGS TO THE REFERENCE, not to this Source. Who may be a customer
+        # is decided by the platform, in customer_premises_seed; here it is read, recorded in
+        # the manifest and RE-CHECKED — the delivered distribution cannot contain an age
+        # below it.
         self.min_customer_age = ages.get(MIN_AGE_HEADER)
         allocation = weights.get(ALLOCATION_HEADER) or {}
         self.customer_allocation = allocation
@@ -128,8 +130,8 @@ class Reference:
         self.penetration_source = allocation.get("penetration_source")
         self.served_population = allocation.get("served_population")
         self.served_adult_population = allocation.get("served_adult_population")
-        # Dict de consulta, nunca iterado: a ordem de insercao nao influencia amostragem
-        # nenhuma, e a lista ordenada de onde ele vem esta preservada em customer_allocation.
+        # Lookup dict, never iterated: insertion order does not influence any sampling, and
+        # the ordered list it comes from is preserved in customer_allocation.
         self._targets = {
             row["wh"]: int(row["customers"])
             for row in allocation.get(ALLOCATION_ROWS, [])
@@ -141,8 +143,8 @@ class Reference:
 
         self._candidates = candidates["rows"]
 
-        # (wh, province_code, municipality_code) -> [candidate_index, ...], na ordem do
-        # arquivo. Guardamos o INDICE, nao a linha: e ele que vai para o cliente.
+        # (wh, province_code, municipality_code) -> [candidate_index, ...], in file order.
+        # We keep the INDEX, not the row: that is what goes into the customer.
         self._by_municipality: dict[tuple, list[int]] = {}
         for index, row in enumerate(self._candidates):
             key = (row["wh"], row["province_code"], row["municipality_code"])
@@ -169,8 +171,8 @@ class Reference:
         rows = self._weights.get(wh)
         if not rows:
             raise ReferenceError(
-                f"referencia sem nenhum municipio para wh={wh!r}. "
-                f"Warehouses disponiveis: {self.warehouses()}"
+                f"reference has no municipality for wh={wh!r}. "
+                f"Available warehouses: {self.warehouses()}"
             )
         return rows
 
@@ -184,86 +186,87 @@ class Reference:
         indexes = self._by_municipality.get((wh, province_code, municipality_code))
         if not indexes:
             raise ReferenceError(
-                f"referencia sem candidato de endereco para "
-                f"wh={wh!r} provincia={province_code!r} municipio={municipality_code!r}"
+                f"reference has no address candidate for "
+                f"wh={wh!r} province={province_code!r} municipality={municipality_code!r}"
             )
         return indexes
 
     def customer_target(self, wh: str) -> int:
-        """Quantos clientes este armazem deve ter, segundo a referencia.
+        """How many customers this warehouse should have, according to the reference.
 
-        E o que o `extract` usa quando `--count` e omitido. NAO ha default: um numero chutado
-        aqui produziria uma base dimensionada por ninguem, que e de onde vinham os 5.000 iguais
-        para AUFs que diferem por 4,6x em populacao.
+        It is what `extract` uses when `--count` is omitted. There is NO default: a guessed
+        number here would produce a base sized by nobody, which is where the identical 5,000
+        for FUAs that differ 4.6x in population used to come from.
         """
-        alvo = self._targets.get(wh)
-        if alvo is None:
+        target = self._targets.get(wh)
+        if target is None:
             raise ReferenceError(
-                f"referencia sem alvo de clientes para wh={wh!r}. Armazens com alvo: "
-                f"{sorted(self._targets)}. Regere a referencia com "
-                f"`make oltp-export-reference`, ou passe --count explicitamente."
+                f"reference has no customer target for wh={wh!r}. Warehouses with a target: "
+                f"{sorted(self._targets)}. Regenerate the reference with "
+                f"`make oltp-export-reference`, or pass --count explicitly."
             )
-        if alvo < 1:
-            raise ReferenceError(f"alvo de clientes invalido para wh={wh!r}: {alvo}")
-        return alvo
+        if target < 1:
+            raise ReferenceError(f"invalid customer target for wh={wh!r}: {target}")
+        return target
 
     def ages_of(self, province_code: str) -> tuple[list[int], list[float]]:
         entry = self._ages.get(province_code)
         if not entry:
             raise ReferenceError(
-                f"referencia sem distribuicao etaria para a provincia {province_code!r}"
+                f"reference has no age distribution for province {province_code!r}"
             )
         return entry
 
 
 def _require_customer_scope(directory: str, weights: dict, ages: dict) -> None:
-    """A referencia declara quem pode ter cadastro, e o conteudo dela tem de obedecer.
+    """The reference declares who may be a customer, and its content must obey it.
 
-    TRES coisas, e nenhuma delas e opcional:
+    THREE things, none of them optional:
 
-      1. `min_customer_age` no cabecalho da distribuicao etaria. Sem ele, esta Source nao tem
-         como distinguir "distribuicao do cadastro" de "distribuicao da populacao inteira", e
-         geraria de novo os 18,01% de menores de idade medidos em 2026-08-31 — 3.602 de
-         20.000, com idade a partir de zero.
-      2. Nenhuma idade abaixo dele nas linhas. O cabecalho e a promessa; isto e a conferencia.
-         Uma referencia truncada pela metade passaria no item 1 e falharia aqui.
-      3. `customer_allocation` no cabecalho dos pesos. Sem ela o `extract` sem --count nao tem
-         alvo, e cair num default seria voltar ao numero digitado a mao.
+      1. `min_customer_age` in the age distribution header. Without it, this Source has no
+         way to tell "customer base distribution" from "whole population distribution", and
+         would again generate the 18.01% of minors measured on 2026-08-31 — 3,602 of
+         20,000, with ages starting from zero.
+      2. No age below it in the rows. The header is the promise; this is the check.
+         A reference truncated halfway would pass item 1 and fail here.
+      3. `customer_allocation` in the weights header. Without it, `extract` without --count
+         has no target, and falling back to a default would mean going back to a hand-typed
+         number.
 
-    Referencia de schema antigo reprova com mensagem acionavel em vez de gerar em silencio —
-    a mesma disciplina do resto deste modulo.
+    An old-schema reference fails with an actionable message instead of generating
+    silently — the same discipline as the rest of this module.
     """
     age_path = os.path.join(directory, AGE_DISTRIBUTION_FILE)
-    minima = ages.get(MIN_AGE_HEADER)
-    if not isinstance(minima, int):
+    minimum = ages.get(MIN_AGE_HEADER)
+    if not isinstance(minimum, int):
         raise ReferenceError(
-            f"{age_path}: sem '{MIN_AGE_HEADER}' inteiro no cabecalho. Esta referencia foi "
-            f"gerada antes de o cadastro passar a excluir menores de idade; regere com "
+            f"{age_path}: no integer '{MIN_AGE_HEADER}' in the header. This reference was "
+            f"generated before the customer base started excluding minors; regenerate with "
             f"`make oltp-export-reference`."
         )
-    abaixo = sorted(
-        {int(row["age"]) for row in ages["rows"] if int(row["age"]) < minima}
+    below = sorted(
+        {int(row["age"]) for row in ages["rows"] if int(row["age"]) < minimum}
     )
-    if abaixo:
+    if below:
         raise ReferenceError(
-            f"{age_path}: idade(s) {abaixo[:10]} abaixo do {MIN_AGE_HEADER}={minima} que o "
-            f"proprio cabecalho declara."
+            f"{age_path}: age(s) {below[:10]} below the {MIN_AGE_HEADER}={minimum} that the "
+            f"header itself declares."
         )
 
     weights_path = os.path.join(directory, POPULATION_WEIGHTS_FILE)
     allocation = weights.get(ALLOCATION_HEADER)
     if not isinstance(allocation, dict) or not allocation.get(ALLOCATION_ROWS):
         raise ReferenceError(
-            f"{weights_path}: sem '{ALLOCATION_HEADER}.{ALLOCATION_ROWS}' no cabecalho. E de "
-            f"la que sai quantos clientes cada armazem tem quando --count e omitido."
+            f"{weights_path}: no '{ALLOCATION_HEADER}.{ALLOCATION_ROWS}' in the header. That "
+            f"is where each warehouse's customer count comes from when --count is omitted."
         )
 
 
 def load(directory: str) -> Reference:
-    """Le e valida os tres arquivos de referencia de um diretorio."""
+    """Read and validate the three reference files in a directory."""
     if not os.path.isdir(directory):
         raise ReferenceError(
-            f"diretorio de referencia nao encontrado: {directory}. Gere-o com "
+            f"reference directory not found: {directory}. Generate it with "
             f"`make oltp-export-reference`."
         )
     candidates = _load_file(directory, ADDRESS_CANDIDATES_FILE)

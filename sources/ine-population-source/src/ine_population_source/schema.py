@@ -1,13 +1,13 @@
-"""Forma esperada dos payloads da fonte e impressao digital de schema.
+"""Expected shape of the source payloads and schema fingerprint.
 
-A Source nao transforma o payload, mas precisa saber navega-lo para contar series e
-pontos, e para detectar quando a fonte muda de formato. Todas as funcoes aqui sao
-defensivas: recebem qualquer objeto JSON e nunca levantam excecao por forma inesperada.
+The Source does not transform the payload, but it needs to navigate it to count series and
+data points, and to detect when the source changes format. Every function here is
+defensive: it accepts any JSON object and never raises on an unexpected shape.
 
-Forma esperada de um payload de /DATOS_TABLA/<table_id>: uma lista de series, cada uma
-com "COD", "Nombre" e "Data" (lista de pontos, cada um com pelo menos "Anyo" e "Valor").
-A impressao digital gravada no manifesto permite ao consumidor detectar mudanca de schema
-entre snapshots comparando um unico campo.
+Expected shape of a /DATOS_TABLA/<table_id> payload: a list of series, each with "COD",
+"Nombre" and "Data" (a list of data points, each with at least "Anyo" and "Valor").
+The fingerprint written into the manifest lets the consumer detect a schema change between
+snapshots by comparing a single field.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import json
 
 
 class SchemaError(Exception):
-    """Payload com forma incompativel com o contrato da Source."""
+    """Payload whose shape is incompatible with the Source contract."""
 
 
 def is_mapping(value: object) -> bool:
@@ -25,14 +25,14 @@ def is_mapping(value: object) -> bool:
 
 
 def series_of(payload: object) -> list:
-    """Series de um payload de tabela. Lista vazia para qualquer forma inesperada."""
+    """Series of a table payload. Empty list for any unexpected shape."""
     if not isinstance(payload, list):
         return []
     return [item for item in payload if is_mapping(item)]
 
 
 def data_points_of(series: object) -> list:
-    """Pontos de uma serie. Lista vazia para qualquer forma inesperada."""
+    """Data points of a series. Empty list for any unexpected shape."""
     if not is_mapping(series):
         return []
     points = series.get("Data")
@@ -56,9 +56,13 @@ def count_data_points(payload: object) -> int:
 
 
 def validate_payload(payload: object) -> list:
-    """Confere que o payload e uma lista de series com 'COD' e 'Data'. Levanta
-    SchemaError se a forma raiz nao bater; series individuais malformadas sao apenas
-    ignoradas por series_of (a Source nao inventa dado que nao veio da fonte)."""
+    """Check that the payload is a list of series with 'COD' and 'Data'. Raises
+    SchemaError if the root shape does not match; individual malformed series are simply
+    ignored by series_of (the Source does not invent data that did not come from the source).
+
+    The SchemaError messages are kept byte-identical: they are persisted in the manifest's
+    failures[].error.
+    """
     if not isinstance(payload, list):
         raise SchemaError("resposta de /DATOS_TABLA nao e uma lista JSON")
     series = series_of(payload)
@@ -68,11 +72,11 @@ def validate_payload(payload: object) -> list:
 
 
 def fingerprint(payloads) -> dict:
-    """Impressao digital do schema observado nos arquivos de tabela.
+    """Fingerprint of the schema observed in the table files.
 
-    Registra o conjunto ordenado de chaves vistas em cada serie e em cada ponto de
-    'Data', mais um hash estavel dos dois conjuntos. Uma renomeacao ou remocao de campo
-    na fonte altera o hash entre snapshots.
+    Records the sorted set of keys seen in each series and in each 'Data' point, plus a
+    stable hash of both sets. A field rename or removal at the source changes the hash
+    between snapshots.
     """
     series_keys: set = set()
     point_keys: set = set()

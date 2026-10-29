@@ -1,30 +1,30 @@
-"""Forma canonica dos arquivos do snapshot.
+"""Canonical form of the snapshot files.
 
-Todo arquivo do snapshot e gravado com a mesma serializacao deterministica, de modo que
-o SHA-256 do arquivo dependa apenas do conteudo do payload. Esta e a unica funcao que
-grava arquivos de dados no pacote.
+Every snapshot file is written with the same deterministic serialization, so the file's
+SHA-256 depends only on the payload content. This is the only function in the package that
+writes data files.
 
-A gravacao e ATOMICA: escreve num temporario no mesmo diretorio e faz os.replace. Um
-processo interrompido no meio da escrita nunca deixa arquivo parcial no lugar final.
+Writing is ATOMIC: it writes to a temporary file in the same directory and calls os.replace. A
+process interrupted mid-write never leaves a partial file at the final location.
 
-Identica a das outras quatro sources deste repo para o JSON, de proposito: o consumidor
-recalcula o digest da mesma forma para qualquer particao, venha ela de que source vier.
+Identical to the other four sources in this repo for JSON, on purpose: the consumer
+recomputes the digest the same way for any partition, whichever source it comes from.
 
-DESVIO DELIBERADO: `write_jsonl`
---------------------------------
-O arquivo de dados desta Source e um LOG, e log nao e array. As outras quatro gravam um
-array JSON com `indent=2`; aqui `order_events.jsonl` e NDJSON — uma linha por evento, cada
-linha canonica e compacta. Tres razoes, nesta ordem:
+DELIBERATE DEVIATION: `write_jsonl`
+-----------------------------------
+This Source's data file is a LOG, and a log is not an array. The other four write a JSON
+array with `indent=2`; here `order_events.jsonl` is NDJSON — one line per event, each line
+canonical and compact. Three reasons, in this order:
 
-  1. um log e lido linha a linha e cresce por append; um array exige o arquivo inteiro em
-     memoria tanto para escrever quanto para ler;
-  2. cada linha e um evento completo e independente, que e exatamente o que atravessa um
-     broker mais adiante — o mesmo byte no disco e no topico;
-  3. `read_json(..., format='newline_delimited')` do DuckDB consome NDJSON direto.
+  1. a log is read line by line and grows by append; an array needs the whole file in
+     memory both to write and to read;
+  2. each line is a complete, independent event, which is exactly what crosses a broker
+     further down — the same bytes on disk and on the topic;
+  3. DuckDB's `read_json(..., format='newline_delimited')` consumes NDJSON directly.
 
-A garantia que importa e preservada: mesmo conteudo produz os mesmos bytes e o mesmo
-SHA-256, porque cada linha e serializada com `sort_keys` e a ORDEM das linhas e determinada
-pelo gerador, nunca pela iteracao de um `set` ou `dict`.
+The guarantee that matters is preserved: the same content produces the same bytes and the
+same SHA-256, because each line is serialized with `sort_keys` and the ORDER of the lines is
+determined by the generator, never by iterating a `set` or `dict`.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ import json
 import os
 import tempfile
 
-# Parametros da forma canonica. Qualquer reimplementacao que os altere produz outro
-# digest para o mesmo conteudo.
+# Canonical form parameters. Any reimplementation that changes them produces a different
+# digest for the same content.
 JSON_ENSURE_ASCII = False
 JSON_SORT_KEYS = True
 JSON_INDENT = 2
@@ -43,11 +43,11 @@ JSON_TRAILING_NEWLINE = "\n"
 
 
 class CorruptFileError(Exception):
-    """Arquivo existente em disco que nao pode ser lido como JSON UTF-8 valido."""
+    """Existing file on disk that cannot be read as valid UTF-8 JSON."""
 
 
 def canonical_bytes(payload) -> bytes:
-    """Serializa o payload na forma canonica do snapshot."""
+    """Serialize the payload in the snapshot's canonical form."""
     text = json.dumps(
         payload,
         ensure_ascii=JSON_ENSURE_ASCII,
@@ -62,7 +62,7 @@ def digest(blob: bytes) -> str:
 
 
 def write_json(path: str, payload) -> tuple[str, int]:
-    """Grava o payload atomicamente na forma canonica. Retorna (sha256, bytes)."""
+    """Write the payload atomically in canonical form. Returns (sha256, bytes)."""
     blob = canonical_bytes(payload)
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
@@ -75,7 +75,7 @@ def write_json(path: str, payload) -> tuple[str, int]:
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
     except BaseException:
-        # Inclui KeyboardInterrupt: o temporario nunca vira arquivo final.
+        # Includes KeyboardInterrupt: the temporary file never becomes the final file.
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
@@ -83,11 +83,11 @@ def write_json(path: str, payload) -> tuple[str, int]:
 
 
 def write_jsonl(path: str, rows) -> tuple[str, int, int]:
-    """Grava um log NDJSON atomicamente. Retorna (sha256, bytes, linhas).
+    """Write an NDJSON log atomically. Returns (sha256, bytes, lines).
 
-    Cada linha e `json.dumps(..., sort_keys=True, ensure_ascii=False)` SEM indentacao, e o
-    arquivo termina em newline. A ordem das linhas e responsabilidade de quem chama: ela faz
-    parte do conteudo e portanto do digest.
+    Each line is `json.dumps(..., sort_keys=True, ensure_ascii=False)` WITHOUT indentation, and
+    the file ends with a newline. Line order is the caller's responsibility: it is part of the
+    content and therefore of the digest.
     """
     chunks = []
     count = 0
@@ -116,7 +116,7 @@ def write_jsonl(path: str, rows) -> tuple[str, int, int]:
 
 
 def read_jsonl(path: str) -> tuple[list, bytes]:
-    """Le um log NDJSON. Levanta CorruptFileError na primeira linha invalida."""
+    """Read an NDJSON log. Raises CorruptFileError on the first invalid line."""
     blob = read_bytes(path)
     rows = []
     try:
@@ -129,7 +129,7 @@ def read_jsonl(path: str) -> tuple[list, bytes]:
         try:
             rows.append(json.loads(line))
         except ValueError as exc:
-            raise CorruptFileError(f"{path}: linha {number}: {exc}") from exc
+            raise CorruptFileError(f"{path}: line {number}: {exc}") from exc
     return rows, blob
 
 
@@ -139,7 +139,7 @@ def read_bytes(path: str) -> bytes:
 
 
 def read_json(path: str) -> tuple[object, bytes]:
-    """Le um arquivo do snapshot. Levanta CorruptFileError se nao for JSON UTF-8 valido."""
+    """Read a snapshot file. Raises CorruptFileError if it is not valid UTF-8 JSON."""
     blob = read_bytes(path)
     try:
         return json.loads(blob.decode("utf-8")), blob

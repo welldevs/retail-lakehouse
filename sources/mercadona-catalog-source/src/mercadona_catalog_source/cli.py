@@ -1,13 +1,13 @@
-"""Interface de linha de comando da Source.
+"""Command-line interface of the Source.
 
-    python -m mercadona_catalog_source extract  [opcoes]
-    python -m mercadona_catalog_source validate <particao> [--strict]
+    python -m mercadona_catalog_source extract  [options]
+    python -m mercadona_catalog_source validate <partition> [--strict]
 
-Codigos de saida:
-    0  sucesso
-    1  falha parcial (extract) ou validacao reprovada (validate)
-    2  falha fatal: nada foi extraido / particao inutilizavel
-    3  excecao nao tratada
+Exit codes:
+    0  success
+    1  partial failure (extract) or validation failed (validate)
+    2  fatal failure: nothing was extracted / partition unusable
+    3  unhandled exception
 """
 
 from __future__ import annotations
@@ -32,51 +32,51 @@ EXIT_UNHANDLED = 3
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mercadona_catalog_source",
-        description="Source de catalogo da Mercadona: produto, categoria e preco.",
+        description="Mercadona catalog Source: product, category and price.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser(
-        "extract", help="extrai um snapshot do catalogo para uma particao"
+        "extract", help="extract a catalog snapshot into a partition"
     )
-    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="diretorio raiz do snapshot")
+    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="snapshot root directory")
     extract_parser.add_argument(
-        "--wh", default=DEFAULT_WAREHOUSE, help="codigo do armazem (token: [A-Za-z0-9_-])"
-    )
-    extract_parser.add_argument(
-        "--lang", default=DEFAULT_LANG, help="idioma da API; fixo por particao"
+        "--wh", default=DEFAULT_WAREHOUSE, help="warehouse code (token: [A-Za-z0-9_-])"
     )
     extract_parser.add_argument(
-        "--date", default=None, help="data da particao YYYY-MM-DD (padrao: hoje em UTC)"
+        "--lang", default=DEFAULT_LANG, help="API language; fixed per partition"
     )
     extract_parser.add_argument(
-        "--delay", type=float, default=DEFAULT_DELAY, help="intervalo minimo entre requisicoes (s)"
+        "--date", default=None, help="partition date YYYY-MM-DD (default: today in UTC)"
     )
     extract_parser.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT, help="timeout de cada requisicao (s)"
+        "--delay", type=float, default=DEFAULT_DELAY, help="minimum interval between requests (s)"
     )
     extract_parser.add_argument(
-        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="tentativas extras por requisicao"
+        "--timeout", type=float, default=DEFAULT_TIMEOUT, help="timeout of each request (s)"
     )
     extract_parser.add_argument(
-        "--limit", type=int, default=None, help="processa apenas as N primeiras categorias (N >= 1)"
+        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="extra attempts per request"
+    )
+    extract_parser.add_argument(
+        "--limit", type=int, default=None, help="process only the first N categories (N >= 1)"
     )
     extract_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="reescreve uma particao existente, inclusive se estiver completa",
+        help="rewrite an existing partition, even if it is complete",
     )
     extract_parser.set_defaults(handler=extract_module.run)
 
     validate_parser = subparsers.add_parser(
-        "validate", help="valida uma particao ja extraida"
+        "validate", help="validate an already extracted partition"
     )
     validate_parser.add_argument(
-        "partition", help="caminho da particao, ex.: data/mercadona/ingestion_date=2026-08-15/wh=mad1"
+        "partition", help="partition path, e.g. data/mercadona/ingestion_date=2026-08-15/wh=mad1"
     )
     validate_parser.add_argument(
-        "--strict", action="store_true", help="tambem falha quando ha registro incompleto"
+        "--strict", action="store_true", help="also fail when there is an incomplete record"
     )
     validate_parser.set_defaults(handler=validate_module.run)
 
@@ -88,10 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except KeyboardInterrupt:
-        print("\ninterrompido pelo usuario", flush=True)
+        print("\ninterrupted by user", flush=True)
         return EXIT_UNHANDLED
-    except Exception as exc:  # nenhum traceback escapa com codigo ambiguo
-        print(f"ERRO NAO TRATADO: {type(exc).__name__}: {exc}", flush=True)
+    except Exception as exc:  # no traceback escapes with an ambiguous code
+        print(f"UNHANDLED ERROR: {type(exc).__name__}: {exc}", flush=True)
         return EXIT_UNHANDLED
 
 

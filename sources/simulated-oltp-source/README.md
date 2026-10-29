@@ -1,61 +1,62 @@
 # Simulated OLTP Source
 
-Gera clientes sintéticos **geograficamente coerentes**: o cliente é inventado, o lugar
-onde ele mora não. Cada cliente nasce numa via real de um município real, com o CEP real
-daquele tramo, num município que pertence de fato à Área Urbana Funcional do seu armazém.
+Generates **geographically coherent** synthetic customers: the customer is invented, the
+place where they live is not. Each customer is born on a real street of a real
+municipality, with that tramo's real postal code, in a municipality that actually belongs
+to their warehouse's Functional Urban Area (FUA).
 
-Pacote irmão isolado, **sem nenhuma dependência de runtime** — só biblioteca padrão. Ver
-[CONTRACT.md](CONTRACT.md) para o contrato completo.
+Isolated sibling package, **with no runtime dependency at all** — standard library only. See
+[CONTRACT.md](CONTRACT.md) for the full contract.
 
-## De onde vêm os dados
+## Where the data comes from
 
-Esta é a primeira source **derivada** do repositório. As outras três são upstream de dado
-externo; esta consome o Silver que elas produziram:
+This is the first **derived** source in the repository. The other three are upstream of
+external data; this one consumes the Silver they produced:
 
-| Insumo | Origem | O que fornece |
+| Input | Origin | What it provides |
 |---|---|---|
-| `silver_callejero_tramos` + `streets`/`pseudo_addresses`/`population_units` | INE Callejero | via, CEP, faixa de numeração, município |
-| `silver_ine_population_by_municipality` (tabela 29005) | INE Tempus3 | peso do município e proporção de sexo |
-| `silver_ine_population_series` (tabela 31304) | INE Tempus3 | distribuição etária provincial (proxy) |
-| `warehouse_service_area_seed`, `warehouse_province_map_seed` | seeds do dbt | quais municípios cada armazém atende |
+| `silver_callejero_tramos` + `streets`/`pseudo_addresses`/`population_units` | INE Callejero | street, postal code, numbering range, municipality |
+| `silver_ine_population_by_municipality` (table 29005) | INE Tempus3 | municipality weight and sex proportion |
+| `silver_ine_population_series` (table 31304) | INE Tempus3 | provincial age distribution (proxy) |
+| `warehouse_service_area_seed`, `warehouse_province_map_seed` | dbt seeds | which municipalities each warehouse serves |
 
-**A Source não fala com o Lakehouse.** Toda Source deste repo é FROZEN
-(`dependencies = []`, verificado por AST), e `duckdb`/`boto3` são dependências exclusivas
-da plataforma por design. A ponte é um contrato **físico**, não um import: a plataforma
-materializa o que a Source precisa em três JSON planos, e a Source os lê com `json` da
-stdlib.
+**The Source does not talk to the Lakehouse.** Every Source in this repo is FROZEN
+(`dependencies = []`, verified by AST), and `duckdb`/`boto3` are platform-only dependencies
+by design. The bridge is a **physical** contract, not an import: the platform materializes
+what the Source needs into three flat JSON files, and the Source reads them with the
+stdlib `json`.
 
 ```
 Silver  ──[ retail-platform export-oltp-reference ]──>  data/oltp-reference/
                                                                  │
-                                                        (3 JSON planos)
+                                                        (3 flat JSON files)
                                                                  │
                                                                  v
                                         [ simulated_oltp_source extract ]  ──> customers.json
 ```
 
-Mesmo precedente que `ine-callejero-source` já usa, um nível antes: lá `extract` também
-não busca rede, incorpora arquivos já preparados em `--in`.
+Same precedent `ine-callejero-source` already uses, one level up: there `extract` does not
+touch the network either, it ingests files already prepared in `--in`.
 
-## Requisitos
+## Requirements
 
-Python 3.12+. Nada além disso: `PYTHONPATH=src` basta para rodar tudo. Os alvos de venv
-existem para empacotar, não para executar.
+Python 3.12+. Nothing else: `PYTHONPATH=src` is enough to run everything. The venv targets
+exist for packaging, not for running.
 
-Antes do primeiro `extract`, o Callejero e a população precisam já estar no Lakehouse
-(`make callejero-refresh` e `make ine-refresh` na raiz do repositório).
+Before the first `extract`, the Callejero and the population must already be in the
+Lakehouse (`make callejero-refresh` and `make ine-refresh` at the repository root).
 
-## Uso
+## Usage
 
-Pela raiz do repositório (recomendado):
+From the repository root (recommended):
 
 ```bash
-make oltp-export-reference          # uma vez: materializa o Silver (cobre os 4 armazéns)
+make oltp-export-reference          # once: materializes the Silver (covers all 4 warehouses)
 make oltp-refresh WH=mad1           # extract -> validate -> land -> verify-landing
-make oltp-refresh-all               # o mesmo para mad1, bcn1, svq1 e vlc1
+make oltp-refresh-all               # the same for mad1, bcn1, svq1 and vlc1
 ```
 
-Direto, sem o Makefile da raiz:
+Directly, without the root Makefile:
 
 ```bash
 PYTHONPATH=src python3 -m simulated_oltp_source extract \
@@ -69,24 +70,24 @@ PYTHONPATH=src python3 -m simulated_oltp_source validate \
 
 ### `extract`
 
-| Flag | Padrão | Papel |
+| Flag | Default | Role |
 |---|---|---|
-| `--reference` | — (obrigatório) | diretório dos três JSON de referência |
-| `--wh` | — (obrigatório) | `mad1`, `bcn1`, `svq1` ou `vlc1` |
-| `--out` | `data/oltp` | raiz do snapshot |
-| `--date` | hoje em UTC | `ingestion_date` da partição |
-| `--count` | **sem default** | clientes a gerar. Omitido, usa o alvo de `customer_allocation` da referência — população adulta do armazém × taxa de penetração. Um default aqui reintroduziria em silêncio a base dimensionada por ninguém |
-| `--seed` | `20260827` | semente: a mesma seed reproduz a mesma saída |
-| `--overwrite` | desligado | reescreve partição completa |
+| `--reference` | — (required) | directory of the three reference JSON files |
+| `--wh` | — (required) | `mad1`, `bcn1`, `svq1` or `vlc1` |
+| `--out` | `data/oltp` | snapshot root |
+| `--date` | today in UTC | partition `ingestion_date` |
+| `--count` | **no default** | customers to generate. If omitted, uses the reference's `customer_allocation` target — warehouse adult population × penetration rate. A default here would silently reintroduce a customer base sized by nobody |
+| `--seed` | `20260827` | seed: the same seed reproduces the same output |
+| `--overwrite` | off | rewrites a complete partition |
 
 ### `validate`
 
-`--reference` é **obrigatório** aqui, diferente das outras três Sources. A garantia
-central — todo cliente mora num endereço real da AUF do seu armazém — só é verificável
-relendo a mesma referência que gerou a partição. `--strict` promove avisos de
-distribuição a falha.
+`--reference` is **required** here, unlike the other three Sources. The central guarantee —
+every customer lives at a real address in their warehouse's FUA — is only verifiable by
+re-reading the same reference that generated the partition. `--strict` promotes
+distribution warnings to failures.
 
-## Estrutura
+## Layout
 
 ```
 sources/simulated-oltp-source/
@@ -94,22 +95,22 @@ sources/simulated-oltp-source/
 ├── README.md
 ├── Makefile
 ├── pyproject.toml            (dependencies = [])
-├── requirements.txt          (vazio, de propósito)
+├── requirements.txt          (empty, on purpose)
 ├── src/simulated_oltp_source/
-│   ├── cli.py                argumentos e códigos de saída
-│   ├── reference_data.py     lê e desconfia dos três JSON
-│   ├── customers_generator.py  amostragem pura, determinística
-│   ├── extract.py            orquestra partição + manifesto + _SUCCESS
-│   ├── validate.py           integridade + coerência geoespacial
-│   ├── partition.py          caminho, tokens, imutabilidade (eixo wh=)
-│   ├── schema.py             campos e impressão digital
-│   └── canonical.py          forma canônica + escrita atômica
-└── tests/                    140 testes, sem rede
+│   ├── cli.py                arguments and exit codes
+│   ├── reference_data.py     reads and distrusts the three JSON files
+│   ├── customers_generator.py  pure, deterministic sampling
+│   ├── extract.py            orchestrates partition + manifest + _SUCCESS
+│   ├── validate.py           integrity + geospatial coherence
+│   ├── partition.py          path, tokens, immutability (wh= axis)
+│   ├── schema.py             fields and fingerprint
+│   └── canonical.py          canonical form + atomic write
+└── tests/                    140 tests, no network
 ```
 
-## Forma dos arquivos
+## Output layout
 
-`customers.json` é um array JSON de objetos. Exemplo real, gerado contra o Lakehouse:
+`customers.json` is a JSON array of objects. Real example, generated against the Lakehouse:
 
 ```json
 {
@@ -131,81 +132,82 @@ sources/simulated-oltp-source/
 }
 ```
 
-`candidate_index` aponta a linha exata de `address_candidates.json` que forneceu o
-endereço — é o único caminho de auditoria exato até o tramo de origem (CEP + rua
-identificam sozinhos apenas 13,3% dos tramos; ver CONTRACT.md seção 4).
+`candidate_index` points to the exact row of `address_candidates.json` that supplied the
+address — it is the only exact audit path back to the source tramo (postal code + street
+alone identify only 13.3% of tramos; see CONTRACT.md section 4).
 
-`house_number` é `null` quando a fonte não sustenta um número real — nunca um número
-inventado. O motivo fica legível no campo companheiro `numbering_type` ao lado.
+`house_number` is `null` when the source does not support a real number — never an invented
+number. The reason is readable in the companion field `numbering_type` next to it.
 
-## Comportamento operacional
+## Operational behavior
 
-- **Idempotente por partição.** Uma partição completa é imutável; reexecutar sem
-  `--overwrite` recusa em vez de reescrever.
-- **Determinístico.** Mesma referência + mesma seed + mesma data ⇒ `customers.json` byte
-  a byte idêntico. Verificado inclusive com `PYTHONHASHSEED` diferente entre execuções.
-- **Ordem de gravação.** Dados → manifesto → `_SUCCESS`, sempre. Um processo morto no
-  meio nunca deixa partição que se anuncia completa sem estar.
-- **A seed vive no manifesto**, não repetida em cada registro, e `history[]` guarda a
-  seed de cada execução anterior.
+- **Idempotent per partition.** A complete partition is immutable; re-running without
+  `--overwrite` refuses instead of rewriting.
+- **Deterministic.** Same reference + same seed + same date ⇒ byte-for-byte identical
+  `customers.json`. Verified even with a different `PYTHONHASHSEED` between runs.
+- **Write order.** Data → manifest → `_SUCCESS`, always. A process killed midway never
+  leaves a partition that announces itself complete without being so.
+- **The seed lives in the manifest**, not repeated in each record, and `history[]` keeps the
+  seed of each previous run.
 
-## Restrições da fonte
+## Source restrictions
 
-Resumo; os números medidos e a explicação completa estão em
-[CONTRACT.md seção 6](CONTRACT.md).
+Summary; the measured numbers and the full explanation are in
+[CONTRACT.md section 6](CONTRACT.md).
 
-- A **idade é provincial**, usada como proxy: não há faixa etária por município nas
-  tabelas ingeridas.
-- **Vintages diferentes** entre os dois insumos demográficos: defasagem real de 2 anos e
-  6 meses, medida por `reference_date`.
-- **Naturezas diferentes**: a idade vem de estimativa (`fk_tipo_dato=2`), o peso
-  municipal vem de cifras oficiales.
-- **Sexo e idade são amostrados independentemente**; a correlação idade×sexo existente na
-  fonte é descartada por construção.
-- A escolha do tramo dentro do município é **uniforme, não ponderada** — não existe
-  população nessa granularidade, e chamar isso de densidade seria falso.
-- 4,2% dos tramos não têm numeração real; 3 são órfãos; 14 têm faixa degenerada.
+- **Age is provincial**, used as a proxy: there is no age band per municipality in the
+  ingested tables.
+- **Different vintages** between the two demographic inputs: a real lag of 2 years and
+  6 months, measured by `reference_date`.
+- **Different natures**: age comes from an estimate (`fk_tipo_dato=2`), the municipal weight
+  comes from official figures (cifras oficiales).
+- **Sex and age are sampled independently**; the age×sex correlation present in the source
+  is discarded by construction.
+- The tramo choice within the municipality is **uniform, not weighted** — there is no
+  population at that granularity, and calling it density would be false.
+- 4.2% of tramos have no real numbering; 3 are orphans; 14 have a degenerate range.
 
-## Validação
+## Validation
 
-`validate` recalcula tudo em vez de confiar no manifesto, e depois relê a referência:
+`validate` recomputes everything instead of trusting the manifest, and then re-reads the
+reference:
 
 ```
-particao ......... data/oltp/ingestion_date=2026-08-27/wh=vlc1
+partition ........ data/oltp/ingestion_date=2026-08-27/wh=vlc1
 run_id ........... 20260827T130256Z_vlc1
 source ........... simulated_oltp
 warehouse ........ vlc1
 seed ............. 20260827
-completa ......... True
-arquivos ......... 1/1 lidos e conferidos
-orfaos ........... 0
-coerencia ........ 200/200 clientes com endereco real na AUF de vlc1
+complete ......... True
+files ............ 1/1 read and checked
+orphans .......... 0
+coherence ........ 200/200 customers with a real address in the FUA of vlc1
 
-OK: integridade, schema, totais e coerencia geoespacial validados.
+OK: integrity, schema, totals and geospatial coherence validated.
 ```
 
-Injetar um CEP de fora da AUF na partição faz a validação reprovar com código 1 —
-verificado ponta a ponta, não só em teste unitário.
+Injecting a postal code from outside the FUA into the partition makes validation fail with
+code 1 — verified end to end, not just in a unit test.
 
-## Dependências e container
+## Dependencies and container
 
-`requirements.txt` está vazio de propósito e `[project.dependencies]` é `[]`. A promessa
-é **verificada, não afirmada**: `tests/test_dependencies.py` percorre a AST de todos os
-módulos do pacote e dos testes e reprova qualquer import fora da stdlib, além de conferir
-`pyproject.toml`, `requirements.txt` e os metadados instalados.
+`requirements.txt` is empty on purpose and `[project.dependencies]` is `[]`. The promise is
+**verified, not asserted**: `tests/test_dependencies.py` walks the AST of every module in
+the package and the tests and fails any import outside the stdlib, besides checking
+`pyproject.toml`, `requirements.txt` and the installed metadata.
 
-Um container que rode esta Source precisa apenas de Python 3.12 e do diretório `src/` no
-`PYTHONPATH` — mais o diretório de referência montado.
+A container running this Source only needs Python 3.12 and the `src/` directory on
+`PYTHONPATH` — plus the mounted reference directory.
 
-## Testes
+## Tests
 
 ```bash
-make test                 # 140 testes, sem rede
+make test                 # 140 tests, no network
 ```
 
-Cobrem, entre outros: mesma seed ⇒ saída byte-idêntica (inclusive sob `PYTHONHASHSEED`
-diferente, em subprocesso); seeds diferentes ⇒ saída diferente; 100% dos clientes na AUF
-correta; nenhum `numbering_type='0'` gera número; `house_number` nunca é 0; peso
-municipal respeitado e escolha de tramo uniforme; referência ausente ou inconsistente
-reprova a geração; manifesto e totais batem com o arquivo produzido; e um teste negativo
-para cada forma de corromper a partição.
+They cover, among others: same seed ⇒ byte-identical output (even under a different
+`PYTHONHASHSEED`, in a subprocess); different seeds ⇒ different output; 100% of customers in
+the correct FUA; no `numbering_type='0'` produces a number; `house_number` is never 0;
+municipal weight respected and uniform tramo choice; a missing or inconsistent reference
+fails the generation; manifest and totals match the produced file; and one negative test for
+each way of corrupting the partition.

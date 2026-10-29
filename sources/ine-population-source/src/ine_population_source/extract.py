@@ -1,15 +1,16 @@
-"""Extracao de series de populacao por provincia.
+"""Extraction of population series by province.
 
-Uma etapa contra a API Tempus3 do INE, uma vez por table_id configurado:
-    GET /ES/DATOS_TABLA/{table_id}  -> serie historica completa daquela tabela
+One step against the INE's Tempus3 API, once per configured table_id:
+    GET /ES/DATOS_TABLA/{table_id}  -> full historical series of that table
 
-Sem crawl de arvore: ao contrario da Mercadona, nao ha descoberta de categorias — os
-table_id sao passados explicitamente (--tables). Nenhuma transformacao e aplicada ao
-payload: ele e gravado na forma canonica descrita em canonical.py, com o conteudo integro.
+No tree crawl: unlike Mercadona, there is no category discovery — the table_ids are passed
+explicitly (--tables). No transformation is applied to the payload: it is written in the
+canonical form described in canonical.py, with its content intact.
 
-O manifesto e gravado DUAS vezes: um preliminar logo apos a particao ser criada, e o
-definitivo no fim. Sem o preliminar, uma execucao interrompida deixaria a particao sem
-manifesto, e a trava de imutabilidade -- que depende dele -- ficaria desligada na retomada.
+The manifest is written TWICE: a preliminary one right after the partition is created, and
+the final one at the end. Without the preliminary one, an interrupted run would leave the
+partition without a manifest, and the immutability lock -- which depends on it -- would be
+off on resume.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ EXIT_FATAL = 2
 
 
 class RunLogger:
-    """Log append-only da particao, espelhado no stdout."""
+    """Append-only partition log, mirrored to stdout."""
 
     def __init__(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -79,7 +80,7 @@ class RunLogger:
 
 
 def _is_canonical(blob: bytes, payload) -> bool:
-    """O arquivo em disco esta exatamente na forma canonica deste Source?"""
+    """Is the file on disk exactly in this Source's canonical form?"""
     return blob == canonical_bytes(payload)
 
 
@@ -138,10 +139,10 @@ def _build_manifest(
 
 
 def run(args, fetcher_factory=Fetcher) -> int:
-    """Executa a extracao. Retorna o codigo de saida.
+    """Run the extraction. Returns the exit code.
 
-    fetcher_factory existe como costura de teste: a suite injeta um cliente que responde
-    do disco, para exercitar toda a maquina sem tocar a rede.
+    fetcher_factory exists as a test seam: the suite injects a client that answers from
+    disk, to exercise the whole machinery without touching the network.
     """
     try:
         ingestion_date = validate_date(
@@ -149,12 +150,12 @@ def run(args, fetcher_factory=Fetcher) -> int:
         )
         tables = [validate_token("table_id", str(t)) for t in args.tables]
         if not tables:
-            raise PartitionError("--tables precisa de pelo menos um table_id")
+            raise PartitionError("--tables needs at least one table_id")
         partition = partition_path(args.out, ingestion_date)
         os.makedirs(partition, exist_ok=True)
         previous = assert_writable(partition, args.overwrite)
     except PartitionError as exc:
-        print(f"FALHA FATAL: {exc}", flush=True)
+        print(f"FATAL FAILURE: {exc}", flush=True)
         return EXIT_FATAL
 
     started = datetime.now(timezone.utc)
@@ -163,7 +164,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
     history = build_history(previous)
 
     with RunLogger(os.path.join(partition, "_run.log")) as log:
-        log(f"== run {run_id} | particao {partition} | delay {args.delay}s | tables {tables}")
+        log(f"== run {run_id} | partition {partition} | delay {args.delay}s | tables {tables}")
         fetcher = fetcher_factory(args.delay, args.timeout, args.max_retries, log)
         files: list[dict] = []
         failures: list[dict] = []
@@ -197,20 +198,20 @@ def run(args, fetcher_factory=Fetcher) -> int:
                 history=history,
             )
 
-        # Manifesto preliminar. A partir daqui a particao tem identidade em disco: uma
-        # interrupcao nao deixa mais uma particao "sem dono" que a retomada aceitaria por
-        # cima de uma particao completa.
+        # Preliminary manifest. From here on the partition has an identity on disk: an
+        # interruption no longer leaves an "ownerless" partition that a resume would accept
+        # on top of a complete partition.
         write_manifest(partition, snapshot_manifest(False, len(tables)))
         mark_success(partition, False, run_id)
 
-        # ---- Uma tabela por vez -------------------------------------------------
+        # ---- One table at a time -----------------------------------------------
         for index, table_id in enumerate(tables, start=1):
             label = f"[{index}/{len(tables)}] table_id={table_id}"
             try:
                 target_path = table_path(partition, table_id)
             except PartitionError as exc:
                 failures.append({"stage": "tables", "table_id": table_id, "error": str(exc)})
-                log(f"{label} FALHOU: {exc}")
+                log(f"{label} FAILED: {exc}")
                 continue
 
             relative = os.path.relpath(target_path, args.out)
@@ -223,23 +224,23 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     payload, blob = read_json(target_path)
                     reused = True
                 except CorruptFileError as exc:
-                    log(f"{label} arquivo ilegivel ({exc}); rebaixando")
+                    log(f"{label} unreadable file ({exc}); downloading again")
                     payload = None
 
             if reused and not isinstance(payload, list):
-                log(f"{label} arquivo com formato inesperado; rebaixando")
+                log(f"{label} file with unexpected shape; downloading again")
                 payload, reused = None, False
 
-            # Um arquivo que nao esta na forma canonica nao veio deste Source.
+            # A file that is not in canonical form did not come from this Source.
             if reused and not _is_canonical(blob, payload):
                 anomalies.append(
                     {"kind": "arquivo_nao_canonico", "path": relative, "table_id": table_id}
                 )
-                log(f"{label} arquivo fora da forma canonica; rebaixando")
+                log(f"{label} file not in canonical form; downloading again")
                 payload, reused = None, False
 
-            # Particao e imutavel: divergencia do manifesto anterior e adulteracao ou
-            # perda. Registramos a anomalia E rebaixamos da fonte.
+            # The partition is immutable: a mismatch with the previous manifest means
+            # tampering or loss. We record the anomaly AND download again from the source.
             if reused and previous_digests.get(relative) not in (None, digest(blob)):
                 anomalies.append(
                     {
@@ -248,14 +249,14 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "table_id": table_id,
                     }
                 )
-                log(f"{label} divergente do manifesto anterior; rebaixando")
+                log(f"{label} differs from the previous manifest; downloading again")
                 payload, reused = None, False
 
             if payload is None:
                 payload, error = fetcher.get_json(f"/ES/DATOS_TABLA/{table_id}", {})
                 if payload is None:
                     failures.append({"stage": "tables", "table_id": table_id, "error": error})
-                    log(f"{label} FALHOU: {error}")
+                    log(f"{label} FAILED: {error}")
                     continue
                 try:
                     validate_payload(payload)
@@ -263,7 +264,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     failures.append(
                         {"stage": "tables", "table_id": table_id, "error": str(exc)}
                     )
-                    log(f"{label} FALHOU: {exc}")
+                    log(f"{label} FAILED: {exc}")
                     continue
                 reused = False
 
@@ -289,9 +290,9 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     "reused": reused,
                 }
             )
-            log(f"{label} {'reaproveitado' if reused else 'ok'} ({rows} series, {points} pontos)")
+            log(f"{label} {'reused' if reused else 'ok'} ({rows} series, {points} data points)")
 
-        # ---- Inventario: arquivos ja presentes que esta execucao nao visitou --
+        # ---- Inventory: files already present that this run did not visit ----
         declared = {entry["path"] for entry in files}
         tables_dir = os.path.join(partition, TABLES_DIR)
         if os.path.isdir(tables_dir):
@@ -309,13 +310,13 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     anomalies.append(
                         {"kind": "arquivo_ilegivel_nao_visitado", "path": relative, "error": str(exc)}
                     )
-                    log(f"[inventario] {name} ilegivel e nao visitado nesta execucao")
+                    log(f"[inventory] {name} unreadable and not visited in this run")
                     continue
                 if not isinstance(payload, list) or not _is_canonical(blob, payload):
                     anomalies.append(
                         {"kind": "arquivo_nao_canonico_nao_visitado", "path": relative}
                     )
-                    log(f"[inventario] {name} fora da forma canonica e nao visitado")
+                    log(f"[inventory] {name} not in canonical form and not visited")
                     continue
                 rows = count_series(payload)
                 points = count_data_points(payload)
@@ -334,9 +335,9 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "reused": True,
                     }
                 )
-                log(f"[inventario] {name} declarado ({rows} series, nao visitado)")
+                log(f"[inventory] {name} declared ({rows} series, not visited)")
 
-        # ---- Manifesto definitivo -------------------------------------------
+        # ---- Final manifest -------------------------------------------------
         complete = not failures
         manifest = snapshot_manifest(complete, len(tables))
         write_manifest(partition, manifest)
@@ -344,16 +345,16 @@ def run(args, fetcher_factory=Fetcher) -> int:
 
         totals = manifest["totals"]
         log(
-            f"== fim: {totals['table_files']}/{len(tables)} arquivos, "
-            f"{totals['series_count']} series, {totals['data_point_count']} pontos, "
+            f"== end: {totals['table_files']}/{len(tables)} files, "
+            f"{totals['series_count']} series, {totals['data_point_count']} data points, "
             f"{totals['http_requests']} requests ({totals['http_retries']} retries), "
             f"{manifest['duration_seconds']}s, complete={complete}"
         )
         if anomalies:
-            log(f"== {len(anomalies)} anomalia(s) registradas em anomalies[]")
+            log(f"== {len(anomalies)} anomaly(ies) recorded in anomalies[]")
         if failures:
             log(
-                f"== {len(failures)} tabela(s) falharam; reexecute o mesmo comando "
-                f"para completar a particao"
+                f"== {len(failures)} table(s) failed; re-run the same command "
+                f"to complete the partition"
             )
         return EXIT_PARTIAL if failures else EXIT_OK

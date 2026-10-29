@@ -1,4 +1,4 @@
-"""Ponto de entrada: python -m mercadona_catalog_source"""
+"""Entry point: python -m mercadona_catalog_source"""
 
 from __future__ import annotations
 

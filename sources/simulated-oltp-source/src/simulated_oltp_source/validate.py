@@ -1,20 +1,20 @@
-"""Validacao independente de uma particao do snapshot.
+"""Independent validation of a snapshot partition.
 
-Rele todos os arquivos declarados no manifesto, recalculando checksum, contagens e
-impressao digital em vez de aceitar os valores registrados, e varre o diretorio para
-detectar arquivos que o manifesto nao declara.
+Re-reads every file declared in the manifest, recomputing checksum, counts and fingerprint
+instead of accepting the recorded values, and scans the directory to detect files the
+manifest does not declare.
 
-ALEM DISSO, E ESTA E A DIFERENCA DESTA SOURCE: rele o mesmo arquivo de referencia que o
-`extract` usou e reconfere, cliente a cliente, que o endereco atribuido existe de verdade
-e pertence a Area Urbana Funcional do warehouse certo. Nenhuma das outras tres sources
-revalida contra um insumo externo, mas aqui a garantia central — "100% dos CEPs pertencem
-ao warehouse certo" — so pode ser reconferida assim. Um teste unitario prova a regra sobre
-fixtures; isto prova o resultado sobre o dado que foi realmente pousado. Dai `--reference`
-ser obrigatorio.
+ON TOP OF THAT, AND THIS IS WHAT SETS THIS SOURCE APART: it re-reads the same reference
+file `extract` used and re-checks, customer by customer, that the assigned address really
+exists and belongs to the Functional Urban Area of the right warehouse. None of the other
+three sources re-validates against an external input, but here the central guarantee —
+"100% of postal codes belong to the right warehouse" — can only be re-checked this way. A
+unit test proves the rule on fixtures; this proves the result on the data that was actually
+landed. Hence `--reference` being mandatory.
 
-Dois tipos de problema:
-  - INTEGRIDADE e COERENCIA GEOGRAFICA -> sempre fatal (codigo 1).
-  - QUALIDADE/DISTRIBUICAO -> medida e reportada; fatal apenas com --strict.
+Two kinds of problem:
+  - INTEGRITY and GEOGRAPHIC COHERENCE -> always fatal (code 1).
+  - QUALITY/DISTRIBUTION -> measured and reported; fatal only with --strict.
 """
 
 from __future__ import annotations
@@ -31,15 +31,16 @@ from .schema import count_customers, customers_of, fingerprint, missing_fields
 EXIT_OK = 0
 EXIT_FAILED = 1
 
-# Campos do cliente que TEM de ser identicos a linha de origem em address_candidates.json.
-# Sao o endereco atribuido: se algum divergir, o cliente nao mora onde diz morar.
+# Customer fields that MUST be identical to the source row in address_candidates.json.
+# They are the assigned address: if any diverges, the customer does not live where they
+# claim to live.
 #
-# `municipality_name` NAO entra: os dois produtos do INE renderizam o mesmo municipio de
-# forma diferente em 370 de 370 casos no escopo ("BRUC (EL)" no Callejero contra
-# "Bruc, El" na tabela 29005). O cliente carrega o nome da 29005, que e o legivel e o mesmo
-# de warehouse_service_area_seed; o Callejero guarda o dele em municipality_name_callejero.
-# Comparar nomes de vocabularios diferentes reprovaria uma particao correta — o que se
-# compara e o CODIGO do municipio, logo abaixo, que e a chave de verdade.
+# `municipality_name` is NOT included: the two INE products render the same municipality
+# differently in 370 of 370 cases in scope ("BRUC (EL)" in the Callejero vs "Bruc, El" in
+# table 29005). The customer carries the 29005 name, which is the readable one and the same
+# as warehouse_service_area_seed; the Callejero keeps its own in municipality_name_callejero.
+# Comparing names from different vocabularies would fail a correct partition — what is
+# compared is the municipality CODE, just below, which is the real key.
 GEO_FIELDS = (
     "wh",
     "province_code",
@@ -57,26 +58,26 @@ def _inside(root: str, path: str) -> bool:
 
 
 def _check_house_number(customer: dict, candidate: dict) -> str | None:
-    """A regra de numeracao, reconferida contra a faixa real do tramo."""
+    """The numbering rule, re-checked against the tramo's real range."""
     number = customer.get("house_number")
     numbering = candidate["numbering_type"]
 
     if numbering == NUMBERING_NONE:
         if number is not None:
             return (
-                f"{customer['customer_id']}: house_number={number} num tramo sem "
-                f"numeracao (numbering_type='0') — endereco fabricado"
+                f"{customer['customer_id']}: house_number={number} on a tramo without "
+                f"numbering (numbering_type='0') — fabricated address"
             )
         return None
     if number is None:
-        return None  # faixa degenerada ou sem numero da paridade certa: legitimo
+        return None  # degenerate range or no number of the right parity: legitimate
     if not isinstance(number, int) or number < 1:
-        return f"{customer['customer_id']}: house_number invalido ({number!r})"
+        return f"{customer['customer_id']}: invalid house_number ({number!r})"
 
     parity = 1 if numbering == NUMBERING_ODD else 0
     if numbering in (NUMBERING_ODD, NUMBERING_EVEN) and number % 2 != parity:
         return (
-            f"{customer['customer_id']}: house_number={number} contraria "
+            f"{customer['customer_id']}: house_number={number} contradicts "
             f"numbering_type={numbering!r}"
         )
     low = candidate.get("number_from")
@@ -84,78 +85,78 @@ def _check_house_number(customer: dict, candidate: dict) -> str | None:
     if isinstance(low, int) and isinstance(high, int):
         if not (min(low, high) <= number <= max(low, high)):
             return (
-                f"{customer['customer_id']}: house_number={number} fora da faixa real "
-                f"[{low}, {high}] do tramo"
+                f"{customer['customer_id']}: house_number={number} outside the tramo's "
+                f"real range [{low}, {high}]"
             )
     return None
 
 
 def _check_minimum_age(customers: list, reference, ingestion_date: str) -> list:
-    """Nenhum titular de conta abaixo da idade minima que a referencia declara.
+    """No account holder below the minimum age the reference declares.
 
-    FATAL, e nao aviso de distribuicao. O que isto pega ja aconteceu: em 2026-08-31, 18,01%
-    da base tinha menos de 18 anos — 3.602 de 20.000, com idade a partir de zero, incluindo
-    titular de conta recem-nascido. Enquanto a idade nao fazia nada aquilo era inofensivo; a
-    partir do momento em que ela governa a demanda, 18% da base entra na faixa mais jovem do
-    benchmark sendo crianca e nada quebra.
+    FATAL, not a distribution warning. What this catches has already happened: on
+    2026-08-31, 18.01% of the base was under 18 — 3,602 of 20,000, with ages starting from
+    zero, including newborn account holders. While age did nothing that was harmless; from
+    the moment it drives demand, 18% of the base lands in the benchmark's youngest band
+    while being children, and nothing breaks.
 
-    A idade e reconstruida do jeito que o gerador a construiu — `ano(ingestion_date) -
-    birth_year` — e nao do relogio. Comparar com a data de hoje faria esta validacao mudar de
-    resposta sozinha com o passar do tempo, e uma particao imutavel comecaria a reprovar sem
-    que nada nela tivesse mudado.
+    Age is reconstructed the way the generator built it — `year(ingestion_date) -
+    birth_year` — and not from the clock. Comparing with today's date would make this
+    validation change its answer on its own as time passes, and an immutable partition would
+    start failing without anything in it having changed.
 
-    A idade minima vem da REFERENCIA, nunca de uma constante deste arquivo: quem decide quem
-    pode ter cadastro e a plataforma, em customer_premises_seed.
+    The minimum age comes from the REFERENCE, never from a constant in this file: who may be
+    a customer is decided by the platform, in customer_premises_seed.
     """
-    minima = reference.min_customer_age
-    if not isinstance(minima, int):
+    minimum = reference.min_customer_age
+    if not isinstance(minimum, int):
         return [
-            "referencia sem min_customer_age: nao ha contra o que conferir a idade dos "
-            "clientes desta particao"
+            "reference has no min_customer_age: nothing to check this partition's "
+            "customer ages against"
         ]
-    ano = int(str(ingestion_date)[:4])
-    menores: list[str] = []
-    sem_idade: list[str] = []
+    year = int(str(ingestion_date)[:4])
+    minors: list[str] = []
+    no_age: list[str] = []
     for customer in customers:
-        nascimento = customer.get("birth_year")
-        if not isinstance(nascimento, int):
-            sem_idade.append(f"{customer.get('customer_id')}: birth_year={nascimento!r}")
+        birth_year = customer.get("birth_year")
+        if not isinstance(birth_year, int):
+            no_age.append(f"{customer.get('customer_id')}: birth_year={birth_year!r}")
             continue
-        idade = ano - nascimento
-        if idade < minima:
-            menores.append(f"{customer.get('customer_id')}: {idade} anos")
+        age = year - birth_year
+        if age < minimum:
+            minors.append(f"{customer.get('customer_id')}: {age} years old")
 
-    problemas = []
-    if menores:
-        problemas.append(
-            f"{len(menores)} cliente(s) abaixo de min_customer_age={minima} em "
-            f"{ingestion_date}: {menores[:10]}"
+    problems = []
+    if minors:
+        problems.append(
+            f"{len(minors)} customer(s) below min_customer_age={minimum} on "
+            f"{ingestion_date}: {minors[:10]}"
         )
-    # SEPARADO dos menores, e nao somado a eles: um birth_year nulo nao e uma idade baixa,
-    # e uma idade que nao existe. Juntar os dois numa contagem so faria o relatorio afirmar
-    # que ha N criancas quando talvez nao haja nenhuma, e o operador iria procurar a coisa
-    # errada. Fatal do mesmo jeito — idade inverificavel nao pode passar.
-    if sem_idade:
-        problemas.append(
-            f"{len(sem_idade)} cliente(s) sem birth_year inteiro, entao a idade nao e "
-            f"verificavel: {sem_idade[:10]}"
+    # SEPARATE from the minors, not added to them: a null birth_year is not a low age, it is
+    # an age that does not exist. Lumping both into one count would make the report claim
+    # there are N children when there may be none, and the operator would go looking for the
+    # wrong thing. Fatal all the same — an unverifiable age cannot pass.
+    if no_age:
+        problems.append(
+            f"{len(no_age)} customer(s) without an integer birth_year, so age is not "
+            f"verifiable: {no_age[:10]}"
         )
-    return problemas
+    return problems
 
 
 def _check_reference(customers: list, reference, warehouse: str) -> tuple[list, list, int]:
-    """Coerencia geoespacial de cada cliente contra a referencia. O coracao da validacao.
+    """Geospatial coherence of each customer against the reference. The heart of validation.
 
-    Devolve (erros, avisos, clientes_aprovados). O terceiro valor e contado, e nao
-    derivado de `len(customers) - len(errors)`: erros que nao sao por cliente (como
-    customer_id duplicado) desalinhariam a conta.
+    Returns (errors, warnings, approved_customers). The third value is counted, not derived
+    from `len(customers) - len(errors)`: errors that are not per customer (such as a
+    duplicated customer_id) would throw the count off.
     """
     errors: list[str] = []
     warnings: list[str] = []
-    aprovados = 0
+    approved = 0
 
-    # Municipios que a Area Urbana Funcional deste warehouse realmente cobre. Conjunto so
-    # para teste de pertinencia — nunca iterado, entao nao influencia nenhuma amostragem.
+    # Municipalities this warehouse's Functional Urban Area actually covers. A set only for
+    # membership tests — never iterated, so it does not influence any sampling.
     service_area = {
         (m["province_code"], m["municipality_code"]) for m in reference.municipalities(warehouse)
     }
@@ -174,14 +175,14 @@ def _check_reference(customers: list, reference, warehouse: str) -> tuple[list, 
 
         if customer.get("wh") != warehouse:
             errors.append(
-                f"{customer_id}: wh={customer.get('wh')!r} nao e o da particao ({warehouse!r})"
+                f"{customer_id}: wh={customer.get('wh')!r} is not the partition's ({warehouse!r})"
             )
             continue
 
         index = customer.get("candidate_index")
         if not isinstance(index, int) or not (0 <= index < total_candidates):
             errors.append(
-                f"{customer_id}: candidate_index={index!r} fora da referencia "
+                f"{customer_id}: candidate_index={index!r} outside the reference "
                 f"(0..{total_candidates - 1})"
             )
             continue
@@ -194,16 +195,16 @@ def _check_reference(customers: list, reference, warehouse: str) -> tuple[list, 
         ]
         if divergent:
             errors.append(
-                f"{customer_id}: campo(s) {divergent} divergem da linha "
-                f"{index} de address_candidates.json"
+                f"{customer_id}: field(s) {divergent} diverge from row "
+                f"{index} of address_candidates.json"
             )
             continue
 
         key = (customer["province_code"], customer["municipality_code"])
         if key not in service_area:
             errors.append(
-                f"{customer_id}: municipio {key[0]}/{key[1]} fora da Area Urbana "
-                f"Funcional de {warehouse}"
+                f"{customer_id}: municipality {key[0]}/{key[1]} outside the Functional "
+                f"Urban Area of {warehouse}"
             )
             continue
         municipalities_used.add(key)
@@ -214,23 +215,23 @@ def _check_reference(customers: list, reference, warehouse: str) -> tuple[list, 
             continue
         if customer.get("house_number") is not None:
             with_number += 1
-        aprovados += 1
+        approved += 1
 
     if duplicated:
-        errors.append(f"customer_id duplicado na particao: {sorted(duplicated)[:10]}")
+        errors.append(f"duplicated customer_id in partition: {sorted(duplicated)[:10]}")
 
     available = len(service_area)
     if len(municipalities_used) == 1 and available > 1 and len(customers) > 10:
         warnings.append(
-            f"todos os {len(customers)} clientes cairam num unico municipio, com "
-            f"{available} disponiveis na AUF — o peso populacional pode estar degenerado"
+            f"all {len(customers)} customers fell in a single municipality, with "
+            f"{available} available in the FUA — the population weight may be degenerate"
         )
     if customers and with_number == 0:
         warnings.append(
-            "nenhum cliente recebeu numero de casa: legitimo se todos os tramos "
-            "sorteados forem numbering_type='0', suspeito caso contrario"
+            "no customer received a house number: legitimate if all drawn tramos "
+            "are numbering_type='0', suspicious otherwise"
         )
-    return errors, warnings, aprovados
+    return errors, warnings, approved
 
 
 def run(args) -> int:
@@ -240,75 +241,75 @@ def run(args) -> int:
 
     path = manifest_path(partition)
     if not os.path.exists(path):
-        print(f"ERRO: manifesto nao encontrado em {path}")
+        print(f"ERROR: manifest not found at {path}")
         return EXIT_FAILED
     try:
         manifest, _ = read_json(path)
     except CorruptFileError as exc:
-        print(f"ERRO: manifesto ilegivel: {exc}")
+        print(f"ERROR: manifest unreadable: {exc}")
         return EXIT_FAILED
     if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
-        print(f"ERRO: manifesto sem a lista 'files': {path}")
+        print(f"ERROR: manifest has no 'files' list: {path}")
         return EXIT_FAILED
 
-    # A raiz do snapshot fica dois niveis acima: ingestion_date= e wh=.
+    # The snapshot root is two levels up: ingestion_date= and wh=.
     root = os.path.abspath(os.path.join(partition, "..", ".."))
     version = manifest.get("manifest_version")
     if version != MANIFEST_VERSION:
         errors.append(
-            f"manifest_version {version!r} diferente do suportado ({MANIFEST_VERSION})"
+            f"manifest_version {version!r} differs from the supported one ({MANIFEST_VERSION})"
         )
 
     warehouse = (manifest.get("partition") or {}).get("warehouse")
     config = manifest.get("config") or {}
 
-    print(f"particao ......... {partition}")
+    print(f"partition ........ {partition}")
     print(f"run_id ........... {manifest.get('run_id')}")
     print(f"source ........... {(manifest.get('source') or {}).get('name')}")
     print(f"warehouse ........ {warehouse}")
     print(f"seed ............. {config.get('seed')}")
-    print(f"completa ......... {manifest.get('complete')}")
+    print(f"complete ......... {manifest.get('complete')}")
 
-    # ---- Integridade dos arquivos declarados -------------------------------
+    # ---- Integrity of the declared files -----------------------------------
     checked = 0
     declared: set = set()
     payloads: list = []
     for entry in manifest["files"]:
         if not isinstance(entry, dict) or "path" not in entry:
-            errors.append(f"entrada de manifesto malformada: {entry!r}")
+            errors.append(f"malformed manifest entry: {entry!r}")
             continue
         target = os.path.join(root, entry["path"])
         if not _inside(root, target):
-            errors.append(f"caminho fora da raiz do snapshot: {entry['path']}")
+            errors.append(f"path outside the snapshot root: {entry['path']}")
             continue
         declared.add(os.path.abspath(target))
         if not os.path.exists(target):
-            errors.append(f"arquivo ausente: {entry['path']}")
+            errors.append(f"missing file: {entry['path']}")
             continue
         blob = read_bytes(target)
         checked += 1
         if digest(blob) != entry.get("sha256"):
-            errors.append(f"checksum divergente: {entry['path']}")
+            errors.append(f"checksum mismatch: {entry['path']}")
         if len(blob) != entry.get("bytes"):
-            errors.append(f"tamanho divergente: {entry['path']}")
+            errors.append(f"size mismatch: {entry['path']}")
         try:
             payload, _ = read_json(target)
         except CorruptFileError as exc:
-            errors.append(f"arquivo ilegivel: {exc}")
+            errors.append(f"unreadable file: {exc}")
             continue
         payloads.append(payload)
         records = count_customers(payload)
         if records != entry.get("records"):
             errors.append(
-                f"contagem divergente em {entry['path']}: "
-                f"manifesto={entry.get('records')} arquivo={records}"
+                f"count mismatch in {entry['path']}: "
+                f"manifest={entry.get('records')} file={records}"
             )
-    print(f"arquivos ......... {checked}/{len(manifest['files'])} lidos e conferidos")
+    print(f"files ............ {checked}/{len(manifest['files'])} read and checked")
 
     if manifest.get("failures"):
-        errors.append(f"{len(manifest['failures'])} falha(s) registrada(s) no manifesto")
+        errors.append(f"{len(manifest['failures'])} failure(s) recorded in the manifest")
 
-    # ---- Arquivos em disco nao declarados no manifesto ---------------------
+    # ---- Files on disk not declared in the manifest ------------------------
     orphans: list[str] = []
     known_root_files = {MANIFEST_NAME, SUCCESS_NAME}
     partition_abs = os.path.abspath(partition)
@@ -319,37 +320,37 @@ def run(args) -> int:
                 continue
             if candidate_path not in declared:
                 orphans.append(os.path.relpath(candidate_path, partition_abs))
-    print(f"orfaos ........... {len(orphans)}")
+    print(f"orphans .......... {len(orphans)}")
     if orphans:
-        errors.append(f"arquivo(s) em disco fora do manifesto: {orphans}")
+        errors.append(f"file(s) on disk outside the manifest: {orphans}")
 
-    # ---- Marcador _SUCCESS coerente com 'complete' -------------------------
+    # ---- _SUCCESS marker consistent with 'complete' ------------------------
     has_success = os.path.exists(success_path(partition))
     if bool(manifest.get("complete")) != has_success:
         errors.append(
-            f"_SUCCESS {'presente' if has_success else 'ausente'} contradiz "
+            f"_SUCCESS {'present' if has_success else 'absent'} contradicts "
             f"complete={manifest.get('complete')}"
         )
 
     customers = [row for payload in payloads for row in customers_of(payload)]
 
-    # ---- Schema e campos obrigatorios --------------------------------------
+    # ---- Schema and required fields ----------------------------------------
     absent = missing_fields(customers)
     if absent:
-        errors.append(f"campo(s) obrigatorio(s) ausente(s) em algum registro: {absent}")
+        errors.append(f"required field(s) missing from some record: {absent}")
     observed_fingerprint = fingerprint(payloads)
     declared_fingerprint = manifest.get("schema_fingerprint") or {}
     if observed_fingerprint.get("sha256") != declared_fingerprint.get("sha256"):
         errors.append(
-            f"schema_fingerprint divergente: manifesto="
-            f"{declared_fingerprint.get('sha256')} observado={observed_fingerprint.get('sha256')}"
+            f"schema_fingerprint mismatch: manifest="
+            f"{declared_fingerprint.get('sha256')} observed={observed_fingerprint.get('sha256')}"
         )
-    # A chave house_number tem de existir em todo registro, mesmo nula: e o que impede a
-    # impressao digital da particao de depender da seed.
+    # The house_number key must exist in every record, even when null: that is what keeps
+    # the partition fingerprint from depending on the seed.
     if customers and "house_number" not in set(observed_fingerprint.get("customer_keys") or []):
-        errors.append("nenhum registro declara a chave house_number")
+        errors.append("no record declares the house_number key")
 
-    # ---- Totais reconferidos contra a releitura ----------------------------
+    # ---- Totals re-checked against the re-read -----------------------------
     totals = manifest.get("totals") or {}
     observed_totals = {
         "customer_rows": len(customers),
@@ -362,52 +363,52 @@ def run(args) -> int:
     for key, observed in observed_totals.items():
         if totals.get(key) != observed:
             errors.append(
-                f"totals.{key} divergente: manifesto={totals.get(key)} observado={observed}"
+                f"totals.{key} mismatch: manifest={totals.get(key)} observed={observed}"
             )
     if totals.get("customer_rows") != config.get("count"):
         errors.append(
-            f"config.count={config.get('count')} nao bate com "
+            f"config.count={config.get('count')} does not match "
             f"totals.customer_rows={totals.get('customer_rows')}"
         )
 
-    # ---- Coerencia geoespacial contra a referencia --------------------------
+    # ---- Geospatial coherence against the reference ------------------------
     try:
         reference = load(args.reference)
     except ReferenceError as exc:
         print()
-        print(f"FALHOU: referencia inutilizavel: {exc}")
+        print(f"FAILED: reference unusable: {exc}")
         return EXIT_FAILED
 
     declared_reference = (manifest.get("reference") or {}).get("callejero_ingestion_date")
     if declared_reference != reference.callejero_ingestion_date:
         errors.append(
-            f"referencia de outro snapshot do Callejero: manifesto={declared_reference} "
-            f"arquivo={reference.callejero_ingestion_date}"
+            f"reference from another Callejero snapshot: manifest={declared_reference} "
+            f"file={reference.callejero_ingestion_date}"
         )
 
     ingestion_date = (manifest.get("partition") or {}).get("ingestion_date")
     errors.extend(_check_minimum_age(customers, reference, ingestion_date))
-    print(f"cadastro ......... idade minima {reference.min_customer_age} "
-          f"(alvo da referencia: {reference.customer_allocation.get('rule')})")
+    print(f"customer base .... minimum age {reference.min_customer_age} "
+          f"(reference target: {reference.customer_allocation.get('rule')})")
 
-    geo_errors, geo_warnings, aprovados = _check_reference(customers, reference, warehouse)
+    geo_errors, geo_warnings, approved = _check_reference(customers, reference, warehouse)
     errors.extend(geo_errors[:20])
     if len(geo_errors) > 20:
-        errors.append(f"... e mais {len(geo_errors) - 20} problema(s) de coerencia geografica")
+        errors.append(f"... and {len(geo_errors) - 20} more geographic coherence problem(s)")
     warnings.extend(geo_warnings)
-    print(f"coerencia ........ {aprovados}/{len(customers)} clientes com "
-          f"endereco real na AUF de {warehouse}")
+    print(f"coherence ........ {approved}/{len(customers)} customers with a "
+          f"real address in the FUA of {warehouse}")
 
     if args.strict and warnings:
-        errors.append(f"{len(warnings)} aviso(s) de distribuicao (--strict)")
+        errors.append(f"{len(warnings)} distribution warning(s) (--strict)")
 
     print()
     for item in warnings:
-        print(f"AVISO: {item}")
+        print(f"WARNING: {item}")
     if errors:
-        print(f"FALHOU ({len(errors)} problema(s)):")
+        print(f"FAILED ({len(errors)} problem(s)):")
         for item in errors:
             print(f"  - {item}")
         return EXIT_FAILED
-    print("OK: integridade, schema, totais e coerencia geoespacial validados.")
+    print("OK: integrity, schema, totals and geospatial coherence validated.")
     return EXIT_OK

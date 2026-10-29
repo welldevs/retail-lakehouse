@@ -1,19 +1,19 @@
-"""Orquestra a geracao de uma particao de eventos de pedido.
+"""Orchestrates the generation of one order-event partition.
 
-"extract" aqui NAO busca rede — nem esta Source nem nenhuma outra parte deste pacote abre
-socket. O verbo e mantido por simetria de Makefile/DAG com as outras quatro sources. O que
-ele faz e: ler os quatro arquivos de referencia que a plataforma pre-computou do Silver,
-gerar o log de eventos daquele (armazem, dia) e pousar a particao com manifesto e _SUCCESS.
+"extract" here does NOT touch the network — neither this Source nor any other part of this
+package opens a socket. The verb is kept for Makefile/DAG symmetry with the other four sources.
+What it does is: read the four reference files the platform pre-computed from Silver, generate
+the event log of that (warehouse, day) and land the partition with manifest and _SUCCESS.
 
-Ordem de gravacao, nesta ordem e sempre: dados -> manifesto -> _SUCCESS. Um processo morto no
-meio nunca deixa uma particao que se anuncia completa sem estar.
+Write order, always in this order: data -> manifest -> _SUCCESS. A process killed midway never
+leaves a partition that announces itself complete without being so.
 
-O MANIFESTO DECLARA O FOLD, E ISSO NAO E REDUNDANCIA
------------------------------------------------------
-`totals` traz `order_rows`, `net_amount_picked`, `substituted_lines` e companhia — numeros que
-so existem depois de dobrar o log. Nao ha `orders.json` ao lado: o estado nao e material aqui,
-e o manifesto e a unica declaracao do que o log significa. E contra ela que o teste dbt
-reconcilia o Silver, fechando manifesto -> RAW -> parquet.
+THE MANIFEST DECLARES THE FOLD, AND THAT IS NOT REDUNDANCY
+----------------------------------------------------------
+`totals` carries `order_rows`, `net_amount_picked`, `substituted_lines` and the like — numbers
+that only exist after folding the log. There is no `orders.json` alongside: the state is not
+materialized here, and the manifest is the only declaration of what the log means. The dbt test
+reconciles Silver against it, closing manifest -> RAW -> parquet.
 """
 
 from __future__ import annotations
@@ -63,14 +63,14 @@ def run(args) -> int:
         premises = Premises(reference.premises)
         events = generate(reference, premises, args.wh, order_date, args.seed)
     except (PartitionError, ReferenceError, PremiseError, GenerationError, EventError) as exc:
-        print(f"ERRO: {exc}")
+        print(f"ERROR: {exc}")
         return EXIT_FATAL
 
-    ausentes = missing_fields(events)
-    if ausentes:
-        # Nunca deve acontecer — o gerador constroi pelo mesmo vocabulario que isto confere —
-        # mas gravar uma particao com campo faltando seria pior que recusar.
-        print(f"ERRO: eventos gerados sem campo declarado: {ausentes[:20]}")
+    absent = missing_fields(events)
+    if absent:
+        # Should never happen — the generator builds from the same vocabulary this checks —
+        # but writing a partition with a missing field would be worse than refusing.
+        print(f"ERROR: generated events missing a declared field: {absent[:20]}")
         return EXIT_FATAL
 
     sha256, size, records = write_jsonl(events_path(partition), events)
@@ -94,20 +94,20 @@ def run(args) -> int:
             "generator_version": __version__,
         },
         "partition": {"ingestion_date": order_date, "warehouse": args.wh},
-        # As TRES entradas que mudam os pedidos sob os mesmos order_id. Sem as tres
-        # registradas, um --overwrite trocaria os pedidos sem deixar rastro.
+        # The THREE inputs that change the orders under the same order_id. Without all three
+        # recorded, an --overwrite would swap the orders without leaving a trace.
         "config": {
             "seed": args.seed,
             "orders": totals["order_rows"],
             "premises_sha256": reference.premises_sha256,
-            # QUARTA CONDICAO NAO-ADITIVA. Trocar o modelo de demanda troca os pedidos por
-            # tras dos mesmos ids, exatamente como trocar seed, referencia ou premissas.
-            # Fica no config, e nao so na referencia, para que reler uma particao antiga
-            # responda com que modelo ela nasceu sem depender do export ainda existir.
+            # FOURTH NON-ADDITIVE CONDITION. Changing the demand model changes the orders
+            # behind the same ids, exactly like changing seed, reference or premises.
+            # It lives in config, not only in reference, so that re-reading an old partition
+            # answers which model it was born with without depending on the export still existing.
             "demand_model_version": reference.demand.version,
             "reference": os.path.normpath(args.reference),
         },
-        # Proveniencia do insumo: quais snapshots sustentam estes pedidos.
+        # Input provenance: which snapshots back these orders.
         "reference": {
             "customer_ingestion_dates": reference.customer_ingestion_dates,
             "roster_ingestion_date": reference.roster_ingestion_date,
@@ -141,23 +141,23 @@ def run(args) -> int:
     write_manifest(partition, manifest)
     mark_success(partition, True, run_id)
 
-    estados = ", ".join(f"{e}={n}" for e, n in totals["orders_by_state"].items())
-    print(f"particao ......... {partition}")
+    states = ", ".join(f"{e}={n}" for e, n in totals["orders_by_state"].items())
+    print(f"partition ........ {partition}")
     print(f"run_id ........... {run_id}")
-    print(f"referencia ....... {args.reference}")
-    print(f"  clientes ....... geracao vigente entre {', '.join(reference.customer_ingestion_dates)}")
-    print(f"  preco .......... price_as_of={calendar['price_as_of']} "
+    print(f"reference ........ {args.reference}")
+    print(f"  customers ...... generation in force between {', '.join(reference.customer_ingestion_dates)}")
+    print(f"  price .......... price_as_of={calendar['price_as_of']} "
           f"({calendar['price_source']})")
-    print(f"  premissas ...... sha256={reference.premises_sha256[:16]}... (todas sinteticas)")
-    print(f"  demanda ........ {reference.demand.version} ({len(reference.demand.groups)} grupos)")
-    print(f"seed ............. {args.seed} (sub-seed do dia derivada por sha256)")
-    print(f"pedidos .......... {totals['order_rows']} de {totals['customers_used']} cliente(s)")
-    print(f"eventos .......... {totals['event_rows']} em {len(totals['event_rows_by_type'])} tipos")
-    print(f"linhas ........... {totals['line_rows']} "
-          f"({totals['substituted_lines']} substituida(s), {totals['removed_lines']} removida(s))")
-    print(f"valor ............ colocado {totals['gross_amount_placed']} / "
-          f"separado {totals['net_amount_picked']}")
-    print(f"estados .......... {estados}")
-    print(f"arquivo .......... {EVENTS_FILE} ({size} bytes, {records} linhas)")
-    print("OK: particao completa, _SUCCESS gravado por ultimo.")
+    print(f"  premises ....... sha256={reference.premises_sha256[:16]}... (all synthetic)")
+    print(f"  demand ......... {reference.demand.version} ({len(reference.demand.groups)} groups)")
+    print(f"seed ............. {args.seed} (day sub-seed derived via sha256)")
+    print(f"orders ........... {totals['order_rows']} from {totals['customers_used']} customer(s)")
+    print(f"events ........... {totals['event_rows']} across {len(totals['event_rows_by_type'])} types")
+    print(f"lines ............ {totals['line_rows']} "
+          f"({totals['substituted_lines']} substituted, {totals['removed_lines']} removed)")
+    print(f"value ............ placed {totals['gross_amount_placed']} / "
+          f"picked {totals['net_amount_picked']}")
+    print(f"states ........... {states}")
+    print(f"file ............. {EVENTS_FILE} ({size} bytes, {records} lines)")
+    print("OK: partition complete, _SUCCESS written last.")
     return EXIT_OK

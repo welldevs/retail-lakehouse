@@ -1,12 +1,12 @@
-"""Forma dos registros gerados e impressao digital de schema.
+"""Shape of the generated records and schema fingerprint.
 
-Diferente das outras tres sources, aqui o payload nao vem de fora: e esta Source que o
-escreve. Mesmo assim a impressao digital continua valendo a pena — ela detecta que o
-formato mudou entre snapshots sem que o consumidor precise difundir arquivo inteiro.
+Unlike the other three sources, here the payload does not come from outside: this Source
+writes it. Even so the fingerprint is still worth it — it detects that the format changed
+between snapshots without the consumer having to diff a whole file.
 
-A impressao digital e a UNIAO das chaves observadas. E por isso que
-`customers_generator` sempre emite `house_number`, mesmo nulo: se a chave fosse omitida
-quando nao ha numero, a impressao digital da particao passaria a depender da seed.
+The fingerprint is the UNION of the observed keys. That is why `customers_generator`
+always emits `house_number`, even when null: if the key were omitted when there is no
+number, the partition fingerprint would start to depend on the seed.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-# Campos que todo cliente carrega. As tres primeiras linhas sao identidade e linhagem; a
-# quarta e o endereco atribuido; a quinta e a demografia amostrada.
+# Fields every customer carries. The first three lines are identity and lineage; the
+# fourth is the assigned address; the fifth is the sampled demographics.
 CUSTOMER_FIELDS = (
     "customer_id",
     "wh",
@@ -36,7 +36,7 @@ CUSTOMER_FIELDS = (
 
 
 def customers_of(payload: object) -> list:
-    """Clientes de um arquivo do snapshot. Lista vazia para qualquer forma inesperada."""
+    """Customers in a snapshot file. Empty list for any unexpected shape."""
     if not isinstance(payload, list):
         return []
     return [row for row in payload if isinstance(row, dict)]
@@ -47,7 +47,7 @@ def count_customers(payload: object) -> int:
 
 
 def fingerprint(payloads) -> dict:
-    """Impressao digital do schema observado nos arquivos de clientes."""
+    """Fingerprint of the schema observed in the customer files."""
     keys: set = set()
     for payload in payloads:
         for customer in customers_of(payload):
@@ -60,7 +60,7 @@ def fingerprint(payloads) -> dict:
 
 
 def missing_fields(customers) -> list[str]:
-    """Campos obrigatorios ausentes em algum registro, agregados (nao um erro por linha)."""
+    """Required fields missing from any record, aggregated (not one error per row)."""
     absent: set = set()
     for customer in customers:
         absent.update(field for field in CUSTOMER_FIELDS if field not in customer)

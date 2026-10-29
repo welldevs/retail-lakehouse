@@ -1,16 +1,16 @@
-"""Extracao do catalogo: produto, categoria e preco.
+"""Catalog extraction: product, category and price.
 
-Duas etapas contra a API publica da Mercadona:
-  1. GET /api/categories/       -> arvore de categorias (nivel 1 + nivel 2)
-  2. GET /api/categories/{id}/  -> um arquivo por categoria de nivel 2
+Two stages against Mercadona's public API:
+  1. GET /api/categories/       -> category tree (level 1 + level 2)
+  2. GET /api/categories/{id}/  -> one file per level-2 category
 
-Nenhuma transformacao e aplicada ao payload: ele e gravado na forma canonica descrita em
-canonical.py, com o conteudo integro.
+No transformation is applied to the payload: it is written in the canonical form described
+in canonical.py, with its content intact.
 
-O manifesto e gravado DUAS vezes: um manifesto preliminar logo apos a arvore, e o
-definitivo no fim. Sem o preliminar, uma execucao interrompida deixaria a particao sem
-manifesto, e as travas de imutabilidade e de idioma fixo — que dependem dele — ficariam
-desligadas na retomada.
+The manifest is written TWICE: a preliminary manifest right after the tree, and the final
+one at the end. Without the preliminary one, an interrupted run would leave the partition
+without a manifest, and the immutability and fixed-language locks — which depend on it —
+would be switched off on resume.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ EXIT_FATAL = 2
 
 
 class RunLogger:
-    """Log append-only da particao, espelhado no stdout."""
+    """Append-only partition log, mirrored to stdout."""
 
     def __init__(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -66,7 +66,7 @@ class RunLogger:
 
     def __call__(self, message: str) -> None:
         line = f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} {message}"
-        # errors="replace": um locale nao-UTF-8 nao pode derrubar a extracao no meio.
+        # errors="replace": a non-UTF-8 locale must not bring the extraction down midway.
         print(line.encode("utf-8", "replace").decode("utf-8", "replace"), flush=True)
         self._handle.write(line + "\n")
         self._handle.flush()
@@ -83,12 +83,12 @@ class RunLogger:
 
 
 def _is_canonical(blob: bytes, payload) -> bool:
-    """O arquivo em disco esta exatamente na forma canonica deste Source?
+    """Is the file on disk exactly in this Source's canonical form?
 
-    Um arquivo que carregue o mesmo valor JSON mas outra grafia (outra indentacao, outra
-    ordem de chaves, escapes Unicode) nao pode ser reaproveitado: seu SHA-256 entraria no
-    manifesto como se fosse o digest canonico, e um consumidor que compare digests entre
-    snapshots veria mudanca onde nada mudou.
+    A file carrying the same JSON value but a different spelling (other indentation, other
+    key order, Unicode escapes) cannot be reused: its SHA-256 would enter the manifest as
+    if it were the canonical digest, and a consumer comparing digests across snapshots
+    would see a change where nothing changed.
     """
     return blob == canonical_bytes(payload)
 
@@ -156,10 +156,10 @@ def _build_manifest(
 
 
 def run(args, fetcher_factory=Fetcher) -> int:
-    """Executa a extracao. Retorna o codigo de saida.
+    """Runs the extraction. Returns the exit code.
 
-    fetcher_factory existe como costura de teste: a suite injeta um cliente que responde
-    do disco, para exercitar toda a maquina sem tocar a rede.
+    fetcher_factory exists as a test seam: the suite injects a client that answers from
+    memory, to exercise the whole machinery without touching the network.
     """
     try:
         ingestion_date = validate_date(
@@ -168,12 +168,12 @@ def run(args, fetcher_factory=Fetcher) -> int:
         warehouse = validate_token("wh", args.wh)
         lang = validate_token("lang", args.lang)
         if args.limit is not None and args.limit < 1:
-            raise PartitionError(f"--limit deve ser >= 1 (recebido: {args.limit})")
+            raise PartitionError(f"--limit must be >= 1 (got: {args.limit})")
         partition = partition_path(args.out, ingestion_date, warehouse)
         os.makedirs(partition, exist_ok=True)
         previous = assert_writable(partition, lang, args.overwrite)
     except (PartitionError, CorruptFileError) as exc:
-        print(f"FALHA FATAL: {exc}", flush=True)
+        print(f"FATAL FAILURE: {exc}", flush=True)
         return EXIT_FATAL
 
     started = datetime.now(timezone.utc)
@@ -182,7 +182,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
     history = build_history(previous)
 
     with RunLogger(os.path.join(partition, "_run.log")) as log:
-        log(f"== run {run_id} | particao {partition} | delay {args.delay}s | lang {lang}")
+        log(f"== run {run_id} | partition {partition} | delay {args.delay}s | lang {lang}")
         fetcher = fetcher_factory(args.delay, args.timeout, args.max_retries, log)
         files: list[dict] = []
         failures: list[dict] = []
@@ -220,14 +220,14 @@ def run(args, fetcher_factory=Fetcher) -> int:
                 history=history,
             )
 
-        # ---- Etapa 1: arvore de categorias ---------------------------------
+        # ---- Stage 1: category tree ----------------------------------------
         tree, error = fetcher.get_json("/categories/", {"lang": lang, "wh": warehouse})
         if tree is None:
-            log(f"FALHA FATAL na arvore de categorias: {error}")
+            log(f"FATAL FAILURE fetching the category tree: {error}")
             return EXIT_FATAL
 
-        # A arvore e gravada ANTES de ser interpretada: um formato inesperado nao
-        # descarta um download bem-sucedido.
+        # The tree is written BEFORE it is interpreted: an unexpected format does not
+        # discard a successful download.
         tree_path = categories_path(partition)
         tree_digest, tree_size = write_json(tree_path, tree)
         files.append(
@@ -244,30 +244,30 @@ def run(args, fetcher_factory=Fetcher) -> int:
         try:
             level2 = flatten_tree(tree)
         except SchemaError as exc:
-            # Manifesto preliminar: a arvore baixada fica declarada mesmo na saida fatal,
-            # em vez de virar arquivo orfao na particao.
+            # Preliminary manifest: the downloaded tree stays declared even on the fatal exit,
+            # instead of becoming an orphan file in the partition.
             write_manifest(partition, snapshot_manifest(False, level1_count, 0, 0))
             mark_success(partition, False, run_id)
-            log(f"FALHA FATAL: formato da arvore de categorias mudou: {exc}")
+            log(f"FATAL FAILURE: category tree format changed: {exc}")
             return EXIT_FATAL
         if not level2:
             write_manifest(partition, snapshot_manifest(False, level1_count, 0, 0))
             mark_success(partition, False, run_id)
-            log("FALHA FATAL: arvore de categorias sem nenhuma categoria de nivel 2")
+            log("FATAL FAILURE: category tree has no level-2 category")
             return EXIT_FATAL
 
         targets = level2 if args.limit is None else level2[: args.limit]
-        log(f"etapa 1 ok: {level1_count} categorias nivel 1, {len(level2)} nivel 2")
+        log(f"stage 1 ok: {level1_count} level-1 categories, {len(level2)} level-2")
 
-        # Manifesto preliminar. A partir daqui a particao tem identidade em disco: uma
-        # interrupcao nao deixa mais uma particao "sem dono" que a retomada aceitaria com
-        # outro idioma ou por cima de uma particao completa.
+        # Preliminary manifest. From here on the partition has an identity on disk: an
+        # interruption no longer leaves an "ownerless" partition that a resume would accept
+        # with another language or on top of a complete partition.
         write_manifest(
             partition, snapshot_manifest(False, level1_count, len(level2), len(targets))
         )
         mark_success(partition, False, run_id)
 
-        # ---- Etapa 2: catalogo por categoria de nivel 2 ---------------------
+        # ---- Stage 2: catalog per level-2 category --------------------------
         for index, category in enumerate(targets, start=1):
             label = f"[{index}/{len(targets)}] {category['id']} {category['name'][:38]}"
             try:
@@ -281,7 +281,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "error": str(exc),
                     }
                 )
-                log(f"{label} FALHOU: {exc}")
+                log(f"{label} FAILED: {exc}")
                 continue
 
             relative = os.path.relpath(target_path, args.out)
@@ -294,15 +294,16 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     payload, blob = read_json(target_path)
                     reused = True
                 except CorruptFileError as exc:
-                    log(f"{label} arquivo ilegivel ({exc}); rebaixando")
+                    log(f"{label} unreadable file ({exc}); re-downloading")
                     payload = None
 
             if reused and not is_mapping(payload):
-                log(f"{label} arquivo com formato inesperado; rebaixando")
+                log(f"{label} file with unexpected format; re-downloading")
                 payload, reused = None, False
 
-            # Um arquivo que nao esta na forma canonica nao veio deste Source. Reaproveita-lo
-            # gravaria no manifesto um digest que nao e o digest canonico do conteudo.
+            # A file that is not in canonical form did not come from this Source. Reusing it
+            # would write into the manifest a digest that is not the content's canonical digest.
+            # Anomaly "kind" values are contract literals written to the manifest (kept as-is).
             if reused and not _is_canonical(blob, payload):
                 anomalies.append(
                     {
@@ -311,12 +312,12 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "category_id": category["id"],
                     }
                 )
-                log(f"{label} arquivo fora da forma canonica; rebaixando")
+                log(f"{label} file not in canonical form; re-downloading")
                 payload, reused = None, False
 
-            # Particao e imutavel: divergencia do manifesto anterior e adulteracao ou
-            # perda. Registramos a anomalia E rebaixamos da fonte, para que a reexecucao
-            # seguinte nao "lave" o conteudo adulterado transformando-o na nova verdade.
+            # The partition is immutable: a mismatch with the previous manifest means tampering or
+            # loss. We record the anomaly AND re-download from the source, so that the next
+            # re-run does not "launder" the tampered content into the new truth.
             if reused and previous_digests.get(relative) not in (None, digest(blob)):
                 anomalies.append(
                     {
@@ -325,7 +326,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "category_id": category["id"],
                     }
                 )
-                log(f"{label} divergente do manifesto anterior; rebaixando")
+                log(f"{label} differs from the previous manifest; re-downloading")
                 payload, reused = None, False
 
             if payload is None:
@@ -341,7 +342,7 @@ def run(args, fetcher_factory=Fetcher) -> int:
                             "error": error,
                         }
                     )
-                    log(f"{label} FALHOU: {error}")
+                    log(f"{label} FAILED: {error}")
                     continue
                 if not is_mapping(payload):
                     failures.append(
@@ -349,10 +350,11 @@ def run(args, fetcher_factory=Fetcher) -> int:
                             "stage": "catalog",
                             "category_id": category["id"],
                             "name": category["name"],
+                            # Kept verbatim ("response is not a JSON object"): persisted.
                             "error": "resposta nao e um objeto JSON",
                         }
                     )
-                    log(f"{label} FALHOU: resposta nao e um objeto JSON")
+                    log(f"{label} FAILED: response is not a JSON object")
                     continue
                 reused = False
 
@@ -377,11 +379,11 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     "reused": reused,
                 }
             )
-            log(f"{label} {'reaproveitado' if reused else 'ok'} ({rows} produtos)")
+            log(f"{label} {'reused' if reused else 'ok'} ({rows} products)")
 
-        # ---- Inventario: arquivos ja presentes que esta execucao nao visitou --
-        # Sem isto, uma execucao parcial declararia menos arquivos do que a particao
-        # contem, e o manifesto deixaria de ser o inventario fechado que o contrato promete.
+        # ---- Inventory: files already present that this run did not visit ---
+        # Without this, a partial run would declare fewer files than the partition
+        # contains, and the manifest would stop being the closed inventory the contract promises.
         declared = {entry["path"] for entry in files}
         catalog_dir = os.path.join(partition, CATALOG_DIR)
         if os.path.isdir(catalog_dir):
@@ -399,13 +401,13 @@ def run(args, fetcher_factory=Fetcher) -> int:
                     anomalies.append(
                         {"kind": "arquivo_ilegivel_nao_visitado", "path": relative, "error": str(exc)}
                     )
-                    log(f"[inventario] {name} ilegivel e nao visitado nesta execucao")
+                    log(f"[inventory] {name} unreadable and not visited in this run")
                     continue
                 if not is_mapping(payload) or not _is_canonical(blob, payload):
                     anomalies.append(
                         {"kind": "arquivo_nao_canonico_nao_visitado", "path": relative}
                     )
-                    log(f"[inventario] {name} fora da forma canonica e nao visitado")
+                    log(f"[inventory] {name} not in canonical form and not visited")
                     continue
                 rows = count_products(payload)
                 product_rows += rows
@@ -423,9 +425,9 @@ def run(args, fetcher_factory=Fetcher) -> int:
                         "reused": True,
                     }
                 )
-                log(f"[inventario] {name} declarado ({rows} produtos, nao visitado)")
+                log(f"[inventory] {name} declared ({rows} products, not visited)")
 
-        # ---- Manifesto definitivo -------------------------------------------
+        # ---- Final manifest -------------------------------------------------
         complete = not failures and args.limit is None
         manifest = snapshot_manifest(complete, level1_count, len(level2), len(targets))
         write_manifest(partition, manifest)
@@ -433,16 +435,16 @@ def run(args, fetcher_factory=Fetcher) -> int:
 
         totals = manifest["totals"]
         log(
-            f"== fim: {totals['catalog_files']}/{len(targets)} arquivos, "
-            f"{totals['product_rows']} linhas, {totals['unique_product_ids']} produtos unicos, "
+            f"== end: {totals['catalog_files']}/{len(targets)} files, "
+            f"{totals['product_rows']} rows, {totals['unique_product_ids']} unique products, "
             f"{totals['http_requests']} requests ({totals['http_retries']} retries), "
             f"{manifest['duration_seconds']}s, complete={complete}"
         )
         if anomalies:
-            log(f"== {len(anomalies)} anomalia(s) registradas em anomalies[]")
+            log(f"== {len(anomalies)} anomaly(ies) recorded in anomalies[]")
         if failures:
             log(
-                f"== {len(failures)} categoria(s) falharam; reexecute o mesmo comando "
-                f"para completar a particao"
+                f"== {len(failures)} category(ies) failed; re-run the same command "
+                f"to complete the partition"
             )
         return EXIT_PARTIAL if failures else EXIT_OK

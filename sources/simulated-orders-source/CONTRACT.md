@@ -1,451 +1,455 @@
 # Source Contract — `simulated_orders`
 
-Contrato entre esta Source e qualquer componente que consuma seus snapshots.
-Tudo aqui é imposto por código e coberto por teste, salvo onde marcado como **[fonte]** —
-característica do dado a montante, fora do controle desta Source.
+Contract between this Source and any component that consumes its snapshots.
+Everything here is enforced by code and covered by tests, except where marked **[source]** —
+a characteristic of the upstream data, outside this Source's control.
 
-**Diferença estrutural das outras quatro Sources: esta entrega um LOG, não uma fotografia.**
-As outras quatro produzem o estado de alguma coisa num instante. Esta produz a sequência de
-eventos que fez o estado mudar, e o estado não existe em lugar nenhum da partição — ele é o
-**fold** dos eventos, e quem o materializa é o consumidor.
+**Structural difference from the other four Sources: this one delivers a LOG, not a snapshot.**
+The other four produce the state of something at an instant. This one produces the sequence of
+events that made the state change, and the state exists nowhere in the partition — it is the
+**fold** of the events, and the consumer is the one who materializes it.
 
-**É a segunda source DERIVADA**, como `simulated_oltp`: consome o Silver que as outras
-produziram e devolve uma RAW nova. A regra de ouro da Fase 1 vale igual, deslocada um nível:
+**It is the second DERIVED source**, like `simulated_oltp`: it consumes the Silver the others
+produced and returns a new RAW. Phase 1's golden rule still holds, shifted one level:
 
-> O **pedido** é inventado; quem compra, o que se compra, quanto custa e onde mora não.
+> The **order** is invented; who buys, what is bought, what it costs and where they live are not.
 
-**Não há rede em nenhum passo.** `extract` aqui não faz nenhuma requisição: lê cinco
-arquivos JSON planos (`customers`, `catalog`, `calendar`, `premises`, `demand_profile`) que a
-plataforma pré-computou do Silver e dos seeds versionados com `retail-platform
-export-orders-reference`, e gera os eventos a partir deles. O verbo é mantido por uniformidade
-de interface — mesmo precedente do `extract --in <dir>` do `ine_callejero` e do `extract
---reference` do `simulated_oltp`.
+**There is no network at any step.** `extract` here makes no request at all: it reads five flat
+JSON files (`customers`, `catalog`, `calendar`, `premises`, `demand_profile`) that the platform
+pre-computed from Silver and the versioned seeds with `retail-platform
+export-orders-reference`, and generates the events from them. The verb is kept for interface
+uniformity — same precedent as `extract --in <dir>` in `ine_callejero` and `extract
+--reference` in `simulated_oltp`.
 
-## 1. Identidade do snapshot
+## 1. Snapshot identity
 
-| Chave | Valor | Onde vive |
+| Key | Value | Where it lives |
 |---|---|---|
 | `source` | `simulated_orders` | `_manifest.json` → `source.name` |
-| `ingestion_date` | `YYYY-MM-DD` (UTC) — **a data do PEDIDO** | diretório da partição e `partition.ingestion_date` |
-| `wh` | armazém (`mad1`, `bcn1`, `svq1`, `vlc1`) | diretório da partição e `partition.warehouse` |
+| `ingestion_date` | `YYYY-MM-DD` (UTC) — **the ORDER date** | partition directory and `partition.ingestion_date` |
+| `wh` | warehouse (`mad1`, `bcn1`, `svq1`, `vlc1`) | partition directory and `partition.warehouse` |
 
-Uma partição **por armazém e por dia**. Os dois eixos não são escolha estética:
-`platform/src/retail_platform/manifest.py` deriva `axis_name = "wh" if warehouse else None`,
-e esses são os dois únicos formatos que o leitor de manifesto entende.
+One partition **per warehouse and per day**. The two axes are not an aesthetic choice:
+`platform/src/retail_platform/manifest.py` derives `axis_name = "wh" if warehouse else None`,
+and those are the only two layouts the manifest reader understands.
 
 ```
-<root>/ingestion_date=YYYY-MM-DD/wh=<armazém>/
+<root>/ingestion_date=YYYY-MM-DD/wh=<warehouse>/
 ├── order_events.jsonl
 ├── _manifest.json
-└── _SUCCESS          (só existe quando complete = true)
+└── _SUCCESS          (only exists when complete = true)
 ```
 
-**`ingestion_date` é a data do PEDIDO, não a data do evento.** Todo evento de um pedido mora
-na partição do dia em que o pedido foi *colocado*, mesmo quando `occurred_at` atravessa a
-meia-noite — um pedido das 22h40 entregue às 9h do dia seguinte deixa **todos** os seus
-eventos aqui.
+**`ingestion_date` is the ORDER date, not the event date.** Every event of an order lives in
+the partition of the day the order was *placed*, even when `occurred_at` crosses midnight — an
+order placed at 22:40 and delivered at 9:00 the next day leaves **all** its events here.
 
-A alternativa — particionar por data do evento — deixaria a partição de um dia impossível de
-fechar: ela só estaria completa dois dias depois, quando o último pedido daquele dia
-terminasse, e `_SUCCESS` perderia o significado. Ver obrigação 4.2.
+The alternative — partitioning by event date — would make a day's partition impossible to
+close: it would only be complete two days later, when that day's last order finished, and
+`_SUCCESS` would lose its meaning. See obligation 4.2.
 
-Blocos de primeiro nível do `_manifest.json`: `manifest_version`, `run_id`,
+Top-level blocks of `_manifest.json`: `manifest_version`, `run_id`,
 `started_at_utc`, `finished_at_utc`, `duration_seconds`, `complete`, `source`,
 `partition`, `config`, `reference`, `totals`, `schema_fingerprint`, `files[]`,
 `failures[]`, `anomalies[]`, `history[]`.
 
-## 2. Conteúdo garantido
+## 2. Guaranteed content
 
-`order_events.jsonl` é **NDJSON**: uma linha por evento, cada linha um objeto JSON completo e
-independente. **Não é um array JSON**, e esse é o único desvio de forma canônica em relação às
-outras quatro Sources — justificado na garantia 2.
+`order_events.jsonl` is **NDJSON**: one line per event, each line a complete, independent JSON
+object. **It is not a JSON array**, and that is the only deviation from the canonical form
+relative to the other four Sources — justified in guarantee 2.
 
-### 2.1 Envelope — idêntico em todo evento
+### 2.1 Envelope — identical in every event
 
-| Campo | Papel | Origem |
+| Field | Role | Origin |
 |---|---|---|
-| `event_id` | identidade do evento | `sha256("<order_id>|<sequence_no>")[:32]` |
-| `event_type` | um dos 12 do vocabulário | máquina de estados |
-| `event_version` | versão do `payload` | `1` |
-| `occurred_at` | instante do evento, ISO-8601 UTC | `ingestion_date` + offsets declarados |
-| `order_id` | agregado **e** chave de partição do broker | `ord_<wh>_<YYYYMMDD>_<6 dígitos>` |
-| `sequence_no` | posição no agregado, `1..N` sem buracos | ordem de emissão |
-| `wh` | linhagem: qual armazém | argumento `--wh` |
-| `producer` | quem emitiu | `simulated_orders` |
-| `payload` | específico do tipo | ver 2.2 |
+| `event_id` | event identity | `sha256("<order_id>|<sequence_no>")[:32]` |
+| `event_type` | one of the 12 in the vocabulary | state machine |
+| `event_version` | `payload` version | `1` |
+| `occurred_at` | event instant, ISO-8601 UTC | `ingestion_date` + declared offsets |
+| `order_id` | aggregate **and** broker partition key | `ord_<wh>_<YYYYMMDD>_<6 digits>` |
+| `sequence_no` | position in the aggregate, `1..N` with no gaps | emission order |
+| `wh` | lineage: which warehouse | `--wh` argument |
+| `producer` | who emitted it | `simulated_orders` |
+| `payload` | type-specific | see 2.2 |
 
-**`recorded_at` não existe aqui, de propósito.** Atraso e reordenação são propriedades do
-*transporte*, e quem os mede é quem consome — do outro lado do broker, com o próprio relógio.
-Carimbá-los aqui seria inventar um atraso que ninguém observou, e destruiria a
-reprodutibilidade byte a byte do log.
+**`recorded_at` does not exist here, on purpose.** Delay and reordering are properties of the
+*transport*, and whoever consumes measures them — on the other side of the broker, with their
+own clock. Stamping them here would invent a delay nobody observed, and would destroy the
+byte-for-byte reproducibility of the log.
 
-### 2.2 Vocabulário de eventos e máquina de estados
+### 2.2 Event vocabulary and state machine
 
-| # | `event_type` | estado depois | exige estado | payload |
+| # | `event_type` | state after | requires state | payload |
 |---|---|---|---|---|
 | 1 | `order_placed` | `PLACED` | — | `customer_id`, `customer_ingestion_date`, `buyer_age_band`, `province_code`, `municipality_code`, `postal_code`, `price_as_of`, `price_source`, `delivery_slot_start`, `delivery_slot_end`, `line_count`, `gross_amount`, `lines[]` |
 | 2 | `order_payment_authorized` | `CONFIRMED` | `PLACED` | `payment_method`, `authorized_amount` |
 | 3 | `order_payment_failed` | `PAYMENT_FAILED` ⏹ | `PLACED` | `decline_reason` |
 | 4 | `order_cancelled` | `CANCELLED` ⏹ | `PLACED`, `CONFIRMED` | `cancelled_by`, `reason` |
-| 5 | `order_picking_started` | `PICKING` | `CONFIRMED` | *(vazio)* |
+| 5 | `order_picking_started` | `PICKING` | `CONFIRMED` | *(empty)* |
 | 6 | `order_line_substituted` | `PICKING` | `PICKING` | `line_no`, `source_product_id`, `substitute_source_product_id`, `substitute_unit_price`, `quantity` |
 | 7 | `order_line_removed` | `PICKING` | `PICKING` | `line_no`, `source_product_id`, `quantity`, `reason` |
 | 8 | `order_picked` | `PICKED` | `PICKING` | `picked_line_count`, `picked_amount` |
-| 9 | `order_dispatched` | `IN_TRANSIT` | `PICKED` | *(vazio)* |
+| 9 | `order_dispatched` | `IN_TRANSIT` | `PICKED` | *(empty)* |
 | 10 | `order_delivered` | `DELIVERED` | `IN_TRANSIT` | `delivered_within_slot`, `delivered_line_count`, `delivered_amount` |
 | 11 | `order_delivery_failed` | `DELIVERY_FAILED` ⏹ | `IN_TRANSIT` | `reason` |
 | 12 | `order_returned` | `RETURNED` ⏹ | `DELIVERED` | `returned_line_count`, `returned_line_no`, `returned_amount` |
 
-⏹ = estado terminal: nenhum evento pode sair dele. **`DELIVERED` não é terminal** — uma
-devolução ainda pode vir depois, e é por isso que ele não encerra o agregado.
+⏹ = terminal state: no event can leave it. **`DELIVERED` is not terminal** — a return can
+still come afterwards, which is why it does not close the aggregate.
 
-Cada linha de `lines[]` traz `line_no`, `source_product_id`, `category_id`, `subgroup_id`,
-`demand_group`, `quantity` e `unit_price`.
+Each row of `lines[]` carries `line_no`, `source_product_id`, `category_id`, `subgroup_id`,
+`demand_group`, `quantity` and `unit_price`.
 
-`demand_group` é o rótulo contra o qual a cesta foi calibrada (§2.6). Ele viaja **no evento**,
-e não é redescoberto por join a jusante: o que importa é o grupo que valia no momento do
-pedido, não o que o de-para diria hoje.
+`demand_group` is the label the basket was calibrated against (§2.6). It travels **on the
+event**, and is not rediscovered by a downstream join: what matters is the group in force at
+order time, not what the mapping would say today.
 
-`unit_price` é o preço da **porção comprável**, que difere do `unit_price` cru da API nas 10
-combinações produto×armazém vendidas a granel sem `unit_size` — ali a fonte devolve
-`reference_price × 99`, o teto do seletor de peso (obrigação 5 do contrato da Mercadona).
+`unit_price` is the price of the **purchasable portion**, which differs from the raw API
+`unit_price` in the 10 product×warehouse combinations sold in bulk without `unit_size` — there
+the source returns `reference_price × 99`, the ceiling of the weight selector (obligation 5 of
+the Mercadona contract).
 
-### 2.3 O fold é não-trivial, e isso é a razão de a Source existir
+### 2.3 The fold is non-trivial, and that is the reason the Source exists
 
-Os eventos 6 e 7 alteram a cesta **depois** da colocação. Logo:
+Events 6 and 7 change the basket **after** placement. So:
 
-> `picked_amount` **não é derivável** de `gross_amount`. O valor do pedido só existe depois
-> de dobrar o log.
+> `picked_amount` **cannot be derived** from `gross_amount`. The order's value only exists
+> after folding the log.
 
-Se fosse derivável, o log seria um carimbo de data e o modelo de eventos seria enfeite. Um
-teste dbt invertido vigia exatamente isso do lado do consumidor.
+If it could be derived, the log would be a date stamp and the event model would be decoration.
+An inverted dbt test watches exactly that on the consumer side.
 
-### 2.4 O que é real e o que é inventado
+### 2.4 What is real and what is invented
 
-| Dimensão | Natureza |
+| Dimension | Nature |
 |---|---|
-| Cliente, e o município/CEP dele | **observado** (via `silver_customer`, cujo endereço vem do Callejero) |
-| Produto pedido | **observado** — existe no catálogo daquele armazém naquele dia |
-| Preço pago | **observado** — é o `unit_price` daquele `(armazém, data, produto)` |
-| Armazém e data | **observado** |
-| Grupo de demanda de cada linha | **calibrado contra benchmark** — ver 2.6 |
-| Idade e comunidade autónoma do comprador | **observado** (INE 31304 e Callejero, via `silver_customer`) |
-| Propensão de cada coorte por grupo | **calibrado contra benchmark** — ver 2.7 |
-| Cesta, cadência, horários, taxas de substituição/cancelamento/devolução | **sintético declarado** — ver 2.5 |
+| Customer, and their municipality/postal code | **observed** (via `silver_customer`, whose address comes from the Callejero) |
+| Ordered product | **observed** — exists in that warehouse's catalog on that day |
+| Price paid | **observed** — it is the `unit_price` of that `(warehouse, date, product)` |
+| Warehouse and date | **observed** |
+| Demand group of each line | **calibrated against a benchmark** — see 2.6 |
+| Buyer's age and autonomous community | **observed** (INE 31304 and Callejero, via `silver_customer`) |
+| Per-group propensity of each cohort | **calibrated against a benchmark** — see 2.7 |
+| Basket, cadence, times, substitution/cancellation/return rates | **declared synthetic** — see 2.5 |
 
-Três naturezas, e a distinção entre a segunda e a terceira é nova nesta fase:
-**observado** vem de uma fonte que esta plataforma ingere; **benchmark** vem de uma fonte
-oficial externa que ela *não* ingere e usa apenas como referência de distribuição;
-**sintético** não tem âncora nenhuma. Um benchmark não é um dado nosso — chamá-lo assim seria
-transformá-lo numa falsa representação da realidade.
+Three natures, and the distinction between the second and the third is new in this phase:
+**observed** comes from a source this platform ingests; **benchmark** comes from an external
+official source it does *not* ingest and uses only as a distribution reference;
+**synthetic** has no anchor at all. A benchmark is not our data — calling it that would turn it
+into a false representation of reality.
 
-### 2.5 Premissas — todas sintéticas, todas declaradas
+### 2.5 Premises — all synthetic, all declared
 
-Nenhuma fonte ingerida por esta plataforma mede venda, cesta, cadência de compra ou
-disponibilidade de produto. Toda premissa vive em `platform/dbt/seeds/order_premises_seed.csv`,
-é rotulada `synthetic` (nunca `observed`, nunca `proxy` — um rótulo diferente **reprova** o
-export), e seu `sha256` viaja até `config.premises_sha256` no manifesto.
+No source ingested by this platform measures sales, baskets, purchase cadence or product
+availability. Every premise lives in `platform/dbt/seeds/order_premises_seed.csv`, is labeled
+`synthetic` (never `observed`, never `proxy` — a different label **fails** the export), and its
+`sha256` travels to `config.premises_sha256` in the manifest.
 
-`daily_order_rate` é a única premissa **sem nenhuma âncora observacional**: é por isso que ela
-mora num seed que qualquer um edita e reconstrói, e não numa constante escondida no gerador.
-Não existe default para nenhuma premissa — uma chave ausente reprova a geração.
+`daily_order_rate` is the only premise **with no observational anchor at all**: that is why it
+lives in a seed anyone can edit and rebuild, and not in a constant hidden in the generator.
+There is no default for any premise — a missing key fails the generation.
 
-### 2.6 Modelo de demanda — calibrado contra o MAPA 2025
+### 2.6 Demand model — calibrated against MAPA 2025
 
-`demand_model_version` viaja em `config.demand_model_version` no manifesto. Versão em vigor:
-**`mapa_2025_v2`**. A `v2` acrescenta a camada de coorte descrita em 2.7; tudo abaixo
-descreve o agregado e continua valendo palavra por palavra.
+`demand_model_version` travels in `config.demand_model_version` in the manifest. Version in
+force: **`mapa_2025_v2`**. `v2` adds the cohort layer described in 2.7; everything below
+describes the aggregate and still holds word for word.
 
-**A cadeia, com preço fora do caminho da demanda:**
+**The chain, with price outside the demand path:**
 
 ```
-grupo de demanda   P(g)  <- alvo de VOLUME (kg/L) do MAPA, inclinado pelo canal e-commerce
+demand group       P(g)  <- MAPA VOLUME target (kg/L), tilted by the e-commerce channel
        |
-produto no grupo         <- UNIFORME (nenhuma fonte mede giro por SKU)
+product in group         <- UNIFORM (no source measures per-SKU turnover)
        |
-quantidade               <- w(k)=1/2^(k-1), inalterado
+quantity                 <- w(k)=1/2^(k-1), unchanged
        |
-preço unitário           <- OBSERVADO (porção comprável da Mercadona)
+unit price               <- OBSERVED (Mercadona purchasable portion)
        |
-valor do pedido          <- consequência, nunca objetivo
+order value              <- consequence, never a target
 ```
 
-Preço não aparece em nenhuma seta que aponta para demanda. Uma categoria cara pode ter volume
-baixo e receita alta — no MAPA, mariscos são **0,81% do volume e 2,88% do valor** —, e isso é
-resultado do modelo, não defeito.
+Price appears in no arrow pointing at demand. An expensive category can have low volume and
+high revenue — in MAPA, shellfish are **0.81% of volume and 2.88% of value** —, and that is a
+result of the model, not a defect.
 
-**O que o benchmark calibra:** a probabilidade de um grupo de demanda aparecer numa linha.
-**O que ele não calibra, e não pode:** `daily_order_rate`, `basket_lines_min/mode/max` e
-`quantity_max`. O MAPA mede consumo doméstico do residente — não mede pedido de loja online,
-nem cesta, nem cadência de compra. Essas continuam `synthetic` em `order_premises_seed.csv`.
+**What the benchmark calibrates:** the probability of a demand group appearing on a line.
+**What it does not calibrate, and cannot:** `daily_order_rate`, `basket_lines_min/mode/max` and
+`quantity_max`. MAPA measures residents' household consumption — it does not measure
+online-store orders, baskets or purchase cadence. Those remain `synthetic` in
+`order_premises_seed.csv`.
 
-**A ponte entre alvo em kg e sorteio de linhas** é o tamanho médio *observado* da embalagem,
-jamais o preço: `P(g) ∝ alvo_volume_g / kg_médio_por_linha_g`. Um grupo cuja embalagem típica
-pesa 1 kg precisa de menos linhas que um cujo produto típico pesa 100 g para entregar o mesmo
-volume. Grupos com menos de 50% do sortimento convertível a kg/L (`reference_format` em `ud`,
-`dz`) **não** recebem alvo de volume — medido: `HUEVOS` converte 18% e cai no fallback
-declarado de share de linhas.
+**The bridge between a kg target and line draws** is the *observed* average package size,
+never the price: `P(g) ∝ volume_target_g / avg_kg_per_line_g`. A group whose typical package
+weighs 1 kg needs fewer lines than one whose typical product weighs 100 g to deliver the same
+volume. Groups with less than 50% of the assortment convertible to kg/L (`reference_format` in
+`ud`, `dz`) do **not** get a volume target — measured: `HUEVOS` converts 18% and falls into the
+declared line-share fallback.
 
-**Sazonalidade: neutra nos 12 meses, por ausência de evidência numérica.** Os gráficos mensais
-do informe são imagens; só há cinco números mensais em prosa, todos do total da alimentação e
-nunca por categoria. Além disso a janela cobre apenas agosto. O mecanismo existe, aplica-se à
-**taxa de pedidos** (nunca ao mix — um fator global sobre o mix se normalizaria e não faria
-nada) e tem teste que prova que um perfil não neutro muda a saída.
+**Seasonality: neutral across all 12 months, for lack of numerical evidence.** The report's
+monthly charts are images; there are only five monthly numbers in prose, all for total food and
+never per category. Moreover the window only covers August. The mechanism exists, applies to
+the **order rate** (never to the mix — a global factor on the mix would normalize away and do
+nothing) and has a test proving that a non-neutral profile changes the output.
 
-Os oito seeds versionados — `mapa_2025_benchmark_seed.csv`,
+The eight versioned seeds — `mapa_2025_benchmark_seed.csv`,
 `demand_category_mapping_seed.csv`, `demand_profile_seed.csv`,
 `demand_seasonality_seed.csv`, `demand_cohort_age_seed.csv`,
-`demand_cohort_region_seed.csv`, `mapa_2025_region_seed.csv` e `ine_ccaa_map_seed.csv` —
-têm `sha256` em `reference.demand_seeds_sha256`.
+`demand_cohort_region_seed.csv`, `mapa_2025_region_seed.csv` and `ine_ccaa_map_seed.csv` —
+have their `sha256` in `reference.demand_seeds_sha256`.
 
-### 2.7 Propensão por coorte do comprador
+### 2.7 Per-cohort buyer propensity
 
-O que a `v2` acrescenta é um andar acima do agregado: **P(grupo) vira P(grupo | coorte)**.
+What `v2` adds is one floor above the aggregate: **P(group) becomes P(group | cohort)**.
 
-A coorte tem duas dimensões, e são as duas **únicas** em que um atributo observado do cliente
-coincide com um corte publicado do informe:
+The cohort has two dimensions, and they are the **only** two in which an observed customer
+attribute coincides with a published cut of the report:
 
-| Dimensão | De onde vem no cliente | Corte do MAPA |
+| Dimension | Where it comes from in the customer | MAPA cut |
 |---|---|---|
-| `age_band` ∈ {`LT35`,`35_49`,`50_64`,`GE65`} | `birth_year`, da distribuição etária provincial do INE 31304 | idade do responsável de compra |
-| `region` (comunidade autónoma) | `province_code`, do Callejero | comunidade autónoma |
+| `age_band` ∈ {`LT35`,`35_49`,`50_64`,`GE65`} | `birth_year`, from INE 31304's provincial age distribution | age of the person responsible for purchasing |
+| `region` (autonomous community) | `province_code`, from the Callejero | autonomous community |
 
-**O que ficou de fora, e por quê.** Ciclo de vida do lar (9 tipos) e nível socioeconómico
-(5 níveis) são os cortes mais ricos do informe, e vêm com volume e per cápita completos. O
-bloqueio não é o dado — é o atributo: o cliente não tem composição familiar nem renda, e
-atribuí-las seria **inventar o atributo**, a mesma proibição que a Fase 1 aplicou à densidade
-por tramo. Sexo do comprador o cliente tem, mas o informe só o publica para consumo
-*extradoméstico*. **Gatilho registrado:** se uma fase futura ingerir lares por província do
-INE, o corte de ciclo de vida abre.
+**What was left out, and why.** Household life cycle (9 types) and socioeconomic level
+(5 levels) are the report's richest cuts, and come with full volume and per-capita figures. The
+blocker is not the data — it is the attribute: the customer has no household composition or
+income, and assigning them would be **inventing the attribute**, the same prohibition Phase 1
+applied to per-segment density. The customer does have the buyer's sex, but the report only
+publishes it for *out-of-home* consumption. **Recorded trigger:** if a future phase ingests
+INE households per province, the life-cycle cut opens up.
 
-**O índice de afinidade** sai do mesmo gráfico para numerador e denominador, e por isso é
-adimensional:
+**The affinity index** takes numerator and denominator from the same chart, and is therefore
+dimensionless:
 
 ```
-idx(g, faixa)         = volume_share(g, faixa) / populacao_share(faixa)
-peso_bruto(g, coorte) = w_g  x  idx_idade(g, faixa)  x  idx_regiao(g, ccaa)
+idx(g, band)            = volume_share(g, band) / population_share(band)
+raw_weight(g, cohort)   = w_g  x  idx_age(g, band)  x  idx_region(g, ccaa)
 ```
 
-**Duas premissas novas, nomeadas e declaradas em `demand_profile_seed.csv`:**
+**Two new premises, named and declared in `demand_profile_seed.csv`:**
 
-1. `cohort_independence = multiplicative` — o informe publica as duas **marginais** e nunca o
-   cruzamento idade × comunidade. Multiplicar assume independência condicional. É premissa,
-   não medição.
-2. `region_frequency_basis = per_capita_volume` — a intensidade regional manifesta-se como
-   **frequência de pedido**, nunca como tamanho de cesta. O informe dá kg/ano e **não publica
-   frequência de compra doméstica** (`actos de compra` só aparece no capítulo extradoméstico),
-   então repartir a intensidade entre as duas seria inventar a repartição.
+1. `cohort_independence = multiplicative` — the report publishes the two **marginals** and
+   never the age × community cross. Multiplying assumes conditional independence. It is a
+   premise, not a measurement.
+2. `region_frequency_basis = per_capita_volume` — regional intensity shows up as **order
+   frequency**, never as basket size. The report gives kg/year and **does not publish household
+   purchase frequency** (`actos de compra` only appears in the out-of-home chapter), so
+   splitting the intensity between the two would be inventing the split.
 
-**Por que o índice não pode ser lido como share.** O `% Población` do MAPA é a população que
-*vive em lares* cujo responsável de compra está naquela faixa — um lar com comprador de 40
-anos carrega os filhos para dentro de `35_49`. O nosso cliente é um indivíduo. Por isso o
-número entra como índice **relativo** entre faixas, e nunca como share absoluto.
+**Why the index cannot be read as a share.** MAPA's `% Población` is the population that
+*lives in households* whose purchasing person is in that band — a household with a 40-year-old
+buyer carries the children into `35_49`. Our customer is an individual. That is why the number
+enters as a **relative** index between bands, and never as an absolute share.
 
-**O agregado não se move, e esse é o critério de aceitação.** Um *iterative proportional
-fitting* ajusta um fator por grupo até que a média dos pesos por coorte — ponderada pela
-distribuição real de coortes **entre os pedidos** — reproduza os pesos agregados da `v1`. Sem
-isso, o mix agregado sairia do alvo só porque a nossa pirâmide etária não é a do MAPA, e a
-calibração da fase anterior seria desfeita de lado sem nada falhar.
+**The aggregate does not move, and that is the acceptance criterion.** An *iterative
+proportional fitting* adjusts one factor per group until the average of the per-cohort
+weights — weighted by the real distribution of cohorts **among the orders** — reproduces the
+`v1` aggregate weights. Without it, the aggregate mix would drift off target merely because our
+age pyramid is not MAPA's, and the previous phase's calibration would be quietly undone
+without anything failing.
 
-**O IPF roda DENTRO de cada bloco**, e a restrição foi encontrada medindo. Normalizando a
-coorte inteira de uma vez, `NO_FOOD` e `SIN_BENCHMARK` — que têm índice neutro por *ausência
-de evidência* — saíam com 0,60× da fatia em 65+ contra menos de 35. O modelo passaria a
-afirmar que quem tem mais de 65 anos compra 40% menos drogaria por linha de cesta: ninguém
-mediu isso, era resíduo da normalização, e era **maior que a maioria dos efeitos medidos**.
+**IPF runs WITHIN each block**, and the constraint was found by measuring. Normalizing the
+whole cohort at once, `NO_FOOD` and `SIN_BENCHMARK` — which have a neutral index for *lack of
+evidence* — came out at 0.60× the share in 65+ versus under 35. The model would come to claim
+that people over 65 buy 40% less drugstore per basket line: nobody measured that, it was a
+normalization residue, and it was **larger than most of the measured effects**.
 
-**Idade mínima do comprador.** `min_buyer_age = 18`, em `order_premises_seed.csv`. A
-distribuição de idade do INE, consumida pela Source de OLTP, é **populacional** — e
-população inclui menores. A diferença entre **residente** e **quem coloca um pedido** só
-importa a partir do momento em que a idade governa a demanda, como acontece aqui. Esta Source
-aplica o piso vindo da premissa, nunca de uma constante própria; a base de clientes em si não
-é alterada.
+**Minimum buyer age.** `min_buyer_age = 18`, in `order_premises_seed.csv`. INE's age
+distribution, consumed by the OLTP Source, is **population-wide** — and population includes
+minors. The difference between **resident** and **who places an order** only matters from the
+moment age governs demand, as happens here. This Source applies the floor taken from the
+premise, never from a constant of its own; the customer base itself is not changed.
 
-**A faixa é resolvida no dia do pedido**, não no export, e viaja carimbada em
-`order_placed.buyer_age_band` — mesmo precedente de `demand_group`: é ela que escolheu o vetor
-de pesos daquela cesta. Um cliente que faz aniversário dentro da janela tem dois pedidos em
-faixas diferentes, e está certo.
+**The band is resolved on the order day**, not at export, and travels stamped in
+`order_placed.buyer_age_band` — same precedent as `demand_group`: it is what chose that
+basket's weight vector. A customer whose birthday falls within the window has two orders in
+different bands, and that is correct.
 
-## 3. Garantias
+## 3. Guarantees
 
-1. **Escrita atômica.** Nenhum arquivo é observável em estado parcial (temporário no mesmo
-   diretório + `os.replace`, com `fsync`).
-2. **Forma canônica, adaptada ao log.** Cada linha de `order_events.jsonl` é
-   `json.dumps(ensure_ascii=False, sort_keys=True)` **sem indentação**, e o arquivo termina em
-   newline; `_manifest.json` mantém a forma indentada das outras quatro Sources. O desvio é
-   deliberado: um log é lido linha a linha e cresce por append, cada linha é um evento
-   completo — o mesmo byte no disco e no tópico — e `read_json(format='newline_delimited')` do
-   DuckDB o consome direto. A garantia que importa é preservada: mesmo conteúdo ⇒ mesmos bytes
-   ⇒ mesmo SHA-256.
-3. **Ordenação total e determinística.** As linhas são ordenadas por
-   `(occurred_at, order_id, sequence_no)`. `occurred_at` sozinho empata; o desempate garante
-   que os eventos de um mesmo pedido nunca saiam fora de ordem.
-4. **Integridade verificável.** O manifesto declara `sha256`, `bytes` e `records`; `validate`
-   recalcula os três a partir do disco.
-5. **Reprodutibilidade por seed, com sub-seed por dia.** Cada `(wh, order_date)` deriva a
-   própria `random.Random` de `sha256("<seed>|<wh>|<order_date>")`. `sha256` e não `hash()`,
-   porque o hash de `str` em CPython é aleatorizado por processo. Verificado em subprocesso,
-   com três valores de `PYTHONHASHSEED`.
-6. **Acrescentar um dia é aditivo.** Como nenhum dia depende do sorteio de outro, gerar
-   `D+1` deixa a partição de `D` **byte a byte idêntica**. É o análogo da propriedade de
-   prefixo da Fase 1, num eixo diferente.
+1. **Atomic writes.** No file is observable in a partial state (temporary file in the same
+   directory + `os.replace`, with `fsync`).
+2. **Canonical form, adapted to the log.** Each line of `order_events.jsonl` is
+   `json.dumps(ensure_ascii=False, sort_keys=True)` **without indentation**, and the file ends
+   with a newline; `_manifest.json` keeps the indented form of the other four Sources. The
+   deviation is deliberate: a log is read line by line and grows by append, each line is a
+   complete event — the same bytes on disk and on the topic — and DuckDB's
+   `read_json(format='newline_delimited')` consumes it directly. The guarantee that matters is
+   preserved: same content ⇒ same bytes ⇒ same SHA-256.
+3. **Total, deterministic ordering.** Lines are sorted by
+   `(occurred_at, order_id, sequence_no)`. `occurred_at` alone ties; the tie-break guarantees
+   that events of the same order never come out of order.
+4. **Verifiable integrity.** The manifest declares `sha256`, `bytes` and `records`; `validate`
+   recomputes all three from disk.
+5. **Per-seed reproducibility, with a per-day sub-seed.** Each `(wh, order_date)` derives its
+   own `random.Random` from `sha256("<seed>|<wh>|<order_date>")`. `sha256` and not `hash()`,
+   because CPython's `str` hash is randomized per process. Verified in a subprocess, with
+   three `PYTHONHASHSEED` values.
+6. **Adding a day is additive.** Since no day depends on another day's draw, generating
+   `D+1` leaves the partition of `D` **byte-for-byte identical**. It is the analogue of
+   Phase 1's prefix property, on a different axis.
 
-   **As quatro condições NÃO-aditivas**, que trocam os pedidos por trás dos mesmos ids:
-   outra `seed`; outra referência (clientes ou catálogo reingeridos); outro
-   `order_premises_seed.csv`; e outro **`demand_model_version`**. As quatro são registradas
-   em `config`, e regenerar sob qualquer uma delas exige `--overwrite`.
+   **The four NON-additive conditions**, which swap the orders behind the same ids:
+   another `seed`; another reference (customers or catalog re-ingested); another
+   `order_premises_seed.csv`; and another **`demand_model_version`**. All four are recorded
+   in `config`, and regenerating under any of them requires `--overwrite`.
 
-   `min_buyer_age` entra pela terceira: ela é uma premissa, e mudá-la muda **quem** está no
-   conjunto elegível — logo, quem é sorteado. Não é uma quinta condição, é um caso da que já
-   existia, e vale a pena dizer porque a intuição sugere o contrário: uma regra de
-   *elegibilidade* parece filtro, e é sorteio. Redimensionar a base de clientes (outra
-   referência) entra pela segunda condição, ainda que esta Source não mude uma linha: como
-   `buyer_age_band` é carimbado no evento, o teste
-   `assert_buyer_age_band_matches_the_customer_birth_year` reprova quando a pessoa por trás de
-   um `customer_id` muda, e a janela inteira precisa ser regerada. **Cliente e pedido são
-   domínios separados no código e acoplados no dado.**
+   `min_buyer_age` enters through the third: it is a premise, and changing it changes **who**
+   is in the eligible set — hence, who is drawn. It is not a fifth condition, it is a case of
+   one that already existed, and it is worth saying because intuition suggests otherwise: an
+   *eligibility* rule looks like a filter, and it is a draw. Resizing the customer base
+   (another reference) enters through the second condition, even though this Source does not
+   change a line: since `buyer_age_band` is stamped on the event, the test
+   `assert_buyer_age_band_matches_the_customer_birth_year` fails when the person behind a
+   `customer_id` changes, and the whole window must be regenerated. **Customer and order are
+   separate domains in the code and coupled in the data.**
 
-   **Consequência para quem consome a projeção Iceberg:** ela funde estado de forma
-   **monotônica**, descartando linha com `last_sequence_no` menor — o que assume que um
-   `order_id` sempre se refere ao mesmo pedido. Trocar `demand_model_version` quebra essa
-   suposição (o `order_id` continua igual, o pedido por trás dele não), e um rebuild sem
-   reset mistura os dois universos na mesma tabela. Depois de qualquer uma das quatro
-   condições não-aditivas, use `make orders-rebuild-projection PROJECTION_RESET=1`.
-7. **Sem relógio.** Todo `occurred_at` deriva de `ingestion_date` mais offsets declarados,
-   nunca de `datetime.now()`.
-8. **`event_id` determinístico.** Deriva de `(order_id, sequence_no)`, nunca de `uuid4()` —
-   sem isso o consumidor a jusante não conseguiria deduplicar entre replays.
-9. **`sequence_no` contíguo.** `1..N` por pedido, sem buracos, verificado na releitura.
-10. **Máquina de estados imposta na geração.** O gerador avança o estado pela mesma função que
-    o `validate` usa para reconferir: uma transição impossível reprova na hora de emitir, não
-    três camadas adiante.
-11. **Inventário fechado.** Todo arquivo dentro da partição está declarado no manifesto.
-12. **Imutabilidade.** Uma partição com `complete: true` não pode ser reescrita sem
-    `--overwrite` explícito — inclusive quando o manifesto foi removido e só o `_SUCCESS`
-    restou.
-13. **Marcador de conclusão.** `_SUCCESS` existe se e somente se `complete: true`, e é sempre
-    gravado **depois** do manifesto.
-14. **Proveniência preservada.** `reference{}` registra as `ingestion_date` de cliente e de
-    catálogo, o `price_as_of` e o `price_source` daquele dia, e o digest das premissas.
-    `history[]` acumula cada execução anterior **com a seed e o digest de premissas que ela
-    usou** — as duas entradas que trocam os pedidos por trás dos mesmos `order_id`.
-15. **Coerência verificada contra a referência.** `validate` relê a referência e confere,
-    pedido a pedido: o cliente pertence ao armazém da partição; todo produto existe no
-    catálogo daquele `(armazém, data)`; o preço pago é o observado, comparado como `Decimal` e
-    nunca como `float`; `gross_amount` fecha com as linhas colocadas; `picked_amount` fecha com
-    as linhas cumpridas depois de substituições e remoções.
-16. **`schema_fingerprint` estável por construção.** Diferente das outras quatro Sources, a
-    impressão digital cobre o **vocabulário declarado inteiro** — envelope, campos de linha e
-    payload dos 12 tipos — e não a união das chaves observadas. Um dia sem nenhuma devolução
-    não teria `order_returned` no conjunto observado, e duas partições corretas divergiriam por
-    sorteio. Ela muda quando o **código** muda, que é o que ela existe para detectar.
-17. **Totais reconferidos.** Todos os campos de `totals` são recalculados da releitura, e
-    `config.orders` tem de bater com `totals.order_rows`.
-18. **Referência desconfiada.** Referência ausente, ilegível, com `rows` vazio, sem campo
-    obrigatório, com preço não positivo ou com `price_source` fora do vocabulário reprova a
-    geração — nunca produz pedidos enviesados em silêncio.
-19. **Nenhum pedido nasce antes do cliente.** Um pedido cujo cliente só aparece numa geração
-    posterior reprova a geração.
+   **Consequence for consumers of the Iceberg projection:** it merges state
+   **monotonically**, discarding a row with a lower `last_sequence_no` — which assumes that an
+   `order_id` always refers to the same order. Changing `demand_model_version` breaks that
+   assumption (the `order_id` stays the same, the order behind it does not), and a rebuild
+   without reset mixes the two universes in the same table. After any of the four non-additive
+   conditions, use `make orders-rebuild-projection PROJECTION_RESET=1`.
+7. **No clock.** Every `occurred_at` derives from `ingestion_date` plus declared offsets,
+   never from `datetime.now()`.
+8. **Deterministic `event_id`.** Derives from `(order_id, sequence_no)`, never from `uuid4()` —
+   without that the downstream consumer could not deduplicate across replays.
+9. **Contiguous `sequence_no`.** `1..N` per order, with no gaps, verified on re-read.
+10. **State machine enforced at generation.** The generator advances the state through the same
+    function `validate` uses to re-check: an impossible transition fails at emission time, not
+    three layers further down.
+11. **Closed inventory.** Every file inside the partition is declared in the manifest.
+12. **Immutability.** A partition with `complete: true` cannot be rewritten without an explicit
+    `--overwrite` — including when the manifest was removed and only `_SUCCESS` remained.
+13. **Completion marker.** `_SUCCESS` exists if and only if `complete: true`, and is always
+    written **after** the manifest.
+14. **Provenance preserved.** `reference{}` records the customer and catalog `ingestion_date`s,
+    that day's `price_as_of` and `price_source`, and the premises digest.
+    `history[]` accumulates each previous run **with the seed and premises digest it used** —
+    the two inputs that swap the orders behind the same `order_id`.
+15. **Coherence verified against the reference.** `validate` re-reads the reference and checks,
+    order by order: the customer belongs to the partition's warehouse; every product exists in
+    that `(warehouse, date)` catalog; the price paid is the observed one, compared as `Decimal`
+    and never as `float`; `gross_amount` matches the placed lines; `picked_amount` matches the
+    fulfilled lines after substitutions and removals.
+16. **`schema_fingerprint` stable by construction.** Unlike the other four Sources, the
+    fingerprint covers the **whole declared vocabulary** — envelope, line fields and payload of
+    the 12 types — and not the union of observed keys. A day with no returns would have no
+    `order_returned` in the observed set, and two correct partitions would diverge by chance.
+    It changes when the **code** changes, which is what it exists to detect.
+17. **Totals re-checked.** Every field of `totals` is recomputed from the re-read, and
+    `config.orders` must match `totals.order_rows`.
+18. **Distrusted reference.** A reference that is missing, unreadable, has empty `rows`, lacks a
+    required field, has a non-positive price or a `price_source` outside the vocabulary fails
+    the generation — it never silently produces biased orders.
+19. **No order is born before its customer.** An order whose customer only appears in a later
+    generation fails the generation.
 
-## 4. Obrigações do consumidor
+## 4. Consumer obligations
 
-1. **Itere `manifest.files[]`.** `files[].path` é relativo à raiz do snapshot, dois níveis
-   acima da partição (`ingestion_date=…/wh=…/`).
-2. **`ingestion_date` é a data do PEDIDO.** Para "eventos ocorridos no dia D", filtre por
-   `occurred_at`, **não** por `ingestion_date`. O Silver expõe as duas colunas
-   (`ingestion_date` e `event_date`) exatamente porque as duas perguntas são legítimas e
-   diferentes.
-3. **O estado é o fold, e materializá-lo é seu trabalho.** Não existe `orders.json` na
-   partição, e isso não é omissão: duas representações da mesma verdade divergem. Dobre o log.
-4. **Ordene por `sequence_no` dentro do pedido, nunca por `occurred_at`.** Dois eventos do
-   mesmo pedido podem compartilhar o mesmo instante; só `sequence_no` é total.
-5. **Deduplique por `event_id`.** Ele é determinístico de propósito: um replay entrega os
-   mesmos eventos, e o consumidor tem de conseguir reconhecê-los.
-6. **Trate a partição como imutável.** Não escreva dentro dela.
-7. **`order_id` é único em toda a janela, não só na partição.** `wh` e o dia estão embutidos no
-   próprio id, então `ord_mad1_20260824_000042` e `ord_mad1_20260825_000042` nunca colidem.
-   A **estabilidade do referente**, porém, vale só dentro de `(wh, dia, seed, premissas,
-   referência, modelo de demanda)`: um `--overwrite` com outra seed mantém os mesmos ids e troca os pedidos por
-   trás deles. O manifesto registra as duas em `history`.
-8. **Leia dinheiro como decimal, nunca como float.** Todo valor monetário viaja como string,
-   pelo mesmo motivo da obrigação 4.4 do contrato da Mercadona.
-9. **`price_source` qualifica o preço, e não é decorativo.** `carried_forward` significa que
-   aquele dia não teve snapshot de catálogo para aquele armazém e o último preço conhecido foi
-   carregado adiante. Um mart que compare receita entre dias sem olhar essa coluna compara
-   preços de vintages diferentes.
+1. **Iterate `manifest.files[]`.** `files[].path` is relative to the snapshot root, two levels
+   above the partition (`ingestion_date=…/wh=…/`).
+2. **`ingestion_date` is the ORDER date.** For "events that occurred on day D", filter by
+   `occurred_at`, **not** by `ingestion_date`. Silver exposes both columns
+   (`ingestion_date` and `event_date`) precisely because both questions are legitimate and
+   different.
+3. **The state is the fold, and materializing it is your job.** There is no `orders.json` in
+   the partition, and that is not an omission: two representations of the same truth drift
+   apart. Fold the log.
+4. **Sort by `sequence_no` within the order, never by `occurred_at`.** Two events of the same
+   order may share the same instant; only `sequence_no` is total.
+5. **Deduplicate by `event_id`.** It is deterministic on purpose: a replay delivers the same
+   events, and the consumer must be able to recognize them.
+6. **Treat the partition as immutable.** Do not write inside it.
+7. **`order_id` is unique across the whole window, not just the partition.** `wh` and the day
+   are embedded in the id itself, so `ord_mad1_20260824_000042` and `ord_mad1_20260825_000042`
+   never collide. The **stability of the referent**, however, only holds within `(wh, day,
+   seed, premises, reference, demand model)`: an `--overwrite` with another seed keeps the same
+   ids and swaps the orders behind them. The manifest records both in `history`.
+8. **Read money as decimal, never as float.** Every monetary value travels as a string, for the
+   same reason as obligation 4.4 of the Mercadona contract.
+9. **`price_source` qualifies the price, and is not decorative.** `carried_forward` means that
+   day had no catalog snapshot for that warehouse and the last known price was carried
+   forward. A mart that compares revenue across days without looking at this column compares
+   prices of different vintages.
 
-## 5. O que a Source não faz
+## 5. What the Source does not do
 
-- **Não fala com o Lakehouse.** Sem `duckdb`, sem `boto3`, sem dbt, sem importar nada da
-  plataforma. A referência chega como JSON plano.
-- **Não busca rede.** Nenhum socket, em nenhum passo.
-- **Não fala com broker, banco nem catálogo.** Sem `confluent-kafka`, sem `psycopg`, sem
-  `pyiceberg`. O OLTP, o outbox, o tópico e a projeção viva existem **um nível adiante**, do
-  lado da plataforma. Aqui só se escreve um log canônico em disco — e é justamente por o log
-  ser byte-reprodutível que o replay pelo broker pode ser conferido contra ele.
-- **Não materializa o estado do pedido.** Ver obrigação 4.3.
-- **Não fornece identidade persistente de pedido entre execuções.** `order_id` é chave da
-  janela; o referente é estável apenas sob a mesma `(seed, premissas, referência, modelo de
-  demanda)`.
-- **Não modela estoque, reposição, rota nem tempo de entrega.** Ver seção 6.
-- **Não corrige o Silver.** Onde o dado a montante tem limite (seção 6), esta Source se defende
-  de forma explícita e medida, mas não o conserta.
+- **It does not talk to the Lakehouse.** No `duckdb`, no `boto3`, no dbt, no import of anything
+  from the platform. The reference arrives as flat JSON.
+- **It does not touch the network.** No socket, at any step.
+- **It does not talk to a broker, database or catalog.** No `confluent-kafka`, no `psycopg`, no
+  `pyiceberg`. The OLTP, the outbox, the topic and the live projection exist **one level
+  further**, on the platform side. Here only a canonical log is written to disk — and it is
+  precisely because the log is byte-reproducible that a replay through the broker can be
+  checked against it.
+- **It does not materialize the order state.** See obligation 4.3.
+- **It does not provide persistent order identity across runs.** `order_id` is a key of the
+  window; the referent is only stable under the same `(seed, premises, reference, demand
+  model)`.
+- **It does not model stock, replenishment, routes or delivery time.** See section 6.
+- **It does not fix Silver.** Where the upstream data has a limit (section 6), this Source
+  defends itself explicitly and measurably, but does not repair it.
 
-## 6. Escopo e limites **[fonte]**
+## 6. Source scope and limits **[source]**
 
-Tudo medido contra o Lakehouse real em 2026-08-28 (catálogo `2026-08-24`…`2026-08-27`,
-clientes `2026-08-24` e `2026-08-27`).
+All measured against the real Lakehouse on 2026-08-28 (catalog `2026-08-24`…`2026-08-27`,
+customers `2026-08-24` and `2026-08-27`).
 
-- **Não existe fato transacional em nenhuma fonte externa deste repo.** O contrato da
-  Mercadona registra: *"Nenhum endpoint conhecido expõe venda, pedido ou estoque."* Todo pedido
-  aqui é sintético, e isso está dito, não implícito.
-- **Não existe fato de estoque.** Por isso `order_line_removed` carrega
-  `reason = "unavailable"` e **não** `"out_of_stock"`: nomear como se houvesse estoque
-  prometeria um dado que ninguém mediu. A taxa é declarada, não consequência de um saldo.
-- **A escolha do produto é UNIFORME de propósito, e isso não é "cesta realista".** Nenhuma
-  fonte mede venda, giro ou composição de cesta. Ponderar produto inventaria uma distribuição
-  que ninguém mediu — a mesma proibição que a Fase 1 aplicou ao tramo. Consequência declarada:
-  **o mix por categoria espelha o tamanho do sortimento**, e isso é consequência de uma
-  premissa, não afirmação sobre o mercado.
-- **A janela de entrega é uma promessa comercial numa grade fixa, nunca uma rota.** O Callejero
-  não tem coordenada nem adjacência; calcular rota ou tempo de rota seria inventar geografia.
-  `delivered_within_slot` compara dois instantes sintéticos — não é medida de pontualidade
-  real. Gatilho para o real: uma sexta source com coordenada (CartoCiudad do IGN, ou OSM).
-- **A janela de dias é limitada pelo catálogo, e o limite é medido.** Os 4 armazéns têm
-  catálogo de `2026-08-24` a `2026-08-27`; `mad1` tem também `08-15` e `08-16`, com buraco de
-  `08-17` a `08-23`. Um dia sem nenhum snapshot **anterior ou igual** para aquele armazém
-  **reprova o export da referência** em vez de gerar preço inventado.
-- **A taxa efetiva de substituição fica ligeiramente abaixo de `substitution_rate`.** Quando
-  nenhum produto livre do mesmo subgrupo — nem, em segunda tentativa, da mesma categoria —
-  está disponível, a linha segue cumprida e nenhum evento é emitido. Inventar um substituto
-  fora do sortimento daquele armazém seria pior: seria inventar sortimento.
-- **Um cliente faz no máximo um pedido por dia.** Simplificação declarada; nenhuma fonte deste
-  repo mede cadência de compra.
-- **Sexo, idade e endereço do cliente não influenciam a cesta.** Cruzar demografia com consumo
-  exigiria um dado de consumo que não existe. A correlação é descartada por construção, como a
-  Fase 1 descartou a correlação real entre sexo e idade.
+- **There is no transactional fact in any external source of this repo.** The Mercadona
+  contract records: *"No known endpoint exposes sales, orders or stock."* Every order here is
+  synthetic, and that is stated, not implied.
+- **There is no stock fact.** That is why `order_line_removed` carries
+  `reason = "unavailable"` and **not** `"out_of_stock"`: naming it as if there were stock would
+  promise data nobody measured. The rate is declared, not the consequence of a balance.
+- **The product choice is UNIFORM on purpose, and that is not a "realistic basket".** No
+  source measures sales, turnover or basket composition. Weighting products would invent a
+  distribution nobody measured — the same prohibition Phase 1 applied to the street segment.
+  Declared consequence: **the category mix mirrors the size of the assortment**, and that is
+  the consequence of a premise, not a claim about the market.
+- **The delivery slot is a commercial promise on a fixed grid, never a route.** The Callejero
+  has no coordinates or adjacency; computing a route or route time would be inventing
+  geography. `delivered_within_slot` compares two synthetic instants — it is not a measure of
+  real punctuality. Trigger for the real thing: a sixth source with coordinates (IGN's
+  CartoCiudad, or OSM).
+- **The window of days is bounded by the catalog, and the bound is measured.** The 4
+  warehouses have a catalog from `2026-08-24` to `2026-08-27`; `mad1` also has `08-15` and
+  `08-16`, with a gap from `08-17` to `08-23`. A day with no snapshot **before or on** it for
+  that warehouse **fails the reference export** instead of generating an invented price.
+- **The effective substitution rate is slightly below `substitution_rate`.** When no free
+  product of the same subgroup — nor, on a second attempt, of the same category — is
+  available, the line stays fulfilled and no event is emitted. Inventing a substitute outside
+  that warehouse's assortment would be worse: it would be inventing assortment.
+- **A customer places at most one order per day.** Declared simplification; no source in this
+  repo measures purchase cadence.
+- **The customer's sex, age and address do not influence the basket.** Crossing demographics
+  with consumption would require consumption data that does not exist. The correlation is
+  discarded by construction, as Phase 1 discarded the real correlation between sex and age.
 
-## 7. Códigos de saída
+## 7. Exit codes
 
-| Código | `extract` | `validate` |
+| Code | `extract` | `validate` |
 |---|---|---|
-| 0 | partição completa | validação passou |
-| 1 | — | validação reprovou |
-| 2 | falha fatal: nada foi gerado, partição inutilizável | — |
-| 3 | exceção não tratada (nenhum traceback escapa) | idem |
+| 0 | partition complete | validation passed |
+| 1 | — | validation failed |
+| 2 | fatal failure: nothing was generated, partition unusable | — |
+| 3 | unhandled exception (no traceback escapes) | same |
 
-`validate` **exige `--reference`**, como a Source de clientes e pelo mesmo motivo: as garantias
-centrais — o produto existe naquele catálogo, o preço é o observado, o cliente é daquele
-armazém — só são verificáveis relendo a mesma referência que gerou a partição. Um validador que
-só confere checksum provaria integridade, não coerência.
+`validate` **requires `--reference`**, like the customers Source and for the same reason: the
+core guarantees — the product exists in that catalog, the price is the observed one, the
+customer belongs to that warehouse — can only be verified by re-reading the same reference that
+generated the partition. A validator that only checks checksums would prove integrity, not
+coherence.
 
-`--date` é **obrigatório** no `extract`, diferente das outras quatro Sources. Nelas a partição
-é "o snapshot de hoje" e o default de hoje faz sentido; aqui `ingestion_date` é a data do
-pedido, e cair no dia corrente por omissão geraria pedidos num dia que talvez nem tenha
-catálogo, ou fora da janela exportada.
+`--date` is **required** for `extract`, unlike the other four Sources. There the partition is
+"today's snapshot" and defaulting to today makes sense; here `ingestion_date` is the order
+date, and falling back to the current day would generate orders on a day that may not even
+have a catalog, or outside the exported window.
 
-## 8. Versão do contrato
+## 8. Contract version
 
-`manifest_version: 1`. Cada Source tem seu próprio contador — são contratos independentes. A
-plataforma declara a versão que sabe ler em
-`retail_platform.SUPPORTED_MANIFEST_VERSIONS["simulated_orders"]` e recusa qualquer outra, em
-vez de interpretar por adivinhação.
+`manifest_version: 1`. Each Source has its own counter — they are independent contracts. The
+platform declares the version it can read in
+`retail_platform.SUPPORTED_MANIFEST_VERSIONS["simulated_orders"]` and refuses any other, instead
+of interpreting by guesswork.

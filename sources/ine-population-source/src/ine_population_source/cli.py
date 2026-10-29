@@ -1,13 +1,13 @@
-"""Interface de linha de comando da Source.
+"""Command-line interface of the Source.
 
-    python -m ine_population_source extract  [opcoes]
-    python -m ine_population_source validate <particao> [--strict]
+    python -m ine_population_source extract  [options]
+    python -m ine_population_source validate <partition> [--strict]
 
-Codigos de saida:
-    0  sucesso
-    1  falha parcial (extract) ou validacao reprovada (validate)
-    2  falha fatal: nada foi extraido / particao inutilizavel
-    3  excecao nao tratada
+Exit codes:
+    0  success
+    1  partial failure (extract) or validation failed (validate)
+    2  fatal failure: nothing was extracted / partition unusable
+    3  unhandled exception
 """
 
 from __future__ import annotations
@@ -29,55 +29,55 @@ EXIT_UNHANDLED = 3
 
 
 def _tables_type(value: str) -> list[str]:
-    """--tables aceita uma lista separada por virgula: --tables 31304,9689"""
+    """--tables accepts a comma-separated list: --tables 31304,9689"""
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ine_population_source",
-        description="Source de populacao do INE: series por provincia via API Tempus3.",
+        description="INE population Source: series by province via the Tempus3 API.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser(
-        "extract", help="extrai um snapshot das tabelas configuradas para uma particao"
+        "extract", help="extract a snapshot of the configured tables into a partition"
     )
-    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="diretorio raiz do snapshot")
+    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="snapshot root directory")
     extract_parser.add_argument(
         "--tables",
         type=_tables_type,
         default=DEFAULT_TABLES,
-        help="table_id(s) do INE Tempus3, separados por virgula (padrao: 31304)",
+        help="INE Tempus3 table_id(s), comma-separated (default: 31304)",
     )
     extract_parser.add_argument(
-        "--date", default=None, help="data da particao YYYY-MM-DD (padrao: hoje em UTC)"
+        "--date", default=None, help="partition date YYYY-MM-DD (default: today in UTC)"
     )
     extract_parser.add_argument(
-        "--delay", type=float, default=DEFAULT_DELAY, help="intervalo minimo entre requisicoes (s)"
+        "--delay", type=float, default=DEFAULT_DELAY, help="minimum interval between requests (s)"
     )
     extract_parser.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT, help="timeout de cada requisicao (s)"
+        "--timeout", type=float, default=DEFAULT_TIMEOUT, help="timeout of each request (s)"
     )
     extract_parser.add_argument(
-        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="tentativas extras por requisicao"
+        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="extra attempts per request"
     )
     extract_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="reescreve uma particao existente, inclusive se estiver completa",
+        help="rewrite an existing partition, even if it is complete",
     )
     extract_parser.set_defaults(handler=extract_module.run)
 
     validate_parser = subparsers.add_parser(
-        "validate", help="valida uma particao ja extraida"
+        "validate", help="validate an already extracted partition"
     )
     validate_parser.add_argument(
-        "partition", help="caminho da particao, ex.: data/ine/ingestion_date=2026-08-15"
+        "partition", help="partition path, e.g. data/ine/ingestion_date=2026-08-15"
     )
     validate_parser.add_argument(
-        "--strict", action="store_true", help="tambem falha quando ha serie sem valor"
+        "--strict", action="store_true", help="also fail when a series has no value"
     )
     validate_parser.set_defaults(handler=validate_module.run)
 
@@ -89,10 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except KeyboardInterrupt:
-        print("\ninterrompido pelo usuario", flush=True)
+        print("\ninterrupted by user", flush=True)
         return EXIT_UNHANDLED
-    except Exception as exc:  # nenhum traceback escapa com codigo ambiguo
-        print(f"ERRO NAO TRATADO: {type(exc).__name__}: {exc}", flush=True)
+    except Exception as exc:  # no traceback escapes with an ambiguous exit code
+        print(f"UNHANDLED ERROR: {type(exc).__name__}: {exc}", flush=True)
         return EXIT_UNHANDLED
 
 

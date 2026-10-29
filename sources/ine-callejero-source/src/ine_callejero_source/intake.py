@@ -1,14 +1,14 @@
-"""Intake dos arquivos do Callejero: validar e incorporar arquivos ja baixados.
+"""Callejero file intake: validate and ingest files that were already downloaded.
 
-CONTRACT.md secao 2: esta Source nao busca dado por rede. Aqui "extract" significa
-localizar, dentro de --in, os arquivos de cada (provincia, dataset) configurados,
-copia-los verbatim para a particao e registrar manifesto. O verbo e mantido por
-uniformidade com as outras Sources — nao ha requisicao HTTP nenhuma neste modulo.
+CONTRACT.md section 2: this Source does not fetch data over the network. Here "extract"
+means locating, inside --in, the file for each configured (province, dataset), copying it
+verbatim into the partition and recording the manifest. The verb is kept for uniformity
+with the other Sources — there is no HTTP request at all in this module.
 
-O manifesto e gravado DUAS vezes: preliminar logo apos a particao ser criada, e
-definitivo no fim — mesma razao da source de populacao: sem o preliminar, uma execucao
-interrompida deixaria a particao sem manifesto, e a trava de imutabilidade (que depende
-dele) ficaria desligada na retomada.
+The manifest is written TWICE: a preliminary one right after the partition is created, and
+the final one at the end — same reason as in the population source: without the
+preliminary one, an interrupted run would leave the partition without a manifest, and the
+immutability lock (which depends on it) would be off on resume.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ EXIT_FATAL = 2
 
 
 class RunLogger:
-    """Log append-only da particao, espelhado no stdout."""
+    """Append-only partition log, mirrored to stdout."""
 
     def __init__(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -64,13 +64,13 @@ class RunLogger:
 
 
 def discover_input_files(in_dir: str) -> dict[tuple[str, str], str]:
-    """Mapeia (dataset, provincia) -> caminho absoluto, varrendo --in recursivamente.
+    """Map (dataset, province) -> absolute path, scanning --in recursively.
 
-    So reconhece arquivos cujo nome bate com o padrao oficial do Callejero
-    (partition.INPUT_FILE, que lista SECC/UP/VIAS/PSEU/TRAM). Se houver mais de um
-    arquivo pro mesmo (dataset, provincia) em --in, o ultimo encontrado numa varredura
-    ordenada (os.walk + sorted) vence — deterministico entre execucoes, nao "o que o
-    sistema de arquivos devolver primeiro".
+    Only recognizes files whose name matches the official Callejero pattern
+    (partition.INPUT_FILE, which lists SECC/UP/VIAS/PSEU/TRAM). If there is more than one
+    file for the same (dataset, province) in --in, the last one found in a sorted scan
+    (os.walk + sorted) wins — deterministic across runs, not "whatever the filesystem
+    returns first".
     """
     found: dict[tuple[str, str], str] = {}
     for base, _dirs, names in os.walk(in_dir):
@@ -123,11 +123,11 @@ def _build_manifest(
 
 
 def run(args) -> int:
-    """Executa o intake. Retorna o codigo de saida.
+    """Run the intake. Returns the exit code.
 
-    Nao ha costura de teste tipo `fetcher_factory`: nao existe cliente de rede a
-    substituir. A suite exercita este modulo apontando --in para um diretorio de
-    fixture com arquivos de amostra, criado por tests/support.py.
+    There is no test seam like `fetcher_factory`: there is no network client to replace.
+    The suite exercises this module by pointing --in at a fixture directory with sample
+    files, created by tests/support.py.
     """
     try:
         ingestion_date = validate_date(
@@ -135,14 +135,14 @@ def run(args) -> int:
         )
         provinces = [validate_province(p) for p in args.provinces]
         if not provinces:
-            raise PartitionError("--provinces precisa de pelo menos uma provincia")
+            raise PartitionError("--provinces needs at least one province")
         if not os.path.isdir(args.in_dir):
-            raise PartitionError(f"--in nao e um diretorio: {args.in_dir}")
+            raise PartitionError(f"--in is not a directory: {args.in_dir}")
         partition = partition_path(args.out, ingestion_date)
         os.makedirs(partition, exist_ok=True)
         previous = assert_writable(partition, args.overwrite)
     except PartitionError as exc:
-        print(f"FALHA FATAL: {exc}", flush=True)
+        print(f"FATAL FAILURE: {exc}", flush=True)
         return EXIT_FATAL
 
     started = datetime.now(timezone.utc)
@@ -152,11 +152,11 @@ def run(args) -> int:
 
     with RunLogger(os.path.join(partition, "_run.log")) as log:
         log(
-            f"== run {run_id} | particao {partition} | provincias {provinces} | "
+            f"== run {run_id} | partition {partition} | provinces {provinces} | "
             f"datasets {list(DATASETS)} | in {args.in_dir}"
         )
         available = discover_input_files(args.in_dir)
-        log(f"{len(available)} arquivo(s) reconhecidos em --in")
+        log(f"{len(available)} file(s) recognized in --in")
 
         files: list[dict] = []
         failures: list[dict] = []
@@ -177,19 +177,19 @@ def run(args) -> int:
                 history=history,
             )
 
-        # Manifesto preliminar: ver docstring do modulo.
+        # Preliminary manifest: see the module docstring.
         write_manifest(partition, snapshot_manifest(False))
         mark_success(partition, False, run_id)
 
         for province in provinces:
             for dataset in DATASETS:
-                label = f"provincia={province} dataset={dataset}"
+                label = f"province={province} dataset={dataset}"
                 source_path = available.get((dataset, province))
                 if source_path is None:
                     failures.append(
                         {"province": province, "dataset": dataset, "error": "arquivo nao encontrado em --in"}
                     )
-                    log(f"{label} FALHOU: nao encontrado em {args.in_dir}")
+                    log(f"{label} FAILED: not found in {args.in_dir}")
                     continue
 
                 original_filename = os.path.basename(source_path)
@@ -197,7 +197,7 @@ def run(args) -> int:
                     target_path = dataset_path(partition, province, original_filename)
                 except PartitionError as exc:
                     failures.append({"province": province, "dataset": dataset, "error": str(exc)})
-                    log(f"{label} FALHOU: {exc}")
+                    log(f"{label} FAILED: {exc}")
                     continue
 
                 relative = os.path.relpath(target_path, args.out)
@@ -217,7 +217,7 @@ def run(args) -> int:
                                 "error": "arquivo ja landado diverge do arquivo atual em --in; use --overwrite",
                             }
                         )
-                        log(f"{label} FALHOU: landado diverge do --in atual")
+                        log(f"{label} FAILED: landed file diverges from current --in")
                         continue
 
                 if reused:
@@ -240,8 +240,8 @@ def run(args) -> int:
                     }
                 )
                 log(
-                    f"{label} {'reaproveitado' if reused else 'ok'} "
-                    f"({stats['line_count']} linhas, largura dominante {dominant_width(stats)})"
+                    f"{label} {'reused' if reused else 'ok'} "
+                    f"({stats['line_count']} lines, dominant width {dominant_width(stats)})"
                 )
 
         complete = not failures
@@ -250,12 +250,12 @@ def run(args) -> int:
         mark_success(partition, complete, run_id)
 
         log(
-            f"== fim: {len(files)}/{targeted} arquivos landados, "
+            f"== end: {len(files)}/{targeted} files landed, "
             f"{manifest['duration_seconds']}s, complete={complete}"
         )
         if failures:
             log(
-                f"== {len(failures)} combinacao(oes) provincia/dataset falharam; "
-                f"reexecute o mesmo comando para completar a particao"
+                f"== {len(failures)} province/dataset combination(s) failed; "
+                f"rerun the same command to complete the partition"
             )
         return EXIT_PARTIAL if failures else EXIT_OK

@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mercadona-catalog-source"
 version = "1.0.0"
-description = "Source de catalogo da Mercadona: produto, categoria e preco em snapshots particionados"
+description = "Mercadona catalog Source: product, category and price in partitioned snapshots"
 readme = "README.md"
 requires-python = ">=3.12"
-# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao.
+# No runtime dependencies: the package uses only the standard library.
 dependencies = []
 
 [project.scripts]

@@ -1,14 +1,14 @@
-"""As duas formas de arquivo que esta Source grava: manifesto JSON e dataset verbatim.
+"""The two file forms this Source writes: the JSON manifest and the verbatim dataset.
 
-Ao contrario das outras Sources (que reserializam o payload numa forma JSON canonica),
-os arquivos do Callejero sao texto de largura fixa cujo formato e definido pelo proprio
-INE — esta Source NAO os reescreve, so os copia. "Canonico" para um dataset aqui
-significa "os mesmos bytes do arquivo baixado", nao uma serializacao propria; o SHA-256
-e sobre o arquivo como ele chegou. O `_manifest.json` continua sendo JSON de verdade,
-gravado na mesma forma determinista das outras Sources.
+Unlike the other Sources (which reserialize the payload into a canonical JSON form), the
+Callejero files are fixed-width text whose format is defined by INE itself — this Source
+does NOT rewrite them, it only copies them. "Canonical" for a dataset here means "the same
+bytes as the downloaded file", not a serialization of our own; the SHA-256 is over the
+file as it arrived. `_manifest.json` is still real JSON, written in the same deterministic
+form as the other Sources.
 
-As duas escritas sao ATOMICAS: temporario no mesmo diretorio + fsync + os.replace. Um
-processo interrompido no meio nunca deixa arquivo parcial no lugar final.
+Both writes are ATOMIC: temp file in the same directory + fsync + os.replace. A process
+interrupted midway never leaves a partial file at the final location.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import json
 import os
 import tempfile
 
-# Forma canonica do MANIFESTO (JSON). Mesmos parametros das outras Sources: qualquer
-# reimplementacao que os altere produz outro digest para o mesmo conteudo.
+# Canonical form of the MANIFEST (JSON). Same parameters as the other Sources: any
+# reimplementation that changes them produces a different digest for the same content.
 JSON_ENSURE_ASCII = False
 JSON_SORT_KEYS = True
 JSON_INDENT = 2
@@ -27,7 +27,7 @@ JSON_TRAILING_NEWLINE = "\n"
 
 
 class CorruptFileError(Exception):
-    """Manifesto existente em disco que nao pode ser lido como JSON UTF-8 valido."""
+    """Manifest on disk that cannot be read as valid UTF-8 JSON."""
 
 
 def digest(blob: bytes) -> str:
@@ -45,13 +45,13 @@ def _atomic_write(path: str, blob: bytes) -> None:
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
     except BaseException:
-        # Inclui KeyboardInterrupt: o temporario nunca vira arquivo final.
+        # Includes KeyboardInterrupt: the temp file never becomes the final file.
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
 
 
-# ---- manifesto (JSON) -------------------------------------------------------------
+# ---- manifest (JSON) ---------------------------------------------------------------
 
 
 def canonical_json_bytes(payload) -> bytes:
@@ -88,11 +88,11 @@ def read_bytes(path: str) -> bytes:
 
 
 def copy_verbatim(source_path: str, target_path: str) -> tuple[str, int]:
-    """Copia source_path para target_path, atomicamente. Retorna (sha256, bytes).
+    """Copy source_path to target_path atomically. Returns (sha256, bytes).
 
-    Nenhuma decodificacao, conversao de encoding ou normalizacao de fim de linha
-    acontece aqui: os bytes gravados sao exatamente os bytes lidos. CONTRACT.md
-    secao 2 promete isso explicitamente.
+    No decoding, encoding conversion or line-ending normalization happens here: the
+    bytes written are exactly the bytes read. CONTRACT.md section 2 promises this
+    explicitly.
     """
     blob = read_bytes(source_path)
     _atomic_write(target_path, blob)

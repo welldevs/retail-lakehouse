@@ -1,204 +1,203 @@
 # Simulated Orders Source
 
-Quinta Source do repositório, e a **segunda derivada**: consome o Silver que as outras
-produziram e devolve uma RAW nova. Entrega um **log de eventos de pedido**, não uma
-fotografia de pedidos.
+Fifth Source in the repository, and the **second derived one**: it consumes the Silver the
+others produced and returns a new RAW. It delivers an **order event log**, not a snapshot of
+orders.
 
-> **A regra de ouro, deslocada um nível:** o *pedido* é inventado; quem compra, o que se
-> compra, quanto custa e onde mora não.
+> **The golden rule, shifted one level:** the *order* is invented; who buys, what is bought,
+> what it costs and where they live are not.
 
-Cliente vem de `silver_customer` (pessoa sintética, endereço real do Callejero). Produto e
-preço vêm de `silver_product_price` do **mesmo armazém na mesma data**. Nada aqui fabrica
-produto, preço, cliente ou CEP.
+The customer comes from `silver_customer` (synthetic person, real Callejero address). Product
+and price come from `silver_product_price` of the **same warehouse on the same date**. Nothing
+here fabricates a product, price, customer or postal code.
 
-Contrato completo em [CONTRACT.md](CONTRACT.md).
+Full contract in [CONTRACT.md](CONTRACT.md).
 
-## Como uma Source FROZEN lê o Lakehouse sem quebrar a fronteira
+## How a FROZEN Source reads the Lakehouse without breaking the boundary
 
-Ela não lê. A plataforma materializa antes, com `retail-platform export-orders-reference`,
-cinco JSON planos — `customers.json`, `catalog.json`, `calendar.json`, `premises.json`,
-`demand_profile.json` — e esta Source os consome só com a stdlib. Nenhum lado importa o
-código do outro.
+It does not. The platform materializes beforehand, with `retail-platform export-orders-reference`,
+five flat JSON files — `customers.json`, `catalog.json`, `calendar.json`, `premises.json`,
+`demand_profile.json` — and this Source consumes them with the stdlib only. Neither side imports
+the other's code.
 
-`dependencies = []`, verificado por AST em `tests/test_dependencies.py`. Em particular **não**
-importa `confluent-kafka`, `psycopg` nem `pyiceberg`: o broker, o OLTP e a projeção viva
-existem um nível adiante, do lado da plataforma.
+`dependencies = []`, verified by AST in `tests/test_dependencies.py`. In particular it does
+**not** import `confluent-kafka`, `psycopg` or `pyiceberg`: the broker, the OLTP and the live
+projection exist one level further, on the platform side.
 
-## Requisitos
+## Requirements
 
-Python 3.12+ e nada mais. Somente biblioteca padrão: `dependencies = []` no
-[pyproject.toml](pyproject.toml) — não há o que instalar. `PYTHONPATH=src` basta para rodar
-tudo; os alvos de venv existem para empacotar, não para executar.
+Python 3.12+ and nothing else. Standard library only: `dependencies = []` in
+[pyproject.toml](pyproject.toml) — there is nothing to install. `PYTHONPATH=src` is enough to
+run everything; the venv targets exist for packaging, not for running.
 
-Antes do primeiro `extract`, o cliente (`simulated-oltp-source`) e o catálogo
-(`mercadona-catalog-source`) precisam já estar aterrissados no Lakehouse, e a referência
-precisa ter sido exportada com `make orders-export-reference` na raiz do repositório.
+Before the first `extract`, the customers (`simulated-oltp-source`) and the catalog
+(`mercadona-catalog-source`) must already have landed in the Lakehouse, and the reference must
+have been exported with `make orders-export-reference` at the repository root.
 
-## Comandos
+## Commands
 
 ```bash
-# na raiz do repo
+# at the repo root
 make orders-export-reference ORDERS_FROM=2026-08-24 ORDERS_TO=2026-08-27
 make orders-refresh-all      ORDERS_FROM=2026-08-24 ORDERS_TO=2026-08-27
 
-# aqui dentro, sem venv e sem instalar nada
+# in here, with no venv and nothing installed
 make test
 make extract  DATE=2026-08-24 WH=mad1 REFERENCE=../../data/orders-reference/ingestion_date=2026-08-27
 make validate DATE=2026-08-24 WH=mad1 REFERENCE=../../data/orders-reference/ingestion_date=2026-08-27
 ```
 
-## Estrutura
+## Layout
 
 ```
 sources/simulated-orders-source/
-├── CONTRACT.md                      # contrato com o consumidor
+├── CONTRACT.md                      # contract with the consumer
 ├── Makefile                         # test / extract / validate / check / venv / install / freeze
-├── pyproject.toml                   # metadados; dependencies = []
-├── requirements.txt                 # runtime: vazio por construção, verificado por teste
-├── requirements-build.txt           # setuptools / wheel / packaging, congelados
+├── pyproject.toml                   # metadata; dependencies = []
+├── requirements.txt                 # runtime: empty by construction, verified by test
+├── requirements-build.txt           # setuptools / wheel / packaging, pinned
 ├── src/simulated_orders_source/
-│   ├── __init__.py                  # nome da source, versão do manifesto
+│   ├── __init__.py                  # source name, manifest version
 │   ├── __main__.py                  # python -m simulated_orders_source
-│   ├── cli.py                       # subcomandos e códigos de saída
-│   ├── reference_data.py            # lê e desconfia dos cinco JSON de referência
-│   ├── demand.py                    # modelo de demanda calibrado (mapa_2025_v2) e coortes
-│   ├── premises.py                  # acesso tipado às premissas, todas sintéticas
-│   ├── events.py                    # vocabulário de eventos + máquina de estados (o contrato em código)
-│   ├── orders_generator.py          # amostragem determinística do log, um (armazém, dia) por vez
-│   ├── extract.py                   # orquestra partição + manifesto + _SUCCESS
-│   ├── validate.py                  # integridade + coerência contra a referência
-│   ├── partition.py                 # caminho, tokens, imutabilidade (eixos wh= e ingestion_date=)
-│   ├── schema.py                    # campos do envelope, totais reconferíveis e fingerprint
-│   └── canonical.py                 # forma canônica do NDJSON + escrita atômica
-└── tests/                           # 163 testes, stdlib unittest, sem rede
+│   ├── cli.py                       # subcommands and exit codes
+│   ├── reference_data.py            # reads and distrusts the five reference JSON files
+│   ├── demand.py                    # calibrated demand model (mapa_2025_v2) and cohorts
+│   ├── premises.py                  # typed access to the premises, all synthetic
+│   ├── events.py                    # event vocabulary + state machine (the contract in code)
+│   ├── orders_generator.py          # deterministic sampling of the log, one (warehouse, day) at a time
+│   ├── extract.py                   # orchestrates partition + manifest + _SUCCESS
+│   ├── validate.py                  # integrity + coherence against the reference
+│   ├── partition.py                 # path, tokens, immutability (wh= and ingestion_date= axes)
+│   ├── schema.py                    # envelope fields, re-checkable totals and fingerprint
+│   └── canonical.py                 # canonical NDJSON form + atomic writes
+└── tests/                           # 163 tests, stdlib unittest, no network
 ```
 
-Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
-`<raiz>/data/orders/ingestion_date=…/wh=…/`, dois níveis acima. A referência que o
-`extract` lê vive em `<raiz>/data/orders-reference/ingestion_date=…/`, gerada por
-`make orders-export-reference` na raiz do repositório.
+The snapshots **do not live here**. The partition the platform consumes lives in
+`<root>/data/orders/ingestion_date=…/wh=…/`, two levels up. The reference `extract` reads lives
+in `<root>/data/orders-reference/ingestion_date=…/`, generated by
+`make orders-export-reference` at the repository root.
 
-## O que sai
+## Output layout
 
 ```
 data/orders/ingestion_date=2026-08-24/wh=mad1/
-├── order_events.jsonl      NDJSON, uma linha por evento
+├── order_events.jsonl      NDJSON, one line per event
 ├── _manifest.json
 └── _SUCCESS
 ```
 
-**Não existe `orders.json` ao lado**, e isso não é omissão: duas representações da mesma
-verdade divergem. O estado do pedido é o **fold** dos seus eventos, e o fold mora no Silver.
+**There is no `orders.json` alongside**, and that is not an omission: two representations of
+the same truth drift apart. An order's state is the **fold** of its events, and the fold lives
+in Silver.
 
-## Por que o fold não é trivial
+## Why the fold is not trivial
 
-Substituição e remoção de linha alteram a cesta **depois** da colocação. Logo `picked_amount`
-não é derivável de `gross_amount` — o valor do pedido só existe depois de dobrar o log. Se
-fosse derivável, o log seria um carimbo de data e o modelo de eventos seria enfeite.
+Line substitution and removal change the basket **after** placement. So `picked_amount` cannot
+be derived from `gross_amount` — the order's value only exists after folding the log. If it
+could be derived, the log would be a date stamp and the event model would be decoration.
 
-Medido numa partição real (`mad1`, `2026-08-24`, 400 pedidos): colocado `48.251,11`, separado
-`45.553,00`, 269 substituições e 145 remoções em 7.506 linhas.
+Measured on a real partition (`mad1`, `2026-08-24`, 400 orders): placed `48.251,11`, picked
+`45.553,00`, 269 substitutions and 145 removals across 7,506 lines.
 
-## Reprodutibilidade
+## Reproducibility
 
-Cada `(armazém, dia)` deriva a própria semente de `sha256("<seed>|<wh>|<order_date>")` —
-`sha256` e não `hash()`, porque o hash de `str` em CPython é aleatorizado por processo.
-Consequência, verificada ponta a ponta:
+Each `(warehouse, day)` derives its own seed from `sha256("<seed>|<wh>|<order_date>")` —
+`sha256` and not `hash()`, because CPython's `str` hash is randomized per process.
+Consequence, verified end to end:
 
-> **Acrescentar um dia à janela é aditivo.** As partições já geradas ficam byte a byte
-> idênticas, porque nenhum dia depende do sorteio de outro.
+> **Adding a day to the window is additive.** Already generated partitions stay byte-for-byte
+> identical, because no day depends on another day's draw.
 
-As três condições que **não** são aditivas: outra `seed`, outra referência (clientes ou
-catálogo reingeridos) e outra tabela de premissas. O manifesto registra as três, e `history[]`
-guarda a seed e o digest de premissas de cada execução anterior.
+The three conditions that are **not** additive: another `seed`, another reference (customers or
+catalog re-ingested) and another premises table. The manifest records all three, and
+`history[]` keeps the seed and premises digest of each previous run.
 
-## Premissas: sintéticas e declaradas
+## Premises: synthetic and declared
 
-Nenhuma fonte deste repo mede venda, cesta, cadência ou disponibilidade. Toda premissa vive em
-`platform/dbt/seeds/order_premises_seed.csv`, é rotulada `synthetic` — um rótulo diferente
-**reprova** o export — e seu `sha256` viaja até o manifesto. Não há default para nenhuma: uma
-chave ausente reprova a geração, porque um default escondido no gerador seria uma premissa não
-declarada.
+No source in this repo measures sales, baskets, cadence or availability. Every premise lives in
+`platform/dbt/seeds/order_premises_seed.csv`, is labeled `synthetic` — a different label
+**fails** the export — and its `sha256` travels all the way to the manifest. There is no default
+for any of them: a missing key fails the generation, because a default hidden in the generator
+would be an undeclared premise.
 
-## Restrições da fonte
+## Source restrictions
 
-- Não existe fato transacional em nenhuma fonte externa: o contrato da Mercadona registra que
-  nenhum endpoint expõe venda, pedido ou estoque.
-- Não existe fato de estoque: por isso a remoção de linha diz `unavailable`, e não
-  `out_of_stock`.
-- A escolha do produto é **uniforme**, de propósito. Ponderar inventaria uma distribuição que
-  ninguém mediu.
-- A janela de entrega é promessa comercial numa grade fixa, **nunca** rota: o Callejero não tem
-  coordenada nem adjacência.
+- There is no transactional fact in any external source: the Mercadona contract records that
+  no endpoint exposes sales, orders or stock.
+- There is no stock fact: that is why line removal says `unavailable`, not `out_of_stock`.
+- The product choice is **uniform**, on purpose. Weighting it would invent a distribution
+  nobody measured.
+- The delivery slot is a commercial promise on a fixed grid, **never** a route: the Callejero
+  has no coordinates or adjacency.
 
-## Validação
+## Validation
 
-`validate` relê o arquivo declarado no manifesto, recalculando checksum, contagem, impressão
-digital e todos os totais em vez de aceitar os valores registrados, varre a partição em busca
-de arquivos não declarados e reconfere a ordenação total do log.
+`validate` re-reads the file declared in the manifest, recomputing checksum, count, fingerprint
+and all totals instead of accepting the recorded values, walks the partition looking for
+undeclared files and re-checks the total ordering of the log.
 
-Além disso — e é aqui que mora o valor — relê a mesma referência que gerou a partição e
-reconfere, pedido a pedido: o cliente pertence ao armazém da partição; todo produto pedido
-existe no catálogo daquele `(armazém, data)`; o preço pago é o observado, comparado como
-`Decimal` e nunca como `float`; a sequência de eventos é contígua e aceita pela mesma máquina
-de estados que o gerador usa; `gross_amount` fecha com as linhas colocadas e `picked_amount`
-fecha com as linhas cumpridas depois de substituições e remoções.
+On top of that — and this is where the value lies — it re-reads the same reference that
+generated the partition and re-checks, order by order: the customer belongs to the partition's
+warehouse; every ordered product exists in that `(warehouse, date)` catalog; the price paid is
+the observed one, compared as `Decimal` and never as `float`; the event sequence is contiguous
+and accepted by the same state machine the generator uses; `gross_amount` matches the placed
+lines and `picked_amount` matches the fulfilled lines after substitutions and removals.
 
-**Integridade e coerência** — sempre fatais: manifesto ausente/ilegível · `manifest_version`
-incompatível · entrada de manifesto malformada ou apontando para fora da raiz do snapshot ·
-arquivo declarado e ausente · checksum ou tamanho divergente · contagem de registros
-divergente · arquivo em disco fora do manifesto · `_SUCCESS` incoerente com `complete` ·
-campo do envelope ausente · `event_id` que não deriva de `(order_id, sequence_no)` ·
-`schema_fingerprint` divergente · log fora de ordem · `sequence_no` não contíguo · transição
-de estado impossível · cliente, produto ou preço divergente da referência · totais
-divergentes da releitura · referência com outro modelo de demanda ou outra tabela de
-premissas.
+**Integrity and coherence** — always fatal: missing/unreadable manifest · incompatible
+`manifest_version` · malformed manifest entry or one pointing outside the snapshot root ·
+declared file missing · checksum or size mismatch · record count mismatch · file on disk
+outside the manifest · `_SUCCESS` inconsistent with `complete` · missing envelope field ·
+`event_id` that does not derive from `(order_id, sequence_no)` · `schema_fingerprint`
+mismatch · log out of order · non-contiguous `sequence_no` · impossible state transition ·
+customer, product or price differing from the reference · totals differing from the re-read ·
+reference with a different demand model or a different premises table.
 
-**Avisos de distribuição** — reportados, fatais só com `--strict`: nenhum pedido teve linha
-substituída ou removida (o fold fica trivial e o log deixa de justificar o modelo de
-eventos), ou todos os pedidos terminaram no mesmo evento.
+**Distribution warnings** — reported, fatal only with `--strict`: no order had a substituted or
+removed line (the fold becomes trivial and the log no longer justifies the event model), or all
+orders ended on the same event.
 
 ```bash
 make validate DATE=2026-08-24 WH=mad1 REFERENCE=../../data/orders-reference/ingestion_date=2026-08-27
 ```
 
-`--reference` é **obrigatório**, como na Source de clientes e pelo mesmo motivo: as garantias
-centrais só são verificáveis relendo a mesma referência que gerou a partição. Um validador que
-só confere checksum provaria integridade, não coerência.
+`--reference` is **required**, as in the customers Source and for the same reason: the core
+guarantees can only be verified by re-reading the same reference that generated the partition.
+A validator that only checks checksums would prove integrity, not coherence.
 
-## Dependências e container
+## Dependencies and container
 
-**Runtime: nenhuma.** `[project.dependencies]` está vazio no [pyproject.toml](pyproject.toml),
-e a promessa é verificada, não apenas afirmada: `tests/test_dependencies.py` percorre a AST de
-todos os módulos do pacote e dos testes e reprova qualquer import fora da biblioteca padrão —
-em particular, nenhum import de `confluent-kafka`, `psycopg`, `pyiceberg`, `duckdb`, `boto3`
-nem de nada do dbt: o broker, o OLTP e a projeção viva existem um nível adiante, do lado da
-plataforma.
+**Runtime: none.** `[project.dependencies]` is empty in [pyproject.toml](pyproject.toml), and
+the promise is verified, not merely asserted: `tests/test_dependencies.py` walks the AST of
+every module of the package and of the tests and fails on any import outside the standard
+library — in particular, no import of `confluent-kafka`, `psycopg`, `pyiceberg`, `duckdb`,
+`boto3` or anything from dbt: the broker, the OLTP and the live projection exist one level
+further, on the platform side.
 
-| Arquivo | Conteúdo | Quando é necessário |
+| File | Content | When it is needed |
 |---|---|---|
-| [requirements.txt](requirements.txt) | vazio, só comentários | nunca — não há dependência de runtime |
-| [requirements-build.txt](requirements-build.txt) | `packaging`, `setuptools`, `wheel` | apenas para `pip install .` / construir a wheel |
+| [requirements.txt](requirements.txt) | empty, comments only | never — there is no runtime dependency |
+| [requirements-build.txt](requirements-build.txt) | `packaging`, `setuptools`, `wheel` | only for `pip install .` / building the wheel |
 
 ### Container
 
-A imagem **não precisa instalar nenhum pacote de terceiros**, pelo mesmo motivo das outras
-quatro Sources: `dependencies = []` significa que o código roda com
-`PYTHONPATH=src python -m simulated_orders_source` no próprio interpretador do Airflow, sem
-nenhum `pip install`. Não existe `Dockerfile` dedicado, e por ora não é necessário.
+The image **does not need to install any third-party package**, for the same reason as the
+other four Sources: `dependencies = []` means the code runs with
+`PYTHONPATH=src python -m simulated_orders_source` on Airflow's own interpreter, without any
+`pip install`. There is no dedicated `Dockerfile`, and for now none is needed.
 
-## Testes
+## Tests
 
 ```bash
-make test                 # 163 testes, sem rede
+make test                 # 163 tests, no network
 ```
 
-Cobrem, entre outros: o vocabulário de eventos e a máquina de estados (transições válidas e
-inválidas); o fold — substituição e remoção mudando a cesta, `picked_amount` fechando com o
-que sobrou depois delas; reprodutibilidade por seed com sub-seed por dia, inclusive sob
-`PYTHONHASHSEED` diferente em subprocesso; a propriedade de aditividade entre dias e as
-quatro condições que não são aditivas; o modelo de demanda calibrado (`mapa_2025_v2`) e a
-propensão por coorte de idade/região; premissas declaradas como `synthetic`, sem nenhum
-default; desconfiança da referência (arquivo ausente, `rows` vazio, campo faltando, preço não
-positivo, `price_source` fora do vocabulário); escrita atômica e forma canônica do NDJSON;
-ordenação total do log; imutabilidade e retomada; e ausência de dependência de terceiros.
+They cover, among others: the event vocabulary and the state machine (valid and invalid
+transitions); the fold — substitution and removal changing the basket, `picked_amount`
+matching what is left after them; per-seed reproducibility with a per-day sub-seed, including
+under a different `PYTHONHASHSEED` in a subprocess; the additivity property across days and
+the four conditions that are not additive; the calibrated demand model (`mapa_2025_v2`) and
+per-cohort age/region propensity; premises declared as `synthetic`, with no default at all;
+distrust of the reference (missing file, empty `rows`, missing field, non-positive price,
+`price_source` outside the vocabulary); atomic writes and the canonical NDJSON form; total
+ordering of the log; immutability and resumption; and absence of third-party dependencies.

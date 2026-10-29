@@ -1,229 +1,233 @@
 # Source Contract — `ine_population_api`
 
-Contrato entre esta Source e qualquer componente que consuma seus snapshots.
-Tudo aqui é imposto por código e coberto por teste, salvo onde marcado como **[fonte]** —
-característica da API Tempus3 do INE, fora do controle desta Source.
+Contract between this Source and any component that consumes its snapshots.
+Everything here is enforced by code and covered by a test, except where marked
+**[source]** — a characteristic of the INE's Tempus3 API, outside this Source's control.
 
-Mais enxuto que o contrato da Mercadona Catalog Source: sem eixo de armazém, sem
-identidade de produto/preço, sem premissa de moeda — nada disso existe aqui. O que os
-dois compartilham (escrita atômica, forma canônica, inventário fechado, imutabilidade,
-retomada segura) é hygiene genérica de partição, mantida verbatim.
+Leaner than the Mercadona Catalog Source contract: no warehouse axis, no product/price
+identity, no currency premise — none of that exists here. What the two share (atomic write,
+canonical form, closed inventory, immutability, safe resume) is generic partition hygiene,
+kept verbatim.
 
-## 1. Identidade do snapshot
+## 1. Snapshot identity
 
-Cada execução completa produz um snapshot identificado por duas chaves — **sem** eixo de
-armazém, ao contrário da Mercadona: a API Tempus3 devolve todas as províncias e todos os
-anos num único payload por `table_id`, então não há um eixo de fetch para promover a
-diretório.
+Each complete run produces a snapshot identified by two keys — **no** warehouse axis,
+unlike Mercadona: the Tempus3 API returns every province and every year in a single
+payload per `table_id`, so there is no fetch axis to promote to a directory.
 
-| Chave | Valor | Onde vive |
+| Key | Value | Where it lives |
 |---|---|---|
 | `source` | `ine_population_api` | `_manifest.json` → `source.name` |
-| `ingestion_date` | `YYYY-MM-DD` (UTC) | diretório da partição e `partition.ingestion_date` |
+| `ingestion_date` | `YYYY-MM-DD` (UTC) | partition directory and `partition.ingestion_date` |
 
 ```
 <root>/ingestion_date=YYYY-MM-DD/
 ├── tables/table_id=<id>.json
 ├── _manifest.json
-├── _SUCCESS          (só existe quando complete = true)
+├── _SUCCESS          (only exists when complete = true)
 └── _run.log
 ```
 
-Blocos de primeiro nível do `_manifest.json`: `manifest_version`, `run_id`,
-`started_at_utc`, `finished_at_utc`, `duration_seconds`, `complete`, `source`,
-`partition`, `config`, `totals`, `schema_fingerprint`, `files[]`, `failures[]`,
-`anomalies[]`, `history[]`.
+Top-level blocks of `_manifest.json`: `manifest_version`, `run_id`, `started_at_utc`,
+`finished_at_utc`, `duration_seconds`, `complete`, `source`, `partition`, `config`,
+`totals`, `schema_fingerprint`, `files[]`, `failures[]`, `anomalies[]`, `history[]`.
 
-**Compatibilidade dentro de uma versão de manifesto:** uma lista ausente equivale à lista
-vazia. Consumidores devem usar `manifest.get("anomalies", [])`, nunca indexação direta.
+**Compatibility within a manifest version:** a missing list is equivalent to an empty
+list. Consumers must use `manifest.get("anomalies", [])`, never direct indexing.
 
-## 2. Conteúdo garantido
+## 2. Guaranteed content
 
-O snapshot preserva **série temporal de população por província**, tal como a API a
-devolve — sem interpretação.
+The snapshot preserves **population time series by province**, as the API returns it —
+with no interpretation.
 
-| Campo | Caminho |
+| Field | Path |
 |---|---|
-| Código da série | `tables/table_id=<id>.json` → `[].COD` |
-| Descrição da série (inclui província) | `tables/table_id=<id>.json` → `[].Nombre` |
-| Pontos da série (ano, valor) | `tables/table_id=<id>.json` → `[].Data[]` |
+| Series code | `tables/table_id=<id>.json` → `[].COD` |
+| Series description (includes the province) | `tables/table_id=<id>.json` → `[].Nombre` |
+| Series data points (year, value) | `tables/table_id=<id>.json` → `[].Data[]` |
 
-**`table_id` é 31304** ("Población por fecha, sexo, edad y provincia"), com dimensões
-`Sexo`, `Edad`, `Provincias` — confirmado consultando `GRUPOS_TABLA/31304` e
-`DATOS_TABLA/31304` diretamente na API. **A província vem como texto**, não como código
-numérico: `Nombre` concatena idade, território e sexo separados por `". "` — ex.:
+**`table_id` is 31304** ("Población por fecha, sexo, edad y provincia"), with dimensions
+`Sexo`, `Edad`, `Provincias` — confirmed by querying `GRUPOS_TABLA/31304` and
+`DATOS_TABLA/31304` directly against the API. **The province comes as text**, not as a
+numeric code: `Nombre` concatenates age, territory and sex separated by `". "` — e.g.
 `"Total. Albacete. Ambos sexos. Población. Número."`.
 
-**Medido contra o payload real** (16.377 séries, 1.547.496 pontos, table_id=31304):
+**Measured against the real payload** (16,377 series, 1,547,496 data points,
+table_id=31304):
 
-- **A ordem dos três primeiros segmentos NÃO é fixa.** 97,2% das séries seguem
-  `"<Idade>. <Território>. <Sexo>."`, mas o bucket etário `"85 y más años"` inteiro
-  (156 séries) vem como `"<Sexo>. <Idade>. <Território>."`, e as 309 séries do total
-  nacional vêm como `"Total Nacional. <Idade>. <Sexo>."` (ou, só para
-  `"100 y más años"`, `"<Idade>. Total Nacional. <Sexo>."`). Extrair por posição fixa
-  (ex.: `split_part(..., 2)`) erra o território em ~2,8% das séries. O consumidor deve
-  identificar território e sexo por **vocabulário conhecido** (lista fechada de 52
-  províncias + o valor `"Total Nacional"`; 3 valores de sexo), não por índice.
-- **`"Total Nacional"` não é uma província** — é a agregação do país inteiro, presente
-  na mesma tabela junto com as 52 províncias (50 + Ceuta e Melilla).
-- **Cada série tem 2 pontos por ano**, não 1: um por `FK_Periodo` (`27` = referência
-  30/06, `26` = referência 31/12 — o INE publica duas estimativas de população por
-  ano). `(série, Anyo, FK_Periodo)` é único; `(série, Anyo)` sozinho não é.
+- **The order of the first three segments is NOT fixed.** 97.2% of the series follow
+  `"<Age>. <Territory>. <Sex>."`, but the whole `"85 y más años"` age bucket (156 series)
+  comes as `"<Sex>. <Age>. <Territory>."`, and the 309 national-total series come as
+  `"Total Nacional. <Age>. <Sex>."` (or, only for `"100 y más años"`,
+  `"<Age>. Total Nacional. <Sex>."`). Extracting by fixed position (e.g.
+  `split_part(..., 2)`) gets the territory wrong in ~2.8% of the series. The consumer must
+  identify territory and sex by **known vocabulary** (closed list of 52 provinces + the
+  value `"Total Nacional"`; 3 sex values), not by index.
+- **`"Total Nacional"` is not a province** — it is the aggregate of the whole country,
+  present in the same table alongside the 52 provinces (50 + Ceuta and Melilla).
+- **Each series has 2 data points per year**, not 1: one per `FK_Periodo` (`27` =
+  reference 30/06, `26` = reference 31/12 — the INE publishes two population estimates
+  per year). `(series, Anyo, FK_Periodo)` is unique; `(series, Anyo)` alone is not.
 
-O Silver (`silver_ine_population_series`) já implementa a extração por vocabulário e o
-grão com `fk_periodo`.
+The Silver (`silver_ine_population_series`) already implements vocabulary-based extraction
+and the grain with `fk_periodo`.
 
-**`table_id` 29005** ("Cifras oficiales del padrón por municipio") também confirmado,
-consultando `DATOS_TABLA/29005` diretamente na API. Dimensão diferente de 31304: só
-**município + sexo**, sem idade. **O município vem como texto, sem código** — nem sequer
-código de província, ao contrário do que se poderia supor por analogia com 31304.
+**`table_id` 29005** ("Cifras oficiales del padrón por municipio") is also confirmed, by
+querying `DATOS_TABLA/29005` directly against the API. Different dimensions from 31304:
+only **municipality + sex**, no age. **The municipality comes as text, with no code** —
+not even a province code, contrary to what one might assume by analogy with 31304.
 
-**Medido contra uma amostra grande do payload real** (4.509 séries completas de um
-payload maior que a rede truncou durante a investigação — ver histórico do projeto):
+**Measured against a large sample of the real payload** (4,509 complete series from a
+larger payload that the network truncated during the investigation — see the project
+history):
 
-- **A ordem dos segmentos É fixa aqui**, ao contrário de 31304: 100% da amostra segue
-  `"<Município>. <Sexo>. Total habitantes. Personas."` — 4 segmentos sempre, município e
-  sexo podem ser extraídos por posição, não por vocabulário.
-- **Vocabulário de sexo é diferente do de 31304**: `"Total"` / `"Hombres"` /
-  `"Mujeres"`, não `"Ambos sexos"` / `"Hombres"` / `"Mujeres"`.
-- **`Secreto: true` não apareceu na amostra** (0 ocorrências) — mas a amostra não cobre
-  os ~8.200 municípios inteiros da Espanha, então isso não está provado para o dataset
-  completo. Não há exemplo observado do que a fonte coloca em `Valor` quando
-  `Secreto: true` — o consumidor não deve presumir que vira `0` ou `null`.
-- **Payload sem filtro é grande** (série histórica desde 1996, ~8.200 municípios × 3
-  séries de sexo × ~30 anos): truncou no meio da própria investigação desta extensão sob
-  a rede daquele ambiente, apesar de `HTTP 200`. O `Fetcher` desta Source já trata corpo
-  JSON inválido como erro retryable (`http_client.py`), então uma resposta truncada é
-  reexecutada com backoff — mas o `--timeout` default (30s) é curto para um payload deste
-  tamanho; quem rodar `--tables 29005` num link lento deve considerar `--timeout` maior.
-- **Não há código de município no payload** — mesma limitação de 31304 com província,
-  só que mais séria aqui porque nome de município não é chave segura nacionalmente (nomes
-  duplicados entre províncias diferentes). Resolver o código é responsabilidade do
-  consumidor (ver `scripts/derive_municipality_codes.py` na raiz do projeto, fora desta
-  Source).
+- **The segment order IS fixed here**, unlike 31304: 100% of the sample follows
+  `"<Municipality>. <Sex>. Total habitantes. Personas."` — always 4 segments; municipality
+  and sex can be extracted by position, not by vocabulary.
+- **The sex vocabulary differs from 31304's**: `"Total"` / `"Hombres"` / `"Mujeres"`, not
+  `"Ambos sexos"` / `"Hombres"` / `"Mujeres"`.
+- **`Secreto: true` did not appear in the sample** (0 occurrences) — but the sample does not
+  cover all ~8,200 municipalities of Spain, so this is not proven for the full dataset.
+  There is no observed example of what the source puts in `Valor` when `Secreto: true` —
+  the consumer must not assume it becomes `0` or `null`.
+- **The unfiltered payload is large** (historical series since 1996, ~8,200 municipalities
+  × 3 sex series × ~30 years): it was truncated in the middle of this extension's own
+  investigation on that environment's network, despite `HTTP 200`. This Source's `Fetcher`
+  already treats an invalid JSON body as a retryable error (`http_client.py`), so a
+  truncated response is retried with backoff — but the default `--timeout` (30s) is short
+  for a payload this size; whoever runs `--tables 29005` on a slow link should consider a
+  larger `--timeout`.
+- **There is no municipality code in the payload** — the same limitation as 31304 with
+  provinces, only more serious here because a municipality name is not a safe key
+  nationally (names are duplicated across different provinces). Resolving the code is the
+  consumer's responsibility (see `scripts/derive_municipality_codes.py` at the project
+  root, outside this Source).
 
-O Silver (`silver_ine_population_by_municipality`) implementa a extração por posição e
-o cruzamento de código.
+The Silver (`silver_ine_population_by_municipality`) implements the positional extraction
+and the code lookup.
 
-**Medido contra o payload real e completo** (extração de produção, 40.791 séries, 2.253.624
-pontos): 6 séries de `table_id=29005` — 2 municípios (`"Gatova"`, província de Castellón,
-e `"Palmerola"`, província de Girona), 3 séries cada (Total/Hombres/Mujeres) — não têm
-**nenhum** ponto de dado (`Data: []`), não só `Valor` nulo. Nenhum dos dois municípios cai
-dentro do escopo desta plataforma (08/28/41/46). A plataforma (Makefile raiz, DAG) roda
-`validate` **sem `--strict`** por causa disso — reprovar toda extração por 2 municípios
-fora de escopo não protegeria nada real; a contagem de séries sem valor continua
-reportada no output do `validate` de qualquer forma, só deixou de ser fatal.
+**Measured against the real, complete payload** (production extraction, 40,791 series,
+2,253,624 data points): 6 series of `table_id=29005` — 2 municipalities (`"Gatova"`,
+province of Castellón, and `"Palmerola"`, province of Girona), 3 series each
+(Total/Hombres/Mujeres) — have **no** data point at all (`Data: []`), not just a null
+`Valor`. Neither municipality falls within this platform's scope (08/28/41/46). The
+platform (root Makefile, DAG) runs `validate` **without `--strict`** because of this —
+failing every extraction over 2 out-of-scope municipalities would protect nothing real;
+the count of series without a value is still reported in the `validate` output either way,
+it just stopped being fatal.
 
-**Essa mesma extração de produção mediu o payload grande de `table_id=31304` sendo
-genuinamente frágil em trânsito.** A primeira tentativa (rede da máquina que rodou esta
-extensão, 2026-08-26) baixou ~264 MB e falhou perto do fim —
-`JSONDecodeError: Expecting ':' delimiter` no byte 154.057.166 — depois de ~33 min. O
-retry automático do `Fetcher` (`http_client.py`, já tratava corpo JSON inválido como erro
-retentável antes desta extensão) refez a busca e fechou íntegro na 2ª tentativa (`retry
-1/3`, backoff 5s). Total pousado no MinIO: `table_id=31304` (276.503.711 bytes) +
-`table_id=29005` (125.350.984 bytes) ≈ 402 MB em 2 arquivos de tabela, 5 objetos no total
-com manifesto/log/`_SUCCESS`. Registrado aqui porque o `--timeout` default (30 s, ver README § "extract") é curto demais
-pra um payload deste tamanho nessa rede — quem repetir esta
-extração num link lento deve considerar `--timeout` maior, não só mais `--max-retries`.
+**That same production extraction measured the large `table_id=31304` payload as
+genuinely fragile in transit.** The first attempt (network of the machine that ran this
+extension, 2026-08-26) downloaded ~264 MB and failed near the end —
+`JSONDecodeError: Expecting ':' delimiter` at byte 154,057,166 — after ~33 min. The
+`Fetcher`'s automatic retry (`http_client.py`, which already treated an invalid JSON body
+as a retryable error before this extension) redid the fetch and completed intact on the
+2nd attempt (`retry 1/3`, 5s backoff). Total landed in MinIO: `table_id=31304`
+(276,503,711 bytes) + `table_id=29005` (125,350,984 bytes) ≈ 402 MB in 2 table files, 5
+objects in total with manifest/log/`_SUCCESS`. Recorded here because the default
+`--timeout` (30 s, see README § "extract") is too short for a payload this size on that
+network — whoever repeats this extraction on a slow link should consider a larger
+`--timeout`, not just more `--max-retries`.
 
-**O JSON é o contrato físico.** Não há schema relacional: a estrutura da resposta da API
-é preservada como recebida.
+**The JSON is the physical contract.** There is no relational schema: the structure of
+the API response is preserved as received.
 
-## 3. Garantias
+## 3. Guarantees
 
-1. **Escrita atômica.** Nenhum arquivo de dados é observável em estado parcial.
-2. **Forma canônica.** Todo arquivo é `json.dumps(ensure_ascii=False, sort_keys=True,
-   indent=2)` + newline final.
-3. **Integridade verificável.** `_manifest.json` declara `sha256`, `bytes` e `records`
-   (contagem de séries) de cada arquivo. `validate` recalcula os três a partir do disco.
-4. **Inventário fechado.** Todo arquivo dentro da partição está declarado no manifesto.
-5. **Imutabilidade.** Uma partição com `complete: true` não pode ser reescrita sem
-   `--overwrite` explícito. Um arquivo reaproveitado cujo conteúdo divergiu do manifesto
-   anterior é rebaixado da fonte e registrado em `anomalies[]`.
-6. **Retomada segura.** Uma partição incompleta pode ser completada reexecutando o mesmo
-   comando com o mesmo `--tables`.
-7. **Proveniência preservada.** `history[]` acumula o resumo de cada execução anterior.
-8. **Detecção de mudança de schema.** `schema_fingerprint` registra o conjunto ordenado
-   de chaves de série e de ponto de dado, mais um hash. `validate` recalcula e compara.
-9. **Marcador de conclusão.** `_SUCCESS` existe se e somente se `complete: true`.
-10. **Identidade persistida antes do fan-out.** Um manifesto preliminar (`complete:
-    false`) é gravado assim que a partição é criada, antes de qualquer `table_id` ser
-    buscado — não depois de uma etapa de descoberta, porque não há uma aqui.
-11. **Forma canônica verificada no reuso.** Um arquivo já presente só é reaproveitado se
-    seus bytes forem exatamente a serialização canônica do seu próprio conteúdo.
-12. **Anomalias registradas.** `anomalies[]` lista eventos tratados durante a extração.
-    `validate` os reporta como aviso, sem reprovar uma partição já corrigida.
-13. **Cobertura verificada.** `validate` confere que todo `table_id` em
-    `manifest.config.tables` tem arquivo — cobertura é config-driven, não descoberta
-    contra uma árvore externa como na Mercadona.
-14. **Totais reconferidos.** `totals.series_count`, `totals.data_point_count`,
-    `totals.table_files` e `totals.bytes` são recalculados da releitura.
-15. **Falha registrada é fatal na validação.** Qualquer entrada em `failures[]` reprova a
-    partição.
+1. **Atomic write.** No data file is observable in a partial state.
+2. **Canonical form.** Every file is `json.dumps(ensure_ascii=False, sort_keys=True,
+   indent=2)` + trailing newline.
+3. **Verifiable integrity.** `_manifest.json` declares `sha256`, `bytes` and `records`
+   (series count) for each file. `validate` recomputes all three from disk.
+4. **Closed inventory.** Every file inside the partition is declared in the manifest.
+5. **Immutability.** A partition with `complete: true` cannot be rewritten without an
+   explicit `--overwrite`. A reused file whose content differs from the previous manifest
+   is downloaded again from the source and recorded in `anomalies[]`.
+6. **Safe resume.** An incomplete partition can be completed by re-running the same
+   command with the same `--tables`.
+7. **Provenance preserved.** `history[]` accumulates the summary of each previous run.
+8. **Schema change detection.** `schema_fingerprint` records the sorted set of series and
+   data-point keys, plus a hash. `validate` recomputes and compares.
+9. **Completion marker.** `_SUCCESS` exists if and only if `complete: true`.
+10. **Identity persisted before fan-out.** A preliminary manifest (`complete: false`) is
+    written as soon as the partition is created, before any `table_id` is fetched — not
+    after a discovery step, because there is none here.
+11. **Canonical form verified on reuse.** An already present file is only reused if its
+    bytes are exactly the canonical serialization of its own content.
+12. **Anomalies recorded.** `anomalies[]` lists events handled during extraction.
+    `validate` reports them as warnings, without failing an already corrected partition.
+13. **Coverage verified.** `validate` checks that every `table_id` in
+    `manifest.config.tables` has a file — coverage is config-driven, not discovered
+    against an external tree as with Mercadona.
+14. **Totals re-checked.** `totals.series_count`, `totals.data_point_count`,
+    `totals.table_files` and `totals.bytes` are recomputed from the re-read.
+15. **A recorded failure is fatal in validation.** Any entry in `failures[]` fails the
+    partition.
 
-**Deliberadamente sem equivalente aqui** (existem na Mercadona, não fazem sentido nesta
-fonte): `lang` fixo por partição — não há eixo de idioma; identidade de produto/preço;
-premissa de moeda.
+**Deliberately without an equivalent here** (they exist in Mercadona, they make no sense
+for this source): a fixed `lang` per partition — there is no language axis; product/price
+identity; currency premise.
 
-## 4. Obrigações do consumidor
+## 4. Consumer obligations
 
-1. **Itere `manifest.files[]`.** `files[].path` é relativo à raiz do snapshot, não à
-   partição — começa em `ingestion_date=…/`. Resolva com
-   `os.path.join(partition, "..", entry["path"])` — um nível a menos que a Mercadona,
-   porque não há eixo de armazém entre a raiz e a partição.
-2. **Trate a partição como imutável.** Não escreva dentro dela.
-3. **Cada snapshot já contém a série histórica inteira.** `Data[]` cobre muitos anos por
-   série. Um novo `ingestion_date` é um **pull atualizado**, não incremental — não assuma
-   que só "linhas novas" aparecem.
-4. **Não assuma cadência de atualização.** O INE publica Cifras de Población de forma
-   irregular (nominalmente ~1-2x/ano, historicamente às vezes meses entre publicações). Um
-   novo `ingestion_date` sem nenhum `Valor` diferente do snapshot anterior é o caso
-   esperado, não um sinal de falha.
-5. **Extraia a província de `Nombre`, com cuidado.** Não há código de província no
-   payload — só o nome por extenso, dentro de uma string com outros campos concatenados
-   (ver §2). Não há mapeamento pronto para código INE de província aqui; se precisar de
-   um, ele vive na camada que cruza esta fonte com outra (fora do escopo desta Source).
-6. **Verifique `schema_fingerprint` entre snapshots** se depender da forma dos campos.
+1. **Iterate `manifest.files[]`.** `files[].path` is relative to the snapshot root, not to
+   the partition — it starts at `ingestion_date=…/`. Resolve it with
+   `os.path.join(partition, "..", entry["path"])` — one level less than Mercadona, because
+   there is no warehouse axis between the root and the partition.
+2. **Treat the partition as immutable.** Do not write inside it.
+3. **Each snapshot already contains the whole historical series.** `Data[]` covers many
+   years per series. A new `ingestion_date` is an **updated pull**, not incremental — do
+   not assume only "new rows" appear.
+4. **Do not assume an update cadence.** The INE publishes the Cifras de Población
+   irregularly (nominally ~1-2x/year, historically sometimes months between publications).
+   A new `ingestion_date` with no `Valor` different from the previous snapshot is the
+   expected case, not a sign of failure.
+5. **Extract the province from `Nombre`, carefully.** There is no province code in the
+   payload — only the full name, inside a string with other concatenated fields (see §2).
+   There is no ready-made mapping to the INE province code here; if you need one, it lives
+   in the layer that joins this source with another (outside this Source's scope).
+6. **Check `schema_fingerprint` between snapshots** if you depend on the shape of the
+   fields.
 
-## 5. O que a Source não faz
+## 5. What the Source does not do
 
-Deduplicação · modelagem dimensional · normalização · fatos e dimensões · transformação
-Silver · Gold/Marts · mapeamento província → outro sistema geográfico · cálculo de
-métricas · ingestão em object storage · Spark · dbt · Airflow.
+Deduplication · dimensional modeling · normalization · facts and dimensions · Silver
+transformation · Gold/Marts · province → other geographic system mapping · metric
+computation · ingestion into object storage · Spark · dbt · Airflow.
 
-Cada execução é uma **fotografia** da tabela pedida. Interpretação (extrair província,
-filtrar por sexo/idade, cruzar com outra fonte) é da camada posterior.
+Each run is a **snapshot** of the requested table. Interpretation (extracting the province,
+filtering by sex/age, joining with another source) belongs to the downstream layer.
 
-## 6. Escopo e limites da fonte **[fonte]**
+## 6. Source scope and limits **[source]**
 
-- A API Tempus3 (`servicios.ine.es/wstempus`) é pública e não exige autenticação.
-- Comportamento de rate-limit **não foi medido** contra esta fonte — ao contrário da
-  Mercadona, onde 403 intermitente sob concorrência foi medido e documentado. Esta Source
-  não tem fan-out concorrente (uma execução busca um punhado de `table_id`,
-  sequencialmente), então não há cenário local que exigiria medir isso ainda.
-- `table_id: 31304` (província+idade+sexo) e `table_id: 29005` (município+sexo, sem
-  idade) são os confirmados nesta versão do contrato — ver §2 para o formato medido de
-  cada um. Outras tabelas do INE podem ser passadas via `--tables`, mas a forma de
-  `Nombre` para elas não foi verificada.
-- Dado abaixo do nível de município (ex.: seção censitária) não foi localizado nesta
-  API (`DATOS_TABLA`/Tempus3) durante a investigação que levou a `table_id: 29005` —
-  o que existe (Censo/SDC21) parece ser uma API estruturalmente diferente, não
-  verificada, fora do escopo desta Source por ora.
-- Dado de município com idade (não só sexo) existe no INE, mas fragmentado numa família
-  de dezenas de `table_id` — um por província — não mapeados para as 4 províncias desta
-  plataforma; não perseguido nesta versão do contrato (ver ARCHITECTURE.md).
+- The Tempus3 API (`servicios.ine.es/wstempus`) is public and requires no authentication.
+- Rate-limit behavior **has not been measured** against this source — unlike Mercadona,
+  where intermittent 403 under concurrency was measured and documented. This Source has no
+  concurrent fan-out (a run fetches a handful of `table_id`s, sequentially), so there is no
+  local scenario that would require measuring it yet.
+- `table_id: 31304` (province+age+sex) and `table_id: 29005` (municipality+sex, no age)
+  are the confirmed ones in this contract version — see §2 for the measured format of
+  each. Other INE tables can be passed via `--tables`, but their `Nombre` shape was not
+  verified.
+- Data below the municipality level (e.g. census section) was not found in this API
+  (`DATOS_TABLA`/Tempus3) during the investigation that led to `table_id: 29005` — what
+  exists (Censo/SDC21) appears to be a structurally different API, not verified, outside
+  this Source's scope for now.
+- Municipality data with age (not just sex) exists at the INE, but fragmented across a
+  family of dozens of `table_id`s — one per province — not mapped to this platform's 4
+  provinces; not pursued in this contract version (see ARCHITECTURE.md).
 
-## 7. Códigos de saída
+## 7. Exit codes
 
-| Código | `extract` | `validate` |
+| Code | `extract` | `validate` |
 |---|---|---|
-| 0 | nenhum `table_id` alvo falhou | aprovado |
-| 1 | falha parcial, registrada em `failures[]` | reprovado |
-| 2 | falha fatal: partição inutilizável ou uso inválido | — |
-| 3 | exceção não tratada | exceção não tratada |
+| 0 | no target `table_id` failed | passed |
+| 1 | partial failure, recorded in `failures[]` | failed |
+| 2 | fatal failure: unusable partition or invalid use | — |
+| 3 | unhandled exception | unhandled exception |
 
-## 8. Versão do contrato
+## 8. Contract version
 
-`manifest_version: 1`. Contador independente do da Mercadona — são contratos separados.
-`validate` recusa manifesto de versão diferente da suportada pelo código, em vez de
-interpretá-lo por adivinhação.
+`manifest_version: 1`. A counter independent of Mercadona's — they are separate contracts.
+`validate` rejects a manifest whose version differs from the one supported by the code,
+instead of interpreting it by guesswork.

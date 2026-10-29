@@ -1,7 +1,7 @@
-"""Apoio da suite: cliente HTTP falso e construtores de payload.
+"""Suite support: fake HTTP client and payload builders.
 
-Nenhum teste toca a rede. O FakeFetcher responde de um dicionario em memoria e conta
-requisicoes, para que a suite exercite exatamente o mesmo codigo de extracao.
+No test touches the network. FakeFetcher answers from an in-memory dictionary and counts
+requests, so the suite exercises exactly the same extraction code.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import argparse
 
 
 class FakeFetcher:
-    """Substituto de http_client.Fetcher, alimentado por respostas em memoria."""
+    """Stand-in for http_client.Fetcher, fed by in-memory responses."""
 
     responses: dict = {}
     errors: dict = {}
@@ -32,7 +32,7 @@ class FakeFetcher:
             return None, self.errors[path]
         if path in self.responses:
             value = self.responses[path]
-            # Uma excecao como resposta simula interrupcao do processo no meio da etapa 2.
+            # An exception as a response simulates the process being interrupted mid stage 2.
             if isinstance(value, BaseException):
                 raise value
             return value, None
@@ -40,7 +40,7 @@ class FakeFetcher:
 
 
 def make_fetcher_factory(responses: dict, errors: dict | None = None):
-    """Devolve uma fabrica de FakeFetcher e a lista de instancias criadas."""
+    """Returns a FakeFetcher factory and the list of instances created."""
     created: list[FakeFetcher] = []
 
     def factory(delay, timeout, max_retries, log, base_url="fake://"):
@@ -54,7 +54,7 @@ def make_fetcher_factory(responses: dict, errors: dict | None = None):
 
 
 def tree(*categories) -> dict:
-    """Arvore de categorias: cada argumento e (parent_id, parent_name, [(id, name), ...])."""
+    """Category tree: each argument is (parent_id, parent_name, [(id, name), ...])."""
     return {
         "results": [
             {
@@ -68,7 +68,7 @@ def tree(*categories) -> dict:
 
 
 def catalog(category_id: int, name: str, *groups) -> dict:
-    """Catalogo de uma categoria: cada grupo e (nome, [(product_id, nome, preco), ...])."""
+    """Catalog of one category: each group is (name, [(product_id, name, price), ...])."""
     return {
         "id": category_id,
         "name": name,

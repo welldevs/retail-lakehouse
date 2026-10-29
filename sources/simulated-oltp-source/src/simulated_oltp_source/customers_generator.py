@@ -1,27 +1,27 @@
-"""Amostragem dos clientes sinteticos. Logica pura: entra referencia, sai lista de dicts.
+"""Sampling of the synthetic customers. Pure logic: reference in, list of dicts out.
 
-REGRA DE OURO: zero aleatoriedade geografica. O cliente e inventado; o lugar onde ele
-mora nao. Municipio, via, CEP e faixa de numeracao vem sempre de uma linha real do
-Callejero; nada aqui constroi um endereco a partir de partes soltas.
+GOLDEN RULE: zero geographic randomness. The customer is invented; the place where they
+live is not. Municipality, street, postal code and numbering range always come from a real
+Callejero row; nothing here builds an address out of loose parts.
 
-CADEIA DE AMOSTRAGEM (nesta ordem, sempre):
+SAMPLING CHAIN (always in this order):
 
-    warehouse -> municipio ponderado pela populacao municipal observada
-              -> tramo UNIFORME entre os candidatos validos do municipio
-              -> numero da casa dentro da faixa real, respeitando a paridade
-              -> sexo pela proporcao municipal observada
-              -> idade pela distribuicao PROVINCIAL (proxy)
-              -> nome de lista curada embutida
+    warehouse -> municipality weighted by observed municipal population
+              -> UNIFORM tramo among the municipality's valid candidates
+              -> house number within the real range, respecting parity
+              -> sex by observed municipal proportion
+              -> age by the PROVINCIAL distribution (proxy)
+              -> name from an embedded curated list
 
-A escolha do tramo e UNIFORME de proposito, e isso NAO e densidade populacional: nao
-existe populacao por rua ou por tramo em nenhuma fonte que esta plataforma ingere.
-Ponderar tramos por qualquer coisa aqui seria inventar uma distribuicao que ninguem
-mediu. O peso populacional entra uma unica vez, na escolha do municipio.
+The tramo choice is UNIFORM on purpose, and that is NOT population density: there is no
+population per street or per tramo in any source this platform ingests. Weighting tramos
+by anything here would be inventing a distribution nobody measured. Population weight
+enters only once, in the municipality choice.
 
-REPRODUTIBILIDADE: uma unica instancia `random.Random(seed)` por execucao, consumida
-sempre na mesma ordem. As listas percorridas vem do JSON de referencia, cuja ordem e
-fixada por `ORDER BY` no export — nunca se itera `set` nem `dict` reconstruido, cuja
-ordem dependeria de PYTHONHASHSEED e quebraria a mesma-seed-mesma-saida.
+REPRODUCIBILITY: a single `random.Random(seed)` instance per run, always consumed in the
+same order. The lists traversed come from the reference JSON, whose order is fixed by
+`ORDER BY` in the export — a `set` or rebuilt `dict` is never iterated, since its order
+would depend on PYTHONHASHSEED and break same-seed-same-output.
 """
 
 from __future__ import annotations
@@ -29,23 +29,23 @@ from __future__ import annotations
 import itertools
 import random
 
-# Vocabulario de sexo: os rotulos EXATOS da tabela 29005 do INE, de onde vem a proporcao.
-# O campo se chama `sex_label` pelo mesmo motivo que a coluna homonima do Silver: o valor
-# e o rotulo da fonte, nao uma categoria que esta Source inventou. Assim o join de volta
-# com silver_ine_population_by_municipality e direto e sem traducao.
+# Sex vocabulary: the EXACT labels of INE table 29005, where the proportion comes from.
+# The field is called `sex_label` for the same reason as the Silver column of the same name:
+# the value is the source's label, not a category this Source invented. That way the join
+# back to silver_ine_population_by_municipality is direct and needs no translation.
 SEX_MALE = "Hombres"
 SEX_FEMALE = "Mujeres"
 
-# Numeracao do Callejero (campo TINUM), verbatim: "0" = nao existe numeracao real,
-# "1" = impares, "2" = pares. Carregado ate o cliente para que a regra de numeracao seja
-# auditavel olhando so o customers.json.
+# Callejero numbering (TINUM field), verbatim: "0" = no real numbering exists,
+# "1" = odd, "2" = even. Carried through to the customer so that the numbering rule is
+# auditable by looking at customers.json alone.
 NUMBERING_NONE = "0"
 NUMBERING_ODD = "1"
 NUMBERING_EVEN = "2"
 
-# Dados literais, nao dependencia: nomes proprios e sobrenomes espanhois de uso comum.
-# Servem so para dar forma humana ao registro — nao ha nenhuma fonte de nomes reais no
-# Lakehouse, e inventar uma seria fingir precisao que nao existe.
+# Literal data, not a dependency: common Spanish given names and surnames. They only give
+# the record a human shape — there is no source of real names in the Lakehouse, and
+# inventing one would be faking precision that does not exist.
 FIRST_NAMES_MALE = (
     "Antonio", "Manuel", "José", "Francisco", "David", "Juan", "Javier", "Daniel",
     "Carlos", "Miguel", "Alejandro", "Rafael", "Pablo", "Jesús", "Ángel", "Sergio",
@@ -70,24 +70,24 @@ SURNAMES = (
 
 
 class GenerationError(Exception):
-    """A referencia nao sustenta a geracao pedida."""
+    """The reference does not support the requested generation."""
 
 
 def pick_house_number(rng: random.Random, numbering_type, number_from, number_to):
-    """Numero de casa dentro da faixa real do tramo, ou None quando nao existe.
+    """House number within the tramo's real range, or None when there is none.
 
-    Tres motivos independentes para nao haver numero, todos medidos no Callejero e todos
-    resolvidos com None em vez de um numero inventado:
+    Three independent reasons for there being no number, all measured in the Callejero and
+    all resolved with None instead of an invented number:
 
-      1. `numbering_type == "0"` (9.024 dos 216.594 tramos no escopo): a fonte declara que
-         a via nao tem esquema de numeracao. Sortear aqui fabricaria geografia — a mesma
-         proibicao do CEP, um nivel abaixo.
-      2. Faixa degenerada `0000..0000` com numeracao declarada (14 tramos com
-         `numbering_type == "2"`): sortear em [0,0] daria numero de casa 0, que nao existe.
-         O filtro por numbering_type sozinho NAO pega este caso.
-      3. Faixa sem nenhum numero da paridade declarada (ex.: pares entre 3 e 3).
+      1. `numbering_type == "0"` (9,024 of the 216,594 tramos in scope): the source declares
+         that the street has no numbering scheme. Drawing here would fabricate geography —
+         the same prohibition as for the postal code, one level down.
+      2. Degenerate range `0000..0000` with declared numbering (14 tramos with
+         `numbering_type == "2"`): drawing in [0,0] would give house number 0, which does
+         not exist. The numbering_type filter alone does NOT catch this case.
+      3. Range without any number of the declared parity (e.g. even between 3 and 3).
 
-    Fora esses casos, o numero respeita a paridade: impar para "1", par para "2".
+    Outside those cases, the number respects parity: odd for "1", even for "2".
     """
     if numbering_type == NUMBERING_NONE:
         return None
@@ -97,7 +97,7 @@ def pick_house_number(rng: random.Random, numbering_type, number_from, number_to
         return None
 
     low, high = min(number_from, number_to), max(number_from, number_to)
-    low = max(low, 1)  # 0 nunca e um numero de casa real
+    low = max(low, 1)  # 0 is never a real house number
     if high < low:
         return None
 
@@ -113,25 +113,25 @@ def _cumulative(weights: list[float]) -> list[float]:
 
 
 def generate(reference, wh: str, count: int, seed: int, ingestion_date: str) -> list[dict]:
-    """Gera `count` clientes do warehouse `wh`. Mesma (referencia, wh, count, seed,
-    ingestion_date) produz exatamente a mesma lista, byte a byte."""
+    """Generate `count` customers for warehouse `wh`. The same (reference, wh, count, seed,
+    ingestion_date) produces exactly the same list, byte for byte."""
     if count < 1:
-        raise GenerationError(f"count deve ser >= 1, recebido {count}")
+        raise GenerationError(f"count must be >= 1, got {count}")
 
     rng = random.Random(seed)
     municipalities = reference.municipalities(wh)
 
-    # Pesos cumulativos calculados uma vez. `random.choices` faria o mesmo a cada chamada:
-    # o resultado e identico, o custo nao.
+    # Cumulative weights computed once. `random.choices` would do the same on every call:
+    # the result is identical, the cost is not.
     municipality_cum = _cumulative([m["proportion_within_wh"] for m in municipalities])
 
-    # Cache por chave ja vista. So leitura: nunca se ITERA este dict, so se consulta,
-    # entao a ordem de insercao nao influencia nenhuma amostragem.
+    # Cache per key already seen. Read-only: this dict is never ITERATED, only looked up,
+    # so insertion order does not influence any sampling.
     candidates_cache: dict[tuple, list[int]] = {}
     ages_cache: dict[str, tuple[list[int], list[float]]] = {}
 
-    # birth_year deriva da data da PARTICAO, nunca do relogio: senao a mesma seed daria
-    # saidas diferentes conforme o dia em que a extracao rodasse.
+    # birth_year derives from the PARTITION date, never from the clock: otherwise the same
+    # seed would give different outputs depending on the day the extraction ran.
     reference_year = int(ingestion_date[:4])
 
     customers: list[dict] = []
@@ -164,7 +164,7 @@ def generate(reference, wh: str, count: int, seed: int, ingestion_date: str) -> 
 
         given = FIRST_NAMES_MALE if male else FIRST_NAMES_FEMALE
         first_name = rng.choice(given)
-        # Espanha usa dois sobrenomes: paterno e materno.
+        # Spain uses two surnames: paternal and maternal.
         last_name = f"{rng.choice(SURNAMES)} {rng.choice(SURNAMES)}"
 
         customers.append(
@@ -179,9 +179,9 @@ def generate(reference, wh: str, count: int, seed: int, ingestion_date: str) -> 
                 "street_name": candidate["street_name"],
                 "postal_code": candidate["postal_code"],
                 "numbering_type": candidate["numbering_type"],
-                # Chave SEMPRE presente, mesmo nula: `schema.fingerprint` e a uniao das
-                # chaves observadas, entao um campo opcional faria a impressao digital da
-                # particao depender da seed.
+                # Key ALWAYS present, even when null: `schema.fingerprint` is the union of
+                # observed keys, so an optional field would make the partition fingerprint
+                # depend on the seed.
                 "house_number": house_number,
                 "first_name": first_name,
                 "last_name": last_name,

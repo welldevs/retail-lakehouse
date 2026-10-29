@@ -1,4 +1,4 @@
-"""Forma canonica, digest estavel e gravacao atomica."""
+"""Canonical form, stable digest and atomic write."""
 
 from __future__ import annotations
 
@@ -18,17 +18,17 @@ from simulated_oltp_source.canonical import (
 
 
 class CanonicalTest(unittest.TestCase):
-    def test_ordem_das_chaves_nao_altera_o_digest(self):
-        """O SHA-256 depende do conteudo, nao da ordem em que o dict foi montado."""
+    def test_key_order_does_not_change_the_digest(self):
+        """The SHA-256 depends on the content, not on the order the dict was built in."""
         a = {"b": 1, "a": 2}
         b = {"a": 2, "b": 1}
         self.assertEqual(digest(canonical_bytes(a)), digest(canonical_bytes(b)))
 
-    def test_acento_nao_e_escapado(self):
-        blob = canonical_bytes({"nome": "València"})
+    def test_accent_is_not_escaped(self):
+        blob = canonical_bytes({"name": "València"})
         self.assertIn("València", blob.decode("utf-8"))
 
-    def test_termina_com_quebra_de_linha(self):
+    def test_ends_with_newline(self):
         self.assertTrue(canonical_bytes({"a": 1}).endswith(b"\n"))
 
 
@@ -37,7 +37,7 @@ class WriteJsonTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def test_grava_e_devolve_digest_e_tamanho(self):
+    def test_writes_and_returns_digest_and_size(self):
         path = os.path.join(self.tmp.name, "sub", "a.json")
         sha, size = write_json(path, {"a": 1})
         blob = read_bytes(path)
@@ -45,20 +45,20 @@ class WriteJsonTest(unittest.TestCase):
         self.assertEqual(size, len(blob))
         self.assertEqual(json.loads(blob), {"a": 1})
 
-    def test_nao_deixa_temporario_para_tras(self):
+    def test_leaves_no_temporary_file_behind(self):
         path = os.path.join(self.tmp.name, "a.json")
         write_json(path, {"a": 1})
-        restos = [n for n in os.listdir(self.tmp.name) if n.startswith(".tmp-")]
-        self.assertEqual(restos, [])
+        leftovers = [n for n in os.listdir(self.tmp.name) if n.startswith(".tmp-")]
+        self.assertEqual(leftovers, [])
 
-    def test_falha_na_serializacao_nao_deixa_arquivo_parcial(self):
+    def test_serialization_failure_leaves_no_partial_file(self):
         path = os.path.join(self.tmp.name, "a.json")
         with self.assertRaises(TypeError):
             write_json(path, {"a": object()})
         self.assertFalse(os.path.exists(path))
         self.assertEqual([n for n in os.listdir(self.tmp.name) if n.startswith(".tmp-")], [])
 
-    def test_reescrita_e_atomica_e_substitui_o_conteudo(self):
+    def test_rewrite_is_atomic_and_replaces_the_content(self):
         path = os.path.join(self.tmp.name, "a.json")
         write_json(path, {"a": 1})
         write_json(path, {"a": 2})
@@ -71,10 +71,10 @@ class ReadJsonTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def test_arquivo_corrompido_levanta_erro_nomeado(self):
+    def test_corrupt_file_raises_named_error(self):
         path = os.path.join(self.tmp.name, "a.json")
         with open(path, "w") as handle:
-            handle.write("{ nao e json")
+            handle.write("{ not json")
         with self.assertRaises(CorruptFileError):
             read_json(path)
 

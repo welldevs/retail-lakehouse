@@ -1,4 +1,4 @@
-"""O gerador: a regra de ouro, o determinismo e o fold nao-trivial."""
+"""The generator: the golden rule, determinism and the non-trivial fold."""
 
 from __future__ import annotations
 
@@ -41,21 +41,21 @@ def _reference(directory, **kwargs):
 
 
 class SubSeedTest(unittest.TestCase):
-    def test_muda_com_armazem_e_com_dia(self):
+    def test_changes_with_warehouse_and_day(self):
         base = day_seed(1, "mad1", "2026-08-24")
         self.assertNotEqual(base, day_seed(1, "bcn1", "2026-08-24"))
         self.assertNotEqual(base, day_seed(1, "mad1", "2026-08-25"))
         self.assertNotEqual(base, day_seed(2, "mad1", "2026-08-24"))
 
-    def test_nao_depende_de_pythonhashseed(self):
-        # sha256, e nao hash(): o hash de str em CPython e aleatorizado por processo, e
-        # derivar a sub-seed dele faria a particao inteira depender de PYTHONHASHSEED.
+    def test_does_not_depend_on_pythonhashseed(self):
+        # sha256, not hash(): CPython's str hash is randomized per process, and deriving the
+        # sub-seed from it would make the whole partition depend on PYTHONHASHSEED.
         code = (
             "import sys; sys.path.insert(0, 'src');"
             "from simulated_orders_source.orders_generator import day_seed;"
             "print(day_seed(20260828, 'mad1', '2026-08-24'))"
         )
-        saidas = {
+        outputs = {
             subprocess.run(
                 [sys.executable, "-c", code],
                 capture_output=True,
@@ -65,34 +65,34 @@ class SubSeedTest(unittest.TestCase):
             ).stdout.strip()
             for seed in (0, 13, 5150)
         }
-        self.assertEqual(len(saidas), 1, f"sub-seed variou entre processos: {saidas}")
+        self.assertEqual(len(outputs), 1, f"sub-seed varied across processes: {outputs}")
 
 
-class AmostragemTest(unittest.TestCase):
-    def test_indices_sao_distintos_e_na_ordem_do_sorteio(self):
+class SamplingTest(unittest.TestCase):
+    def test_indices_are_distinct_and_in_draw_order(self):
         import random
 
-        tirados = _sample_indices(random.Random(7), 50, 10)
-        self.assertEqual(len(tirados), 10)
-        self.assertEqual(len(set(tirados)), 10)
+        drawn = _sample_indices(random.Random(7), 50, 10)
+        self.assertEqual(len(drawn), 10)
+        self.assertEqual(len(set(drawn)), 10)
 
-    def test_pedir_mais_do_que_existe_reprova(self):
+    def test_requesting_more_than_exists_fails(self):
         import random
 
         with self.assertRaises(GenerationError):
             _sample_indices(random.Random(7), 3, 4)
 
-    def test_pesos_de_quantidade_sao_decrescentes_e_somam_um(self):
+    def test_quantity_weights_decrease_and_sum_to_one(self):
         cumulative = _quantity_weights(4)
         self.assertAlmostEqual(cumulative[-1], 1.0)
-        passos = [cumulative[0]] + [
+        steps = [cumulative[0]] + [
             cumulative[i] - cumulative[i - 1] for i in range(1, len(cumulative))
         ]
-        self.assertEqual(passos, sorted(passos, reverse=True))
+        self.assertEqual(steps, sorted(steps, reverse=True))
 
 
-class RegraDeOuroTest(unittest.TestCase):
-    """O pedido e inventado; cliente, produto e preco nao."""
+class GoldenRuleTest(unittest.TestCase):
+    """The order is invented; customer, product and price are not."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -102,158 +102,158 @@ class RegraDeOuroTest(unittest.TestCase):
         self.events = generate(self.reference, self.premises, WH, ORDER_DATE, 42)
         self.grouped = group_by_order(self.events)
 
-    def test_todo_produto_pedido_existe_no_catalogo_daquele_armazem_e_data(self):
-        catalogo = {p["source_product_id"] for p in self.reference.catalog_of(WH, ORDER_DATE)}
-        for eventos in self.grouped.values():
-            for linha in eventos[0]["payload"]["lines"]:
-                self.assertIn(linha["source_product_id"], catalogo)
+    def test_every_ordered_product_exists_in_that_warehouse_and_date_catalog(self):
+        catalog = {p["source_product_id"] for p in self.reference.catalog_of(WH, ORDER_DATE)}
+        for order_events in self.grouped.values():
+            for line in order_events[0]["payload"]["lines"]:
+                self.assertIn(line["source_product_id"], catalog)
 
-    def test_todo_preco_pago_e_o_preco_observado(self):
-        precos = {
+    def test_every_price_paid_is_the_observed_price(self):
+        prices = {
             p["source_product_id"]: p["unit_price"]
             for p in self.reference.catalog_of(WH, ORDER_DATE)
         }
-        for eventos in self.grouped.values():
-            for linha in eventos[0]["payload"]["lines"]:
+        for order_events in self.grouped.values():
+            for line in order_events[0]["payload"]["lines"]:
                 self.assertEqual(
-                    Decimal(linha["unit_price"]), precos[linha["source_product_id"]]
+                    Decimal(line["unit_price"]), prices[line["source_product_id"]]
                 )
 
-    def test_todo_cliente_pertence_ao_armazem_do_pedido(self):
-        do_armazem = {c["customer_id"] for c in self.reference.customers_of(WH)}
-        for eventos in self.grouped.values():
-            self.assertIn(eventos[0]["payload"]["customer_id"], do_armazem)
+    def test_every_customer_belongs_to_the_order_warehouse(self):
+        of_warehouse = {c["customer_id"] for c in self.reference.customers_of(WH)}
+        for order_events in self.grouped.values():
+            self.assertIn(order_events[0]["payload"]["customer_id"], of_warehouse)
 
-    def test_substituto_vem_do_mesmo_catalogo(self):
-        catalogo = {p["source_product_id"] for p in self.reference.catalog_of(WH, ORDER_DATE)}
-        vistos = 0
-        for eventos in self.grouped.values():
-            for event in eventos:
+    def test_substitute_comes_from_the_same_catalog(self):
+        catalog = {p["source_product_id"] for p in self.reference.catalog_of(WH, ORDER_DATE)}
+        seen = 0
+        for order_events in self.grouped.values():
+            for event in order_events:
                 if event["event_type"] == ev.ORDER_LINE_SUBSTITUTED:
-                    vistos += 1
-                    self.assertIn(event["payload"]["substitute_source_product_id"], catalogo)
-        self.assertGreater(vistos, 0, "nenhuma substituicao gerada: o teste nao olhou nada")
+                    seen += 1
+                    self.assertIn(event["payload"]["substitute_source_product_id"], catalog)
+        self.assertGreater(seen, 0, "no substitution generated: the test looked at nothing")
 
-    def test_um_cliente_pede_no_maximo_uma_vez_por_dia(self):
-        clientes = [e[0]["payload"]["customer_id"] for e in self.grouped.values()]
-        self.assertEqual(len(clientes), len(set(clientes)))
+    def test_a_customer_orders_at_most_once_per_day(self):
+        customers = [e[0]["payload"]["customer_id"] for e in self.grouped.values()]
+        self.assertEqual(len(customers), len(set(customers)))
 
 
-class FoldNaoTrivialTest(unittest.TestCase):
-    """Se o valor final fosse derivavel do primeiro evento, o log seria um carimbo de data."""
+class NonTrivialFoldTest(unittest.TestCase):
+    """If the final value were derivable from the first event, the log would be a date stamp."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.reference = _reference(os.path.join(self.tmp.name, "ref"))
 
-    def test_valor_separado_difere_do_colocado(self):
+    def test_picked_value_differs_from_placed(self):
         events = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         totals = totals_of(events)
         self.assertGreater(totals["substituted_lines"] + totals["removed_lines"], 0)
         self.assertNotEqual(totals["gross_amount_placed"], totals["net_amount_picked"])
 
-    def test_sem_substituicao_nem_remocao_o_fold_fica_trivial(self):
-        # O contraponto explicito: com as duas taxas em zero, o valor separado passa a ser
-        # derivavel do primeiro evento. E este o cenario que o teste dbt invertido vigia.
-        plano = dict(PREMISES, substitution_rate="0", removal_rate="0")
-        events = generate(self.reference, Premises(plano), WH, ORDER_DATE, 42)
+    def test_without_substitution_or_removal_the_fold_becomes_trivial(self):
+        # The explicit counterpoint: with both rates at zero, the picked value becomes
+        # derivable from the first event. This is the scenario the inverted dbt test watches.
+        flat = dict(PREMISES, substitution_rate="0", removal_rate="0")
+        events = generate(self.reference, Premises(flat), WH, ORDER_DATE, 42)
         totals = totals_of(events)
         self.assertEqual(totals["substituted_lines"], 0)
         self.assertEqual(totals["removed_lines"], 0)
-        for eventos in group_by_order(events).values():
-            picked = [e for e in eventos if e["event_type"] == ev.ORDER_PICKED]
+        for order_events in group_by_order(events).values():
+            picked = [e for e in order_events if e["event_type"] == ev.ORDER_PICKED]
             if picked:
                 self.assertEqual(
-                    picked[0]["payload"]["picked_amount"], eventos[0]["payload"]["gross_amount"]
+                    picked[0]["payload"]["picked_amount"], order_events[0]["payload"]["gross_amount"]
                 )
 
 
-class EstruturaDoLogTest(unittest.TestCase):
+class LogStructureTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.reference = _reference(os.path.join(self.tmp.name, "ref"))
         self.events = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
 
-    def test_log_esta_totalmente_ordenado(self):
-        chaves = [(e["occurred_at"], e["order_id"], e["sequence_no"]) for e in self.events]
-        self.assertEqual(chaves, sorted(chaves))
+    def test_log_is_totally_ordered(self):
+        sort_keys = [(e["occurred_at"], e["order_id"], e["sequence_no"]) for e in self.events]
+        self.assertEqual(sort_keys, sorted(sort_keys))
 
-    def test_sequence_no_e_contiguo_por_pedido(self):
-        for order_id, eventos in group_by_order(self.events).items():
+    def test_sequence_no_is_contiguous_per_order(self):
+        for order_id, order_events in group_by_order(self.events).items():
             self.assertEqual(
-                [e["sequence_no"] for e in eventos],
-                list(range(1, len(eventos) + 1)),
-                f"{order_id} com buraco no sequence_no",
+                [e["sequence_no"] for e in order_events],
+                list(range(1, len(order_events) + 1)),
+                f"{order_id} has a gap in sequence_no",
             )
 
-    def test_todo_pedido_comeca_em_order_placed(self):
-        for eventos in group_by_order(self.events).values():
-            self.assertEqual(eventos[0]["event_type"], ev.ORDER_PLACED)
+    def test_every_order_starts_with_order_placed(self):
+        for order_events in group_by_order(self.events).values():
+            self.assertEqual(order_events[0]["event_type"], ev.ORDER_PLACED)
 
-    def test_toda_sequencia_e_aceita_pela_maquina_de_estados(self):
-        for eventos in group_by_order(self.events).values():
-            ev.fold(eventos)  # strict: levanta se o gerador emitiu transicao impossivel
+    def test_every_sequence_is_accepted_by_the_state_machine(self):
+        for order_events in group_by_order(self.events).values():
+            ev.fold(order_events)  # strict: raises if the generator emitted an impossible transition
 
-    def test_o_tempo_nao_regride_dentro_de_um_pedido(self):
-        for eventos in group_by_order(self.events).values():
-            instantes = [e["occurred_at"] for e in eventos]
-            self.assertEqual(instantes, sorted(instantes))
+    def test_time_does_not_go_backwards_within_an_order(self):
+        for order_events in group_by_order(self.events).values():
+            instants = [e["occurred_at"] for e in order_events]
+            self.assertEqual(instants, sorted(instants))
 
-    def test_nenhum_evento_carimba_relogio(self):
-        # Todo occurred_at deriva do dia da particao. Um pedido colocado hoje seria a prova
-        # de que datetime.now() vazou para dentro do gerador.
+    def test_no_event_stamps_the_clock(self):
+        # Every occurred_at derives from the partition day. An order placed today would prove
+        # that datetime.now() leaked into the generator.
         for event in self.events:
             if event["event_type"] == ev.ORDER_PLACED:
                 self.assertTrue(event["occurred_at"].startswith(ORDER_DATE))
 
 
-class ReprodutibilidadeTest(unittest.TestCase):
+class ReproducibilityTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.reference = _reference(os.path.join(self.tmp.name, "ref"))
 
-    def test_mesma_entrada_produz_a_mesma_saida(self):
+    def test_same_input_produces_same_output(self):
         a = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         b = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         self.assertEqual(a, b)
 
-    def test_outra_seed_produz_outra_saida(self):
+    def test_other_seed_produces_other_output(self):
         a = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         b = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 43)
         self.assertNotEqual(a, b)
 
-    def test_outra_tabela_de_premissas_produz_outra_saida(self):
-        # E por isso que o sha256 das premissas vai para o manifesto: sem ele, trocar uma
-        # taxa e regerar mudaria os pedidos sob os mesmos order_id sem deixar rastro.
+    def test_other_premises_table_produces_other_output(self):
+        # That is why the premises sha256 goes into the manifest: without it, changing a rate
+        # and regenerating would change the orders under the same order_id without a trace.
         a = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         b = generate(
             self.reference, Premises(dict(PREMISES, basket_lines_mode="5")), WH, ORDER_DATE, 42
         )
         self.assertNotEqual(a, b)
 
-    def test_dia_diferente_nao_reembaralha_o_dia_anterior(self):
-        # A propriedade aditiva desta Source: acrescentar um dia a janela deixa as particoes
-        # ja geradas byte a byte identicas, porque cada dia deriva a propria sub-seed.
-        calendario = [
+    def test_different_day_does_not_reshuffle_the_previous_day(self):
+        # This Source's additive property: adding a day to the window leaves the already
+        # generated partitions byte-for-byte identical, because each day derives its own sub-seed.
+        calendar = [
             {"wh": WH, "order_date": d, "price_as_of": ORDER_DATE, "price_source": "observed"}
             for d in (ORDER_DATE, "2026-08-25")
         ]
-        reference = _reference(os.path.join(self.tmp.name, "ref2"), calendar=calendario)
-        primeiro = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+        reference = _reference(os.path.join(self.tmp.name, "ref2"), calendar=calendar)
+        first = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         generate(reference, Premises(PREMISES), WH, "2026-08-25", 42)
-        self.assertEqual(primeiro, generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42))
+        self.assertEqual(first, generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42))
 
 
-class RecusaTest(unittest.TestCase):
+class RefusalTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def test_pedido_antes_de_o_cliente_existir_e_recusado(self):
-        # Restricao 6: nenhum pedido nasce antes do cliente.
+    def test_order_before_customer_exists_is_refused(self):
+        # Restriction 6: no order is born before its customer.
         reference = _reference(
             os.path.join(self.tmp.name, "ref"),
             customers=customer_rows(first="2026-09-01"),
@@ -261,117 +261,118 @@ class RecusaTest(unittest.TestCase):
         )
         with self.assertRaises(GenerationError) as caught:
             generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-        self.assertIn("existia", str(caught.exception))
+        self.assertIn("existed", str(caught.exception))
 
-    def test_taxa_que_zera_os_pedidos_e_recusada(self):
+    def test_rate_that_zeroes_orders_is_refused(self):
         reference = _reference(os.path.join(self.tmp.name, "ref2"))
-        plano = dict(PREMISES, daily_order_rate="0")
+        flat = dict(PREMISES, daily_order_rate="0")
         with self.assertRaises(GenerationError):
-            generate(reference, Premises(plano), WH, ORDER_DATE, 42)
+            generate(reference, Premises(flat), WH, ORDER_DATE, 42)
 
-    def test_cesta_maior_que_o_catalogo_nao_estoura(self):
-        # Degrada para o catalogo inteiro em vez de levantar IndexError.
+    def test_basket_larger_than_catalog_does_not_blow_up(self):
+        # Degrades to the whole catalog instead of raising IndexError.
         reference = _reference(
             os.path.join(self.tmp.name, "ref3"), catalog=catalog_rows(total=6)
         )
         events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-        for eventos in group_by_order(events).values():
-            self.assertLessEqual(len(eventos[0]["payload"]["lines"]), 6)
+        for order_events in group_by_order(events).values():
+            self.assertLessEqual(len(order_events[0]["payload"]["lines"]), 6)
 
 
-class ElegibilidadeTest(unittest.TestCase):
-    """Quem pode colocar um pedido.
+class EligibilityTest(unittest.TestCase):
+    """Who may place an order.
 
-    O modo de falha que isto pega e o Achado 1 da fase: `silver_customer` e uma projecao
-    fiel da POPULACAO residente, e populacao inclui criancas — 18,01% da base media tinha
-    menos de 18 anos, com idades a partir de zero. Enquanto a idade nao fazia nada isso era
-    inofensivo. Ao ligar a idade a demanda, deixa de ser: 18% da base entraria na faixa
-    '-35 anos' do MAPA sendo crianca, e o mix resultante seria plausivel.
+    The failure mode this catches is the phase's Finding 1: `silver_customer` is a faithful
+    projection of the resident POPULATION, and population includes children — 18.01% of the
+    measured base was under 18, with ages starting at zero. While age did nothing this was
+    harmless. Once age is tied to demand, it no longer is: 18% of the base would fall into
+    MAPA's '-35 years' band while being children, and the resulting mix would look plausible.
     """
 
-    def _referencia(self, tmp, ages, total=8):
-        clientes = customer_rows(total=total, ages=ages)
-        return load(write_reference(os.path.join(tmp, "ref"), customers=clientes))
+    def _reference(self, tmp, ages, total=8):
+        customers = customer_rows(total=total, ages=ages)
+        return load(write_reference(os.path.join(tmp, "ref"), customers=customers))
 
-    def test_menor_de_idade_nunca_coloca_pedido(self):
+    def test_minor_never_places_an_order(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # Metade da base com 8 anos: se a idade minima fosse ignorada, esses clientes
-            # apareceriam como comprador em cerca de metade dos pedidos.
-            reference = self._referencia(tmp, ages=(8, 40))
-            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-            clientes = {row["customer_id"]: row for row in reference.customers_of(WH)}
-            compradores = {
-                e["payload"]["customer_id"] for e in eventos
+            # Half the base aged 8: if the minimum age were ignored, these customers would show
+            # up as buyers in roughly half the orders.
+            reference = self._reference(tmp, ages=(8, 40))
+            events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            customers = {row["customer_id"]: row for row in reference.customers_of(WH)}
+            buyers = {
+                e["payload"]["customer_id"] for e in events
                 if e["event_type"] == ORDER_PLACED
             }
-            self.assertTrue(compradores, "a fixture precisa gerar ao menos um pedido")
-            for cid in compradores:
-                idade = FIXTURE_YEAR - int(clientes[cid]["birth_year"])
-                self.assertGreaterEqual(idade, 18, f"{cid} tinha {idade} anos")
+            self.assertTrue(buyers, "the fixture must generate at least one order")
+            for cid in buyers:
+                age = FIXTURE_YEAR - int(customers[cid]["birth_year"])
+                self.assertGreaterEqual(age, 18, f"{cid} was {age} years old")
 
-    def test_base_inteira_abaixo_da_idade_minima_reprova(self):
-        # Sem isto, `wanted` cairia a zero e o dia sairia sem pedido nenhum — silencioso, e
-        # indistinguivel de um dia legitimamente vazio.
+    def test_whole_base_below_minimum_age_fails(self):
+        # Without this, `wanted` would drop to zero and the day would come out with no orders
+        # at all — silent, and indistinguishable from a legitimately empty day.
         with tempfile.TemporaryDirectory() as tmp:
-            reference = self._referencia(tmp, ages=(5, 9))
+            reference = self._reference(tmp, ages=(5, 9))
             with self.assertRaises(GenerationError) as caught:
                 generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-            self.assertIn("18 anos ou mais", str(caught.exception))
+            self.assertIn("aged 18 or older", str(caught.exception))
 
 
-class FrequenciaRegionalTest(unittest.TestCase):
-    """O indice regional pesa QUANTOS pedem, e nada mais.
+class RegionalFrequencyTest(unittest.TestCase):
+    """The regional index weighs HOW MANY order, and nothing else.
 
-    Sem este par, um indice lido do perfil e nunca aplicado passaria despercebido: a
-    contagem de pedidos continuaria plausivel, so que igual em todos os armazens — que e
-    exatamente o estado que a fase veio corrigir.
+    Without this pair, an index read from the profile and never applied would go unnoticed:
+    the order count would remain plausible, just equal across all warehouses — which is
+    exactly the state the phase came to fix.
     """
 
-    def _pedidos(self, tmp, indice):
-        perfil = demand_payload(frequency=indice)
-        reference = load(write_reference(os.path.join(tmp, "ref"), demand=perfil))
-        eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-        return sum(1 for e in eventos if e["event_type"] == ORDER_PLACED)
+    def _orders(self, tmp, index):
+        profile = demand_payload(frequency=index)
+        reference = load(write_reference(os.path.join(tmp, "ref"), demand=profile))
+        events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+        return sum(1 for e in events if e["event_type"] == ORDER_PLACED)
 
-    def test_indice_maior_produz_mais_pedidos(self):
+    def test_higher_index_produces_more_orders(self):
         with tempfile.TemporaryDirectory() as tmp:
-            poucos = self._pedidos(tmp, {"13": "0.5", "09": "1.0"})
+            few = self._orders(tmp, {"13": "0.5", "09": "1.0"})
         with tempfile.TemporaryDirectory() as tmp:
-            muitos = self._pedidos(tmp, {"13": "1.5", "09": "1.0"})
-        self.assertLess(poucos, muitos)
+            many = self._orders(tmp, {"13": "1.5", "09": "1.0"})
+        self.assertLess(few, many)
 
-    def test_indice_neutro_nao_muda_a_contagem(self):
-        # O par do teste acima: prova que o mecanismo so age quando o indice diz para agir,
-        # e nao que ele mexe na contagem por conta propria.
+    def test_neutral_index_does_not_change_the_count(self):
+        # The pair of the test above: proves the mechanism only acts when the index says so,
+        # and does not touch the count on its own.
         with tempfile.TemporaryDirectory() as tmp:
-            neutro = self._pedidos(tmp, {"13": "1.0", "09": "1.0"})
+            neutral = self._orders(tmp, {"13": "1.0", "09": "1.0"})
         with tempfile.TemporaryDirectory() as tmp:
             reference = load(write_reference(os.path.join(tmp, "ref")))
-            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-            padrao = sum(1 for e in eventos if e["event_type"] == ORDER_PLACED)
-        self.assertEqual(neutro, padrao)
+            events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            default = sum(1 for e in events if e["event_type"] == ORDER_PLACED)
+        self.assertEqual(neutral, default)
 
 
-class CoorteNoEventoTest(unittest.TestCase):
-    def test_buyer_age_band_carimbada_bate_com_a_idade_do_cliente(self):
-        # Carimbada no evento pelo mesmo motivo de `demand_group`: o que importa e a faixa
-        # que valia NO MOMENTO DO PEDIDO. Um carimbo errado escolheria outro vetor de pesos
-        # e a cesta sairia coerente com outra coorte — plausivel, sem nulo, sem total errado.
+class CohortOnEventTest(unittest.TestCase):
+    def test_stamped_buyer_age_band_matches_customer_age(self):
+        # Stamped on the event for the same reason as `demand_group`: what matters is the band
+        # in force AT ORDER TIME. A wrong stamp would pick another weight vector and the
+        # basket would come out consistent with another cohort — plausible, no nulls, no
+        # wrong total.
         with tempfile.TemporaryDirectory() as tmp:
             reference = load(write_reference(os.path.join(tmp, "ref")))
-            eventos = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-            clientes = {row["customer_id"]: row for row in reference.customers_of(WH)}
-            vistos = set()
-            for evento in eventos:
-                if evento["event_type"] != ORDER_PLACED:
+            events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+            customers = {row["customer_id"]: row for row in reference.customers_of(WH)}
+            seen = set()
+            for event in events:
+                if event["event_type"] != ORDER_PLACED:
                     continue
-                payload = evento["payload"]
-                idade = FIXTURE_YEAR - int(clientes[payload["customer_id"]]["birth_year"])
+                payload = event["payload"]
+                age = FIXTURE_YEAR - int(customers[payload["customer_id"]]["birth_year"])
                 self.assertEqual(
-                    payload["buyer_age_band"], reference.demand.band_of(idade)
+                    payload["buyer_age_band"], reference.demand.band_of(age)
                 )
-                vistos.add(payload["buyer_age_band"])
-            self.assertGreater(len(vistos), 1, "a fixture precisa cobrir mais de uma faixa")
+                seen.add(payload["buyer_age_band"])
+            self.assertGreater(len(seen), 1, "the fixture must cover more than one band")
 
 
 if __name__ == "__main__":

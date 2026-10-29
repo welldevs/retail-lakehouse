@@ -1,4 +1,4 @@
-"""Ponto de entrada: python -m simulated_oltp_source"""
+"""Entry point: python -m simulated_oltp_source"""
 
 from __future__ import annotations
 

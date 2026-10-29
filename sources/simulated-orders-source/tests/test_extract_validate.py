@@ -1,4 +1,4 @@
-"""extract e validate ponta a ponta, sobre uma referencia de fixture."""
+"""extract and validate end to end, over a fixture reference."""
 
 from __future__ import annotations
 
@@ -34,15 +34,15 @@ class Base(unittest.TestCase):
             overwrite=False,
         )
         args.__dict__.update(kwargs)
-        with redirect_stdout(io.StringIO()) as saida:
+        with redirect_stdout(io.StringIO()) as output:
             code = extract_module.run(args)
-        return code, saida.getvalue()
+        return code, output.getvalue()
 
     def validate(self, strict=True):
         args = Args(partition=self.partition, reference=self.reference, strict=strict)
-        with redirect_stdout(io.StringIO()) as saida:
+        with redirect_stdout(io.StringIO()) as output:
             code = validate_module.run(args)
-        return code, saida.getvalue()
+        return code, output.getvalue()
 
     def manifest(self):
         with open(manifest_path(self.partition), encoding="utf-8") as handle:
@@ -59,52 +59,52 @@ class Base(unittest.TestCase):
 
 
 class ExtractTest(Base):
-    def test_grava_log_manifesto_e_success(self):
+    def test_writes_log_manifest_and_success(self):
         code, _ = self.extract()
         self.assertEqual(code, 0)
         for name in ("order_events.jsonl", "_manifest.json", "_SUCCESS"):
             self.assertTrue(os.path.exists(os.path.join(self.partition, name)), name)
 
-    def test_a_particao_nao_tem_estado_dobrado_ao_lado(self):
-        # Nao existe orders.json: o estado e o fold, e o fold mora no Silver. Duas
-        # representacoes da mesma verdade divergem.
+    def test_partition_has_no_folded_state_alongside(self):
+        # There is no orders.json: the state is the fold, and the fold lives in Silver. Two
+        # representations of the same truth drift apart.
         self.extract()
-        arquivos = sorted(os.listdir(self.partition))
-        self.assertEqual(arquivos, ["_SUCCESS", "_manifest.json", "order_events.jsonl"])
+        files = sorted(os.listdir(self.partition))
+        self.assertEqual(files, ["_SUCCESS", "_manifest.json", "order_events.jsonl"])
 
-    def test_manifesto_declara_as_tres_entradas_reprodutiveis(self):
+    def test_manifest_declares_the_three_reproducible_inputs(self):
         self.extract()
         config = self.manifest()["config"]
         self.assertEqual(config["seed"], 42)
         self.assertIn("premises_sha256", config)
         self.assertIn("reference", config)
 
-    def test_manifesto_declara_a_linhagem_do_insumo(self):
+    def test_manifest_declares_input_lineage(self):
         self.extract()
         reference = self.manifest()["reference"]
         self.assertEqual(reference["price_as_of"], ORDER_DATE)
         self.assertEqual(reference["price_source"], "observed")
         self.assertIn("customer_ingestion_dates", reference)
 
-    def test_reextrair_particao_completa_e_recusado(self):
+    def test_re_extracting_complete_partition_is_refused(self):
         self.extract()
-        code, saida = self.extract()
+        code, output = self.extract()
         self.assertEqual(code, 2)
-        self.assertIn("imutavel", saida)
+        self.assertIn("immutable", output)
 
-    def test_overwrite_regrava_e_acumula_historico(self):
+    def test_overwrite_rewrites_and_accumulates_history(self):
         self.extract()
         code, _ = self.extract(overwrite=True)
         self.assertEqual(code, 0)
         self.assertEqual(len(self.manifest()["history"]), 1)
 
-    def test_referencia_ausente_e_fatal_sem_gravar_nada(self):
-        code, saida = self.extract(reference=os.path.join(self.tmp.name, "vazio"))
+    def test_missing_reference_is_fatal_without_writing_anything(self):
+        code, output = self.extract(reference=os.path.join(self.tmp.name, "empty"))
         self.assertEqual(code, 2)
-        self.assertIn("ERRO", saida)
+        self.assertIn("ERROR", output)
         self.assertFalse(os.path.exists(os.path.join(self.partition, "_SUCCESS")))
 
-    def test_dia_fora_da_janela_e_fatal(self):
+    def test_day_outside_window_is_fatal(self):
         code, _ = self.extract(date="2026-01-01")
         self.assertEqual(code, 2)
 
@@ -114,62 +114,62 @@ class ValidateTest(Base):
         super().setUp()
         self.extract()
 
-    def test_particao_intacta_passa_em_strict(self):
-        code, saida = self.validate()
-        self.assertEqual(code, 0, saida)
+    def test_intact_partition_passes_strict(self):
+        code, output = self.validate()
+        self.assertEqual(code, 0, output)
 
-    def test_checksum_adulterado_reprova(self):
+    def test_tampered_checksum_fails(self):
         events = self.log()
         events[0]["wh"] = "bcn1"
         self.rewrite_log(events)
         self.assertEqual(self.validate()[0], 1)
 
-    def test_arquivo_orfao_reprova(self):
-        with open(os.path.join(self.partition, "sobra.json"), "w", encoding="utf-8") as handle:
+    def test_orphan_file_fails(self):
+        with open(os.path.join(self.partition, "leftover.json"), "w", encoding="utf-8") as handle:
             handle.write("{}")
-        code, saida = self.validate()
+        code, output = self.validate()
         self.assertEqual(code, 1)
-        self.assertIn("fora do manifesto", saida)
+        self.assertIn("outside the manifest", output)
 
-    def test_success_removido_reprova(self):
+    def test_removed_success_fails(self):
         os.unlink(os.path.join(self.partition, "_SUCCESS"))
-        code, saida = self.validate()
+        code, output = self.validate()
         self.assertEqual(code, 1)
-        self.assertIn("_SUCCESS", saida)
+        self.assertIn("_SUCCESS", output)
 
-    def test_referencia_de_outras_premissas_reprova(self):
-        # Trocar a tabela de premissas e regerar mudaria as taxas por tras dos mesmos
-        # order_id: o digest no manifesto e o que torna isso visivel.
-        outra = write_reference(os.path.join(self.tmp.name, "ref2"))
-        with open(os.path.join(outra, "premises.json"), encoding="utf-8") as handle:
+    def test_reference_with_other_premises_fails(self):
+        # Swapping the premises table and regenerating would change the rates behind the same
+        # order_id: the digest in the manifest is what makes that visible.
+        other = write_reference(os.path.join(self.tmp.name, "ref2"))
+        with open(os.path.join(other, "premises.json"), encoding="utf-8") as handle:
             payload = json.load(handle)
         payload["seed_sha256"] = "f" * 64
-        with open(os.path.join(outra, "premises.json"), "w", encoding="utf-8") as handle:
+        with open(os.path.join(other, "premises.json"), "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
-        args = Args(partition=self.partition, reference=outra, strict=False)
-        with redirect_stdout(io.StringIO()) as saida:
+        args = Args(partition=self.partition, reference=other, strict=False)
+        with redirect_stdout(io.StringIO()) as output:
             code = validate_module.run(args)
         self.assertEqual(code, 1)
-        self.assertIn("premissas", saida.getvalue())
+        self.assertIn("premises", output.getvalue())
 
-    def test_manifesto_ausente_reprova_sem_traceback(self):
+    def test_missing_manifest_fails_without_traceback(self):
         os.unlink(manifest_path(self.partition))
-        code, saida = self.validate()
+        code, output = self.validate()
         self.assertEqual(code, 1)
-        self.assertIn("manifesto nao encontrado", saida)
+        self.assertIn("manifest not found", output)
 
-    def test_log_fora_de_ordem_reprova(self):
+    def test_out_of_order_log_fails(self):
         events = self.log()
         events.reverse()
         self.rewrite_log(events)
-        code, saida = self.validate()
+        code, output = self.validate()
         self.assertEqual(code, 1)
-        self.assertIn("fora de ordem", saida)
+        self.assertIn("out of order", output)
 
-    def test_log_adulterado_reprova_com_codigo_1_e_nunca_com_excecao(self):
-        # Contar um log quebrado tem de produzir divergencia, nunca traceback: senao
-        # "particao invalida" viraria "excecao nao tratada" e o orquestrador nao saberia
-        # distinguir dado ruim de bug do validador.
+    def test_tampered_log_fails_with_code_1_and_never_with_exception(self):
+        # Counting a broken log must produce a mismatch, never a traceback: otherwise
+        # "invalid partition" would become "unhandled exception" and the orchestrator could not
+        # tell bad data from a validator bug.
         events = [e for e in self.log() if e["event_type"] != "order_payment_authorized"]
         self.rewrite_log(events)
         code, _ = self.validate()

@@ -1,4 +1,4 @@
-"""A CLI liga os argumentos aos handlers certos e nunca deixa traceback escapar."""
+"""The CLI wires arguments to the right handlers and never lets a traceback escape."""
 
 from __future__ import annotations
 
@@ -19,39 +19,39 @@ class ParserTest(unittest.TestCase):
     def setUp(self):
         self.parser = build_parser()
 
-    def test_extract_liga_no_handler_de_extracao(self):
+    def test_extract_wires_to_extract_handler(self):
         args = self.parser.parse_args(["extract", "--reference", "ref", "--wh", "mad1"])
         self.assertIs(args.handler, extract_module.run)
-        # `None` e nao um numero: omitir --count significa "use o alvo que a referencia
-        # derivou da populacao daquele armazem". Um default aqui reintroduziria a base
-        # dimensionada por quem digitou o comando.
+        # `None` and not a number: omitting --count means "use the target the reference
+        # derived from that warehouse's population". A default here would reintroduce a
+        # base sized by whoever typed the command.
         self.assertIsNone(args.count)
         self.assertFalse(args.overwrite)
 
-    def test_validate_liga_no_handler_de_validacao(self):
+    def test_validate_wires_to_validate_handler(self):
         args = self.parser.parse_args(["validate", "part", "--reference", "ref"])
         self.assertIs(args.handler, validate_module.run)
         self.assertFalse(args.strict)
 
-    def test_extract_exige_reference_e_wh(self):
+    def test_extract_requires_reference_and_wh(self):
         for argv in (["extract", "--wh", "mad1"], ["extract", "--reference", "ref"]):
             with self.subTest(argv=argv):
                 with self.assertRaises(SystemExit):
                     with contextlib.redirect_stderr(io.StringIO()):
                         self.parser.parse_args(argv)
 
-    def test_validate_exige_reference(self):
-        """Sem a referencia a garantia central nao e verificavel: melhor recusar."""
+    def test_validate_requires_reference(self):
+        """Without the reference the central guarantee is not verifiable: better to refuse."""
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.parser.parse_args(["validate", "part"])
 
-    def test_subcomando_e_obrigatorio(self):
+    def test_subcommand_is_required(self):
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.parser.parse_args([])
 
-    def test_seed_e_count_sao_inteiros(self):
+    def test_seed_and_count_are_integers(self):
         args = self.parser.parse_args(
             ["extract", "--reference", "r", "--wh", "w", "--seed", "42", "--count", "9"]
         )
@@ -59,38 +59,38 @@ class ParserTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def test_excecao_inesperada_vira_codigo_3_sem_traceback(self):
-        """Nenhum traceback escapa com codigo ambiguo: o orquestrador decide por codigo."""
+    def test_unexpected_exception_becomes_code_3_without_traceback(self):
+        """No traceback escapes with an ambiguous code: the orchestrator decides by code."""
         original = validate_module.run
         self.addCleanup(setattr, validate_module, "run", original)
 
-        def explodir(args):
+        def explode(args):
             raise RuntimeError("boom")
 
-        validate_module.run = explodir  # build_parser le o handler na hora de montar
+        validate_module.run = explode  # build_parser reads the handler when it is built
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            codigo = main(["validate", "p", "--reference", "r"])
-        self.assertEqual(codigo, EXIT_UNHANDLED)
-        self.assertIn("ERRO NAO TRATADO", buffer.getvalue())
+            code = main(["validate", "p", "--reference", "r"])
+        self.assertEqual(code, EXIT_UNHANDLED)
+        self.assertIn("UNHANDLED ERROR", buffer.getvalue())
         self.assertNotIn("Traceback", buffer.getvalue())
 
-    def test_fluxo_completo_pela_cli(self):
+    def test_full_flow_through_the_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             reference = support.write_reference(os.path.join(tmp, "ref"))
             out = os.path.join(tmp, "data")
             with contextlib.redirect_stdout(io.StringIO()):
-                extraido = main(
+                extracted = main(
                     ["extract", "--reference", reference, "--out", out,
                      "--wh", support.WH_A, "--date", "2026-08-27", "--count", "20"]
                 )
-                validado = main(
+                validated = main(
                     ["validate",
                      os.path.join(out, "ingestion_date=2026-08-27", f"wh={support.WH_A}"),
                      "--reference", reference, "--strict"]
                 )
-        self.assertEqual(extraido, 0)
-        self.assertEqual(validado, 0)
+        self.assertEqual(extracted, 0)
+        self.assertEqual(validated, 0)
 
 
 if __name__ == "__main__":

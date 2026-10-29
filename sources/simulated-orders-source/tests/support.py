@@ -1,8 +1,9 @@
-"""Fixtures minimas: uma referencia completa em disco, sem rede e sem Lakehouse.
+"""Minimal fixtures: a complete reference on disk, with no network and no Lakehouse.
 
-Pequena de proposito — catalogo de poucas dezenas de produtos e um punhado de clientes. O que
-se testa aqui e a REGRA (o preco vem do catalogo, o cliente vem do armazem, o fold fecha), e
-regra nao precisa de volume. O volume e exercitado pelo `validate` contra a particao real.
+Small on purpose — a catalog of a few dozen products and a handful of customers. What is tested
+here is the RULE (price comes from the catalog, customer comes from the warehouse, the fold
+closes), and a rule needs no volume. Volume is exercised by `validate` against the real
+partition.
 """
 
 from __future__ import annotations
@@ -51,24 +52,24 @@ PREMISES = {
 }
 
 
-# Tres grupos de demanda na fixture, com pesos DESIGUAIS de proposito: com pesos iguais o
-# sorteio ponderado seria indistinguivel do uniforme, e um teste que passa nas duas
-# implementacoes nao testa nenhuma.
-DEMAND_GROUPS = ("GRUPO_A", "GRUPO_B", "GRUPO_C")
-DEMAND_WEIGHTS = {"GRUPO_A": "0.6", "GRUPO_B": "0.3", "GRUPO_C": "0.1"}
+# Three demand groups in the fixture, with UNEQUAL weights on purpose: with equal weights the
+# weighted draw would be indistinguishable from the uniform one, and a test that passes on both
+# implementations tests neither.
+DEMAND_GROUPS = ("GROUP_A", "GROUP_B", "GROUP_C")
+DEMAND_WEIGHTS = {"GROUP_A": "0.6", "GROUP_B": "0.3", "GROUP_C": "0.1"}
 
-# As quatro faixas do informe, e uma comunidade por armazem — a fixture espelha a forma do
-# perfil real, incluindo a colinearidade entre armazem e comunidade.
+# The report's four bands, and one community per warehouse — the fixture mirrors the shape of
+# the real profile, including the collinearity between warehouse and community.
 AGE_BANDS = (("LT35", 34), ("35_49", 49), ("50_64", 64), ("GE65", None))
 WAREHOUSE_CCAA = {WH: "13", OTHER_WH: "09"}
 
-# Ano de referencia das idades da fixture. Fixo, e nao `date.today()`: uma fixture que
-# envelhece com o relogio faria o mesmo teste mudar de resultado no ano que vem.
+# Reference year for the fixture ages. Fixed, not `date.today()`: a fixture that ages with the
+# clock would make the same test change its result next year.
 FIXTURE_YEAR = int(ORDER_DATE[:4])
 
 
 def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) -> list[dict]:
-    """Catalogo sintetico com subgrupos povoados, para que a substituicao tenha candidato."""
+    """Synthetic catalog with populated subgroups, so that substitution has a candidate."""
     rows = []
     for index in range(total):
         rows.append(
@@ -76,7 +77,7 @@ def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) 
                 "wh": wh,
                 "price_as_of": price_as_of,
                 "source_product_id": f"p{index:04d}",
-                "display_name": f"Produto {index}",
+                "display_name": f"Product {index}",
                 "category_id": 10 + index % 3,
                 "subgroup_id": 100 + index % 5,
                 "demand_group": DEMAND_GROUPS[index % len(DEMAND_GROUPS)],
@@ -87,26 +88,26 @@ def catalog_rows(wh: str = WH, price_as_of: str = PRICE_AS_OF, total: int = 30) 
     return rows
 
 
-def cohort_payload(pesos, cohort_weights=None, frequency=None) -> dict:
-    """Secao `cohorts` da fixture.
+def cohort_payload(weights, cohort_weights=None, frequency=None) -> dict:
+    """The fixture's `cohorts` section.
 
-    Por padrao TODA coorte recebe o vetor agregado: e a matriz de indices plana, e com ela
-    o sorteio por coorte tem de reproduzir exatamente o sorteio agregado. Um teste que
-    passa nas duas implementacoes nao testa nenhuma, entao os testes que precisam de
-    diferenciacao passam `cohort_weights` explicitamente.
+    By default EVERY cohort gets the aggregate vector: that is the flat index matrix, and with
+    it the per-cohort draw must reproduce the aggregate draw exactly. A test that passes on
+    both implementations tests neither, so the tests that need differentiation pass
+    `cohort_weights` explicitly.
     """
-    chaves = [
-        f"{banda}|{ccaa}"
+    keys = [
+        f"{band}|{ccaa}"
         for ccaa in sorted(set(WAREHOUSE_CCAA.values()))
-        for banda, _teto in AGE_BANDS
+        for band, _ceiling in AGE_BANDS
     ]
-    vetores = cohort_weights or {c: pesos for c in chaves}
+    vectors = cohort_weights or {c: weights for c in keys}
     indices = frequency or {c: "1.0" for c in sorted(set(WAREHOUSE_CCAA.values()))}
     return {
         "dimensions": ["age", "region"],
         "independence": "multiplicative",
         "calibration": "ipf",
-        "age_bands": [{"key": nome, "max_age": teto} for nome, teto in AGE_BANDS],
+        "age_bands": [{"key": name, "max_age": ceiling} for name, ceiling in AGE_BANDS],
         "regions": [
             {
                 "ccaa_code": ccaa,
@@ -116,16 +117,16 @@ def cohort_payload(pesos, cohort_weights=None, frequency=None) -> dict:
             }
             for ccaa in sorted(set(WAREHOUSE_CCAA.values()))
         ],
-        "mass": [{"cohort": c, "share": str(1 / len(chaves))} for c in sorted(vetores)],
+        "mass": [{"cohort": c, "share": str(1 / len(keys))} for c in sorted(vectors)],
         "weights": [
             {
                 "cohort": chave,
                 "groups": [
-                    {"demand_group": g, "line_weight": str(vetores[chave][g])}
-                    for g in sorted(vetores[chave])
+                    {"demand_group": g, "line_weight": str(vectors[chave][g])}
+                    for g in sorted(vectors[chave])
                 ],
             }
-            for chave in sorted(vetores)
+            for chave in sorted(vectors)
         ],
     }
 
@@ -137,8 +138,8 @@ def demand_payload(
     cohort_weights=None,
     frequency=None,
 ) -> dict:
-    """Perfil de demanda minimo, no mesmo formato que a plataforma escreve."""
-    pesos = dict(DEMAND_WEIGHTS if weights is None else weights)
+    """Minimal demand profile, in the same format the platform writes."""
+    weights = dict(DEMAND_WEIGHTS if weights is None else weights)
     return {
         "demand_model_version": version,
         "benchmark": "fixture",
@@ -149,22 +150,22 @@ def demand_payload(
         if seasonality is None
         else {str(m): str(v) for m, v in seasonality.items()},
         "groups": [
-            {"demand_group": key, "line_weight": pesos[key], "block": "benchmark"}
-            for key in sorted(pesos)
+            {"demand_group": key, "line_weight": weights[key], "block": "benchmark"}
+            for key in sorted(weights)
         ],
-        "cohorts": cohort_payload(pesos, cohort_weights, frequency),
+        "cohorts": cohort_payload(weights, cohort_weights, frequency),
     }
 
 
-# Uma idade por faixa, ciclada: a fixture cobre as quatro faixas mesmo com 8 clientes, e
-# nenhuma delas fica vazia por acaso do tamanho da amostra.
+# One age per band, cycled: the fixture covers all four bands even with 8 customers, and none
+# of them ends up empty by accident of sample size.
 FIXTURE_AGES = (25, 42, 57, 71)
 
 
 def customer_rows(
     wh: str = WH, total: int = 8, first: str = FIRST_INGESTION, ages=None
 ) -> list[dict]:
-    idades = tuple(ages or FIXTURE_AGES)
+    ages = tuple(ages or FIXTURE_AGES)
     return [
         {
             "customer_id": f"cust_{wh}_{index:06d}",
@@ -172,7 +173,7 @@ def customer_rows(
             "province_code": "28",
             "municipality_code": "079",
             "postal_code": f"280{index:02d}",
-            "birth_year": FIXTURE_YEAR - idades[index % len(idades)],
+            "birth_year": FIXTURE_YEAR - ages[index % len(ages)],
             "first_ingestion_date": first,
         }
         for index in range(total)
@@ -188,7 +189,7 @@ def write_reference(
     customer_ingestion_dates=None,
     demand=None,
 ) -> str:
-    """Grava os cinco arquivos de referencia. Devolve o diretorio."""
+    """Write the five reference files. Returns the directory."""
     os.makedirs(directory, exist_ok=True)
     dates = customer_ingestion_dates or [FIRST_INGESTION]
     payloads = {
@@ -235,7 +236,7 @@ def write_reference(
 
 
 class Args:
-    """Namespace simples no lugar do resultado do argparse."""
+    """Simple namespace standing in for the argparse result."""
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)

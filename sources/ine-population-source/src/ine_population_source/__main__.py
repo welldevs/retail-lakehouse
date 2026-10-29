@@ -1,4 +1,4 @@
-"""Ponto de entrada: python -m ine_population_source"""
+"""Entry point: python -m ine_population_source"""
 
 from __future__ import annotations
 

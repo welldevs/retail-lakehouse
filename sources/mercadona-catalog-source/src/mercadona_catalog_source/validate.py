@@ -1,12 +1,12 @@
-"""Validacao independente de uma particao do snapshot.
+"""Independent validation of a snapshot partition.
 
-Rele e reparseia todos os arquivos declarados no manifesto, recalculando checksums,
-contagens e impressao digital de schema em vez de aceitar os valores registrados. Alem
-disso varre o diretorio para detectar arquivos que o manifesto nao declara.
+Re-reads and re-parses every file declared in the manifest, recomputing checksums,
+counts and the schema fingerprint instead of accepting the recorded values. It also
+sweeps the directory to detect files the manifest does not declare.
 
-Dois tipos de problema:
-  - INTEGRIDADE -> sempre fatal (codigo 1).
-  - QUALIDADE   -> medida e reportada; fatal apenas com --strict.
+Two kinds of problem:
+  - INTEGRITY -> always fatal (code 1).
+  - QUALITY   -> measured and reported; fatal only with --strict.
 """
 
 from __future__ import annotations
@@ -52,57 +52,57 @@ def run(args) -> int:
 
     path = manifest_path(partition)
     if not os.path.exists(path):
-        print(f"ERRO: manifesto nao encontrado em {path}")
+        print(f"ERROR: manifest not found at {path}")
         return EXIT_FAILED
     try:
         manifest, _ = read_json(path)
     except CorruptFileError as exc:
-        print(f"ERRO: manifesto ilegivel: {exc}")
+        print(f"ERROR: manifest unreadable: {exc}")
         return EXIT_FAILED
     if not is_mapping(manifest) or not isinstance(manifest.get("files"), list):
-        print(f"ERRO: manifesto sem a lista 'files': {path}")
+        print(f"ERROR: manifest has no 'files' list: {path}")
         return EXIT_FAILED
 
     root = os.path.abspath(os.path.join(partition, "..", ".."))
     version = manifest.get("manifest_version")
     if version != MANIFEST_VERSION:
         errors.append(
-            f"manifest_version {version!r} diferente do suportado ({MANIFEST_VERSION})"
+            f"manifest_version {version!r} differs from the supported one ({MANIFEST_VERSION})"
         )
 
-    print(f"particao ......... {partition}")
+    print(f"partition ........ {partition}")
     print(f"run_id ........... {manifest.get('run_id')}")
     print(f"source ........... {(manifest.get('source') or {}).get('name')}")
-    print(f"completa ......... {manifest.get('complete')}")
+    print(f"complete ......... {manifest.get('complete')}")
 
-    # ---- Integridade dos arquivos declarados -------------------------------
+    # ---- Integrity of the declared files -----------------------------------
     checked = 0
     declared: set = set()
     payloads: list[object] = []
     rows_by_entry: dict = {}
     for entry in manifest["files"]:
         if not is_mapping(entry) or "path" not in entry:
-            errors.append(f"entrada de manifesto malformada: {entry!r}")
+            errors.append(f"malformed manifest entry: {entry!r}")
             continue
         target = os.path.join(root, entry["path"])
         if not _inside(root, target):
-            errors.append(f"caminho fora da raiz do snapshot: {entry['path']}")
+            errors.append(f"path outside the snapshot root: {entry['path']}")
             continue
         declared.add(os.path.abspath(target))
         if not os.path.exists(target):
-            errors.append(f"arquivo ausente: {entry['path']}")
+            errors.append(f"missing file: {entry['path']}")
             continue
         with open(target, "rb") as handle:
             blob = handle.read()
         checked += 1
         if digest(blob) != entry.get("sha256"):
-            errors.append(f"checksum divergente: {entry['path']}")
+            errors.append(f"checksum mismatch: {entry['path']}")
         if len(blob) != entry.get("bytes"):
-            errors.append(f"tamanho divergente: {entry['path']}")
+            errors.append(f"size mismatch: {entry['path']}")
         try:
             payload, _ = read_json(target)
         except CorruptFileError as exc:
-            errors.append(f"JSON invalido em {entry['path']}: {exc}")
+            errors.append(f"invalid JSON in {entry['path']}: {exc}")
             continue
         if entry.get("stage") == "catalog":
             observed = count_products(payload)
@@ -114,28 +114,28 @@ def run(args) -> int:
             observed = entry.get("records")
         if observed != entry.get("records"):
             errors.append(
-                f"contagem divergente em {entry['path']}: "
-                f"manifesto={entry.get('records')} arquivo={observed}"
+                f"count mismatch in {entry['path']}: "
+                f"manifest={entry.get('records')} file={observed}"
             )
-    print(f"arquivos ......... {checked}/{len(manifest['files'])} lidos e conferidos")
+    print(f"files ............ {checked}/{len(manifest['files'])} read and checked")
 
     if manifest.get("failures"):
         errors.append(
-            f"{len(manifest['failures'])} categoria(s) registradas como falha no manifesto"
+            f"{len(manifest['failures'])} category(ies) recorded as failed in the manifest"
         )
 
-    # Anomalias sao eventos ja tratados pela extracao (arquivo rebaixado da fonte). Ficam
-    # visiveis para auditoria, sem reprovar uma particao que foi corrigida.
+    # Anomalies are events already handled by the extraction (file re-downloaded from the
+    # source). They stay visible for auditing, without failing a partition that was fixed.
     anomalies = manifest.get("anomalies") or []
-    print(f"anomalias ........ {len(anomalies)}")
+    print(f"anomalies ........ {len(anomalies)}")
     for item in anomalies:
         if is_mapping(item):
-            warnings.append(f"anomalia registrada: {item.get('kind')} em {item.get('path')}")
+            warnings.append(f"recorded anomaly: {item.get('kind')} at {item.get('path')}")
 
-    # ---- Arquivos em disco nao declarados no manifesto ---------------------
-    # Varredura recursiva: um listdir raso deixaria passar catalog/backup/old.json e
-    # qualquer subdiretorio criado dentro da particao, e a garantia de inventario fechado
-    # so valeria para o primeiro nivel.
+    # ---- Files on disk not declared in the manifest ------------------------
+    # Recursive sweep: a shallow listdir would let catalog/backup/old.json and any
+    # subdirectory created inside the partition slip through, and the closed-inventory
+    # guarantee would only hold for the first level.
     orphans: list[str] = []
     known_root_files = {MANIFEST_NAME, SUCCESS_NAME, RUN_LOG_NAME}
     partition_abs = os.path.abspath(partition)
@@ -146,29 +146,29 @@ def run(args) -> int:
                 continue
             if candidate not in declared:
                 orphans.append(os.path.relpath(candidate, partition_abs))
-    print(f"orfaos ........... {len(orphans)}")
+    print(f"orphans .......... {len(orphans)}")
     if orphans:
-        errors.append(f"arquivo(s) em disco fora do manifesto: {orphans}")
+        errors.append(f"file(s) on disk not in the manifest: {orphans}")
 
-    # ---- Marcador _SUCCESS coerente com 'complete' -------------------------
+    # ---- _SUCCESS marker consistent with 'complete' ------------------------
     has_success = os.path.exists(success_path(partition))
     if bool(manifest.get("complete")) != has_success:
         errors.append(
-            f"_SUCCESS {'presente' if has_success else 'ausente'} contradiz "
+            f"_SUCCESS {'present' if has_success else 'absent'} contradicts "
             f"complete={manifest.get('complete')}"
         )
 
-    # ---- Cobertura: toda categoria de nivel 2 tem arquivo ------------------
+    # ---- Coverage: every level-2 category has a file ----------------------
     tree_file = categories_path(partition)
     level2: list = []
     if not os.path.exists(tree_file):
-        errors.append("arvore de categorias ausente: categories/categories.json")
+        errors.append("category tree missing: categories/categories.json")
     else:
         try:
             tree, _ = read_json(tree_file)
             level2 = flatten_tree(tree)
         except (CorruptFileError, SchemaError) as exc:
-            errors.append(f"arvore de categorias ilegivel: {exc}")
+            errors.append(f"category tree unreadable: {exc}")
 
     expected = {node["id"] for node in level2}
     present = {
@@ -176,21 +176,21 @@ def run(args) -> int:
         for entry in manifest["files"]
         if is_mapping(entry) and entry.get("stage") == "catalog"
     }
-    print(f"cobertura ........ {len(present)}/{len(expected)} categorias de nivel 2")
+    print(f"coverage ......... {len(present)}/{len(expected)} level-2 categories")
     limit = (manifest.get("config") or {}).get("limit")
     missing = expected - present
     if missing and limit is None:
-        errors.append(f"categorias de nivel 2 sem arquivo: {sorted(missing)}")
+        errors.append(f"level-2 categories without a file: {sorted(missing)}")
     elif missing and limit is not None:
         warnings.append(
-            f"{len(missing)} categoria(s) sem arquivo (esperado: particao parcial, limit={limit})"
+            f"{len(missing)} category(ies) without a file (expected: partial partition, limit={limit})"
         )
 
-    # ---- Qualidade: produto, categoria e preco -----------------------------
+    # ---- Quality: product, category and price ------------------------------
     lineage = {node["id"]: node for node in level2}
     rows = 0
     unique_ids: set = set()
-    sem_nome = sem_preco = sem_categoria = 0
+    missing_name = missing_price = missing_category = 0
     for entry in manifest["files"]:
         if not is_mapping(entry) or entry.get("stage") != "catalog":
             continue
@@ -200,48 +200,48 @@ def run(args) -> int:
         try:
             payload, _ = read_json(target)
         except CorruptFileError:
-            continue  # ja reportado como erro de integridade
+            continue  # already reported as an integrity error
         has_lineage = entry.get("category_id") in lineage
         for group, product in iter_products(payload):
             rows += 1
             if "id" in product:
                 unique_ids.add(product["id"])
             if not product.get("display_name"):
-                sem_nome += 1
+                missing_name += 1
             price = (product.get("price_instructions") or {}).get("unit_price")
             if price is None or str(price).strip() == "":
-                sem_preco += 1
+                missing_price += 1
             if not has_lineage or not group.get("name"):
-                sem_categoria += 1
+                missing_category += 1
 
-    duplicadas = rows - len(unique_ids)
-    print(f"linhas ........... {rows}")
-    print(f"produtos unicos .. {len(unique_ids)} ({duplicadas} linhas repetidas)")
-    print(f"sem nome ......... {sem_nome}")
-    print(f"sem preco ........ {sem_preco}")
-    print(f"sem categoria .... {sem_categoria}")
+    duplicates = rows - len(unique_ids)
+    print(f"rows ............. {rows}")
+    print(f"unique products .. {len(unique_ids)} ({duplicates} repeated rows)")
+    print(f"missing name ..... {missing_name}")
+    print(f"missing price .... {missing_price}")
+    print(f"missing category . {missing_category}")
 
-    incompletos = sem_nome + sem_preco + sem_categoria
+    incomplete = missing_name + missing_price + missing_category
     if rows == 0:
-        print("completude ....... n/a (nenhuma linha lida)")
+        print("completeness ..... n/a (no rows read)")
     else:
         print(
-            f"completude ....... {100.0 * (1 - incompletos / (rows * 3)):.2f}% "
-            f"dos campos de escopo"
+            f"completeness ..... {100.0 * (1 - incomplete / (rows * 3)):.2f}% "
+            f"of the in-scope fields"
         )
 
-    # ---- Impressao digital de schema ---------------------------------------
+    # ---- Schema fingerprint ------------------------------------------------
     declared_fp = manifest.get("schema_fingerprint") or {}
     observed_fp = fingerprint(payloads)
     same_fp = declared_fp.get("sha256") == observed_fp["sha256"]
-    print(f"schema ........... {observed_fp['sha256'][:16]} ({'igual' if same_fp else 'DIVERGENTE'})")
+    print(f"schema ........... {observed_fp['sha256'][:16]} ({'same' if same_fp else 'MISMATCH'})")
     if not same_fp:
         errors.append(
-            f"schema_fingerprint divergente: manifesto={declared_fp.get('sha256')} "
-            f"observado={observed_fp['sha256']}"
+            f"schema_fingerprint mismatch: manifest={declared_fp.get('sha256')} "
+            f"observed={observed_fp['sha256']}"
         )
 
-    # ---- Totais reconferidos contra a releitura ----------------------------
+    # ---- Totals re-checked against the re-read -----------------------------
     totals = manifest.get("totals") or {}
     catalog_entries = [
         e for e in manifest["files"] if is_mapping(e) and e.get("stage") == "catalog"
@@ -257,24 +257,24 @@ def run(args) -> int:
     for key, observed in observed_totals.items():
         if totals.get(key) != observed:
             errors.append(
-                f"totals.{key} divergente: manifesto={totals.get(key)} observado={observed}"
+                f"totals.{key} mismatch: manifest={totals.get(key)} observed={observed}"
             )
 
     if catalog_entries and rows == 0:
         errors.append(
-            f"nenhum produto lido em {len(catalog_entries)} arquivo(s) de catalogo: "
-            f"formato da fonte pode ter mudado"
+            f"no product read in {len(catalog_entries)} catalog file(s): "
+            f"the source format may have changed"
         )
-    if args.strict and incompletos:
-        errors.append(f"{incompletos} campo(s) de escopo ausentes (--strict)")
+    if args.strict and incomplete:
+        errors.append(f"{incomplete} in-scope field(s) missing (--strict)")
 
     print()
     for item in warnings:
-        print(f"AVISO: {item}")
+        print(f"WARNING: {item}")
     if errors:
-        print(f"FALHOU ({len(errors)} problema(s)):")
+        print(f"FAILED ({len(errors)} problem(s)):")
         for item in errors:
             print(f"  - {item}")
         return EXIT_FAILED
-    print("OK: integridade, cobertura, schema e totais validados.")
+    print("OK: integrity, coverage, schema and totals validated.")
     return EXIT_OK

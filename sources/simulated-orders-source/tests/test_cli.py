@@ -1,4 +1,4 @@
-"""O contrato da CLI: verbos, argumentos obrigatorios e codigos de saida."""
+"""The CLI contract: verbs, required arguments and exit codes."""
 
 from __future__ import annotations
 
@@ -11,64 +11,64 @@ from simulated_orders_source.cli import build_parser, main
 
 
 class ParserTest(unittest.TestCase):
-    def test_dois_verbos(self):
+    def test_two_verbs(self):
         parser = build_parser()
         for argv in (["extract", "--reference", "r", "--wh", "mad1", "--date", "2026-08-24"],
                      ["validate", "p", "--reference", "r"]):
             self.assertTrue(hasattr(parser.parse_args(argv), "handler"))
 
-    def test_extract_exige_reference_wh_e_date(self):
-        # --date e obrigatorio, diferente das outras quatro sources: aqui ingestion_date e a
-        # DATA DO PEDIDO, e cair no dia corrente por omissao geraria pedidos num dia que
-        # talvez nem tenha catalogo.
-        for incompleto in (
+    def test_extract_requires_reference_wh_and_date(self):
+        # --date is required, unlike the other four sources: here ingestion_date is the
+        # ORDER DATE, and falling back to the current day would generate orders on a day that
+        # may not even have a catalog.
+        for incomplete in (
             ["extract", "--wh", "mad1", "--date", "2026-08-24"],
             ["extract", "--reference", "r", "--date", "2026-08-24"],
             ["extract", "--reference", "r", "--wh", "mad1"],
         ):
             with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
-                build_parser().parse_args(incompleto)
+                build_parser().parse_args(incomplete)
 
-    def test_validate_exige_reference(self):
-        # Sem a referencia so daria para conferir checksum, que prova integridade e nao
-        # coerencia. E a coerencia que e a garantia central desta Source.
+    def test_validate_requires_reference(self):
+        # Without the reference only the checksum could be checked, which proves integrity and
+        # not coherence. Coherence is this Source's core guarantee.
         with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
             build_parser().parse_args(["validate", "p"])
 
-    def test_verbo_desconhecido_e_recusado(self):
+    def test_unknown_verb_is_refused(self):
         with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
             build_parser().parse_args(["publish"])
 
-    def test_versao_bate_com_o_pacote(self):
-        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()) as saida:
+    def test_version_matches_package(self):
+        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()) as output:
             build_parser().parse_args(["--version"])
-        self.assertEqual(saida.getvalue().strip(), __version__)
+        self.assertEqual(output.getvalue().strip(), __version__)
 
 
-class CodigoDeSaidaTest(unittest.TestCase):
-    def test_referencia_inexistente_sai_com_2(self):
-        with redirect_stdout(io.StringIO()) as saida:
+class ExitCodeTest(unittest.TestCase):
+    def test_missing_reference_exits_2(self):
+        with redirect_stdout(io.StringIO()) as output:
             code = main(
                 [
                     "extract",
                     "--reference",
-                    "/tmp/nao-existe-referencia-alguma",
+                    "/tmp/no-such-reference-anywhere",
                     "--wh",
                     "mad1",
                     "--date",
                     "2026-08-24",
                     "--out",
-                    "/tmp/nao-existe-saida-alguma",
+                    "/tmp/no-such-output-anywhere",
                 ]
             )
         self.assertEqual(code, 2)
-        self.assertIn("ERRO", saida.getvalue())
+        self.assertIn("ERROR", output.getvalue())
 
-    def test_particao_inexistente_no_validate_sai_com_1(self):
-        with redirect_stdout(io.StringIO()) as saida:
-            code = main(["validate", "/tmp/nao-existe-particao", "--reference", "/tmp/x"])
+    def test_missing_partition_in_validate_exits_1(self):
+        with redirect_stdout(io.StringIO()) as output:
+            code = main(["validate", "/tmp/no-such-partition", "--reference", "/tmp/x"])
         self.assertEqual(code, 1)
-        self.assertIn("manifesto nao encontrado", saida.getvalue())
+        self.assertIn("manifest not found", output.getvalue())
 
 
 if __name__ == "__main__":

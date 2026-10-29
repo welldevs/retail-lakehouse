@@ -1,4 +1,4 @@
-"""Validacao: cada modo de falha do snapshot precisa ser detectado, nunca silenciado."""
+"""Validation: every snapshot failure mode must be detected, never silenced."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from mercadona_catalog_source import extract, partition as part, validate
 from mercadona_catalog_source.canonical import read_json, write_json
 from tests.support import catalog, extract_args, make_fetcher_factory, tree, validate_args
 
-TREE = tree((1, "Pai", [(10, "Alfa"), (11, "Beta")]))
+TREE = tree((1, "Parent", [(10, "Alfa"), (11, "Beta")]))
 RESPONSES = {
     "/categories/": TREE,
     "/categories/10/": catalog(10, "Alfa", ("g1", [(1, "p1", "1.00"), (2, "p2", "2.00")])),
@@ -39,16 +39,16 @@ class ValidPartitionTest(unittest.TestCase):
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def test_particao_integra_e_aprovada(self):
+    def test_intact_partition_passes(self):
         code, output = run_validate(self.partition, strict=True)
         self.assertEqual(code, 0)
         self.assertIn("OK:", output)
-        self.assertIn("orfaos ........... 0", output)
+        self.assertIn("orphans .......... 0", output)
 
-    def test_relata_linhas_e_produtos_unicos(self):
+    def test_reports_rows_and_unique_products(self):
         _, output = run_validate(self.partition)
-        self.assertIn("linhas ........... 3", output)
-        self.assertIn("produtos unicos .. 3", output)
+        self.assertIn("rows ............. 3", output)
+        self.assertIn("unique products .. 3", output)
 
 
 class IntegrityFailureTest(unittest.TestCase):
@@ -56,63 +56,63 @@ class IntegrityFailureTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.partition = build_partition(self.root)
 
-    def test_manifesto_ausente(self):
+    def test_missing_manifest(self):
         os.unlink(part.manifest_path(self.partition))
         self.assertEqual(run_validate(self.partition)[0], 1)
 
-    def test_manifesto_corrompido_e_reportado_sem_traceback(self):
+    def test_corrupt_manifest_is_reported_without_traceback(self):
         with open(part.manifest_path(self.partition), "wb") as handle:
-            handle.write(b"{nao e json")
+            handle.write(b"{not json")
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("ilegivel", output)
+        self.assertIn("unreadable", output)
 
-    def test_arquivo_ausente(self):
+    def test_missing_file(self):
         os.unlink(part.catalog_path(self.partition, 10))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("arquivo ausente", output)
+        self.assertIn("missing file", output)
 
-    def test_checksum_divergente(self):
+    def test_checksum_mismatch(self):
         payload, _ = read_json(part.catalog_path(self.partition, 10))
-        payload["name"] = "adulterado"
+        payload["name"] = "tampered"
         write_json(part.catalog_path(self.partition, 10), payload)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("checksum divergente", output)
+        self.assertIn("checksum mismatch", output)
 
-    def test_arquivo_corrompido_e_reportado_em_vez_de_derrubar_o_validador(self):
+    def test_corrupt_file_is_reported_instead_of_crashing_the_validator(self):
         with open(part.catalog_path(self.partition, 10), "wb") as handle:
             handle.write(b'{"id": 10, "categ')
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("JSON invalido", output)
-        # o relatorio segue ate o fim, em vez de morrer no primeiro arquivo ruim
-        self.assertIn("FALHOU", output)
+        self.assertIn("invalid JSON", output)
+        # the report runs to the end instead of dying at the first bad file
+        self.assertIn("FAILED", output)
 
-    def test_arvore_de_categorias_ausente(self):
+    def test_missing_category_tree(self):
         os.unlink(part.categories_path(self.partition))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("arvore de categorias ausente", output)
+        self.assertIn("category tree missing", output)
 
 
 class OrphanDetectionTest(unittest.TestCase):
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def test_arquivo_de_catalogo_nao_declarado_e_detectado(self):
+    def test_undeclared_catalog_file_is_detected(self):
         write_json(part.catalog_path(self.partition, 99), {"id": 99, "categories": []})
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("fora do manifesto", output)
+        self.assertIn("not in the manifest", output)
 
-    def test_arquivo_solto_na_raiz_da_particao_e_detectado(self):
-        with open(os.path.join(self.partition, "anotacao.txt"), "w", encoding="utf-8") as handle:
-            handle.write("nota")
+    def test_stray_file_at_partition_root_is_detected(self):
+        with open(os.path.join(self.partition, "annotation.txt"), "w", encoding="utf-8") as handle:
+            handle.write("note")
         self.assertEqual(run_validate(self.partition)[0], 1)
 
-    def test_log_e_marcador_nao_sao_orfaos(self):
+    def test_log_and_marker_are_not_orphans(self):
         self.assertEqual(run_validate(self.partition)[0], 0)
 
 
@@ -120,16 +120,16 @@ class SuccessMarkerTest(unittest.TestCase):
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def test_success_removido_contradiz_o_manifesto(self):
+    def test_removed_success_contradicts_the_manifest(self):
         os.unlink(part.success_path(self.partition))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("_SUCCESS", output)
 
-    def test_success_indevido_em_particao_parcial(self):
+    def test_spurious_success_in_partial_partition(self):
         partial = build_partition(tempfile.mkdtemp(), limit=1)
         with open(part.success_path(partial), "w", encoding="utf-8") as handle:
-            handle.write("mentira\n")
+            handle.write("lie\n")
         self.assertEqual(run_validate(partial)[0], 1)
 
 
@@ -142,31 +142,31 @@ class TotalsAndSchemaTest(unittest.TestCase):
         mutate(manifest)
         write_json(part.manifest_path(self.partition), manifest)
 
-    def test_product_rows_adulterado(self):
+    def test_tampered_product_rows(self):
         self._tamper_manifest(lambda m: m["totals"].update(product_rows=999))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("totals.product_rows", output)
 
-    def test_bytes_adulterado(self):
+    def test_tampered_bytes(self):
         self._tamper_manifest(lambda m: m["totals"].update(bytes=1))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("totals.bytes", output)
 
-    def test_catalog_files_adulterado(self):
+    def test_tampered_catalog_files(self):
         self._tamper_manifest(lambda m: m["totals"].update(catalog_files=7))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("totals.catalog_files", output)
 
-    def test_fingerprint_divergente(self):
+    def test_fingerprint_mismatch(self):
         self._tamper_manifest(lambda m: m["schema_fingerprint"].update(sha256="0" * 64))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("schema_fingerprint divergente", output)
+        self.assertIn("schema_fingerprint mismatch", output)
 
-    def test_manifest_version_incompativel(self):
+    def test_incompatible_manifest_version(self):
         self._tamper_manifest(lambda m: m.update(manifest_version=99))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
@@ -174,56 +174,56 @@ class TotalsAndSchemaTest(unittest.TestCase):
 
 
 class PerFileRecheckTest(unittest.TestCase):
-    """Cada campo declarado por arquivo e reconferido, nao apenas os totais agregados."""
+    """Every per-file declared field is re-checked, not just the aggregate totals."""
 
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def _tamper_entry(self, sufixo, campo, valor):
+    def _tamper_entry(self, suffix, field, value):
         manifest = part.read_manifest(self.partition)
-        entrada = next(f for f in manifest["files"] if f["path"].endswith(sufixo))
-        entrada[campo] = valor
+        entry = next(f for f in manifest["files"] if f["path"].endswith(suffix))
+        entry[field] = value
         write_json(part.manifest_path(self.partition), manifest)
 
-    def test_records_de_arquivo_de_catalogo_e_reconferido(self):
+    def test_catalog_file_records_are_rechecked(self):
         self._tamper_entry("category_id=10.json", "records", 99)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("contagem divergente", output)
+        self.assertIn("count mismatch", output)
 
-    def test_records_da_arvore_de_categorias_e_reconferido(self):
+    def test_category_tree_records_are_rechecked(self):
         self._tamper_entry("categories.json", "records", 42)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("contagem divergente", output)
+        self.assertIn("count mismatch", output)
         self.assertIn("categories.json", output)
 
-    def test_bytes_de_cada_arquivo_e_reconferido(self):
+    def test_bytes_of_each_file_are_rechecked(self):
         self._tamper_entry("category_id=10.json", "bytes", 7)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("tamanho divergente", output)
+        self.assertIn("size mismatch", output)
 
-    def test_entrada_apontando_fora_da_raiz_do_snapshot_e_barrada(self):
+    def test_entry_pointing_outside_snapshot_root_is_blocked(self):
         self._tamper_entry("category_id=10.json", "path", "../../../../etc/passwd")
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("fora da raiz", output)
+        self.assertIn("outside the snapshot root", output)
 
-    def test_entrada_de_manifesto_malformada_e_reportada(self):
+    def test_malformed_manifest_entry_is_reported(self):
         manifest = part.read_manifest(self.partition)
-        manifest["files"].append({"sem": "path"})
+        manifest["files"].append({"no": "path"})
         write_json(part.manifest_path(self.partition), manifest)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("malformada", output)
+        self.assertIn("malformed", output)
 
 
 class CoverageAndFailuresTest(unittest.TestCase):
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def test_categoria_de_nivel_2_sem_arquivo_reprova(self):
+    def test_level_2_category_without_file_fails(self):
         manifest = part.read_manifest(self.partition)
         manifest["files"] = [
             f for f in manifest["files"] if not f["path"].endswith("category_id=11.json")
@@ -232,10 +232,10 @@ class CoverageAndFailuresTest(unittest.TestCase):
         os.unlink(part.catalog_path(self.partition, 11))
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("categorias de nivel 2 sem arquivo", output)
-        self.assertIn("cobertura ........ 1/2", output)
+        self.assertIn("level-2 categories without a file", output)
+        self.assertIn("coverage ......... 1/2", output)
 
-    def test_falha_registrada_no_manifesto_reprova(self):
+    def test_failure_recorded_in_manifest_fails(self):
         manifest = part.read_manifest(self.partition)
         manifest["failures"] = [
             {"stage": "catalog", "category_id": 99, "name": "x", "error": "HTTP 500"}
@@ -243,96 +243,96 @@ class CoverageAndFailuresTest(unittest.TestCase):
         write_json(part.manifest_path(self.partition), manifest)
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("registradas como falha no manifesto", output)
+        self.assertIn("recorded as failed in the manifest", output)
 
 
 class RecursiveOrphanTest(unittest.TestCase):
-    """A varredura precisa descer nos subdiretorios, senao o inventario fechado e falso."""
+    """The sweep must descend into subdirectories, otherwise the closed inventory is false."""
 
     def setUp(self):
         self.partition = build_partition(tempfile.mkdtemp())
 
-    def test_arquivo_em_subdiretorio_de_catalog_e_detectado(self):
-        destino = os.path.join(self.partition, "catalog", "backup")
-        os.makedirs(destino, exist_ok=True)
-        write_json(os.path.join(destino, "old.json"), {"id": 1})
+    def test_file_in_catalog_subdirectory_is_detected(self):
+        target_dir = os.path.join(self.partition, "catalog", "backup")
+        os.makedirs(target_dir, exist_ok=True)
+        write_json(os.path.join(target_dir, "old.json"), {"id": 1})
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
-        self.assertIn("fora do manifesto", output)
+        self.assertIn("not in the manifest", output)
         self.assertIn("backup", output)
 
-    def test_diretorio_desconhecido_na_raiz_da_particao_e_detectado(self):
-        destino = os.path.join(self.partition, "_scratch")
-        os.makedirs(destino, exist_ok=True)
-        with open(os.path.join(destino, "notas.txt"), "w", encoding="utf-8") as handle:
-            handle.write("nota")
+    def test_unknown_directory_at_partition_root_is_detected(self):
+        target_dir = os.path.join(self.partition, "_scratch")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(target_dir, "notes.txt"), "w", encoding="utf-8") as handle:
+            handle.write("note")
         code, output = run_validate(self.partition)
         self.assertEqual(code, 1)
         self.assertIn("_scratch", output)
 
-    def test_subdiretorio_vazio_nao_e_orfao(self):
-        os.makedirs(os.path.join(self.partition, "catalog", "vazio"), exist_ok=True)
+    def test_empty_subdirectory_is_not_orphan(self):
+        os.makedirs(os.path.join(self.partition, "catalog", "empty"), exist_ok=True)
         self.assertEqual(run_validate(self.partition)[0], 0)
 
 
 class AnomaliesTest(unittest.TestCase):
-    def test_anomalia_registrada_vira_aviso_e_nao_reprova(self):
+    def test_recorded_anomaly_becomes_warning_and_does_not_fail(self):
         root = tempfile.mkdtemp()
         partition = build_partition(root, limit=1)
-        # arquivo fora da forma canonica: a extracao rebaixa e registra a anomalia
-        alvo = part.catalog_path(partition, 11)
-        os.makedirs(os.path.dirname(alvo), exist_ok=True)
-        with open(alvo, "w", encoding="utf-8") as handle:
+        # file not in canonical form: the extraction re-downloads it and records the anomaly
+        target = part.catalog_path(partition, 11)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
             json.dump({"id": 11, "name": "x", "categories": []}, handle, indent=8)
         build_partition(root)
         manifest = part.read_manifest(partition)
         self.assertTrue(manifest["anomalies"])
         code, output = run_validate(partition, strict=True)
         self.assertEqual(code, 0)
-        self.assertIn("AVISO: anomalia registrada", output)
-        self.assertIn("anomalias ........ 1", output)
+        self.assertIn("WARNING: recorded anomaly", output)
+        self.assertIn("anomalies ........ 1", output)
 
 
 class ShapeChangeDetectionTest(unittest.TestCase):
-    def test_particao_sem_nenhum_produto_e_reprovada(self):
+    def test_partition_without_any_product_fails(self):
         responses = {
             "/categories/": TREE,
-            "/categories/10/": {"id": 10, "name": "Alfa", "secoes": []},
-            "/categories/11/": {"id": 11, "name": "Beta", "secoes": []},
+            "/categories/10/": {"id": 10, "name": "Alfa", "sections": []},
+            "/categories/11/": {"id": 11, "name": "Beta", "sections": []},
         }
         partition = build_partition(tempfile.mkdtemp(), responses=responses)
         code, output = run_validate(partition, strict=True)
         self.assertEqual(code, 1)
-        self.assertIn("nenhum produto lido", output)
-        self.assertIn("n/a (nenhuma linha lida)", output)
+        self.assertIn("no product read", output)
+        self.assertIn("n/a (no rows read)", output)
 
 
 class QualityTest(unittest.TestCase):
     def setUp(self):
         responses = dict(RESPONSES)
-        sem_preco = catalog(11, "Beta", ("g1", [(3, "p3", "3.00")]))
-        sem_preco["categories"][0]["products"][0]["price_instructions"]["unit_price"] = None
-        responses["/categories/11/"] = sem_preco
+        no_price = catalog(11, "Beta", ("g1", [(3, "p3", "3.00")]))
+        no_price["categories"][0]["products"][0]["price_instructions"]["unit_price"] = None
+        responses["/categories/11/"] = no_price
         self.partition = build_partition(tempfile.mkdtemp(), responses=responses)
 
-    def test_qualidade_e_reportada_mas_nao_reprova_sem_strict(self):
+    def test_quality_is_reported_but_does_not_fail_without_strict(self):
         code, output = run_validate(self.partition)
         self.assertEqual(code, 0)
-        self.assertIn("sem preco ........ 1", output)
+        self.assertIn("missing price .... 1", output)
 
-    def test_strict_reprova_registro_incompleto(self):
+    def test_strict_fails_incomplete_record(self):
         code, output = run_validate(self.partition, strict=True)
         self.assertEqual(code, 1)
         self.assertIn("--strict", output)
 
 
 class PartialPartitionTest(unittest.TestCase):
-    def test_particao_parcial_avisa_mas_nao_reprova_por_cobertura(self):
+    def test_partial_partition_warns_but_does_not_fail_on_coverage(self):
         partition = build_partition(tempfile.mkdtemp(), limit=1)
         code, output = run_validate(partition, strict=True)
         self.assertEqual(code, 0)
-        self.assertIn("AVISO", output)
-        self.assertIn("particao parcial", output)
+        self.assertIn("WARNING", output)
+        self.assertIn("partial partition", output)
 
 
 if __name__ == "__main__":

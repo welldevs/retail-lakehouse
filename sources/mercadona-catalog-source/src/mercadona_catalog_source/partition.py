@@ -1,14 +1,14 @@
-"""Identidade, caminho e metadados de uma particao do snapshot.
+"""Identity, path and metadata of a snapshot partition.
 
-Uma particao e a unidade de entrega da Source:
+A partition is the Source's unit of delivery:
 
     <root>/ingestion_date=YYYY-MM-DD/wh=<warehouse>/
 
-Regras impostas aqui, e nao apenas documentadas:
-  - tokens de particao sao validados (nada de separador de caminho ou '..');
-  - uma particao completa e imutavel: so pode ser reescrita com --overwrite;
-  - 'lang' e fixo por particao: reabrir com outro idioma e recusado;
-  - o marcador _SUCCESS so existe quando a particao esta completa.
+Rules enforced here, not just documented:
+  - partition tokens are validated (no path separator or '..');
+  - a complete partition is immutable: it can only be rewritten with --overwrite;
+  - 'lang' is fixed per partition: reopening with another language is refused;
+  - the _SUCCESS marker only exists when the partition is complete.
 """
 
 from __future__ import annotations
@@ -26,19 +26,21 @@ CATALOG_DIR = "catalog"
 CATEGORIES_DIR = "categories"
 CATEGORIES_FILE = "categories.json"
 
-# Tokens que viram nome de diretorio ou de arquivo. Deliberadamente restritivo: impede
-# travessia de caminho vinda de um parametro de CLI ou de um id devolvido pela fonte.
+# Tokens that become a directory or file name. Deliberately restrictive: prevents path
+# traversal coming from a CLI parameter or from an id returned by the source.
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-# Nome de arquivo de catalogo, para reconhecer arquivos ja presentes na particao.
+# Catalog file name, used to recognize files already present in the partition.
 CATALOG_FILE = re.compile(r"^category_id=([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.json$")
 
 
 class PartitionError(Exception):
-    """Uso invalido de particao: token malformado, imutabilidade ou idioma divergente."""
+    """Invalid partition use: malformed token, immutability or mismatched language."""
 
 
 def validate_token(name: str, value: str) -> str:
+    # Message kept verbatim (Portuguese): for an unsafe category id it is persisted into the
+    # manifest's failures[].error via str(exc) in extract.py.
     if not isinstance(value, str) or not SAFE_TOKEN.match(value):
         raise PartitionError(
             f"{name} invalido: {value!r}. Use apenas letras, digitos, '-' e '_' "
@@ -49,7 +51,7 @@ def validate_token(name: str, value: str) -> str:
 
 def validate_date(value: str) -> str:
     if not isinstance(value, str) or not ISO_DATE.match(value):
-        raise PartitionError(f"data invalida: {value!r}. Formato esperado: YYYY-MM-DD.")
+        raise PartitionError(f"invalid date: {value!r}. Expected format: YYYY-MM-DD.")
     return value
 
 
@@ -60,7 +62,7 @@ def partition_path(root: str, ingestion_date: str, warehouse: str) -> str:
 
 
 def catalog_path(partition: str, category_id) -> str:
-    """Caminho do arquivo de uma categoria, com o id validado como token seguro."""
+    """Path of a category's file, with the id validated as a safe token."""
     validate_token("category_id", str(category_id))
     return os.path.join(partition, CATALOG_DIR, f"category_id={category_id}.json")
 
@@ -78,70 +80,70 @@ def success_path(partition: str) -> str:
 
 
 def read_manifest(partition: str) -> dict | None:
-    """Le o manifesto da particao. None se nao existir; erro se estiver corrompido."""
+    """Reads the partition manifest. None if it does not exist; error if it is corrupt."""
     path = manifest_path(partition)
     if not os.path.exists(path):
         return None
     payload, _ = read_json(path)
     if not isinstance(payload, dict):
-        raise CorruptFileError(f"{path}: manifesto nao e um objeto JSON")
+        raise CorruptFileError(f"{path}: manifest is not a JSON object")
     return payload
 
 
 def assert_writable(partition: str, lang: str, overwrite: bool) -> dict | None:
-    """Valida a reabertura de uma particao existente. Retorna o manifesto anterior.
+    """Validates reopening an existing partition. Returns the previous manifest.
 
-    Impede usos que o contrato proibe e que antes passavam silenciosamente:
-      - reescrever uma particao ja completa sem pedir explicitamente;
-      - misturar idiomas na mesma particao, reaproveitando arquivos de outro 'lang';
-      - reabrir uma particao cujo manifesto esta ilegivel, como se fosse nova;
-      - ignorar o marcador _SUCCESS quando o manifesto foi removido.
+    Prevents uses the contract forbids and that used to pass silently:
+      - rewriting an already complete partition without asking explicitly;
+      - mixing languages in the same partition, reusing files from another 'lang';
+      - reopening a partition whose manifest is unreadable, as if it were new;
+      - ignoring the _SUCCESS marker when the manifest was removed.
     """
     try:
         previous = read_manifest(partition)
     except CorruptFileError as exc:
         if not overwrite:
             raise PartitionError(
-                f"manifesto anterior ilegivel ({exc}). Use --overwrite para reescrever a "
-                f"particao do zero, ou extraia para outra ingestion_date."
+                f"previous manifest unreadable ({exc}). Use --overwrite to rewrite the "
+                f"partition from scratch, or extract into another ingestion_date."
             ) from exc
         previous = None
 
     if previous is not None and not isinstance(previous.get("files"), list):
         if not overwrite:
             raise PartitionError(
-                "manifesto anterior sem a lista 'files'. Use --overwrite para reescrever "
-                "a particao do zero."
+                "previous manifest has no 'files' list. Use --overwrite to rewrite "
+                "the partition from scratch."
             )
         previous = None
 
     if previous is None:
-        # Sem manifesto legivel, o marcador _SUCCESS ainda testemunha uma particao
-        # completa: sem esta checagem, apagar o manifesto contornaria a imutabilidade.
+        # Without a readable manifest, the _SUCCESS marker still attests a complete
+        # partition: without this check, deleting the manifest would bypass immutability.
         if os.path.exists(success_path(partition)) and not overwrite:
             raise PartitionError(
-                "particao marcada como completa por _SUCCESS, mas sem manifesto legivel. "
-                "Use --overwrite para reescreve-la deliberadamente."
+                "partition marked complete by _SUCCESS, but has no readable manifest. "
+                "Use --overwrite to rewrite it deliberately."
             )
         return None
 
     previous_lang = (previous.get("source") or {}).get("lang")
     if previous_lang is not None and previous_lang != lang and not overwrite:
         raise PartitionError(
-            f"particao gravada com lang={previous_lang!r} e pedido lang={lang!r}. "
-            f"'lang' e fixo por particao: use outra particao ou --overwrite."
+            f"partition written with lang={previous_lang!r} and requested lang={lang!r}. "
+            f"'lang' is fixed per partition: use another partition or --overwrite."
         )
 
     if previous.get("complete") and not overwrite:
         raise PartitionError(
-            "particao ja esta completa e e imutavel. Use --overwrite para reescreve-la "
-            "deliberadamente, ou extraia para outra ingestion_date."
+            "partition is already complete and is immutable. Use --overwrite to rewrite it "
+            "deliberately, or extract into another ingestion_date."
         )
     return previous
 
 
 def build_history(previous: dict | None) -> list[dict]:
-    """Historico de execucoes, para que a proveniencia sobreviva a reexecucoes."""
+    """Run history, so that provenance survives re-runs."""
     if previous is None:
         return []
     history = list(previous.get("history") or [])
@@ -168,10 +170,10 @@ def write_manifest(partition: str, manifest: dict) -> tuple[str, int]:
 
 
 def mark_success(partition: str, complete: bool, run_id: str) -> None:
-    """Cria _SUCCESS quando a particao esta completa; remove quando nao esta.
+    """Creates _SUCCESS when the partition is complete; removes it when it is not.
 
-    Convencao de data lake: o consumidor pode decidir se le a particao olhando um unico
-    arquivo, sem parsear o manifesto.
+    Data lake convention: the consumer can decide whether to read the partition by looking
+    at a single file, without parsing the manifest.
     """
     path = success_path(partition)
     if complete:

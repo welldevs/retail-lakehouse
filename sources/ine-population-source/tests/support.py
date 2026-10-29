@@ -1,7 +1,7 @@
-"""Apoio da suite: cliente HTTP falso e construtores de payload.
+"""Suite support: fake HTTP client and payload builders.
 
-Nenhum teste toca a rede. O FakeFetcher responde de um dicionario em memoria e conta
-requisicoes, para que a suite exercite exatamente o mesmo codigo de extracao.
+No test touches the network. FakeFetcher answers from an in-memory dictionary and counts
+requests, so the suite exercises exactly the same extraction code.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import argparse
 
 
 class FakeFetcher:
-    """Substituto de http_client.Fetcher, alimentado por respostas em memoria."""
+    """Stand-in for http_client.Fetcher, fed by in-memory responses."""
 
     responses: dict = {}
     errors: dict = {}
@@ -39,7 +39,7 @@ class FakeFetcher:
 
 
 def make_fetcher_factory(responses: dict, errors: dict | None = None):
-    """Devolve uma fabrica de FakeFetcher e a lista de instancias criadas."""
+    """Return a FakeFetcher factory and the list of instances it created."""
     created: list[FakeFetcher] = []
 
     def factory(delay, timeout, max_retries, log, base_url="fake://"):
@@ -53,7 +53,7 @@ def make_fetcher_factory(responses: dict, errors: dict | None = None):
 
 
 def series(cod: str, nombre: str, *points) -> dict:
-    """Uma serie Tempus3: cada ponto e (ano, valor)."""
+    """A Tempus3 series: each data point is (year, value)."""
     return {
         "COD": cod,
         "Nombre": nombre,
@@ -64,7 +64,7 @@ def series(cod: str, nombre: str, *points) -> dict:
 
 
 def table_payload(*series_list) -> list:
-    """Resposta de /DATOS_TABLA/<table_id>: uma lista de series."""
+    """Response of /DATOS_TABLA/<table_id>: a list of series."""
     return list(series_list)
 
 

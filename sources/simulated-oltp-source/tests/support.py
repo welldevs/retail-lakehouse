@@ -1,17 +1,19 @@
-"""Referencia sintetica minima, com os casos-limite que a suite precisa provar.
+"""Minimal synthetic reference, with the edge cases the suite needs to prove.
 
-A fixture nao imita o volume do dado real (216 mil tramos), imita a FORMA e todos os
-casos que a regra de numeracao e a coerencia geografica tem de tratar:
+The fixture does not mimic the volume of the real data (216 thousand tramos), it mimics the
+SHAPE and every case the numbering rule and geographic coherence must handle:
 
-  * `numbering_type='0'`  -> a via nao tem numeracao real, nunca pode sair numero;
-  * faixa `0..0` com `numbering_type='2'` -> existe no dado real (14 tramos) e daria
-    numero de casa 0 se o codigo so filtrasse por numbering_type;
-  * faixa sem numero da paridade declarada (pares entre 3 e 3) -> tambem sem numero;
-  * pseudovia -> tramo que nao pendura em rua nomeada;
-  * dois warehouses com municipios disjuntos -> prova que nenhum cliente cruza a AUF;
-  * um municipio com peso 0,9 e outro com 0,1 -> prova que o peso e respeitado;
-  * um municipio com varios candidatos de mesmo peso -> prova que a escolha do TRAMO e
-    uniforme, e nao ponderada por populacao (que nao existe nessa granularidade).
+  * `numbering_type='0'`  -> the street has no real numbering, a number must never come out;
+  * range `0..0` with `numbering_type='2'` -> exists in the real data (14 tramos) and would
+    give house number 0 if the code only filtered by numbering_type;
+  * range without any number of the declared parity (even between 3 and 3) -> no number either;
+  * pseudo-street -> tramo that does not hang off a named street;
+  * two warehouses with disjoint municipalities -> proves no customer crosses the FUA;
+  * one municipality with weight 0.9 and another with 0.1 -> proves the weight is respected;
+  * one municipality with several equally weighted candidates -> proves the TRAMO choice is
+    uniform, not weighted by population (which does not exist at that granularity).
+
+The street/neighborhood strings below (e.g. "RUA UM") are opaque fixture values, kept as-is.
 """
 
 from __future__ import annotations
@@ -22,9 +24,9 @@ import os
 WH_A = "wha"
 WH_B = "whb"
 
-# Indices sao a identidade do candidato (candidate_index): a ordem desta lista importa.
+# Indexes are the candidate identity (candidate_index): the order of this list matters.
 CANDIDATES = [
-    # 0..2: wha / provincia 01 / municipio 001 — tres tramos, para testar uniformidade
+    # 0..2: wha / province 01 / municipality 001 — three tramos, to test uniformity
     {
         "wh": WH_A, "province_code": "01", "municipality_code": "001",
         "municipality_name_callejero": "ALFA", "neighborhood_name": None,
@@ -43,7 +45,7 @@ CANDIDATES = [
         "street_name": "PARQUE DA PSEUDOVIA", "is_pseudo_address": True,
         "postal_code": "01003", "numbering_type": "0", "number_from": 0, "number_to": 0,
     },
-    # 3..5: wha / provincia 01 / municipio 002 — so casos sem numero possivel
+    # 3..5: wha / province 01 / municipality 002 — only cases where no number is possible
     {
         "wh": WH_A, "province_code": "01", "municipality_code": "002",
         "municipality_name_callejero": "BETA", "neighborhood_name": None,
@@ -62,7 +64,7 @@ CANDIDATES = [
         "street_name": "RUA IMPAR UNICA", "is_pseudo_address": False,
         "postal_code": "01012", "numbering_type": "1", "number_from": 3, "number_to": 3,
     },
-    # 6: whb / provincia 02 / municipio 010 — outro warehouse, outra provincia
+    # 6: whb / province 02 / municipality 010 — another warehouse, another province
     {
         "wh": WH_B, "province_code": "02", "municipality_code": "010",
         "municipality_name_callejero": "GAMA", "neighborhood_name": None,
@@ -97,14 +99,15 @@ AGES = (
     + [{"province_code": "02", "age": age, "proportion": 0.5} for age in (40, 41)]
 )
 
-# A distribuicao entregue e a do CADASTRO: ja truncada e renormalizada pela plataforma. Todas
-# as idades da fixture estao acima do minimo de proposito — quem quiser exercitar a recusa
-# usa AGES_COM_MENOR abaixo, e ai a recusa e o comportamento em teste, nao um acidente.
+# The delivered distribution is the CUSTOMER BASE one: already truncated and renormalized by
+# the platform. Every fixture age is above the minimum on purpose — whoever wants to exercise
+# the refusal uses AGES_WITH_MINOR below, and then the refusal is the behavior under test,
+# not an accident.
 MIN_CUSTOMER_AGE = 18
-AGES_COM_MENOR = AGES + [{"province_code": "01", "age": 7, "proportion": 0.0}]
+AGES_WITH_MINOR = AGES + [{"province_code": "01", "age": 7, "proportion": 0.0}]
 
-# Alvos DIFERENTES entre si e diferentes do count padrao da fixture (50): so assim um teste
-# distingue "leu o alvo da referencia" de "usou o numero da linha de comando".
+# Targets DIFFERENT from each other and from the fixture's default count (50): only then can
+# a test tell "read the reference target" from "used the command-line number".
 CUSTOMER_TARGETS = {WH_A: 37, WH_B: 11}
 
 ALLOCATION = {
@@ -127,11 +130,11 @@ def write_reference(
     directory: str, candidates=None, weights=None, ages=None,
     allocation=..., min_customer_age=...,
 ) -> str:
-    """Escreve os tres arquivos de referencia. Devolve o diretorio.
+    """Write the three reference files. Returns the directory.
 
-    `allocation` e `min_customer_age` usam `...` como ausencia em vez de `None`: `None` e um
-    valor legitimo que os testes precisam poder injetar para provar que a Source recusa uma
-    referencia de schema antigo.
+    `allocation` and `min_customer_age` use `...` as absence instead of `None`: `None` is a
+    legitimate value the tests need to be able to inject to prove the Source rejects an
+    old-schema reference.
     """
     os.makedirs(directory, exist_ok=True)
     payloads = {
@@ -163,11 +166,11 @@ def write_reference(
         },
     }
     for payload in payloads.values():
-        # Chave AUSENTE e diferente de chave nula: e assim que uma referencia de schema antigo
-        # se parece, e e esse caso que a Source tem de recusar.
-        for chave in ("customer_allocation", "min_customer_age"):
-            if chave in payload and payload[chave] is None:
-                payload.pop(chave)
+        # An ABSENT key is different from a null key: that is what an old-schema reference
+        # looks like, and that is the case the Source must reject.
+        for key in ("customer_allocation", "min_customer_age"):
+            if key in payload and payload[key] is None:
+                payload.pop(key)
     for name, payload in payloads.items():
         with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
@@ -176,7 +179,7 @@ def write_reference(
 
 
 class Args:
-    """Namespace simples, para chamar os handlers sem passar pelo argparse."""
+    """Simple namespace, to call the handlers without going through argparse."""
 
     def __init__(self, **values):
         self.__dict__.update(values)

@@ -1,4 +1,4 @@
-"""Premissas: sem default, e faixa invertida reprova."""
+"""Premises: no default, and an inverted range fails."""
 
 from __future__ import annotations
 
@@ -9,40 +9,40 @@ from simulated_orders_source.premises import PremiseError, Premises
 from .support import PREMISES
 
 
-class PremissasTest(unittest.TestCase):
-    def test_tabela_valida_passa(self):
+class PremisesTest(unittest.TestCase):
+    def test_valid_table_passes(self):
         p = Premises(PREMISES)
         self.assertEqual(p.integer("basket_lines_mode"), 3)
         self.assertAlmostEqual(p.number("substitution_rate"), 0.2)
 
-    def test_chave_ausente_levanta_em_vez_de_devolver_default(self):
-        # E o ponto inteiro do modulo: um default escondido no gerador seria uma premissa
-        # nao declarada, e a tabela existe justamente para impedir isso.
+    def test_missing_key_raises_instead_of_returning_default(self):
+        # The whole point of the module: a default hidden in the generator would be an
+        # undeclared premise, and the table exists precisely to prevent that.
         p = Premises(PREMISES)
         with self.assertRaises(PremiseError) as caught:
-            p.number("taxa_que_ninguem_declarou")
+            p.number("rate_nobody_declared")
         self.assertIn("default", str(caught.exception))
 
-    def test_faixa_invertida_reprova_na_construcao(self):
-        ruim = dict(PREMISES, minutes_to_picking_min="240", minutes_to_picking_max="10")
+    def test_inverted_range_fails_on_construction(self):
+        bad = dict(PREMISES, minutes_to_picking_min="240", minutes_to_picking_max="10")
         with self.assertRaises(PremiseError) as caught:
-            Premises(ruim)
-        self.assertIn("invertida", str(caught.exception))
+            Premises(bad)
+        self.assertIn("inverted", str(caught.exception))
 
-    def test_proporcao_fora_de_zero_um_reprova(self):
-        for valor in ("1.5", "-0.1"):
+    def test_proportion_outside_zero_one_fails(self):
+        for value in ("1.5", "-0.1"):
             with self.assertRaises(PremiseError):
-                Premises(dict(PREMISES, substitution_rate=valor))
+                Premises(dict(PREMISES, substitution_rate=value))
 
-    def test_moda_fora_da_faixa_reprova(self):
+    def test_mode_outside_range_fails(self):
         with self.assertRaises(PremiseError):
             Premises(dict(PREMISES, basket_lines_mode="99"))
 
-    def test_valor_nao_numerico_reprova(self):
+    def test_non_numeric_value_fails(self):
         with self.assertRaises(PremiseError):
-            Premises(dict(PREMISES, quantity_max="tres"))
+            Premises(dict(PREMISES, quantity_max="three"))
 
-    def test_inteiro_exige_valor_inteiro(self):
+    def test_integer_requires_integer_value(self):
         with self.assertRaises(PremiseError):
             Premises(dict(PREMISES)).integer("substitution_rate")
 

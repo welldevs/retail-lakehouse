@@ -1,11 +1,11 @@
-"""Forma canonica dos arquivos do snapshot.
+"""Canonical form of the snapshot files.
 
-Todo arquivo do snapshot e gravado com a mesma serializacao deterministica, de modo que
-o SHA-256 do arquivo dependa apenas do conteudo do payload. Esta e a unica funcao que
-grava arquivos de dados no pacote.
+Every snapshot file is written with the same deterministic serialization, so that the
+file's SHA-256 depends only on the payload content. This is the only function that
+writes data files in the package.
 
-A gravacao e ATOMICA: escreve num temporario no mesmo diretorio e faz os.replace. Um
-processo interrompido no meio da escrita nunca deixa arquivo parcial no lugar final.
+The write is ATOMIC: it writes to a temporary file in the same directory and calls
+os.replace. A process interrupted mid-write never leaves a partial file in the final place.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import json
 import os
 import tempfile
 
-# Parametros da forma canonica. Qualquer reimplementacao que os altere produz outro
-# digest para o mesmo conteudo.
+# Canonical form parameters. Any reimplementation that changes them produces a different
+# digest for the same content.
 JSON_ENSURE_ASCII = False
 JSON_SORT_KEYS = True
 JSON_INDENT = 2
@@ -24,11 +24,11 @@ JSON_TRAILING_NEWLINE = "\n"
 
 
 class CorruptFileError(Exception):
-    """Arquivo existente em disco que nao pode ser lido como JSON UTF-8 valido."""
+    """Existing file on disk that cannot be read as valid UTF-8 JSON."""
 
 
 def canonical_bytes(payload) -> bytes:
-    """Serializa o payload na forma canonica do snapshot."""
+    """Serializes the payload in the snapshot's canonical form."""
     text = json.dumps(
         payload,
         ensure_ascii=JSON_ENSURE_ASCII,
@@ -43,7 +43,7 @@ def digest(blob: bytes) -> str:
 
 
 def write_json(path: str, payload) -> tuple[str, int]:
-    """Grava o payload atomicamente na forma canonica. Retorna (sha256, bytes)."""
+    """Writes the payload atomically in canonical form. Returns (sha256, bytes)."""
     blob = canonical_bytes(payload)
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
@@ -56,7 +56,7 @@ def write_json(path: str, payload) -> tuple[str, int]:
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
     except BaseException:
-        # Inclui KeyboardInterrupt: o temporario nunca vira arquivo final.
+        # Includes KeyboardInterrupt: the temporary file never becomes the final file.
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
@@ -64,7 +64,7 @@ def write_json(path: str, payload) -> tuple[str, int]:
 
 
 def read_json(path: str) -> tuple[object, bytes]:
-    """Le um arquivo do snapshot. Levanta CorruptFileError se nao for JSON UTF-8 valido."""
+    """Reads a snapshot file. Raises CorruptFileError if it is not valid UTF-8 JSON."""
     with open(path, "rb") as handle:
         blob = handle.read()
     try:

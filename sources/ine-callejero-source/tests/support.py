@@ -1,10 +1,10 @@
-"""Apoio da suite: diretorio de entrada com arquivos de amostra do Callejero.
+"""Suite support: input directory with sample Callejero files.
 
-Nenhum teste toca rede nem os 110 MB de arquivos reais (fora do repositorio, so em
-temp/ localmente). As larguras usadas aqui sao as MEDIDAS contra os arquivos reais (ver
-CONTRACT.md secao 2): SECC=10 chars, VIAS=132, PSEU=127, UP=604, TRAM=273 — o suficiente
-para exercitar intake/validate (que operam por linha e por nome de arquivo, nao por
-campo semantico) com dados estruturalmente equivalentes aos de producao.
+No test touches the network or the 110 MB of real files (outside the repository, only in
+temp/ locally). The widths used here are the ones MEASURED against the real files (see
+CONTRACT.md section 2): SECC=10 chars, VIAS=132, PSEU=127, UP=604, TRAM=273 — enough to
+exercise intake/validate (which work per line and per file name, not per semantic field)
+with data structurally equivalent to production.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ def pseu_line(province: str, municipio: str, pseudovia_id: str, name: str, date:
 
 def up_line(province: str, municipio: str, suffix: str, municipio_name: str) -> str:
     code = f"{province}{municipio}{suffix}"
-    # Layout real tem 604 chars com o nome do municipio a partir da coluna 94; um
-    # fixture nao precisa reproduzir todas as colunas redundantes, so a largura total.
+    # The real layout has 604 chars with the municipality name from column 94 on; a
+    # fixture does not need to reproduce every redundant column, only the total width.
     return _pad(code + "   20260630" + " " * 71 + municipio_name, 604) + "\r\n"
 
 
@@ -63,18 +63,18 @@ def tram_line(
     esn: str = "0001",
     date: str = "20260630",
 ) -> str:
-    """Linha de TRAM (tramo): secao + entidade/nucleo + via/pseudovia + CEP + faixa.
+    """TRAM (street segment) line: section + entity/nucleus + street/pseudo-street +
+    postal code + number range.
 
-    Offsets MEDIDOS contra os 4 arquivos reais e confirmados contra o Diseno de
-    Registro oficial do INE (CONTRACT.md secao 2): [0:10] secao (provincia+municipio+
-    distrito+seccao, igual a SECC) · [13:20] CUN (entity_suffix, igual a UP) · [20:25]
-    CVIA (via_id, igual a VIAS quando != 00000) · [25:30] CPSVIA (pseudovia_id, igual a
-    PSEU quando != 00000 — mutuamente exclusivo com CVIA) · [30:42] MANZ (manzana,
-    normalmente em branco) · [42:47] CPOS (codigo postal) · [47:48] TINUM (0=sem
-    numeracao,1=impar,2=par) · [48:52] EIN + [52:53] CEIN (extremo inferior de
-    numeracao + qualificador) · [53:57] ESN + [57:58] CESN (extremo superior +
-    qualificador) · [61:69] data de referencia. O resto do registro (ate 273 chars) nao
-    foi decodificado ainda — fica em branco aqui, igual so campos redundantes do UP.
+    Offsets MEASURED against the 4 real files and confirmed against INE's official Diseno
+    de Registro (CONTRACT.md section 2): [0:10] section (province+municipality+district+
+    section, same as SECC) · [13:20] CUN (entity_suffix, same as UP) · [20:25] CVIA
+    (via_id, same as VIAS when != 00000) · [25:30] CPSVIA (pseudovia_id, same as PSEU when
+    != 00000 — mutually exclusive with CVIA) · [30:42] MANZ (manzana, usually blank) ·
+    [42:47] CPOS (postal code) · [47:48] TINUM (0=no numbering, 1=odd, 2=even) · [48:52]
+    EIN + [52:53] CEIN (lower end of the number range + qualifier) · [53:57] ESN + [57:58]
+    CESN (upper end + qualifier) · [61:69] reference date. The rest of the record (up to
+    273 chars) has not been decoded yet — left blank here, like the redundant UP fields.
     """
     cpos = cpos if cpos is not None else f"{province}000"[:5].ljust(5, "0")
     head = (
@@ -91,16 +91,16 @@ def tram_line(
         + esn
         + " "
     )
-    assert len(head) == 58, f"tram_line: head deveria ter 58 chars, tem {len(head)}"
+    assert len(head) == 58, f"tram_line: head should have 58 chars, has {len(head)}"
     body = head + "   " + date
     return _pad(body, 273) + "\r\n"
 
 
 DEFAULT_LINES = {
     "SECC": lambda province, municipio: [secc_line(province, municipio)],
-    "UP": lambda province, municipio: [up_line(province, municipio, "0000000", "MUNICIPIO TESTE")],
-    "VIAS": lambda province, municipio: [vias_line(province, municipio, "00001", "RUA TESTE")],
-    "PSEU": lambda province, municipio: [pseu_line(province, municipio, "00001", "PSEUDOVIA TESTE")],
+    "UP": lambda province, municipio: [up_line(province, municipio, "0000000", "TEST MUNICIPALITY")],
+    "VIAS": lambda province, municipio: [vias_line(province, municipio, "00001", "TEST STREET")],
+    "PSEU": lambda province, municipio: [pseu_line(province, municipio, "00001", "TEST PSEUDOVIA")],
     "TRAM": lambda province, municipio: [tram_line(province, municipio, via_id="00001")],
 }
 
@@ -116,11 +116,11 @@ def write_callejero_file(
     lines: list[str] | None = None,
     subdir: str | None = None,
 ) -> str:
-    """Grava um arquivo de amostra do Callejero, com o nome oficial do dataset.
+    """Write a sample Callejero file with the dataset's official name.
 
-    `subdir` imita a estrutura aninhada dos downloads reais (call_pXX_.../call_pXX_.../)
-    quando fornecido; por padrao grava direto em `directory`, o que tambem e um caso
-    valido (intake varre recursivamente).
+    `subdir`, when given, mimics the nested layout of the real downloads
+    (call_pXX_.../call_pXX_.../); by default it writes straight into `directory`, which is
+    also a valid case (intake scans recursively).
     """
     filename = f"{dataset}.P{province}.D{date}.G{gen}"
     target_dir = os.path.join(directory, subdir) if subdir else directory
@@ -137,7 +137,7 @@ def build_input_dir(
     provinces: tuple[str, ...] = ("28",),
     datasets: tuple[str, ...] = ("SECC", "UP", "VIAS", "PSEU", "TRAM"),
 ) -> str:
-    """Monta um diretorio --in de amostra: um arquivo por (provincia, dataset)."""
+    """Build a sample --in directory: one file per (province, dataset)."""
     in_dir = os.path.join(root, "in")
     for province in provinces:
         subdir = f"call_p{province}_726/call_p{province}_072026"

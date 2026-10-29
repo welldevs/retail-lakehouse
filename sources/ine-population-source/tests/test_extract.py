@@ -1,4 +1,4 @@
-"""Extracao ponta a ponta, sem rede: cada gap fechado tem um teste que falha sem a correcao."""
+"""End-to-end extraction, no network: every closed gap has a test that fails without the fix."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class ExtractionHappyPathTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
 
-    def test_extracao_completa(self):
+    def test_complete_extraction(self):
         code, fetcher, _ = run_extract(self.root, tables=["31304", "9689"])
         self.assertEqual(code, 0)
         self.assertEqual(fetcher.requests, 2)
@@ -50,11 +50,11 @@ class ExtractionHappyPathTest(unittest.TestCase):
         self.assertEqual(manifest["history"], [])
         self.assertIn("sha256", manifest["schema_fingerprint"])
 
-    def test_marcador_success_criado_quando_completa(self):
+    def test_success_marker_created_when_complete(self):
         run_extract(self.root)
         self.assertTrue(os.path.exists(part.success_path(self.partition)))
 
-    def test_totais_batem_com_a_soma_dos_arquivos(self):
+    def test_totals_match_the_sum_of_the_files(self):
         run_extract(self.root, tables=["31304", "9689"])
         manifest = part.read_manifest(self.partition)
         self.assertEqual(
@@ -70,15 +70,15 @@ class ArgumentGuardTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
 
-    def test_lista_de_tables_vazia_e_recusada(self):
+    def test_empty_tables_list_is_rejected(self):
         code, fetcher, _ = run_extract(self.root, tables=[])
         self.assertEqual(code, 2)
         self.assertIsNone(fetcher)
 
-    def test_table_id_malicioso_e_recusado(self):
+    def test_malicious_table_id_is_rejected(self):
         self.assertEqual(run_extract(self.root, tables=["../../etc"])[0], 2)
 
-    def test_data_invalida_e_recusada(self):
+    def test_invalid_date_is_rejected(self):
         self.assertEqual(run_extract(self.root, date="15-08-2026")[0], 2)
 
 
@@ -92,7 +92,7 @@ class ResumeAndImmutabilityTest(unittest.TestCase):
             self.root, tables=["31304", "9689"], errors={"/ES/DATOS_TABLA/9689": "HTTP 500"}
         )
 
-    def test_falha_parcial_devolve_1_e_nao_marca_success(self):
+    def test_partial_failure_returns_1_and_does_not_mark_success(self):
         code, _, _ = self._partial()
         self.assertEqual(code, 1)
         manifest = part.read_manifest(self.partition)
@@ -100,31 +100,31 @@ class ResumeAndImmutabilityTest(unittest.TestCase):
         self.assertEqual(len(manifest["failures"]), 1)
         self.assertFalse(os.path.exists(part.success_path(self.partition)))
 
-    def test_reexecucao_retoma_reaproveitando_o_que_ja_existe(self):
+    def test_rerun_resumes_reusing_what_already_exists(self):
         self._partial()
         code, fetcher, _ = run_extract(self.root, tables=["31304", "9689"])
         self.assertEqual(code, 0)
-        # apenas a tabela que faltava; a ja gravada foi reaproveitada
+        # only the missing table; the one already written was reused
         self.assertEqual(fetcher.requests, 1)
         manifest = part.read_manifest(self.partition)
         self.assertTrue(manifest["complete"])
         self.assertEqual(manifest["totals"]["series_count"], 2)
 
-    def test_historico_preserva_a_execucao_anterior(self):
+    def test_history_preserves_the_previous_run(self):
         self._partial()
         run_extract(self.root, tables=["31304", "9689"])
         manifest = part.read_manifest(self.partition)
         self.assertEqual(len(manifest["history"]), 1)
         self.assertFalse(manifest["history"][0]["complete"])
 
-    def test_particao_completa_e_imutavel(self):
+    def test_complete_partition_is_immutable(self):
         run_extract(self.root)
         code, fetcher, output = run_extract(self.root)
         self.assertEqual(code, 2)
         self.assertIsNone(fetcher)
-        self.assertIn("imutavel", output)
+        self.assertIn("immutable", output)
 
-    def test_overwrite_reescreve_particao_completa(self):
+    def test_overwrite_rewrites_complete_partition(self):
         run_extract(self.root)
         code, fetcher, _ = run_extract(self.root, overwrite=True)
         self.assertEqual(code, 0)
@@ -138,61 +138,61 @@ class CorruptAndTamperedFilesTest(unittest.TestCase):
         run_extract(self.root, tables=["31304", "9689"], errors={"/ES/DATOS_TABLA/9689": "HTTP 500"})
         self.target = part.table_path(self.partition, 31304)
 
-    def test_arquivo_truncado_e_rebaixado_em_vez_de_derrubar_a_execucao(self):
+    def test_truncated_file_is_downloaded_again_instead_of_crashing_the_run(self):
         with open(self.target, "wb") as handle:
             handle.write(b'[{"COD": "A", "Nomb')
         code, fetcher, output = run_extract(self.root, tables=["31304", "9689"])
         self.assertEqual(code, 0)
-        self.assertIn("ilegivel", output)
+        self.assertIn("unreadable", output)
         self.assertIn("/ES/DATOS_TABLA/31304", fetcher.paths)
         self.assertEqual(part.read_manifest(self.partition)["totals"]["series_count"], 2)
 
-    def test_arquivo_vazio_e_rebaixado(self):
+    def test_empty_file_is_downloaded_again(self):
         open(self.target, "wb").close()
         self.assertEqual(run_extract(self.root, tables=["31304", "9689"])[0], 0)
 
-    def test_arquivo_valido_mas_com_outra_forma_e_rebaixado(self):
-        write_json(self.target, {"nao": "e uma lista"})
+    def test_valid_file_with_another_shape_is_downloaded_again(self):
+        write_json(self.target, {"not": "a list"})
         code, fetcher, _ = run_extract(self.root, tables=["31304", "9689"])
         self.assertEqual(code, 0)
         self.assertIn("/ES/DATOS_TABLA/31304", fetcher.paths)
 
-    def test_arquivo_adulterado_e_rebaixado_da_fonte_e_registrado_como_anomalia(self):
+    def test_tampered_file_is_downloaded_again_and_recorded_as_anomaly(self):
         payload, _ = read_json(self.target)
-        payload.append({"COD": "injetado", "Nombre": "x", "Data": [{"Anyo": 2020, "Valor": 1}]})
+        payload.append({"COD": "injected", "Nombre": "x", "Data": [{"Anyo": 2020, "Valor": 1}]})
         write_json(self.target, payload)
         code, fetcher, output = run_extract(self.root, tables=["31304", "9689"])
         self.assertEqual(code, 0)
-        self.assertIn("divergente do manifesto anterior", output)
+        self.assertIn("differs from the previous manifest", output)
         self.assertIn("/ES/DATOS_TABLA/31304", fetcher.paths)
-        restaurado, _ = read_json(self.target)
-        codigos = [s["COD"] for s in restaurado]
-        self.assertNotIn("injetado", codigos)
+        restored, _ = read_json(self.target)
+        codes = [s["COD"] for s in restored]
+        self.assertNotIn("injected", codes)
         manifest = part.read_manifest(self.partition)
         self.assertEqual(len(manifest["anomalies"]), 1)
         self.assertEqual(
             manifest["anomalies"][0]["kind"], "conteudo_divergente_do_manifesto_anterior"
         )
 
-    def test_adulteracao_nao_e_lavada_por_reexecucao(self):
+    def test_tampering_is_not_laundered_by_rerun(self):
         payload, _ = read_json(self.target)
-        payload.append({"COD": "injetado", "Nombre": "x", "Data": [{"Anyo": 2020, "Valor": 1}]})
+        payload.append({"COD": "injected", "Nombre": "x", "Data": [{"Anyo": 2020, "Valor": 1}]})
         write_json(self.target, payload)
         run_extract(self.root, tables=["31304", "9689"])
         run_extract(self.root, tables=["31304", "9689"], overwrite=True)
-        restaurado, _ = read_json(self.target)
-        codigos = [s["COD"] for s in restaurado]
-        self.assertNotIn("injetado", codigos)
+        restored, _ = read_json(self.target)
+        codes = [s["COD"] for s in restored]
+        self.assertNotIn("injected", codes)
 
 
 class PartitionWithoutManifestTest(unittest.TestCase):
-    """Sem manifesto anterior, as travas do contrato nao podem ficar desligadas."""
+    """Without a previous manifest, the contract locks cannot be switched off."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
 
-    def test_manifesto_preliminar_existe_antes_de_qualquer_tabela(self):
+    def test_preliminary_manifest_exists_before_any_table(self):
         responses = dict(RESPONSES)
         responses["/ES/DATOS_TABLA/31304"] = KeyboardInterrupt()
         factory, _ = make_fetcher_factory(responses)
@@ -200,35 +200,35 @@ class PartitionWithoutManifestTest(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 extract.run(extract_args(self.root), fetcher_factory=factory)
         manifest = part.read_manifest(self.partition)
-        self.assertIsNotNone(manifest, "interrupcao deixou a particao sem manifesto")
+        self.assertIsNotNone(manifest, "interruption left the partition without a manifest")
         self.assertFalse(manifest["complete"])
         self.assertFalse(os.path.exists(part.success_path(self.partition)))
 
-    def test_arquivo_fora_da_forma_canonica_e_rebaixado(self):
+    def test_file_not_in_canonical_form_is_downloaded_again(self):
         os.makedirs(os.path.join(self.partition, "tables"), exist_ok=True)
-        alvo = part.table_path(self.partition, 31304)
-        with open(alvo, "w", encoding="utf-8") as handle:
-            json.dump([{"COD": "falsificado", "Nombre": "x", "Data": []}], handle, indent=4)
+        target = part.table_path(self.partition, 31304)
+        with open(target, "w", encoding="utf-8") as handle:
+            json.dump([{"COD": "forged", "Nombre": "x", "Data": []}], handle, indent=4)
         code, fetcher, output = run_extract(self.root)
         self.assertEqual(code, 0)
-        self.assertIn("forma canonica", output)
+        self.assertIn("canonical form", output)
         self.assertIn("/ES/DATOS_TABLA/31304", fetcher.paths)
         manifest = part.read_manifest(self.partition)
         self.assertTrue(
             any(a["kind"] == "arquivo_nao_canonico" for a in manifest["anomalies"])
         )
-        entrada = next(f for f in manifest["files"] if f["path"].endswith("table_id=31304.json"))
-        with open(alvo, "rb") as handle:
-            self.assertEqual(entrada["sha256"], digest(handle.read()))
+        entry = next(f for f in manifest["files"] if f["path"].endswith("table_id=31304.json"))
+        with open(target, "rb") as handle:
+            self.assertEqual(entry["sha256"], digest(handle.read()))
 
-    def test_success_sem_manifesto_ainda_bloqueia_reescrita(self):
+    def test_success_without_manifest_still_blocks_rewrite(self):
         run_extract(self.root)
         os.unlink(part.manifest_path(self.partition))
         code, _, output = run_extract(self.root)
         self.assertEqual(code, 2)
         self.assertIn("_SUCCESS", output)
 
-    def test_success_sem_manifesto_cede_a_overwrite(self):
+    def test_success_without_manifest_yields_to_overwrite(self):
         run_extract(self.root)
         os.unlink(part.manifest_path(self.partition))
         self.assertEqual(run_extract(self.root, overwrite=True)[0], 0)
@@ -240,43 +240,43 @@ class CorruptPreviousManifestTest(unittest.TestCase):
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
         run_extract(self.root, tables=["31304", "9689"], errors={"/ES/DATOS_TABLA/9689": "HTTP 500"})
 
-    def _corromper(self, conteudo=b"{nao e json"):
+    def _corrupt(self, content=b"{not json"):
         with open(part.manifest_path(self.partition), "wb") as handle:
-            handle.write(conteudo)
+            handle.write(content)
 
-    def test_manifesto_ilegivel_falha_com_codigo_2_e_nao_3(self):
-        self._corromper()
+    def test_unreadable_manifest_fails_with_code_2_not_3(self):
+        self._corrupt()
         code, _, output = run_extract(self.root)
         self.assertEqual(code, 2)
-        self.assertIn("ilegivel", output)
+        self.assertIn("unreadable", output)
 
-    def test_manifesto_ilegivel_e_resgatado_por_overwrite(self):
-        self._corromper()
+    def test_unreadable_manifest_is_rescued_by_overwrite(self):
+        self._corrupt()
         self.assertEqual(run_extract(self.root, overwrite=True)[0], 0)
 
-    def test_manifesto_sem_lista_files_falha_com_codigo_2(self):
-        write_json(part.manifest_path(self.partition), {"files": "nao e lista"})
+    def test_manifest_without_files_list_fails_with_code_2(self):
+        write_json(part.manifest_path(self.partition), {"files": "not a list"})
         code, _, output = run_extract(self.root)
         self.assertEqual(code, 2)
         self.assertIn("files", output)
 
 
 class InventorySweepTest(unittest.TestCase):
-    """O manifesto precisa descrever a particao inteira, nao so o que a execucao tocou."""
+    """The manifest must describe the whole partition, not only what the run touched."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
 
-    def test_arquivo_de_table_id_removido_da_config_continua_declarado(self):
+    def test_file_of_table_id_removed_from_config_stays_declared(self):
         run_extract(self.root, tables=["31304", "9689"])
-        # a proxima execucao so pede 31304; o arquivo de 9689 continua em disco
+        # the next run only asks for 31304; the 9689 file stays on disk
         code, _, output = run_extract(self.root, tables=["31304"], overwrite=True)
         self.assertEqual(code, 0)
-        self.assertIn("[inventario]", output)
+        self.assertIn("[inventory]", output)
         manifest = part.read_manifest(self.partition)
-        declarados = {f["table_id"] for f in manifest["files"] if f["stage"] == "tables"}
-        self.assertIn("9689", declarados)
+        declared = {f["table_id"] for f in manifest["files"] if f["stage"] == "tables"}
+        self.assertIn("9689", declared)
         self.assertEqual(manifest["totals"]["series_count"], 2)
 
 
@@ -285,20 +285,21 @@ class SourceShapeChangeTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
 
-    def test_payload_que_nao_e_lista_vira_falha_registrada_nao_fatal(self):
-        """Ao contrario da arvore da Mercadona, uma tabela com forma inesperada nao e
-        fatal para a particao inteira: e so mais uma falha por table_id, reexecutavel."""
-        code, _, _ = run_extract(self.root, responses={"/ES/DATOS_TABLA/31304": {"nao": "lista"}})
+    def test_payload_that_is_not_a_list_becomes_recorded_non_fatal_failure(self):
+        """Unlike the Mercadona tree, a table with an unexpected shape is not fatal for the
+        whole partition: it is just one more per-table_id failure, re-runnable."""
+        code, _, _ = run_extract(self.root, responses={"/ES/DATOS_TABLA/31304": {"not": "list"}})
         self.assertEqual(code, 1)
         manifest = part.read_manifest(self.partition)
         self.assertEqual(len(manifest["failures"]), 1)
+        # The persisted SchemaError text is a contract literal (kept in Portuguese).
         self.assertIn("lista JSON", manifest["failures"][0]["error"])
 
-    def test_tabela_indisponivel_e_falha_registrada(self):
+    def test_unavailable_table_is_recorded_failure(self):
         code, _, _ = run_extract(self.root, errors={"/ES/DATOS_TABLA/31304": "HTTP 503"})
         self.assertEqual(code, 1)
 
-    def test_serie_sem_pontos_registra_zero_pontos_mas_conta_como_serie(self):
+    def test_series_without_points_records_zero_points_but_counts_as_series(self):
         responses = {"/ES/DATOS_TABLA/31304": [{"COD": "A", "Nombre": "x", "Data": []}]}
         code, _, _ = run_extract(self.root, responses=responses)
         self.assertEqual(code, 0)

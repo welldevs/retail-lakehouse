@@ -1,21 +1,22 @@
-"""Interface de linha de comando da Source.
+"""Command-line interface of the Source.
 
-    python -m simulated_oltp_source extract  --reference <dir> --wh <wh> [opcoes]
-    python -m simulated_oltp_source validate <particao> --reference <dir> [--strict]
+    python -m simulated_oltp_source extract  --reference <dir> --wh <wh> [options]
+    python -m simulated_oltp_source validate <partition> --reference <dir> [--strict]
 
-"extract" aqui NAO busca rede: le o arquivo de referencia que a plataforma pre-computou
-do Silver com `retail-platform export-oltp-reference` e gera os clientes a partir dele
-(CONTRACT.md secao 2). Mesmo espirito do `extract --in <dir>` do ine-callejero-source.
+"extract" here does NOT touch the network: it reads the reference file the platform
+precomputed from Silver with `retail-platform export-oltp-reference` and generates the
+customers from it (CONTRACT.md section 2). Same spirit as ine-callejero-source's
+`extract --in <dir>`.
 
-"validate" EXIGE --reference, diferente das outras tres sources: a garantia central desta
-Source — todo cliente mora num endereco real da AUF do seu warehouse — so pode ser
-reconferida relendo a mesma referencia que a geracao usou.
+"validate" REQUIRES --reference, unlike the other three sources: this Source's central
+guarantee — every customer lives at a real address in their warehouse's FUA — can only be
+re-checked by re-reading the same reference the generation used.
 
-Codigos de saida:
-    0  sucesso
-    1  validacao reprovada
-    2  falha fatal: nada foi gerado / particao inutilizavel
-    3  excecao nao tratada
+Exit codes:
+    0  success
+    1  validation failed
+    2  fatal failure: nothing was generated / partition unusable
+    3  unhandled exception
 """
 
 from __future__ import annotations
@@ -38,71 +39,71 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="simulated_oltp_source",
         description=(
-            "Source de OLTP simulado: clientes sinteticos com endereco e demografia "
-            "reais, derivados do Silver do Callejero e da populacao do INE."
+            "Simulated OLTP Source: synthetic customers with real address and "
+            "demographics, derived from the Callejero Silver and INE population."
         ),
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser(
-        "extract", help="gera os clientes de um warehouse a partir da referencia"
+        "extract", help="generate one warehouse's customers from the reference"
     )
     extract_parser.add_argument(
         "--reference",
         required=True,
-        help="diretorio da referencia (saida de `retail-platform export-oltp-reference`)",
+        help="reference directory (output of `retail-platform export-oltp-reference`)",
     )
     extract_parser.add_argument(
         "--wh",
         required=True,
-        help=f"armazem da particao, ex.: {'/'.join(DEFAULT_WAREHOUSES)}",
+        help=f"partition warehouse, e.g. {'/'.join(DEFAULT_WAREHOUSES)}",
     )
-    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="diretorio raiz do snapshot")
+    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="snapshot root directory")
     extract_parser.add_argument(
-        "--date", default=None, help="data da particao YYYY-MM-DD (padrao: hoje em UTC)"
+        "--date", default=None, help="partition date YYYY-MM-DD (default: today in UTC)"
     )
-    # SEM DEFAULT, e isso e a mudanca. Ate a Fase 5 o numero vinha da linha de comando e o
-    # Makefile passava 5.000 para os quatro armazens — o mesmo numero para AUFs que diferem
-    # por 4,6x em populacao. Omitir --count agora significa "use o alvo que a referencia
-    # derivou da populacao adulta daquele armazem", e a referencia REPROVA se nao tiver um.
-    # Um default aqui reintroduziria em silencio a base dimensionada por ninguem.
+    # NO DEFAULT, and that is the change. Up to Phase 5 the number came from the command line
+    # and the Makefile passed 5,000 for all four warehouses — the same number for FUAs that
+    # differ 4.6x in population. Omitting --count now means "use the target the reference
+    # derived from that warehouse's adult population", and the reference FAILS if it has none.
+    # A default here would silently reintroduce a customer base sized by nobody.
     extract_parser.add_argument(
         "--count",
         type=int,
         default=None,
-        help="clientes a gerar. Omitido, usa o alvo de customer_allocation da referencia "
-             "(populacao adulta do armazem x taxa de penetracao)",
+        help="customers to generate. If omitted, uses the reference's customer_allocation "
+             "target (warehouse adult population x penetration rate)",
     )
     extract_parser.add_argument(
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help="semente da geracao: a mesma seed reproduz exatamente a mesma saida",
+        help="generation seed: the same seed reproduces exactly the same output",
     )
     extract_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="reescreve uma particao existente, inclusive se estiver completa",
+        help="rewrite an existing partition, even if it is complete",
     )
     extract_parser.set_defaults(handler=extract_module.run)
 
     validate_parser = subparsers.add_parser(
-        "validate", help="valida uma particao ja extraida, inclusive a coerencia geografica"
+        "validate", help="validate an already extracted partition, including geographic coherence"
     )
     validate_parser.add_argument(
         "partition",
-        help="caminho da particao, ex.: data/oltp/ingestion_date=2026-08-27/wh=mad1",
+        help="partition path, e.g. data/oltp/ingestion_date=2026-08-27/wh=mad1",
     )
     validate_parser.add_argument(
         "--reference",
         required=True,
-        help="a mesma referencia usada na geracao: sem ela a coerencia nao e verificavel",
+        help="the same reference used for generation: without it coherence cannot be verified",
     )
     validate_parser.add_argument(
         "--strict",
         action="store_true",
-        help="tambem falha quando ha aviso de distribuicao",
+        help="also fail when there is a distribution warning",
     )
     validate_parser.set_defaults(handler=validate_module.run)
 
@@ -114,10 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except KeyboardInterrupt:
-        print("\ninterrompido pelo usuario", flush=True)
+        print("\ninterrupted by user", flush=True)
         return EXIT_UNHANDLED
-    except Exception as exc:  # nenhum traceback escapa com codigo ambiguo
-        print(f"ERRO NAO TRATADO: {type(exc).__name__}: {exc}", flush=True)
+    except Exception as exc:  # no traceback escapes with an ambiguous code
+        print(f"UNHANDLED ERROR: {type(exc).__name__}: {exc}", flush=True)
         return EXIT_UNHANDLED
 
 

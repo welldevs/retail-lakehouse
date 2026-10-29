@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "simulated-orders-source"
 version = "1.0.0"
-description = "Source de pedidos simulados: log de eventos com cliente, produto e preco reais"
+description = "Simulated orders Source: event log with real customer, product and price"
 readme = "README.md"
 requires-python = ">=3.12"
-# Sem dependencias de runtime: o pacote usa apenas a biblioteca padrao. Cliente, catalogo,
-# calendario de preco e premissas chegam como JSON plano, nunca por conexao ao Lakehouse.
-# O broker e o OLTP existem UM NIVEL ADIANTE, do lado da plataforma.
+# No runtime dependencies: the package uses only the standard library. Customer, catalog,
+# price calendar and premises arrive as flat JSON, never through a Lakehouse connection.
+# The broker and the OLTP exist ONE LEVEL FURTHER, on the platform side.
 dependencies = []
 
 [project.scripts]

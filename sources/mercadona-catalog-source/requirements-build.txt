@@ -1,10 +1,10 @@
-# Ferramentas de BUILD/EMPACOTAMENTO. Nao sao dependencias de runtime.
+# BUILD/PACKAGING tools. They are not runtime dependencies.
 #
-# Necessarias apenas para `pip install -e .` / `pip install .` / construir a wheel.
-# Um container que rode a Source via PYTHONPATH=src nao precisa de nada disto.
+# Needed only for `pip install -e .` / `pip install .` / building the wheel.
+# A container that runs the Source via PYTHONPATH=src needs none of this.
 #
-# Versoes congeladas do ambiente onde o pacote foi construido e validado
-# (venv/, Python 3.12.7), obtidas com `pip freeze`.
+# Versions frozen from the environment where the package was built and validated
+# (venv/, Python 3.12.7), obtained with `pip freeze`.
 
 packaging==26.3
 setuptools==84.0.0

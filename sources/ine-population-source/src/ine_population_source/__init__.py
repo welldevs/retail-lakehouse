@@ -1,11 +1,11 @@
 """INE Population Source.
 
-Source de dados de populacao: extrai series historicas de habitantes por provincia da
-API publica Tempus3 do INE (Instituto Nacional de Estadistica) e produz snapshots
-particionados, reproduziveis e validaveis.
+Population data Source: extracts historical series of inhabitants by province from the
+public Tempus3 API of the INE (Instituto Nacional de Estadistica) and produces partitioned,
+reproducible, verifiable snapshots.
 
-Este pacote e uma Source, nao uma plataforma de transformacao. Ver CONTRACT.md.
-Somente biblioteca padrao.
+This package is a Source, not a transformation platform. See CONTRACT.md.
+Standard library only.
 """
 
 from __future__ import annotations

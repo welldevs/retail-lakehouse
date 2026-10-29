@@ -1,156 +1,157 @@
-"""Sorteio ponderado do grupo de demanda.
+"""Weighted draw of the demand group.
 
-O QUE ESTE MODULO SABE, E O QUE ELE DELIBERADAMENTE NAO SABE
--------------------------------------------------------------
-Sabe: um peso por grupo, lido de `demand_profile.json`.
-NAO sabe: o que e o MAPA, o que e o mapeamento de categoria, o que e inclinacao de canal,
-nem por que um peso vale o que vale. Tudo isso e resolvido pela plataforma e chega aqui
-como numero. E a mesma fronteira que ja vale para preco e cliente — a Source e FROZEN
-(`dependencies = []`) e nao pode carregar regra de calibracao.
+WHAT THIS MODULE KNOWS, AND WHAT IT DELIBERATELY DOES NOT KNOW
+--------------------------------------------------------------
+It knows: one weight per group, read from `demand_profile.json`.
+It does NOT know: what MAPA is, what the category mapping is, what channel tilt is, nor why a
+weight is worth what it is. All of that is resolved by the platform and arrives here as a
+number. It is the same boundary that already holds for price and customer — the Source is
+FROZEN (`dependencies = []`) and cannot carry calibration rules.
 
-A CONSEQUENCIA PRATICA e que trocar a calibracao NAO exige tocar neste arquivo: edita-se o
-seed, reexporta-se a referencia, e o mesmo codigo sorteia diferente.
+THE PRACTICAL CONSEQUENCE is that changing the calibration does NOT require touching this file:
+edit the seed, re-export the reference, and the same code draws differently.
 
-DUAS PROPRIEDADES QUE ESTE MODULO PRECISA TER
-----------------------------------------------
-1. DETERMINISMO SOB PYTHONHASHSEED. A CDF e construida a partir de uma TUPLA ORDENADA de
-   chaves, nunca da iteracao de um `dict`. O hash de `str` em CPython e aleatorizado por
-   processo: uma CDF montada na ordem de iteracao de um dicionario faria a saida depender
-   da variavel de ambiente, e o defeito so apareceria entre maquinas.
-2. RENORMALIZACAO POR (ARMAZEM, DIA). Um grupo pode nao ter produto no catalogo de um
-   armazem num dia. O peso dele e redistribuido entre os presentes, na proporcao dos
-   respectivos pesos — e o subconjunto de grupos presentes tambem chega ordenado, pelo mesmo
-   motivo do item 1.
+TWO PROPERTIES THIS MODULE MUST HAVE
+------------------------------------
+1. DETERMINISM UNDER PYTHONHASHSEED. The CDF is built from a SORTED TUPLE of keys, never from
+   iterating a `dict`. CPython's `str` hash is randomized per process: a CDF built in a
+   dictionary's iteration order would make the output depend on the environment variable, and
+   the defect would only show up across machines.
+2. RENORMALIZATION PER (WAREHOUSE, DAY). A group may have no product in a warehouse's catalog
+   on a given day. Its weight is redistributed among those present, in proportion to their
+   weights — and the subset of present groups also arrives sorted, for the same reason as
+   item 1.
 
-A COORTE, e o que continua nao morando aqui
---------------------------------------------
-A partir de `mapa_2025_v2` o perfil traz um vetor de pesos POR COORTE, e nao um so. A
-coorte e (faixa etaria, comunidade autonoma), e este modulo sabe apenas:
+THE COHORT, and what still does not live here
+---------------------------------------------
+Starting with `mapa_2025_v2` the profile carries one weight vector PER COHORT, not a single
+one. The cohort is (age band, autonomous community), and this module only knows:
 
-  * quais sao as faixas e onde ficam os seus limites superiores;
-  * qual comunidade corresponde a cada armazem;
-  * que peso cada grupo tem dentro de cada coorte.
+  * which bands exist and where their upper bounds are;
+  * which community corresponds to each warehouse;
+  * what weight each group has within each cohort.
 
-Continua NAO sabendo o que e um indice de afinidade, o que e IPF, nem por que a faixa de
-65 anos compra mais azeite. Tudo isso e resolvido pela plataforma e chega como numero — a
-mesma fronteira que ja valia para preco, cliente e calibracao agregada.
+It still does NOT know what an affinity index is, what IPF is, nor why the 65+ band buys more
+olive oil. All of that is resolved by the platform and arrives as a number — the same boundary
+that already held for price, customer and aggregate calibration.
 
-A CONSEQUENCIA E A MESMA DE ANTES: trocar a propensao nao exige tocar neste arquivo.
+THE CONSEQUENCE IS THE SAME AS BEFORE: changing the propensity does not require touching this
+file.
 """
 
 from __future__ import annotations
 
 
 class DemandError(Exception):
-    """Perfil de demanda ausente, incompleto ou incoerente."""
+    """Missing, incomplete or inconsistent demand profile."""
 
 
 class DemandModel:
-    """Pesos por grupo, prontos para sorteio."""
+    """Weights per group, ready for drawing."""
 
     def __init__(self, payload: dict):
         if not isinstance(payload, dict):
-            raise DemandError("demand_profile.json: raiz nao e um objeto JSON")
+            raise DemandError("demand_profile.json: root is not a JSON object")
 
         self.version = payload.get("demand_model_version")
         if not self.version:
             raise DemandError(
-                "demand_profile.json sem `demand_model_version`. A versao viaja para o "
-                "manifesto e e o que distingue dois dias gerados por modelos diferentes."
+                "demand_profile.json has no `demand_model_version`. The version travels to the "
+                "manifest and is what tells apart two days generated by different models."
             )
         self.benchmark = payload.get("benchmark")
         self.seeds_sha256 = dict(payload.get("seeds_sha256") or {})
         self.blocks = dict(payload.get("blocks") or {})
         self.seasonality_applies_to = payload.get("seasonality_applies_to")
 
-        grupos = payload.get("groups")
-        if not isinstance(grupos, list) or not grupos:
-            raise DemandError("demand_profile.json: sem a lista 'groups' ou lista vazia")
+        groups = payload.get("groups")
+        if not isinstance(groups, list) or not groups:
+            raise DemandError("demand_profile.json: missing 'groups' list or empty list")
 
-        pesos: dict[str, float] = {}
-        for position, row in enumerate(grupos):
+        weights: dict[str, float] = {}
+        for position, row in enumerate(groups):
             if not isinstance(row, dict):
-                raise DemandError(f"demand_profile.json: grupo {position} nao e um objeto")
+                raise DemandError(f"demand_profile.json: group {position} is not an object")
             key = row.get("demand_group")
             if not key:
-                raise DemandError(f"demand_profile.json: grupo {position} sem demand_group")
-            if key in pesos:
-                raise DemandError(f"demand_profile.json: grupo repetido {key!r}")
+                raise DemandError(f"demand_profile.json: group {position} has no demand_group")
+            if key in weights:
+                raise DemandError(f"demand_profile.json: duplicate group {key!r}")
             try:
-                peso = float(row["line_weight"])
+                weight = float(row["line_weight"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise DemandError(
-                    f"demand_profile.json: line_weight ausente ou nao numerico em {key!r}"
+                    f"demand_profile.json: line_weight missing or non-numeric in {key!r}"
                 ) from exc
-            if peso < 0:
-                raise DemandError(f"demand_profile.json: line_weight negativo em {key!r}")
-            pesos[key] = peso
+            if weight < 0:
+                raise DemandError(f"demand_profile.json: negative line_weight in {key!r}")
+            weights[key] = weight
 
-        total = sum(pesos.values())
-        # Tolerancia larga porque os pesos viajam como texto decimal e sao relidos como
-        # float; estreita o suficiente para pegar um perfil truncado, que e o defeito real.
+        total = sum(weights.values())
+        # Loose tolerance because weights travel as decimal text and are re-read as float;
+        # tight enough to catch a truncated profile, which is the real defect.
         if abs(total - 1.0) > 1e-6:
             raise DemandError(
-                f"demand_profile.json: os pesos somam {total!r}, e nao 1. Perfil truncado "
-                f"produziria mix plausivel e nunca falharia sozinho."
+                f"demand_profile.json: weights sum to {total!r}, not 1. A truncated profile "
+                f"would produce a plausible mix and would never fail on its own."
             )
 
-        self.weights = pesos
-        # Tupla ORDENADA: e ela que fixa a ordem de qualquer CDF derivada daqui.
-        self.groups = tuple(sorted(pesos))
+        self.weights = weights
+        # SORTED tuple: it fixes the order of any CDF derived from here.
+        self.groups = tuple(sorted(weights))
 
-        sazonal = payload.get("seasonality") or {}
+        seasonal = payload.get("seasonality") or {}
         self.seasonality: dict[int, float] = {}
-        for mes, fator in sazonal.items():
+        for month, factor in seasonal.items():
             try:
-                self.seasonality[int(mes)] = float(fator)
+                self.seasonality[int(month)] = float(factor)
             except (TypeError, ValueError) as exc:
                 raise DemandError(
-                    f"demand_profile.json: fator sazonal invalido em {mes!r}"
+                    f"demand_profile.json: invalid seasonal factor at {month!r}"
                 ) from exc
         if self.seasonality and sorted(self.seasonality) != list(range(1, 13)):
             raise DemandError(
-                f"demand_profile.json: perfil sazonal precisa dos 12 meses; veio "
+                f"demand_profile.json: seasonal profile needs all 12 months; got "
                 f"{sorted(self.seasonality)}"
             )
 
         self._load_cohorts(payload.get("cohorts"))
 
-    # -- coortes ----------------------------------------------------------------------
+    # -- cohorts ----------------------------------------------------------------------
 
     def _load_cohorts(self, cohorts) -> None:
-        """Faixas, comunidades e um vetor de pesos por coorte.
+        """Bands, communities and one weight vector per cohort.
 
-        RECUSA UM PERFIL SEM A SECAO. Nao ha fallback para "usa o peso agregado": um perfil
-        que promete propensao por coorte no cabecalho e nao a entrega seria um no-op
-        silencioso, e o mix resultante continuaria plausivel. E a mesma regra que ja vale
-        para um grupo sem peso.
+        REFUSES A PROFILE WITHOUT THE SECTION. There is no fallback to "use the aggregate
+        weight": a profile that promises per-cohort propensity in its header and does not
+        deliver it would be a silent no-op, and the resulting mix would still look plausible.
+        It is the same rule that already holds for a group without a weight.
         """
         if not isinstance(cohorts, dict):
             raise DemandError(
-                "demand_profile.json sem a secao `cohorts`. Nao existe perfil sem coorte: "
-                "um vetor unico carimbado com uma versao que promete propensao por cliente "
-                "produziria mix plausivel e nunca falharia sozinho."
+                "demand_profile.json has no `cohorts` section. There is no profile without "
+                "cohorts: a single vector stamped with a version that promises per-customer "
+                "propensity would produce a plausible mix and would never fail on its own."
             )
 
-        bandas = cohorts.get("age_bands")
-        if not isinstance(bandas, list) or not bandas:
-            raise DemandError("demand_profile.json: `cohorts.age_bands` ausente ou vazio")
-        # Ordenadas pelo TETO, com o aberto por ultimo. A ordem do JSON nao e confiavel como
-        # semantica: `band_of` percorre esta tupla e devolve a primeira que cabe.
-        faixas = []
-        for row in bandas:
-            teto = row.get("max_age")
-            faixas.append((row["key"], None if teto is None else int(teto)))
-        abertas = [f for f in faixas if f[1] is None]
-        if len(abertas) != 1:
+        raw_bands = cohorts.get("age_bands")
+        if not isinstance(raw_bands, list) or not raw_bands:
+            raise DemandError("demand_profile.json: `cohorts.age_bands` missing or empty")
+        # Sorted by CEILING, with the open one last. JSON order is not reliable as semantics:
+        # `band_of` walks this tuple and returns the first one that fits.
+        bands = []
+        for row in raw_bands:
+            ceiling = row.get("max_age")
+            bands.append((row["key"], None if ceiling is None else int(ceiling)))
+        open_bands = [f for f in bands if f[1] is None]
+        if len(open_bands) != 1:
             raise DemandError(
-                f"demand_profile.json: as faixas precisam de exatamente uma aberta no topo "
-                f"(max_age nulo); vieram {len(abertas)}"
+                f"demand_profile.json: bands need exactly one open band at the top "
+                f"(null max_age); got {len(open_bands)}"
             )
         self.age_bands = tuple(
-            sorted((f for f in faixas if f[1] is not None), key=lambda f: f[1])
-        ) + tuple(abertas)
+            sorted((f for f in bands if f[1] is not None), key=lambda f: f[1])
+        ) + tuple(open_bands)
 
         self.regions = {}
         self.warehouse_region = {}
@@ -159,138 +160,138 @@ class DemandModel:
             self.regions[code] = float(row["frequency_index"])
             for wh in row.get("warehouses") or []:
                 if wh in self.warehouse_region:
-                    raise DemandError(f"armazem {wh!r} em duas comunidades no perfil")
+                    raise DemandError(f"warehouse {wh!r} in two communities in the profile")
                 self.warehouse_region[wh] = code
         if not self.regions:
-            raise DemandError("demand_profile.json: `cohorts.regions` vazio")
+            raise DemandError("demand_profile.json: `cohorts.regions` empty")
 
-        pesos: dict[str, dict] = {}
-        for vetor in cohorts.get("weights") or []:
-            chave = vetor.get("cohort")
-            if not chave:
-                raise DemandError("demand_profile.json: vetor de coorte sem `cohort`")
-            if chave in pesos:
-                raise DemandError(f"demand_profile.json: coorte repetida {chave!r}")
-            linha = {}
-            for item in vetor.get("groups") or []:
-                linha[item["demand_group"]] = float(item["line_weight"])
-            total = sum(linha.values())
+        weights: dict[str, dict] = {}
+        for vector in cohorts.get("weights") or []:
+            key = vector.get("cohort")
+            if not key:
+                raise DemandError("demand_profile.json: cohort vector without `cohort`")
+            if key in weights:
+                raise DemandError(f"demand_profile.json: duplicate cohort {key!r}")
+            vector_weights = {}
+            for item in vector.get("groups") or []:
+                vector_weights[item["demand_group"]] = float(item["line_weight"])
+            total = sum(vector_weights.values())
             if abs(total - 1.0) > 1e-6:
                 raise DemandError(
-                    f"demand_profile.json: os pesos da coorte {chave!r} somam {total!r}, "
-                    f"e nao 1"
+                    f"demand_profile.json: weights of cohort {key!r} sum to {total!r}, "
+                    f"not 1"
                 )
-            pesos[chave] = linha
-        if not pesos:
-            raise DemandError("demand_profile.json: `cohorts.weights` vazio")
-        self.cohort_weights = pesos
-        # Tupla ORDENADA, pelo mesmo motivo de `groups`: e ela que fixa qualquer ordem
-        # derivada, e iterar o dicionario faria a saida depender de PYTHONHASHSEED.
-        self.cohorts = tuple(sorted(pesos))
+            weights[key] = vector_weights
+        if not weights:
+            raise DemandError("demand_profile.json: `cohorts.weights` empty")
+        self.cohort_weights = weights
+        # SORTED tuple, for the same reason as `groups`: it fixes any derived order, and
+        # iterating the dictionary would make the output depend on PYTHONHASHSEED.
+        self.cohorts = tuple(sorted(weights))
 
     def band_of(self, age: int) -> str:
-        """A faixa etaria de uma idade EM ANOS COMPLETOS no dia do pedido."""
-        for nome, teto in self.age_bands:
-            if teto is None or age <= teto:
-                return nome
-        raise DemandError(f"idade {age!r} nao cai em nenhuma faixa do perfil")
+        """The age band of an age IN COMPLETED YEARS on the order day."""
+        for name, ceiling in self.age_bands:
+            if ceiling is None or age <= ceiling:
+                return name
+        raise DemandError(f"age {age!r} does not fall in any band of the profile")
 
     def region_of(self, wh: str) -> str:
         if wh not in self.warehouse_region:
             raise DemandError(
-                f"o armazem {wh!r} nao tem comunidade no perfil {self.version!r}. Sem "
-                f"comunidade nao ha coorte, e nao existe regiao padrao."
+                f"warehouse {wh!r} has no community in profile {self.version!r}. Without a "
+                f"community there is no cohort, and there is no default region."
             )
         return self.warehouse_region[wh]
 
     def cohort_of(self, wh: str, age: int) -> str:
-        """A chave da coorte de um cliente. Mesmo formato que a plataforma escreveu."""
-        chave = f"{self.band_of(age)}|{self.region_of(wh)}"
-        if chave not in self.cohort_weights:
+        """A customer's cohort key. Same format the platform wrote."""
+        key = f"{self.band_of(age)}|{self.region_of(wh)}"
+        if key not in self.cohort_weights:
             raise DemandError(
-                f"a coorte {chave!r} nao tem vetor de pesos no perfil {self.version!r}"
+                f"cohort {key!r} has no weight vector in profile {self.version!r}"
             )
-        return chave
+        return key
 
     def frequency_index(self, wh: str) -> float:
-        """Fator sobre QUANTOS clientes daquele armazem pedem no dia, nunca sobre a cesta.
+        """Factor on HOW MANY customers of that warehouse order on the day, never on the basket.
 
-        O informe mede consumo per capita por comunidade e nao publica frequencia de compra
-        domestica; a escolha de manifestar a intensidade como frequencia e premissa
-        declarada da plataforma, e chega aqui ja renormalizada sobre as comunidades
-        servidas — a soma ponderada e 1, entao o total de pedidos nao se move.
+        The report measures per-capita consumption by community and does not publish household
+        purchase frequency; the choice to express intensity as frequency is a declared premise
+        of the platform, and it arrives here already renormalized over the communities served
+        — the weighted sum is 1, so the total number of orders does not move.
         """
         return self.regions[self.region_of(wh)]
 
-    # -- consultas ------------------------------------------------------------------
+    # -- queries --------------------------------------------------------------------
 
     def weight_of(self, group: str, cohort: str | None = None) -> float:
-        """Peso de um grupo. Sem coorte, o AGREGADO; com coorte, a condicional.
+        """A group's weight. Without a cohort, the AGGREGATE; with a cohort, the conditional.
 
-        O agregado continua acessivel de proposito: e contra ele que se verifica que a
-        camada de coorte nao deslocou a calibracao da versao anterior.
+        The aggregate stays accessible on purpose: it is against it that one verifies the
+        cohort layer did not shift the previous version's calibration.
         """
-        tabela = self.weights if cohort is None else self.cohort_weights.get(cohort)
-        if tabela is None:
+        table = self.weights if cohort is None else self.cohort_weights.get(cohort)
+        if table is None:
             raise DemandError(
-                f"coorte {cohort!r} nao existe no perfil {self.version!r}"
+                f"cohort {cohort!r} does not exist in profile {self.version!r}"
             )
-        if group not in tabela:
+        if group not in table:
             raise DemandError(
-                f"grupo {group!r} nao tem peso no perfil {self.version!r}"
-                + (f" para a coorte {cohort!r}" if cohort else "")
-                + ". Nao existe peso padrao: um grupo sem peso e uma premissa de demanda "
-                "nao declarada."
+                f"group {group!r} has no weight in profile {self.version!r}"
+                + (f" for cohort {cohort!r}" if cohort else "")
+                + ". There is no default weight: a group without a weight is an undeclared "
+                "demand premise."
             )
-        return tabela[group]
+        return table[group]
 
     def seasonal_factor(self, month: int) -> float:
-        """Fator sobre a TAXA DE PEDIDOS do mes, nunca sobre o mix.
+        """Factor on the month's ORDER RATE, never on the mix.
 
-        A distincao vem da evidencia disponivel: o informe do MAPA publica gasto mensal do
-        total da alimentacao e NAO publica perfil mensal por categoria. Um fator global
-        sobre o mix se normalizaria e nao faria nada; sobre a taxa de pedidos ele faz
-        exatamente o que a evidencia sustenta — e nada mais.
+        The distinction comes from the available evidence: the MAPA report publishes monthly
+        spending for total food and does NOT publish a monthly profile per category. A global
+        factor on the mix would normalize away and do nothing; on the order rate it does
+        exactly what the evidence supports — and nothing more.
         """
         if not self.seasonality:
             return 1.0
         try:
             return self.seasonality[int(month)]
         except KeyError as exc:
-            raise DemandError(f"perfil sazonal sem o mes {month!r}") from exc
+            raise DemandError(f"seasonal profile has no month {month!r}") from exc
 
     def cumulative(self, available: tuple, cohort: str | None = None) -> tuple:
-        """CDF sobre o subconjunto presente, renormalizada. Ordem fixa pela chave.
+        """CDF over the present subset, renormalized. Order fixed by key.
 
-        `available` chega como tupla ordenada e sai na mesma ordem; nenhum `set` e iterado
-        no caminho. Devolve os limites acumulados, alinhados a `available`.
+        `available` arrives as a sorted tuple and leaves in the same order; no `set` is
+        iterated along the way. Returns the cumulative bounds, aligned with `available`.
         """
         if not available:
-            raise DemandError("nenhum grupo disponivel para sorteio")
-        pesos = [self.weight_of(g, cohort) for g in available]
-        total = sum(pesos)
+            raise DemandError("no group available to draw from")
+        weights = [self.weight_of(g, cohort) for g in available]
+        total = sum(weights)
         if total <= 0:
             raise DemandError(
-                f"os {len(available)} grupo(s) disponiveis somam peso zero: "
-                f"{available[:5]}. Sortear entre eles seria escolher ao acaso sem modelo."
+                f"the {len(available)} available group(s) have zero weight in total: "
+                f"{available[:5]}. Drawing among them would be choosing at random with no model."
             )
-        acumulado, corrente = [], 0.0
-        for peso in pesos:
-            corrente += peso / total
-            acumulado.append(corrente)
-        return tuple(acumulado)
+        cumulative, running = [], 0.0
+        for weight in weights:
+            running += weight / total
+            cumulative.append(running)
+        return tuple(cumulative)
 
     def pick(self, rng, available: tuple, cumulative: tuple) -> str:
-        """Um grupo, sorteado pela CDF. `rng.random()` uma unica vez por chamada.
+        """One group, drawn from the CDF. `rng.random()` exactly once per call.
 
-        Uma so extracao por linha mantem o consumo do gerador de aleatorios previsivel: a
-        reprodutibilidade por seed depende de QUANTAS vezes o rng e chamado, nao apenas de
-        com que seed ele comecou.
+        A single draw per line keeps the random generator's consumption predictable: per-seed
+        reproducibility depends on HOW MANY times the rng is called, not only on which seed it
+        started with.
         """
-        sorteio = rng.random()
-        for posicao, limite in enumerate(cumulative):
-            if sorteio <= limite:
-                return available[posicao]
+        draw = rng.random()
+        for position, bound in enumerate(cumulative):
+            if draw <= bound:
+                return available[position]
         return available[-1]
 
 

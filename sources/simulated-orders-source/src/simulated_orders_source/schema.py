@@ -1,20 +1,20 @@
-"""Forma dos eventos, impressao digital de schema e totais reconferiveis.
+"""Event shape, schema fingerprint and re-checkable totals.
 
-A IMPRESSAO DIGITAL E DO CONTRATO DECLARADO, NAO DO QUE POR ACASO SAIU
------------------------------------------------------------------------
-Nas outras quatro sources a impressao digital e a UNIAO das chaves observadas. Aqui isso
-seria um defeito, e a Fase 1 ja tinha registrado o motivo em outra forma ("uma chave opcional
-faria a impressao digital da particao depender da seed"): nem todo tipo de evento aparece em
-todo dia — um dia sem nenhuma devolucao nao teria `order_returned` no conjunto observado, e a
-impressao digital de duas particoes corretas divergiria por sorteio.
+THE FINGERPRINT IS OF THE DECLARED CONTRACT, NOT OF WHATEVER HAPPENED TO COME OUT
+---------------------------------------------------------------------------------
+In the other four sources the fingerprint is the UNION of the observed keys. Here that would
+be a defect, and Phase 1 had already recorded why in another form ("an optional key would make
+the partition fingerprint depend on the seed"): not every event type appears every day — a day
+with no returns would have no `order_returned` in the observed set, and the fingerprint of two
+correct partitions would diverge by chance.
 
-Entao a impressao digital cobre o VOCABULARIO INTEIRO, estatico: os campos do envelope mais
-os campos declarados do payload de cada um dos 12 tipos. Ela muda quando o CODIGO muda, que e
-exatamente o que ela existe para detectar. O que de fato saiu naquele dia fica em
-`totals.event_rows_by_type`, onde variar e legitimo.
+So the fingerprint covers the WHOLE vocabulary, statically: the envelope fields plus the
+declared payload fields of each of the 12 types. It changes when the CODE changes, which is
+exactly what it exists to detect. What actually came out on that day lives in
+`totals.event_rows_by_type`, where variation is legitimate.
 
-`missing_fields` faz o caminho inverso: confere o observado contra o declarado. Os dois juntos
-pegam as duas direcoes do desvio.
+`missing_fields` goes the other way: it checks the observed against the declared. Together the
+two catch drift in both directions.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ from .events import (
     fold,
 )
 
-# Campos declarados do payload de cada tipo. Dois tipos tem payload vazio de proposito: o
-# instante e a transicao SAO a informacao, e um campo inventado ali seria ruido.
+# Declared payload fields of each type. Two types have an empty payload on purpose: the
+# instant and the transition ARE the information, and an invented field there would be noise.
 PAYLOAD_FIELDS = {
     ORDER_PLACED: (
         "customer_id",
@@ -89,18 +89,18 @@ LINE_FIELDS = (
 
 
 def events_of(payload: object) -> list:
-    """Eventos de um log. Lista vazia para qualquer forma inesperada."""
+    """Events of a log. Empty list for any unexpected shape."""
     if not isinstance(payload, list):
         return []
     return [row for row in payload if isinstance(row, dict)]
 
 
 def fingerprint() -> dict:
-    """Impressao digital do vocabulario declarado. Nao depende da seed nem do dia."""
+    """Fingerprint of the declared vocabulary. Depends on neither seed nor day."""
     declared = {
         "envelope_keys": sorted(ENVELOPE_FIELDS),
         "line_keys": sorted(LINE_FIELDS),
-        "payload_keys": {tipo: sorted(PAYLOAD_FIELDS[tipo]) for tipo in sorted(EVENT_TYPES)},
+        "payload_keys": {kind: sorted(PAYLOAD_FIELDS[kind]) for kind in sorted(EVENT_TYPES)},
     }
     blob = json.dumps(declared, ensure_ascii=False, sort_keys=True).encode("utf-8")
     declared["sha256"] = hashlib.sha256(blob).hexdigest()
@@ -108,16 +108,16 @@ def fingerprint() -> dict:
 
 
 def missing_fields(events) -> list[str]:
-    """Campos declarados e ausentes em algum evento, agregados (nao um erro por linha)."""
+    """Declared fields missing from some event, aggregated (not one error per line)."""
     absent: set = set()
     for event in events:
         absent.update(f"envelope.{f}" for f in ENVELOPE_FIELDS if f not in event)
-        tipo = event.get("event_type")
+        kind = event.get("event_type")
         payload = event.get("payload")
-        if tipo not in PAYLOAD_FIELDS or not isinstance(payload, dict):
+        if kind not in PAYLOAD_FIELDS or not isinstance(payload, dict):
             continue
-        absent.update(f"{tipo}.{f}" for f in PAYLOAD_FIELDS[tipo] if f not in payload)
-        if tipo == ORDER_PLACED:
+        absent.update(f"{kind}.{f}" for f in PAYLOAD_FIELDS[kind] if f not in payload)
+        if kind == ORDER_PLACED:
             for line in payload.get("lines") or []:
                 if isinstance(line, dict):
                     absent.update(f"line.{f}" for f in LINE_FIELDS if f not in line)
@@ -125,10 +125,10 @@ def missing_fields(events) -> list[str]:
 
 
 def group_by_order(events) -> dict:
-    """Eventos por pedido, cada lista em ordem de sequence_no.
+    """Events per order, each list in sequence_no order.
 
-    `dict` de saida e consultado e ordenado pelo chamador, nunca iterado para produzir
-    conteudo — a ordem de insercao aqui vem do log, que ja e deterministica.
+    The output `dict` is looked up and sorted by the caller, never iterated to produce
+    content — insertion order here comes from the log, which is already deterministic.
     """
     grouped: dict[str, list] = {}
     for event in events:
@@ -139,19 +139,19 @@ def group_by_order(events) -> dict:
 
 
 def totals_of(events) -> dict:
-    """Totais do log, derivados do FOLD e nao de um estado gravado ao lado.
+    """Log totals, derived from the FOLD and not from a state written alongside.
 
-    E isto que o manifesto declara e que o teste dbt reconfere contra o Silver. Os valores
-    monetarios existem em duas versoes de proposito: `gross_amount` e o que foi COLOCADO e
-    `net_amount` e o que foi SEPARADO. Que os dois difiram e a prova de que o fold e
-    nao-trivial — se fossem sempre iguais, o log seria um carimbo de data.
+    This is what the manifest declares and what the dbt test re-checks against Silver. The
+    monetary values exist in two versions on purpose: `gross_amount` is what was PLACED and
+    `net_amount` is what was PICKED. That the two differ is the proof that the fold is
+    non-trivial — if they were always equal, the log would be a date stamp.
     """
     grouped = group_by_order(events)
-    by_type: dict[str, int] = {tipo: 0 for tipo in EVENT_TYPES}
+    by_type: dict[str, int] = {kind: 0 for kind in EVENT_TYPES}
     for event in events:
-        tipo = event.get("event_type")
-        if tipo in by_type:
-            by_type[tipo] += 1
+        kind = event.get("event_type")
+        if kind in by_type:
+            by_type[kind] += 1
 
     by_state: dict[str, int] = {}
     gross = Decimal("0")
@@ -161,12 +161,12 @@ def totals_of(events) -> dict:
     carried_forward_orders = 0
 
     for order_id in sorted(grouped):
-        do_pedido = grouped[order_id]
-        # strict=False: contar nao pode explodir num log adulterado. Ver events.fold.
-        estado = fold(do_pedido, strict=False)
-        by_state[estado] = by_state.get(estado, 0) + 1
+        order_events = grouped[order_id]
+        # strict=False: counting must not blow up on a tampered log. See events.fold.
+        state = fold(order_events, strict=False)
+        by_state[state] = by_state.get(state, 0) + 1
 
-        placed = do_pedido[0].get("payload") or {}
+        placed = order_events[0].get("payload") or {}
         gross += Decimal(str(placed.get("gross_amount", "0")))
         line_rows += len(placed.get("lines") or [])
         if placed.get("customer_id") is not None:
@@ -174,7 +174,7 @@ def totals_of(events) -> dict:
         if placed.get("price_source") not in (None, "observed"):
             carried_forward_orders += 1
 
-        for event in do_pedido:
+        for event in order_events:
             if event.get("event_type") == ORDER_PICKED:
                 net += Decimal(str((event.get("payload") or {}).get("picked_amount", "0")))
 

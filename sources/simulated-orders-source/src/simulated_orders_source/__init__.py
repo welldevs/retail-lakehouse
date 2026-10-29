@@ -1,24 +1,24 @@
-"""Simulated Orders Source — pedidos sinteticos como LOG DE EVENTOS.
+"""Simulated Orders Source — synthetic orders as an EVENT LOG.
 
-Quinta source do repo, e a segunda DERIVADA: consome o Silver que as outras produziram e
-devolve uma RAW nova. A regra de ouro da Fase 1 vale igual, deslocada um nivel:
+Fifth source in the repo, and the second DERIVED one: it consumes the Silver the others
+produced and returns a new RAW. Phase 1's golden rule still holds, shifted one level:
 
-    o PEDIDO e inventado; quem compra, o que se compra, quanto custa e onde mora nao.
+    the ORDER is invented; who buys, what is bought, what it costs and where they live are not.
 
-Cliente vem de `silver_customer`, produto e preco vem de `silver_product_price` do MESMO
-armazem na MESMA data. Nenhum produto, preco ou cliente e fabricado aqui.
+The customer comes from `silver_customer`; product and price come from `silver_product_price`
+of the SAME warehouse on the SAME date. No product, price or customer is fabricated here.
 
-O QUE ESTA SOURCE ENTREGA E UM LOG, NAO UMA FOTOGRAFIA
-------------------------------------------------------
-A particao contem `order_events.jsonl` e mais nada. NAO existe `orders.json` com o estado
-dobrado ao lado, de proposito: duas representacoes da mesma verdade divergem. O estado do
-pedido e o FOLD dos seus eventos, e o fold mora no Silver.
+WHAT THIS SOURCE DELIVERS IS A LOG, NOT A SNAPSHOT
+--------------------------------------------------
+The partition contains `order_events.jsonl` and nothing else. There is deliberately NO
+`orders.json` with the folded state next to it: two representations of the same truth drift
+apart. An order's state is the FOLD of its events, and the fold lives in Silver.
 
-O fold e nao-trivial por construcao: substituicao e remocao de linha alteram a cesta DEPOIS
-da colocacao, entao o valor final do pedido nao e derivavel do evento `order_placed`. Se ele
-fosse, o log seria um carimbo de data e o modelo de eventos seria enfeite.
+The fold is non-trivial by construction: line substitution and removal change the basket AFTER
+placement, so the order's final value cannot be derived from the `order_placed` event. If it
+could, the log would be a date stamp and the event model would be decoration.
 
-Somente biblioteca padrao. Ver CONTRACT.md.
+Standard library only. See CONTRACT.md.
 """
 
 from __future__ import annotations

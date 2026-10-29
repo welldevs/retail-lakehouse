@@ -1,56 +1,55 @@
-"""Gera o log de eventos de um (armazem, dia).
+"""Generates the event log of one (warehouse, day).
 
-A REGRA DE OURO
+THE GOLDEN RULE
 ---------------
-Zero aleatoriedade em cliente, produto e preco. O PEDIDO e inventado; quem compra, o que se
-compra e quanto custa vem da referencia, que veio do Silver, que veio do RAW. Nenhum produto,
-preco, cliente ou CEP e fabricado aqui.
+Zero randomness in customer, product and price. The ORDER is invented; who buys, what is
+bought and what it costs come from the reference, which came from Silver, which came from RAW.
+No product, price, customer or postal code is fabricated here.
 
-O QUE E SORTEADO, E O QUE ISSO SIGNIFICA
------------------------------------------
-    dia + armazem -> sub-seed proprio
-                  -> quantos clientes pedem hoje (taxa x sazonal x indice regional)
-                  -> quais clientes pedem hoje (UNIFORME, sem reposicao, entre os elegiveis)
-                  -> qual COORTE cada um deles e (faixa etaria x comunidade autonoma)
-                  -> quantas linhas tem a cesta (triangular declarada)
-                  -> qual GRUPO DE DEMANDA (ponderado pelo perfil DAQUELA COORTE)
-                  -> qual produto DENTRO do grupo (UNIFORME)
-                  -> quantidade por linha (decrescente, derivada de quantity_max)
-                  -> horario, janela de entrega e marcos (faixas declaradas)
-                  -> quais linhas sao substituidas ou removidas (taxas declaradas)
-                  -> qual ramo terminal o pedido segue (taxas declaradas)
+WHAT IS DRAWN, AND WHAT THAT MEANS
+----------------------------------
+    day + warehouse -> its own sub-seed
+                    -> how many customers order today (rate x seasonal x regional index)
+                    -> which customers order today (UNIFORM, without replacement, among eligible)
+                    -> which COHORT each of them is (age band x autonomous community)
+                    -> how many lines the basket has (declared triangular)
+                    -> which DEMAND GROUP (weighted by THAT COHORT's profile)
+                    -> which product WITHIN the group (UNIFORM)
+                    -> quantity per line (decreasing, derived from quantity_max)
+                    -> time, delivery slot and milestones (declared ranges)
+                    -> which lines are substituted or removed (declared rates)
+                    -> which terminal branch the order follows (declared rates)
 
-A ESCOLHA DO PRODUTO DENTRO DO GRUPO CONTINUA UNIFORME, de proposito: nenhuma fonte deste
-repo mede giro por SKU, e ponderar produto inventaria uma distribuicao que ninguem mediu — a
-mesma proibicao que a Fase 1 aplicou a escolha do tramo ("nao existe populacao por rua nem
-por tramo em nenhuma fonte que esta plataforma ingere").
+THE CHOICE OF PRODUCT WITHIN THE GROUP STAYS UNIFORM, on purpose: no source in this repo
+measures per-SKU turnover, and weighting products would invent a distribution nobody measured
+— the same prohibition Phase 1 applied to choosing the street segment ("there is no population
+per street or per segment in any source this platform ingests").
 
-O QUE MUDOU NA FASE 4 e o nivel acima. Antes, o produto era sorteado uniformemente sobre o
-CATALOGO INTEIRO, e a consequencia declarada era que o mix por categoria espelhava o TAMANHO
-DO SORTIMENTO. Agora existe uma ancora observacional que nao existia: o Informe del Consumo
-Alimentario en España 2025 do MAPA. O grupo de demanda e sorteado com peso calibrado contra
-o volume domestico espanhol, inclinado pela participacao do e-commerce; o produto dentro do
-grupo continua uniforme.
+WHAT CHANGED IN PHASE 4 is the level above. Before, the product was drawn uniformly over the
+WHOLE CATALOG, and the declared consequence was that the category mix mirrored the SIZE OF THE
+ASSORTMENT. Now there is an observational anchor that did not exist: MAPA's Informe del Consumo
+Alimentario en España 2025. The demand group is drawn with a weight calibrated against Spanish
+household volume, tilted by the e-commerce share; the product within the group stays uniform.
 
-A FRONTEIRA, que importa mais que a calibracao: o MAPA mede consumo domestico do residente.
-NAO mede pedido de loja online, nem cesta, nem cadencia de compra. Por isso `daily_order_rate`,
-`basket_lines_*` e `quantity_max` continuam premissas `synthetic` sem calibracao nenhuma, e
-o terco nao alimentar do catalogo — que o informe nao cobre — recebe share declarado.
+THE BOUNDARY, which matters more than the calibration: MAPA measures residents' household
+consumption. It does NOT measure online-store orders, baskets or purchase cadence. That is why
+`daily_order_rate`, `basket_lines_*` and `quantity_max` remain `synthetic` premises with no
+calibration at all, and the non-food third of the catalog — which the report does not cover —
+gets a declared share.
 
-REPRODUTIBILIDADE: SUB-SEED POR (ARMAZEM, DIA)
------------------------------------------------
-Cada `(wh, order_date)` deriva a propria `random.Random` de
-`sha256(seed|wh|order_date)`. Consequencia — e este e o analogo da "propriedade de prefixo"
-da Fase 1, num eixo diferente:
+REPRODUCIBILITY: SUB-SEED PER (WAREHOUSE, DAY)
+----------------------------------------------
+Each `(wh, order_date)` derives its own `random.Random` from `sha256(seed|wh|order_date)`.
+Consequence — and this is the analogue of Phase 1's "prefix property", on a different axis:
 
-    ACRESCENTAR UM DIA A JANELA E ADITIVO. As particoes ja geradas ficam byte a byte
-    identicas, porque nenhum dia depende do sorteio de outro.
+    ADDING A DAY TO THE WINDOW IS ADDITIVE. Already generated partitions stay byte-for-byte
+    identical, because no day depends on another day's draw.
 
-`hashlib.sha256` e usado, e nao `hash()`, porque o hash de `str` em CPython e aleatorizado por
-processo: derivar a sub-seed dele faria a saida depender de PYTHONHASHSEED.
+`hashlib.sha256` is used, not `hash()`, because CPython's `str` hash is randomized per
+process: deriving the sub-seed from it would make the output depend on PYTHONHASHSEED.
 
-SEM RELOGIO. Todo `occurred_at` deriva da data da particao mais offsets declarados. Nenhuma
-chamada a `datetime.now()` neste modulo.
+NO CLOCK. Every `occurred_at` derives from the partition date plus declared offsets. No call
+to `datetime.now()` in this module.
 """
 
 from __future__ import annotations
@@ -90,13 +89,13 @@ CENTS = Decimal("0.01")
 
 
 class GenerationError(Exception):
-    """A referencia nao sustenta a geracao pedida."""
+    """The reference does not support the requested generation."""
 
 
 def day_seed(seed: int, wh: str, order_date: str) -> int:
-    """Sub-seed deterministica de um (armazem, dia).
+    """Deterministic sub-seed of one (warehouse, day).
 
-    sha256, e nao `hash()`: o hash de str em CPython e aleatorizado por processo.
+    sha256, not `hash()`: CPython's str hash is randomized per process.
     """
     blob = f"{seed}|{wh}|{order_date}".encode("utf-8")
     return int.from_bytes(hashlib.sha256(blob).digest()[:8], "big")
@@ -111,35 +110,35 @@ def _stamp(moment: datetime) -> str:
 
 
 def _sample_indices(rng: random.Random, population: int, wanted: int) -> list[int]:
-    """`wanted` indices distintos de range(population), na ordem em que sairam.
+    """`wanted` distinct indices from range(population), in the order they came out.
 
-    Escrito a mao em vez de `rng.sample`: o algoritmo interno de `sample` nao e parte do
-    contrato da stdlib e pode mudar entre versoes do Python, o que quebraria a
-    reprodutibilidade entre a maquina local e o container. `randrange` e estavel.
+    Hand-written instead of `rng.sample`: the internal algorithm of `sample` is not part of
+    the stdlib contract and may change between Python versions, which would break
+    reproducibility between the local machine and the container. `randrange` is stable.
 
-    O `set` aqui e so consultado, nunca iterado — a ordem da saida vem da sequencia de
-    sorteios, entao PYTHONHASHSEED nao a alcanca.
+    The `set` here is only looked up, never iterated — output order comes from the sequence
+    of draws, so PYTHONHASHSEED cannot reach it.
     """
     if wanted > population:
         raise GenerationError(
-            f"pedidos {wanted} indices distintos de uma populacao de {population}"
+            f"requested {wanted} distinct indices from a population of {population}"
         )
-    escolhidos: list[int] = []
-    vistos: set = set()
-    while len(escolhidos) < wanted:
+    chosen: list[int] = []
+    seen: set = set()
+    while len(chosen) < wanted:
         candidate = rng.randrange(population)
-        if candidate in vistos:
+        if candidate in seen:
             continue
-        vistos.add(candidate)
-        escolhidos.append(candidate)
-    return escolhidos
+        seen.add(candidate)
+        chosen.append(candidate)
+    return chosen
 
 
 def _quantity_weights(quantity_max: int) -> list[float]:
-    """Pesos decrescentes para 1..quantity_max, derivados da propria premissa.
+    """Decreasing weights for 1..quantity_max, derived from the premise itself.
 
-    w(k) = 1/2^(k-1): comprar uma unidade domina, e cada unidade a mais e metade tao provavel.
-    Derivar da premissa em vez de tabelar evita uma segunda premissa nao declarada.
+    w(k) = 1/2^(k-1): buying one unit dominates, and each extra unit is half as likely.
+    Deriving from the premise instead of tabulating avoids a second, undeclared premise.
     """
     raw = [1.0 / (2 ** (k - 1)) for k in range(quantity_max)]
     total = sum(raw)
@@ -163,26 +162,26 @@ def _order_id(wh: str, order_date: str, index: int) -> str:
 
 
 def _basket(rng, reference, premises, wh, price_as_of, cohort):
-    """Monta a cesta: linhas com produto real, preco real, quantidade sorteada.
+    """Build the basket: lines with real product, real price, drawn quantity.
 
-    DOIS PASSOS, e a separacao entre eles e o que esta fase inteira introduziu:
+    TWO STEPS, and the separation between them is what this whole phase introduced:
 
-        1. GRUPO DE DEMANDA, ponderado pelo perfil calibrado contra o MAPA — e, desde
-           `mapa_2025_v2`, pelo perfil DA COORTE do cliente que esta pedindo.
-        2. PRODUTO DENTRO DO GRUPO, uniforme.
+        1. DEMAND GROUP, weighted by the profile calibrated against MAPA — and, since
+           `mapa_2025_v2`, by the profile OF THE COHORT of the customer placing the order.
+        2. PRODUCT WITHIN THE GROUP, uniform.
 
-    O passo 2 continua uniforme de proposito: nenhuma fonte deste repo mede giro por SKU, e
-    ponderar produto inventaria uma distribuicao que ninguem mediu. O que mudou foi so o
-    passo 1 — antes, o produto era sorteado uniformemente sobre o CATALOGO INTEIRO, e o mix
-    por categoria espelhava o TAMANHO DO SORTIMENTO. Um catalogo tem 475 SKUs de cuidado
-    facial e 162 de fruta e verdura; um domicilio nao compra nessa proporcao.
+    Step 2 stays uniform on purpose: no source in this repo measures per-SKU turnover, and
+    weighting products would invent a distribution nobody measured. Only step 1 changed —
+    before, the product was drawn uniformly over the WHOLE CATALOG, and the category mix
+    mirrored the SIZE OF THE ASSORTMENT. A catalog has 475 facial-care SKUs and 162 fruit and
+    vegetable ones; a household does not buy in that proportion.
 
-    PRECO NAO ENTRA EM NENHUM DOS DOIS SORTEIOS. Ele so aparece depois, copiado da
-    referencia. Uma categoria cara pode ter volume baixo e receita alta, e isso e resultado
-    do modelo, nao defeito: no MAPA, mariscos sao 0,81% do volume e 2,88% do valor.
+    PRICE TAKES NO PART IN EITHER DRAW. It only appears afterwards, copied from the
+    reference. An expensive category can have low volume and high revenue, and that is a
+    result of the model, not a defect: in MAPA, shellfish are 0.81% of volume and 2.88% of value.
     """
     catalog = reference.catalog_of(wh, price_as_of)
-    grupos = reference.demand_groups_of(wh, price_as_of)
+    groups = reference.demand_groups_of(wh, price_as_of)
     cumulative = reference.demand_cdf_of(wh, price_as_of, cohort)
 
     low = premises.integer("basket_lines_min")
@@ -195,26 +194,26 @@ def _basket(rng, reference, premises, wh, price_as_of, cohort):
 
     quantity_cumulative = _quantity_weights(premises.integer("quantity_max"))
 
-    # SEM REPOSICAO, como antes: um produto aparece no maximo uma vez na cesta. A diferenca
-    # e que agora a exclusao pode esgotar um GRUPO pequeno (MIEL tem 5 produtos). Quando
-    # isso acontece o sorteio do grupo e refeito — e a tentativa gasta consumiu uma extracao
-    # do rng, o que mantem a sequencia deterministica em vez de "pular" silenciosamente.
-    # O teto de tentativas existe para que um perfil patologico falhe rapido em vez de
-    # travar; nunca foi atingido na janela medida.
+    # WITHOUT REPLACEMENT, as before: a product appears at most once in the basket. The
+    # difference is that exclusion can now exhaust a small GROUP (MIEL has 5 products). When
+    # that happens the group draw is redone — and the wasted attempt consumed one rng draw,
+    # which keeps the sequence deterministic instead of silently "skipping".
+    # The attempt ceiling exists so that a pathological profile fails fast instead of
+    # hanging; it was never reached in the measured window.
     positions: list[int] = []
     taken: set = set()
-    tentativas = 0
-    teto = max(wanted * 8, 32)
-    while len(positions) < wanted and tentativas < teto:
-        tentativas += 1
-        grupo = reference.demand.pick(rng, grupos, cumulative)
-        candidatos = reference.positions_in_demand_group(wh, price_as_of, grupo)
-        livres = [p for p in candidatos if p not in taken]
-        if not livres:
+    attempts = 0
+    ceiling = max(wanted * 8, 32)
+    while len(positions) < wanted and attempts < ceiling:
+        attempts += 1
+        group = reference.demand.pick(rng, groups, cumulative)
+        candidates = reference.positions_in_demand_group(wh, price_as_of, group)
+        free = [p for p in candidates if p not in taken]
+        if not free:
             continue
-        escolhido = livres[rng.randrange(len(livres))]
-        taken.add(escolhido)
-        positions.append(escolhido)
+        picked = free[rng.randrange(len(free))]
+        taken.add(picked)
+        positions.append(picked)
 
     lines = []
     for line_no, position in enumerate(positions, start=1):
@@ -237,35 +236,35 @@ def _basket(rng, reference, premises, wh, price_as_of, cohort):
 
 
 def _substitute_for(rng, reference, wh, price_as_of, line, taken: set) -> dict | None:
-    """Produto de troca, do MESMO armazem e da MESMA data.
+    """Replacement product, from the SAME warehouse and the SAME date.
 
-    Preferencia pelo mesmo subgrupo, depois pela mesma categoria. Se nenhum dos dois tiver
-    candidato livre, NAO ha substituicao e nenhum evento e emitido — a linha segue cumprida.
+    Prefers the same subgroup, then the same category. If neither has a free candidate,
+    there is NO substitution and no event is emitted — the line stays fulfilled.
 
-    Consequencia declarada: a taxa efetiva de substituicao fica ligeiramente abaixo de
-    `substitution_rate` em subgrupos pequenos. Inventar um substituto fora do sortimento
-    daquele armazem seria pior: seria inventar sortimento, que e a mesma proibicao do preco.
+    Declared consequence: the effective substitution rate is slightly below
+    `substitution_rate` in small subgroups. Inventing a substitute outside that warehouse's
+    assortment would be worse: it would be inventing assortment, the same prohibition as price.
     """
     catalog = reference.catalog_of(wh, price_as_of)
     for candidates in (
         reference.substitutes_in_subgroup(wh, price_as_of, line["subgroup_id"]),
         reference.substitutes_in_category(wh, price_as_of, line["category_id"]),
-        # Terceiro nivel: o mesmo GRUPO DE DEMANDA. Mais largo que a categoria da fonte e
-        # ainda dentro do que a calibracao considera a mesma necessidade — trocar merluza
-        # por dourada e substituicao; trocar por xampu nao seria.
+        # Third level: the same DEMAND GROUP. Wider than the source category and still within
+        # what the calibration considers the same need — swapping hake for sea bream is a
+        # substitution; swapping it for shampoo would not be.
         reference.positions_in_demand_group(wh, price_as_of, line["demand_group"]),
     ):
-        livres = [p for p in candidates if catalog[p]["source_product_id"] not in taken]
-        if livres:
-            return catalog[livres[rng.randrange(len(livres))]]
+        free = [p for p in candidates if catalog[p]["source_product_id"] not in taken]
+        if free:
+            return catalog[free[rng.randrange(len(free))]]
     return None
 
 
 def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, base_day):
-    """Constroi a sequencia de eventos de UM pedido.
+    """Build the event sequence of ONE order.
 
-    O estado e avancado por `apply_transition` a cada evento: o gerador e validado pelo
-    proprio vocabulario enquanto constroi, e nao apenas por um teste tres camadas adiante.
+    The state is advanced by `apply_transition` on every event: the generator is validated by
+    its own vocabulary while it builds, not only by a test three layers further down.
     """
     calendar = reference.calendar_of(wh, order_date)
     price_as_of = calendar["price_as_of"]
@@ -274,18 +273,18 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
     customer_version = reference.customer_version_at(customer["first_ingestion_date"], order_date)
     if customer_version is None:
         raise GenerationError(
-            f"cliente {customer['customer_id']} so existe a partir de "
-            f"{customer['first_ingestion_date']}, depois do dia do pedido {order_date}. "
-            f"Nenhum pedido pode nascer antes do cliente."
+            f"customer {customer['customer_id']} only exists from "
+            f"{customer['first_ingestion_date']}, after the order day {order_date}. "
+            f"No order can be born before its customer."
         )
 
-    # A COORTE E RESOLVIDA NO DIA DO PEDIDO, e nao no export: a idade muda, e uma janela
-    # longa faz um cliente cruzar a fronteira de uma faixa. A conta e a diferenca de anos,
-    # que e a mesma convencao com que `birth_year` foi construido na Source de OLTP
-    # (`reference_year - idade`) — usar data completa aqui e ano la produziria duas idades
-    # para a mesma pessoa.
-    idade = int(order_date[:4]) - int(customer["birth_year"])
-    cohort = reference.demand.cohort_of(wh, idade)
+    # THE COHORT IS RESOLVED ON THE ORDER DAY, not at export: age changes, and a long window
+    # makes a customer cross a band boundary. The computation is the difference in years,
+    # which is the same convention `birth_year` was built with in the OLTP Source
+    # (`reference_year - age`) — using a full date here and a year there would produce two
+    # ages for the same person.
+    age = int(order_date[:4]) - int(customer["birth_year"])
+    cohort = reference.demand.cohort_of(wh, age)
 
     lines = _basket(rng, reference, premises, wh, price_as_of, cohort)
     gross = _money(sum((line["unit_price"] * line["quantity"] for line in lines), Decimal("0")))
@@ -331,9 +330,9 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         {
             "customer_id": customer["customer_id"],
             "customer_ingestion_date": customer_version,
-            # Carimbada no evento pelo mesmo motivo de `demand_group`: o que importa e a
-            # faixa que valia NO MOMENTO DO PEDIDO. Deriva-la depois, no Silver, exigiria
-            # reimplementar os limites das faixas numa segunda linguagem.
+            # Stamped on the event for the same reason as `demand_group`: what matters is the
+            # band in force AT ORDER TIME. Deriving it later, in Silver, would require
+            # reimplementing the band bounds in a second language.
             "buyer_age_band": cohort.split("|", 1)[0],
             "province_code": customer["province_code"],
             "municipality_code": customer["municipality_code"],
@@ -350,9 +349,9 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
                     "source_product_id": line["source_product_id"],
                     "category_id": line["category_id"],
                     "subgroup_id": line["subgroup_id"],
-                    # No evento, e nao apenas na referencia: e assim que o Silver pode
-                    # agrupar por grupo de demanda sem reimplementar o de-para, e assim que
-                    # `validate` reconfere o carimbo contra a referencia em vez de confiar.
+                    # On the event, not only in the reference: that is how Silver can group
+                    # by demand group without reimplementing the mapping, and how `validate`
+                    # re-checks the stamp against the reference instead of trusting it.
                     "demand_group": line["demand_group"],
                     "quantity": line["quantity"],
                     "unit_price": str(line["unit_price"]),
@@ -362,7 +361,7 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         },
     )
 
-    # --- pagamento ---------------------------------------------------------------
+    # --- payment -----------------------------------------------------------------
     payment_at = placed_at + timedelta(
         minutes=rng.randint(
             premises.integer("minutes_to_payment_min"), premises.integer("minutes_to_payment_max")
@@ -385,7 +384,7 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         },
     )
 
-    # --- cancelamento ------------------------------------------------------------
+    # --- cancellation -----------------------------------------------------------
     if rng.random() < premises.number("cancellation_rate"):
         cancel_at = payment_at + timedelta(
             minutes=rng.randint(
@@ -403,7 +402,7 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         )
         return events, state
 
-    # --- separacao ---------------------------------------------------------------
+    # --- picking -----------------------------------------------------------------
     picking_at = payment_at + timedelta(
         minutes=rng.randint(
             premises.integer("minutes_to_picking_min"), premises.integer("minutes_to_picking_max")
@@ -421,8 +420,8 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         line["effective_price"] = line["unit_price"]
         line_at = picking_at + timedelta(minutes=per_line * line["line_no"])
 
-        # UM sorteio por linha, com dois limiares: assim as duas taxas sao exatas e
-        # independentes do numero de chamadas ao rng, e nao condicionadas uma a outra.
+        # ONE draw per line, with two thresholds: that way both rates are exact and
+        # independent of the number of rng calls, and not conditioned on each other.
         draw = rng.random()
         if draw < substitution_rate:
             substitute = _substitute_for(rng, reference, wh, price_as_of, line, taken)
@@ -451,8 +450,8 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
                     "line_no": line["line_no"],
                     "source_product_id": line["source_product_id"],
                     "quantity": line["quantity"],
-                    # "unavailable", nunca "out_of_stock": nao existe fato de estoque nesta
-                    # plataforma, e nomear como se existisse prometeria um dado inexistente.
+                    # "unavailable", never "out_of_stock": there is no stock fact in this
+                    # platform, and naming it as if there were would promise nonexistent data.
                     "reason": "unavailable",
                 },
             )
@@ -468,7 +467,7 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         {"picked_line_count": len(kept), "picked_amount": str(net)},
     )
 
-    # --- despacho e entrega ------------------------------------------------------
+    # --- dispatch and delivery---------------------------------------------------
     dispatch_at = picked_at + timedelta(
         minutes=rng.randint(
             premises.integer("minutes_to_dispatch_min"),
@@ -495,17 +494,17 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         ORDER_DELIVERED,
         delivery_at,
         {
-            # Janela de entrega e promessa comercial numa grade fixa, NUNCA rota: o Callejero
-            # nao tem coordenada nem adjacencia, entao rota e tempo de rota seriam inventados.
+            # The delivery slot is a commercial promise on a fixed grid, NEVER a route: the
+            # Callejero has no coordinates or adjacency, so route and route time would be invented.
             "delivered_within_slot": slot_start <= delivery_at <= slot_end,
             "delivered_line_count": len(kept),
             "delivered_amount": str(net),
         },
     )
 
-    # --- devolucao ---------------------------------------------------------------
+    # --- return ------------------------------------------------------------------
     if kept and rng.random() < premises.number("return_rate"):
-        devolvida = kept[rng.randrange(len(kept))]
+        returned = kept[rng.randrange(len(kept))]
         return_at = delivery_at + timedelta(
             minutes=rng.randint(
                 premises.integer("minutes_to_return_min"),
@@ -517,9 +516,9 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
             return_at,
             {
                 "returned_line_count": 1,
-                "returned_line_no": devolvida["line_no"],
+                "returned_line_no": returned["line_no"],
                 "returned_amount": str(
-                    _money(devolvida["effective_price"] * devolvida["quantity"])
+                    _money(returned["effective_price"] * returned["quantity"])
                 ),
             },
         )
@@ -527,81 +526,81 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
 
 
 def generate(reference, premises, wh: str, order_date: str, seed: int) -> list[dict]:
-    """Log de eventos de um (armazem, dia), ordenado por (occurred_at, order_id, sequence_no).
+    """Event log of one (warehouse, day), sorted by (occurred_at, order_id, sequence_no).
 
-    A ordenacao e total e deterministica: `occurred_at` sozinho empata, e o desempate por
-    order_id e sequence_no garante que os eventos de um mesmo pedido nunca saiam fora de
-    ordem, que e a propriedade de que o fold depende.
+    The ordering is total and deterministic: `occurred_at` alone ties, and the tie-break by
+    order_id and sequence_no guarantees that events of the same order never come out of
+    order, which is the property the fold depends on.
     """
     rng = random.Random(day_seed(seed, wh, order_date))
     base_day = datetime.strptime(order_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-    # ELEGIVEIS: DUAS CONDICOES, e a segunda nasceu na Fase 5.
+    # ELIGIBLE: TWO CONDITIONS, and the second was born in Phase 5.
     #
-    #   1. ja existia no dia do pedido — a base cresce, e uma geracao futura pode
-    #      acrescentar clientes que nao existiam nos dias ja gerados;
-    #   2. tem `min_buyer_age` anos ou mais NO DIA DO PEDIDO.
+    #   1. already existed on the order day — the base grows, and a future generation may
+    #      add customers who did not exist on the days already generated;
+    #   2. is `min_buyer_age` years old or older ON THE ORDER DAY.
     #
-    # A segunda existe porque `silver_customer` e uma projecao fiel da POPULACAO residente
-    # (a idade vem da distribuicao provincial do INE, como o contrato da Source de OLTP
-    # declara), e populacao inclui criancas: 18,01% da base tinha menos de 18 anos, com
-    # idades a partir de zero. Enquanto a idade nao fazia nada isso era inofensivo. A partir
-    # do momento em que ela governa a demanda, deixa de ser — 18% da base entraria na faixa
-    # '-35 anos' do MAPA sendo crianca. Quem PODE pedir e premissa do dominio de pedidos, e
-    # mora em `order_premises_seed.csv`; a base de clientes nao foi tocada.
-    minima = premises.integer("min_buyer_age")
-    ano = int(order_date[:4])
+    # The second exists because `silver_customer` is a faithful projection of the resident
+    # POPULATION (age comes from INE's provincial distribution, as the OLTP Source contract
+    # declares), and population includes children: 18.01% of the base was under 18, with
+    # ages starting at zero. While age did nothing this was harmless. From the moment it
+    # governs demand, it no longer is — 18% of the base would fall into MAPA's '-35 years'
+    # band while being children. Who MAY order is a premise of the orders domain, and lives
+    # in `order_premises_seed.csv`; the customer base was not touched.
+    minimum = premises.integer("min_buyer_age")
+    year = int(order_date[:4])
     eligible = [
         customer
         for customer in reference.customers_of(wh)
         if reference.customer_version_at(customer["first_ingestion_date"], order_date)
-        and ano - int(customer["birth_year"]) >= minima
+        and year - int(customer["birth_year"]) >= minimum
     ]
     if not eligible:
         raise GenerationError(
-            f"nenhum cliente de wh={wh!r} existia em {order_date} com {minima} anos ou "
-            f"mais. A base de clientes comeca em "
+            f"no customer of wh={wh!r} existed on {order_date} aged {minimum} or "
+            f"older. The customer base starts on "
             f"{min(reference.customer_ingestion_dates)}."
         )
 
-    # SAZONALIDADE ENTRA AQUI, NA TAXA DE PEDIDOS — nunca no mix. A distincao vem da
-    # evidencia: o informe do MAPA publica gasto mensal do TOTAL da alimentacao e NAO publica
-    # perfil mensal por categoria (os graficos mensais sao imagens). Um fator global sobre o
-    # mix se normalizaria e nao faria nada. O perfil entregue e neutro em todos os 12 meses,
-    # por ausencia de evidencia numerica e porque a janela cobre so agosto — mas o mecanismo
-    # existe e tem teste que prova que um perfil nao neutro muda a saida.
-    fator = reference.demand.seasonal_factor(base_day.month)
+    # SEASONALITY ENTERS HERE, IN THE ORDER RATE — never in the mix. The distinction comes from
+    # the evidence: the MAPA report publishes monthly spending for TOTAL food and does NOT
+    # publish a monthly profile per category (the monthly charts are images). A global factor
+    # on the mix would normalize away and do nothing. The delivered profile is neutral in all
+    # 12 months, for lack of numerical evidence and because the window only covers August —
+    # but the mechanism exists and has a test proving that a non-neutral profile changes the output.
+    factor = reference.demand.seasonal_factor(base_day.month)
 
-    # A INTENSIDADE REGIONAL ENTRA AQUI, ao lado da sazonalidade, e pelo mesmo motivo: ela
-    # e uma propriedade de QUANTO se compra, nao de O QUE se compra. O informe mede consumo
-    # per capita por comunidade — Cataluna 620,82 kg ou litro por pessoa e ano contra 505,86
-    # de Madrid — e nao publica frequencia de compra domestica, entao repartir a intensidade
-    # entre frequencia e tamanho de cesta seria inventar a reparticao. A plataforma escolheu
-    # frequencia, declarou a escolha em `region_frequency_basis`, e ja entrega o indice
-    # RENORMALIZADO sobre as comunidades servidas: a soma ponderada e 1, logo o total de
-    # pedidos da janela nao se move e o que muda e a reparticao entre armazens.
+    # REGIONAL INTENSITY ENTERS HERE, next to seasonality, and for the same reason: it is a
+    # property of HOW MUCH is bought, not of WHAT is bought. The report measures per-capita
+    # consumption by community — Catalonia 620.82 kg or litre per person per year against
+    # Madrid's 505.86 — and does not publish household purchase frequency, so splitting the
+    # intensity between frequency and basket size would be inventing the split. The platform
+    # chose frequency, declared the choice in `region_frequency_basis`, and already delivers
+    # the index RENORMALIZED over the communities served: the weighted sum is 1, so the
+    # window's total orders do not move and what changes is the split between warehouses.
     regional = reference.demand.frequency_index(wh)
 
-    taxa = premises.number("daily_order_rate") * fator * regional
-    wanted = round(len(eligible) * taxa)
+    rate = premises.number("daily_order_rate") * factor * regional
+    wanted = round(len(eligible) * rate)
     if wanted <= 0:
         raise GenerationError(
-            f"daily_order_rate={premises.number('daily_order_rate')} x fator sazonal "
-            f"{fator} x indice regional {regional} sobre {len(eligible)} cliente(s) "
-            f"elegivel(is) da zero pedido em {order_date}"
+            f"daily_order_rate={premises.number('daily_order_rate')} x seasonal factor "
+            f"{factor} x regional index {regional} over {len(eligible)} eligible "
+            f"customer(s) yields zero orders on {order_date}"
         )
 
-    # Sem reposicao: um cliente faz no maximo um pedido por dia. E uma simplificacao
-    # declarada, e nao uma medicao — nenhuma fonte deste repo mede cadencia de compra.
-    escolhidos = _sample_indices(rng, len(eligible), wanted)
+    # Without replacement: a customer places at most one order per day. It is a declared
+    # simplification, not a measurement — no source in this repo measures purchase cadence.
+    chosen = _sample_indices(rng, len(eligible), wanted)
 
     events: list[dict] = []
-    for index, position in enumerate(escolhidos):
+    for index, position in enumerate(chosen):
         order_id = _order_id(wh, order_date, index)
-        do_pedido, _ = _lifecycle(
+        order_events, _ = _lifecycle(
             rng, reference, premises, wh, order_date, order_id, eligible[position], base_day
         )
-        events.extend(do_pedido)
+        events.extend(order_events)
 
     events.sort(key=lambda e: (e["occurred_at"], e["order_id"], e["sequence_no"]))
     return events

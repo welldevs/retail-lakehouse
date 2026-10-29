@@ -1,8 +1,8 @@
-"""A promessa de zero dependencias de runtime e verificada, nao apenas declarada.
+"""The zero-runtime-dependencies promise is verified, not just declared.
 
-Percorre a AST de todos os modulos do pacote e dos testes e falha se aparecer qualquer
-import que nao seja da biblioteca padrao. Sem isto, requirements.txt e
-[project.dependencies] seriam apenas afirmacoes.
+Walks the AST of every module in the package and the tests and fails if any import that is
+not from the standard library appears. Without this, requirements.txt and
+[project.dependencies] would be mere claims.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def top_level_imports(path: str) -> set:
             for alias in node.names:
                 names.add(alias.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
-            if node.level:  # import relativo: proprio pacote
+            if node.level:  # relative import: own package
                 continue
             if node.module:
                 names.add(node.module.split(".")[0])
@@ -47,34 +47,34 @@ def top_level_imports(path: str) -> set:
 
 
 class NoRuntimeDependenciesTest(unittest.TestCase):
-    def test_pacote_importa_apenas_stdlib(self):
-        permitido = set(sys.stdlib_module_names) | LOCAL_MODULES
+    def test_package_imports_only_stdlib(self):
+        allowed = set(sys.stdlib_module_names) | LOCAL_MODULES
         for path in python_files(PACKAGE_ROOT):
-            with self.subTest(modulo=os.path.relpath(path, PACKAGE_ROOT)):
-                externos = top_level_imports(path) - permitido
+            with self.subTest(module=os.path.relpath(path, PACKAGE_ROOT)):
+                external = top_level_imports(path) - allowed
                 self.assertEqual(
-                    externos,
+                    external,
                     set(),
-                    f"{path} importa pacote de terceiros: {sorted(externos)}. "
-                    f"Se for intencional, declare em requirements.txt e em "
-                    f"[project.dependencies] do pyproject.toml.",
+                    f"{path} imports a third-party package: {sorted(external)}. "
+                    f"If intentional, declare it in requirements.txt and in "
+                    f"pyproject.toml [project.dependencies].",
                 )
 
-    def test_testes_importam_apenas_stdlib(self):
-        permitido = set(sys.stdlib_module_names) | LOCAL_MODULES
+    def test_tests_import_only_stdlib(self):
+        allowed = set(sys.stdlib_module_names) | LOCAL_MODULES
         for path in python_files(TESTS_ROOT):
-            with self.subTest(modulo=os.path.relpath(path, TESTS_ROOT)):
-                externos = top_level_imports(path) - permitido
-                self.assertEqual(externos, set(), f"{path} importa {sorted(externos)}")
+            with self.subTest(module=os.path.relpath(path, TESTS_ROOT)):
+                external = top_level_imports(path) - allowed
+                self.assertEqual(external, set(), f"{path} imports {sorted(external)}")
 
-    def test_encontrou_modulos_para_analisar(self):
-        # Protege contra o teste passar por nao ter olhado nada.
+    def test_found_modules_to_analyze(self):
+        # Guards against the test passing because it looked at nothing.
         self.assertGreaterEqual(len(python_files(PACKAGE_ROOT)), 6)
         self.assertGreaterEqual(len(python_files(TESTS_ROOT)), 6)
 
-    def test_pyproject_declara_dependencies_vazio(self):
+    def test_pyproject_declares_empty_dependencies(self):
         path = os.path.join(PROJECT_ROOT, "pyproject.toml")
-        self.assertTrue(os.path.exists(path), f"pyproject.toml ausente em {PROJECT_ROOT}")
+        self.assertTrue(os.path.exists(path), f"pyproject.toml missing from {PROJECT_ROOT}")
         import tomllib
 
         with open(path, "rb") as handle:
@@ -82,34 +82,34 @@ class NoRuntimeDependenciesTest(unittest.TestCase):
         self.assertEqual(
             config["project"].get("dependencies", []),
             [],
-            "pyproject declara dependencias de runtime",
+            "pyproject declares runtime dependencies",
         )
 
-    def test_metadata_instalado_nao_declara_dependencia(self):
+    def test_installed_metadata_declares_no_dependency(self):
         import importlib.metadata as metadata
 
         try:
             requires = metadata.distribution("simulated-oltp-source").requires
         except metadata.PackageNotFoundError:
-            requires = None  # nao instalado: o teste do pyproject ja cobre a fonte
-        self.assertIn(requires, (None, []), f"metadata declara dependencias: {requires}")
+            requires = None  # not installed: the pyproject test already covers the source
+        self.assertIn(requires, (None, []), f"metadata declares dependencies: {requires}")
 
-    def test_requirements_txt_nao_tem_nenhum_pacote(self):
+    def test_requirements_txt_has_no_package(self):
         path = os.path.join(PROJECT_ROOT, "requirements.txt")
-        self.assertTrue(os.path.exists(path), f"requirements.txt ausente em {PROJECT_ROOT}")
+        self.assertTrue(os.path.exists(path), f"requirements.txt missing from {PROJECT_ROOT}")
         with open(path, "r", encoding="utf-8") as handle:
-            linhas = [
-                linha.strip()
-                for linha in handle
-                if linha.strip() and not linha.strip().startswith("#")
+            lines = [
+                line.strip()
+                for line in handle
+                if line.strip() and not line.strip().startswith("#")
             ]
         self.assertEqual(
-            linhas, [], f"requirements.txt lista pacotes de runtime: {linhas}"
+            lines, [], f"requirements.txt lists runtime packages: {lines}"
         )
 
 
 class ProjectMetadataConsistencyTest(unittest.TestCase):
-    """A versao e declarada em dois lugares; elas nao podem divergir em silencio."""
+    """The version is declared in two places; they cannot silently diverge."""
 
     def _pyproject(self) -> dict:
         import tomllib
@@ -117,24 +117,24 @@ class ProjectMetadataConsistencyTest(unittest.TestCase):
         with open(os.path.join(PROJECT_ROOT, "pyproject.toml"), "rb") as handle:
             return tomllib.load(handle)
 
-    def test_versao_do_pacote_bate_com_o_pyproject(self):
+    def test_package_version_matches_pyproject(self):
         self.assertEqual(
             simulated_oltp_source.__version__,
             self._pyproject()["project"]["version"],
-            "__init__.py e pyproject.toml declaram versoes diferentes",
+            "__init__.py and pyproject.toml declare different versions",
         )
 
-    def test_console_script_aponta_para_o_ponto_de_entrada_real(self):
-        alvo = self._pyproject()["project"]["scripts"]["simulated-oltp-source"]
-        modulo, funcao = alvo.split(":")
+    def test_console_script_points_to_the_real_entry_point(self):
+        target = self._pyproject()["project"]["scripts"]["simulated-oltp-source"]
+        module, function = target.split(":")
         import importlib
 
         self.assertTrue(
-            callable(getattr(importlib.import_module(modulo), funcao)),
-            f"console script aponta para {alvo}, que nao e chamavel",
+            callable(getattr(importlib.import_module(module), function)),
+            f"console script points to {target}, which is not callable",
         )
 
-    def test_pacote_declarado_no_pyproject_existe_em_src(self):
+    def test_package_declared_in_pyproject_exists_in_src(self):
         where = self._pyproject()["tool"]["setuptools"]["packages"]["find"]["where"]
         self.assertEqual(where, ["src"])
         self.assertTrue(

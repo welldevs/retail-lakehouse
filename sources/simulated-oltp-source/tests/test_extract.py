@@ -1,4 +1,4 @@
-"""Extracao ponta a ponta: particao, manifesto e reprodutibilidade byte a byte."""
+"""End-to-end extraction: partition, manifest and byte-for-byte reproducibility."""
 
 from __future__ import annotations
 
@@ -55,8 +55,8 @@ class ExtractTestCase(unittest.TestCase):
             return json.load(handle)
 
 
-class ParticaoTest(ExtractTestCase):
-    def test_grava_dados_manifesto_e_success(self):
+class PartitionTest(ExtractTestCase):
+    def test_writes_data_manifest_and_success(self):
         self.assertEqual(self.extract(), EXIT_OK)
         for path in (
             customers_path(self.partition()),
@@ -65,13 +65,13 @@ class ParticaoTest(ExtractTestCase):
         ):
             self.assertTrue(os.path.exists(path), path)
 
-    def test_success_guarda_o_run_id(self):
+    def test_success_holds_the_run_id(self):
         self.extract()
         with open(success_path(self.partition()), encoding="utf-8") as handle:
             self.assertEqual(handle.read().strip(), self.manifest()["run_id"])
 
-    def test_o_caminho_do_arquivo_no_manifesto_e_relativo_a_raiz_do_snapshot(self):
-        """A plataforma resolve files[].path subindo dois niveis quando ha eixo wh=."""
+    def test_file_path_in_manifest_is_relative_to_snapshot_root(self):
+        """The platform resolves files[].path by going up two levels when there is a wh= axis."""
         self.extract()
         entry = self.manifest()["files"][0]
         self.assertEqual(
@@ -80,24 +80,24 @@ class ParticaoTest(ExtractTestCase):
         )
         self.assertTrue(os.path.exists(os.path.join(self.out, entry["path"])))
 
-    def test_particao_completa_e_imutavel_sem_overwrite(self):
+    def test_complete_partition_is_immutable_without_overwrite(self):
         self.extract()
         self.assertEqual(self.extract(), EXIT_FATAL)
 
-    def test_overwrite_reescreve_e_registra_a_execucao_anterior(self):
+    def test_overwrite_rewrites_and_records_the_previous_run(self):
         self.extract(seed=1)
         self.assertEqual(self.extract(seed=2, overwrite=True), EXIT_OK)
-        historico = self.manifest()["history"]
-        self.assertEqual(len(historico), 1)
-        self.assertEqual(historico[0]["seed"], 1)
+        history = self.manifest()["history"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["seed"], 1)
 
 
-class ManifestoTest(ExtractTestCase):
+class ManifestTest(ExtractTestCase):
     def setUp(self):
         super().setUp()
         self.extract()
 
-    def test_identidade_e_versao(self):
+    def test_identity_and_version(self):
         manifest = self.manifest()
         self.assertEqual(manifest["manifest_version"], MANIFEST_VERSION)
         self.assertEqual(manifest["source"]["name"], SOURCE_NAME)
@@ -106,14 +106,14 @@ class ManifestoTest(ExtractTestCase):
         self.assertEqual(manifest["partition"]["ingestion_date"], "2026-08-27")
         self.assertTrue(manifest["complete"])
 
-    def test_a_seed_vive_no_manifesto_e_nao_em_cada_registro(self):
-        """Constante da particao inteira: repetir em 200 registros seria ruido."""
+    def test_seed_lives_in_the_manifest_not_in_each_record(self):
+        """Constant for the whole partition: repeating it in 200 records would be noise."""
         manifest = self.manifest()
         self.assertEqual(manifest["config"]["seed"], 7)
         self.assertEqual(manifest["config"]["count"], 50)
         self.assertNotIn("seed", self.customers()[0])
 
-    def test_registra_a_proveniencia_de_cada_insumo_do_silver(self):
+    def test_records_provenance_of_each_silver_input(self):
         reference = self.manifest()["reference"]
         self.assertEqual(reference["callejero_ingestion_date"], "2026-08-25")
         self.assertEqual(reference["population_ingestion_date"], "2026-08-26")
@@ -122,7 +122,7 @@ class ManifestoTest(ExtractTestCase):
         self.assertEqual(reference["age_fk_periodo"], 27)
         self.assertEqual(reference["orphan_tramos_excluded"], 3)
 
-    def test_totais_batem_com_o_arquivo_produzido(self):
+    def test_totals_match_the_produced_file(self):
         customers = self.customers()
         totals = self.manifest()["totals"]
         self.assertEqual(totals["customer_rows"], len(customers))
@@ -135,7 +135,7 @@ class ManifestoTest(ExtractTestCase):
             sum(1 for c in customers if c["house_number"] is None),
         )
 
-    def test_checksum_e_tamanho_declarados_batem_com_o_disco(self):
+    def test_declared_checksum_and_size_match_the_disk(self):
         entry = self.manifest()["files"][0]
         blob = read_bytes(customers_path(self.partition()))
         self.assertEqual(entry["sha256"], digest(blob))
@@ -143,60 +143,60 @@ class ManifestoTest(ExtractTestCase):
         self.assertEqual(entry["records"], len(self.customers()))
 
 
-class ReprodutibilidadeTest(ExtractTestCase):
+class ReproducibilityTest(ExtractTestCase):
     def _bytes(self) -> bytes:
         return read_bytes(customers_path(self.partition()))
 
-    def test_mesma_seed_produz_arquivo_byte_identico(self):
+    def test_same_seed_produces_byte_identical_file(self):
         self.extract(seed=13)
-        primeiro = self._bytes()
+        first = self._bytes()
         self.extract(seed=13, overwrite=True)
-        self.assertEqual(primeiro, self._bytes())
+        self.assertEqual(first, self._bytes())
 
-    def test_seeds_diferentes_produzem_arquivos_diferentes(self):
+    def test_different_seeds_produce_different_files(self):
         self.extract(seed=13)
-        primeiro = self._bytes()
+        first = self._bytes()
         self.extract(seed=14, overwrite=True)
-        self.assertNotEqual(primeiro, self._bytes())
+        self.assertNotEqual(first, self._bytes())
 
-    def test_saida_nao_depende_de_pythonhashseed(self):
-        """Hash de str e aleatorizado por processo. Se a geracao iterasse um set ou um
-        dict reconstruido fora de ordem, a mesma seed daria saidas diferentes entre
-        execucoes — e nenhum teste no mesmo processo pegaria isso."""
-        programa = (
+    def test_output_does_not_depend_on_pythonhashseed(self):
+        """str hashing is randomized per process. If generation iterated a set or a dict
+        rebuilt out of order, the same seed would give different outputs across runs — and
+        no test in the same process would catch it."""
+        program = (
             "import json, sys;"
             "from simulated_oltp_source import reference_data;"
             "from simulated_oltp_source.customers_generator import generate;"
             "ref = reference_data.load(sys.argv[1]);"
             f"print(json.dumps(generate(ref, {support.WH_A!r}, 120, 5, '2026-08-27')))"
         )
-        saidas = []
+        outputs = []
         for hashseed in ("0", "1", "12345"):
             env = dict(os.environ, PYTHONPATH=SRC_ROOT, PYTHONHASHSEED=hashseed)
-            resultado = subprocess.run(
-                [sys.executable, "-c", programa, self.reference],
+            result = subprocess.run(
+                [sys.executable, "-c", program, self.reference],
                 capture_output=True, text=True, env=env, check=True,
             )
-            saidas.append(resultado.stdout)
-        self.assertEqual(len(set(saidas)), 1, "a saida mudou com PYTHONHASHSEED")
+            outputs.append(result.stdout)
+        self.assertEqual(len(set(outputs)), 1, "the output changed with PYTHONHASHSEED")
 
 
-class FalhaTest(ExtractTestCase):
-    def test_referencia_ausente_reprova_sem_criar_particao(self):
-        codigo = silent(
+class FailureTest(ExtractTestCase):
+    def test_missing_reference_fails_without_creating_partition(self):
+        code = silent(
             run,
-            support.extract_args(os.path.join(self.tmp.name, "nao-existe"), self.out),
+            support.extract_args(os.path.join(self.tmp.name, "does-not-exist"), self.out),
         )
-        self.assertEqual(codigo, EXIT_FATAL)
+        self.assertEqual(code, EXIT_FATAL)
         self.assertFalse(os.path.exists(customers_path(self.partition())))
 
-    def test_warehouse_fora_da_referencia_reprova(self):
-        self.assertEqual(self.extract(wh="inexistente"), EXIT_FATAL)
+    def test_warehouse_outside_the_reference_fails(self):
+        self.assertEqual(self.extract(wh="nonexistent"), EXIT_FATAL)
 
-    def test_count_invalido_reprova(self):
+    def test_invalid_count_fails(self):
         self.assertEqual(self.extract(count=0), EXIT_FATAL)
 
-    def test_data_malformada_reprova(self):
+    def test_malformed_date_fails(self):
         self.assertEqual(self.extract(date="27-08-2026"), EXIT_FATAL)
 
 
@@ -204,24 +204,24 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TamanhoDaBaseTest(ExtractTestCase):
-    """Quantos clientes a particao tem, e quem decidiu isso.
+class BaseSizeTest(ExtractTestCase):
+    """How many customers the partition has, and who decided it.
 
-    Ate a Fase 5 quem decidia era a linha de comando, e o Makefile passava 5.000 para os
-    quatro armazens — o mesmo numero para AUFs que diferem por 4,6x em populacao. Nada
-    reprovava, porque densidade nao aparece em nenhum total.
+    Up to Phase 5 the command line decided, and the Makefile passed 5,000 for all four
+    warehouses — the same number for FUAs that differ 4.6x in population. Nothing failed,
+    because density does not show up in any total.
     """
 
-    def test_count_ausente_usa_o_alvo_da_referencia(self):
+    def test_missing_count_uses_the_reference_target(self):
         self.assertEqual(self.extract(count=None), EXIT_OK)
         self.assertEqual(len(self.customers()), support.CUSTOMER_TARGETS[support.WH_A])
         self.assertEqual(self.manifest()["config"]["count_source"], "reference")
 
-    def test_cada_armazem_recebe_o_proprio_alvo(self):
-        """O alvo e por armazem, e nao um numero global repartido.
+    def test_each_warehouse_gets_its_own_target(self):
+        """The target is per warehouse, not a global number split up.
 
-        Sem este caso, ler o alvo do PRIMEIRO armazem e aplica-lo a todos passaria no teste
-        acima — e a base voltaria a ser uniforme por outro caminho.
+        Without this case, reading the FIRST warehouse's target and applying it to all would
+        pass the test above — and the base would become uniform again by another route.
         """
         for wh in (support.WH_A, support.WH_B):
             self.assertEqual(self.extract(wh=wh, count=None), EXIT_OK)
@@ -230,12 +230,12 @@ class TamanhoDaBaseTest(ExtractTestCase):
             support.CUSTOMER_TARGETS[support.WH_A], support.CUSTOMER_TARGETS[support.WH_B]
         )
 
-    def test_count_explicito_vence_o_alvo_e_deixa_rastro(self):
-        """O override continua possivel — e fica registrado como override.
+    def test_explicit_count_beats_the_target_and_leaves_a_trace(self):
+        """The override is still possible — and it is recorded as an override.
 
-        Sem `count_source` no manifesto, uma base gerada a mao seria indistinguivel de uma
-        derivada da populacao seis meses depois, e a unica forma de descobrir seria refazer
-        a conta.
+        Without `count_source` in the manifest, a hand-generated base would be
+        indistinguishable from a population-derived one six months later, and the only way
+        to find out would be to redo the math.
         """
         self.assertEqual(self.extract(count=9), EXIT_OK)
         self.assertEqual(len(self.customers()), 9)
@@ -243,39 +243,39 @@ class TamanhoDaBaseTest(ExtractTestCase):
         self.assertEqual(config["count"], 9)
         self.assertEqual(config["count_source"], "cli")
 
-    def test_o_manifesto_registra_o_escopo_do_cadastro(self):
-        """As quatro linhas que tornam duas particoes distinguiveis.
+    def test_manifest_records_the_customer_base_scope(self):
+        """The four lines that make two partitions distinguishable.
 
-        Trocar a idade minima ou a taxa troca as PESSOAS por tras dos mesmos customer_id. Sem
-        estas linhas, as duas particoes teriam o mesmo aspecto e a mesma contagem.
+        Changing the minimum age or the rate swaps the PEOPLE behind the same customer_id.
+        Without these lines, the two partitions would look the same and have the same count.
         """
         self.assertEqual(self.extract(count=None), EXIT_OK)
-        referencia = self.manifest()["reference"]
-        self.assertEqual(referencia["min_customer_age"], support.MIN_CUSTOMER_AGE)
-        self.assertEqual(referencia["customer_target"], support.CUSTOMER_TARGETS[support.WH_A])
-        self.assertEqual(referencia["allocation_rule"], "per_warehouse_population")
-        self.assertEqual(referencia["penetration_pct"], 2.2)
+        reference = self.manifest()["reference"]
+        self.assertEqual(reference["min_customer_age"], support.MIN_CUSTOMER_AGE)
+        self.assertEqual(reference["customer_target"], support.CUSTOMER_TARGETS[support.WH_A])
+        self.assertEqual(reference["allocation_rule"], "per_warehouse_population")
+        self.assertEqual(reference["penetration_pct"], 2.2)
         self.assertEqual(
-            referencia["penetration_source"], "demand_profile.channel_reference_pct"
+            reference["penetration_source"], "demand_profile.channel_reference_pct"
         )
 
-    def test_nenhum_cliente_gerado_e_menor_de_idade(self):
-        """O achado que abriu a fase, no ponto onde ele nascia.
+    def test_no_generated_customer_is_a_minor(self):
+        """The finding that opened the phase, at the point where it originated.
 
-        A fixture tem idades de 30 a 41, entao o piso e folgado — o que este caso prova nao e
-        que ninguem tem 17 anos, e que a idade sai da distribuicao ENTREGUE, que ja e a do
-        cadastro. Se o gerador voltasse a ler a piramide inteira, ele reprovaria.
+        The fixture has ages 30 to 41, so the floor is loose — what this case proves is not
+        that nobody is 17, it is that age comes from the DELIVERED distribution, which is
+        already the customer base's. If the generator went back to reading the whole
+        pyramid, it would fail.
         """
         self.assertEqual(self.extract(count=None), EXIT_OK)
-        ano = 2026
-        idades = [ano - c["birth_year"] for c in self.customers()]
-        self.assertTrue(idades)
-        self.assertGreaterEqual(min(idades), support.MIN_CUSTOMER_AGE)
+        year = 2026
+        ages = [year - c["birth_year"] for c in self.customers()]
+        self.assertTrue(ages)
+        self.assertGreaterEqual(min(ages), support.MIN_CUSTOMER_AGE)
 
-    def test_referencia_sem_alvo_reprova_em_vez_de_cair_num_default(self):
+    def test_reference_without_target_fails_instead_of_falling_back_to_a_default(self):
         reference = support.write_reference(
-            os.path.join(self.tmp.name, "ref-sem-alvo"), allocation=None
+            os.path.join(self.tmp.name, "ref-without-target"), allocation=None
         )
         args = support.extract_args(reference, self.out, count=None)
         self.assertEqual(silent(run, args), EXIT_FATAL)
-

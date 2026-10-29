@@ -1,9 +1,9 @@
-"""Cliente HTTP sequencial contra a API publica Tempus3 do INE.
+"""Sequential HTTP client for the INE's public Tempus3 API.
 
-Ao contrario da Mercadona, o comportamento de rate-limit desta API nao foi medido: nao ha
-concorrencia nenhuma para medir (uma execucao busca um punhado de table_id, sequencial por
-natureza, sem fan-out). O throttle aqui existe como boa pratica de cliente HTTP, nao como
-resposta a um bloqueio observado — ver README.md, secao "Restricoes da fonte".
+Unlike Mercadona, this API's rate-limit behavior was not measured: there is no concurrency
+at all to measure (a run fetches a handful of table_ids, sequential by nature, no fan-out).
+The throttle here exists as HTTP-client good practice, not as a response to an observed
+block — see README.md, section "Source restrictions".
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ BACKOFF_CAP_SECONDS = 60.0
 
 
 class Fetcher:
-    """Cliente HTTP sequencial com throttle por taxa e backoff exponencial."""
+    """Sequential HTTP client with rate throttling and exponential backoff."""
 
     def __init__(
         self,
@@ -45,19 +45,20 @@ class Fetcher:
         self._last_request_at = 0.0
 
     def _throttle(self) -> None:
-        """Limita a taxa a 1/delay req/s, medindo do inicio da requisicao anterior."""
+        """Limit the rate to 1/delay req/s, measured from the start of the previous request."""
         elapsed = time.monotonic() - self._last_request_at
         if self._last_request_at and elapsed < self.delay:
             time.sleep(self.delay - elapsed)
 
     def get_json(self, path: str, params: dict) -> tuple[object | None, str | None]:
-        """Retorna (payload, None) em sucesso ou (None, motivo) apos esgotar as tentativas.
+        """Return (payload, None) on success or (None, reason) after exhausting the attempts.
 
-        O payload nao e validado aqui: qualquer JSON valido e devolvido como veio. A
-        checagem de forma e responsabilidade de schema.py.
+        The payload is not validated here: any valid JSON is returned as received. Shape
+        checking is the responsibility of schema.py.
         """
         query = urllib.parse.urlencode(sorted(params.items()))
         url = f"{self.base_url}{path}?{query}" if query else f"{self.base_url}{path}"
+        # Kept byte-identical: this reason can be persisted in the manifest's failures[].
         last_error = "sem tentativa"
 
         for attempt in range(self.max_retries + 1):
@@ -73,7 +74,7 @@ class Fetcher:
             except urllib.error.HTTPError as exc:
                 last_error = f"HTTP {exc.code}"
                 retryable = exc.code in RETRYABLE_STATUS
-            except Exception as exc:  # timeout, reset de conexao, corpo JSON invalido
+            except Exception as exc:  # timeout, connection reset, invalid JSON body
                 last_error = f"{type(exc).__name__}: {exc}"
                 retryable = True
 
@@ -83,8 +84,8 @@ class Fetcher:
             self.retries += 1
             backoff = min(BACKOFF_BASE_SECONDS * (2**attempt), BACKOFF_CAP_SECONDS)
             self.log(
-                f"    retry {attempt + 1}/{self.max_retries} apos {last_error}; "
-                f"aguardando {backoff:.0f}s"
+                f"    retry {attempt + 1}/{self.max_retries} after {last_error}; "
+                f"waiting {backoff:.0f}s"
             )
             time.sleep(backoff)
 

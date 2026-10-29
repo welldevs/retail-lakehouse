@@ -1,28 +1,28 @@
-"""Interface de linha de comando da Source.
+"""Command-line interface of the Source.
 
-    python -m simulated_orders_source extract  --reference <dir> --wh <wh> --date <dia> [opcoes]
-    python -m simulated_orders_source validate <particao> --reference <dir> [--strict]
+    python -m simulated_orders_source extract  --reference <dir> --wh <wh> --date <day> [options]
+    python -m simulated_orders_source validate <partition> --reference <dir> [--strict]
 
-"extract" NAO busca rede: le os quatro arquivos de referencia que a plataforma pre-computou
-do Silver com `retail-platform export-orders-reference` e gera o log de eventos daquele
-(armazem, dia). Mesmo espirito do `extract --in <dir>` do ine-callejero-source.
+"extract" does NOT touch the network: it reads the four reference files the platform
+pre-computed from Silver with `retail-platform export-orders-reference` and generates the event
+log of that (warehouse, day). Same spirit as `extract --in <dir>` in ine-callejero-source.
 
-"validate" EXIGE --reference, como na Source de clientes e pelo mesmo motivo: as garantias
-centrais desta Source — o produto existe no catalogo daquele armazem naquela data, o preco
-pago e o preco observado, o cliente pertence aquele armazem — so podem ser reconferidas
-relendo a mesma referencia que a geracao usou. Um validador que so confere checksum provaria
-integridade, nao coerencia.
+"validate" REQUIRES --reference, as in the customers Source and for the same reason: this
+Source's core guarantees — the product exists in that warehouse's catalog on that date, the
+price paid is the observed price, the customer belongs to that warehouse — can only be
+re-checked by re-reading the same reference the generation used. A validator that only checks
+checksums would prove integrity, not coherence.
 
-`--date` E OBRIGATORIO no extract, diferente das outras quatro sources. Nelas a particao e
-"o snapshot de hoje" e o default de hoje faz sentido; aqui `ingestion_date` e a DATA DO
-PEDIDO, e cair no dia corrente por omissao geraria pedidos num dia que talvez nem tenha
-catalogo, ou fora da janela exportada.
+`--date` IS REQUIRED for extract, unlike the other four sources. There the partition is
+"today's snapshot" and defaulting to today makes sense; here `ingestion_date` is the ORDER
+DATE, and silently falling back to the current day would generate orders on a day that may
+have no catalog, or that lies outside the exported window.
 
-Codigos de saida:
-    0  sucesso
-    1  validacao reprovada
-    2  falha fatal: nada foi gerado / particao inutilizavel
-    3  excecao nao tratada
+Exit codes:
+    0  success
+    1  validation failed
+    2  fatal failure: nothing was generated / partition unusable
+    3  unhandled exception
 """
 
 from __future__ import annotations
@@ -45,62 +45,62 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="simulated_orders_source",
         description=(
-            "Source de pedidos simulados: log de eventos com cliente, produto e preco reais, "
-            "derivados do Silver de clientes e do catalogo da Mercadona."
+            "Simulated orders Source: event log with real customer, product and price, "
+            "derived from the customers Silver and the Mercadona catalog."
         ),
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser(
-        "extract", help="gera o log de eventos de um (armazem, dia) a partir da referencia"
+        "extract", help="generate the event log of one (warehouse, day) from the reference"
     )
     extract_parser.add_argument(
         "--reference",
         required=True,
-        help="diretorio da referencia (saida de `retail-platform export-orders-reference`)",
+        help="reference directory (output of `retail-platform export-orders-reference`)",
     )
     extract_parser.add_argument(
         "--wh",
         required=True,
-        help=f"armazem da particao, ex.: {'/'.join(DEFAULT_WAREHOUSES)}",
+        help=f"partition warehouse, e.g.: {'/'.join(DEFAULT_WAREHOUSES)}",
     )
     extract_parser.add_argument(
         "--date",
         required=True,
-        help="DIA DO PEDIDO, YYYY-MM-DD. Obrigatorio: aqui ingestion_date e a data do pedido",
+        help="ORDER DAY, YYYY-MM-DD. Required: here ingestion_date is the order date",
     )
-    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="diretorio raiz do snapshot")
+    extract_parser.add_argument("--out", default=DEFAULT_ROOT, help="snapshot root directory")
     extract_parser.add_argument(
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help="semente da geracao: a mesma seed reproduz exatamente a mesma saida",
+        help="generation seed: the same seed reproduces exactly the same output",
     )
     extract_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="reescreve uma particao existente, inclusive se estiver completa",
+        help="rewrite an existing partition, even if it is complete",
     )
     extract_parser.set_defaults(handler=extract_module.run)
 
     validate_parser = subparsers.add_parser(
         "validate",
-        help="valida uma particao ja extraida, inclusive a coerencia com catalogo e cliente",
+        help="validate an already extracted partition, including coherence with catalog and customer",
     )
     validate_parser.add_argument(
         "partition",
-        help="caminho da particao, ex.: data/orders/ingestion_date=2026-08-24/wh=mad1",
+        help="partition path, e.g.: data/orders/ingestion_date=2026-08-24/wh=mad1",
     )
     validate_parser.add_argument(
         "--reference",
         required=True,
-        help="a mesma referencia usada na geracao: sem ela a coerencia nao e verificavel",
+        help="the same reference used for generation: without it coherence cannot be verified",
     )
     validate_parser.add_argument(
         "--strict",
         action="store_true",
-        help="tambem falha quando ha aviso de distribuicao",
+        help="also fail on distribution warnings",
     )
     validate_parser.set_defaults(handler=validate_module.run)
 
@@ -112,10 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except KeyboardInterrupt:
-        print("\ninterrompido pelo usuario", flush=True)
+        print("\ninterrupted by user", flush=True)
         return EXIT_UNHANDLED
-    except Exception as exc:  # nenhum traceback escapa com codigo ambiguo
-        print(f"ERRO NAO TRATADO: {type(exc).__name__}: {exc}", flush=True)
+    except Exception as exc:  # no traceback escapes with an ambiguous exit code
+        print(f"UNHANDLED ERROR: {type(exc).__name__}: {exc}", flush=True)
         return EXIT_UNHANDLED
 
 

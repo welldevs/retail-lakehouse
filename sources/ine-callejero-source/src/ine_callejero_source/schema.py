@@ -1,28 +1,28 @@
-"""Fatos estruturais observados num arquivo do Callejero, sem interpretar conteudo.
+"""Structural facts observed in a Callejero file, without interpreting its content.
 
-Os arquivos sao texto de largura fixa em ISO-8859-1 com fim de linha CRLF (medido
-contra os arquivos reais — ver CONTRACT.md secao 2). Esta Source nao parseia campos:
-so observa fatos estruturais (quantas linhas, quais larguras aparecem) para o manifesto
-e para a revalidacao — o mesmo papel que `schema_fingerprint` cumpre na source de
-populacao, adaptado a um formato sem chaves nomeadas.
+The files are fixed-width text in ISO-8859-1 with CRLF line endings (measured against the
+real files — see CONTRACT.md section 2). This Source does not parse fields: it only
+observes structural facts (how many lines, which widths appear) for the manifest and for
+revalidation — the same role `schema_fingerprint` plays in the population source, adapted
+to a format without named keys.
 
-Uma divergencia de largura entre duas ingestion_date sucessivas e sinal de que o INE
-mudou o layout do arquivo — informacao para o consumidor (Silver), nao algo que esta
-Source tenta corrigir ou validar contra um valor esperado fixo: o layout observado hoje
-nao e assumido estavel para sempre.
+A width divergence between two successive ingestion_dates signals that INE changed the
+file layout — information for the consumer (Silver), not something this Source tries to
+fix or validate against a fixed expected value: the layout observed today is not assumed
+to be stable forever.
 """
 
 from __future__ import annotations
 
-ENCODING = "latin-1"  # ISO-8859-1, medido. Nunca convertido ao gravar (CONTRACT.md).
+ENCODING = "latin-1"  # ISO-8859-1, measured. Never converted on write (CONTRACT.md).
 
 
 def line_stats(path: str) -> dict:
-    """Numero de linhas e distribuicao de larguras (sem o terminador) do arquivo.
+    """Line count and width distribution (without the terminator) of the file.
 
-    Defensivo: um arquivo vazio ou ilegivel no encoding esperado nao levanta excecao
-    aqui — devolve estatisticas vazias. Quem decide se isso e falha e o chamador
-    (intake/validate), nao esta funcao.
+    Defensive: an empty file, or one unreadable in the expected encoding, does not raise
+    here — it returns empty stats. The caller (intake/validate) decides whether that is a
+    failure, not this function.
     """
     widths: dict[int, int] = {}
     count = 0
@@ -38,11 +38,11 @@ def line_stats(path: str) -> dict:
 
 
 def dominant_width(stats: dict) -> int | None:
-    """A largura mais frequente, ou None se o arquivo estiver vazio.
+    """The most frequent width, or None if the file is empty.
 
-    Nao afirma que TODA linha tem essa largura — so relata a mais comum. Um arquivo com
-    larguras heterogeneas ainda produz um resultado (nao e erro aqui); e o chamador que
-    decide o que fazer com isso.
+    Does not claim that EVERY line has that width — it only reports the most common one. A
+    file with mixed widths still produces a result (not an error here); the caller decides
+    what to do with it.
     """
     widths = stats.get("widths") or {}
     if not widths:

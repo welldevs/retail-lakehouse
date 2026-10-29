@@ -1,12 +1,12 @@
 """INE Callejero Source.
 
-Source de geografia oficial do INE: incorpora os arquivos do Callejero (SECC, UP, VIAS,
-PSEU, TRAM) — sem API, baixados manualmente do site do INE e colocados num diretorio local.
-Produz snapshots particionados, reproduziveis e validaveis, com os mesmos bytes dos
-arquivos originais.
+Official INE geography Source: ingests the Callejero files (SECC, UP, VIAS, PSEU, TRAM)
+— there is no API; they are downloaded manually from the INE website and placed in a local
+directory. Produces partitioned, reproducible, verifiable snapshots holding the same bytes
+as the original files.
 
-Este pacote e uma Source, nao uma plataforma de transformacao. Ver CONTRACT.md.
-Somente biblioteca padrao.
+This package is a Source, not a transformation platform. See CONTRACT.md.
+Standard library only.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
-"""A validacao fecha o loop: prova o resultado pousado, nao so a regra em fixture.
+"""Validation closes the loop: it proves the landed result, not just the rule on a fixture.
 
-Cada teste aqui corrompe a particao de um jeito diferente e exige que a validacao
-reprove. Um validador que so passa em particao boa nao prova nada.
+Each test here corrupts the partition in a different way and requires validation to fail.
+A validator that only passes on a good partition proves nothing.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ class ValidateTestCase(unittest.TestCase):
         return code, buffer.getvalue()
 
     def rewrite_customers(self, mutate) -> None:
-        """Reescreve customers.json e reconcilia o manifesto, para que a falha testada
-        seja a que o teste quer — e nao um checksum divergente escondendo as outras."""
+        """Rewrite customers.json and reconcile the manifest, so that the failure under test
+        is the one the test wants — not a checksum mismatch hiding the others."""
         with open(customers_path(self.partition), encoding="utf-8") as handle:
             customers = json.load(handle)
         mutate(customers)
@@ -62,35 +62,35 @@ class ValidateTestCase(unittest.TestCase):
         write_json(manifest_path(self.partition), manifest)
 
 
-class ParticaoBoaTest(ValidateTestCase):
-    def test_particao_recem_gerada_passa(self):
-        codigo, saida = self.validate(strict=True)
-        self.assertEqual(codigo, EXIT_OK, saida)
-        self.assertIn("coerencia geoespacial validados", saida)
+class GoodPartitionTest(ValidateTestCase):
+    def test_freshly_generated_partition_passes(self):
+        code, output = self.validate(strict=True)
+        self.assertEqual(code, EXIT_OK, output)
+        self.assertIn("geospatial coherence validated", output)
 
-    def test_relata_a_coerencia_de_todos_os_clientes(self):
-        _, saida = self.validate()
-        self.assertIn("50/50 clientes", saida)
+    def test_reports_coherence_for_every_customer(self):
+        _, output = self.validate()
+        self.assertIn("50/50 customers", output)
 
 
-class CoerenciaGeograficaTest(ValidateTestCase):
-    def test_cep_de_fora_da_auf_reprova(self):
-        """O teste negativo que prova que a garantia central e mesmo verificada."""
+class GeographicCoherenceTest(ValidateTestCase):
+    def test_postal_code_outside_the_fua_fails(self):
+        """The negative test that proves the central guarantee really is verified."""
         self.rewrite_customers(
             lambda customers: customers[0].update(postal_code="99999")
         )
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("postal_code", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("postal_code", output)
 
-    def test_municipio_fora_da_service_area_reprova(self):
-        """Endereco coerente com a linha de origem, mas num municipio que a AUF do
-        warehouse nao cobre. So a checagem de service area pega este caso: todos os
-        campos batem com o candidato, entao a comparacao campo a campo passa."""
-        intruso = dict(support.CANDIDATES[0], municipality_code="003")
+    def test_municipality_outside_the_service_area_fails(self):
+        """Address consistent with its source row, but in a municipality the warehouse's FUA
+        does not cover. Only the service area check catches this case: every field matches
+        the candidate, so the field-by-field comparison passes."""
+        intruder = dict(support.CANDIDATES[0], municipality_code="003")
         reference = support.write_reference(
-            os.path.join(self.tmp.name, "com-intruso"),
-            candidates=support.CANDIDATES + [intruso],
+            os.path.join(self.tmp.name, "with-intruder"),
+            candidates=support.CANDIDATES + [intruder],
         )
         self.reference = reference
         self.rewrite_customers(
@@ -98,148 +98,148 @@ class CoerenciaGeograficaTest(ValidateTestCase):
                 candidate_index=len(support.CANDIDATES), municipality_code="003"
             )
         )
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("fora da Area Urbana Funcional", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("outside the Functional Urban Area", output)
 
-    def test_candidate_index_fora_da_referencia_reprova(self):
+    def test_candidate_index_outside_the_reference_fails(self):
         self.rewrite_customers(lambda c: c[0].update(candidate_index=999999))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("candidate_index", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("candidate_index", output)
 
-    def test_rua_que_nao_e_a_do_tramo_reprova(self):
-        self.rewrite_customers(lambda c: c[0].update(street_name="RUA INVENTADA"))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("street_name", saida)
+    def test_street_that_is_not_the_tramo_street_fails(self):
+        self.rewrite_customers(lambda c: c[0].update(street_name="MADE-UP STREET"))
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("street_name", output)
 
-    def test_wh_divergente_da_particao_reprova(self):
+    def test_wh_diverging_from_the_partition_fails(self):
         self.rewrite_customers(lambda c: c[0].update(wh=support.WH_B))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("nao e o da particao", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("is not the partition's", output)
 
-    def test_customer_id_duplicado_reprova(self):
+    def test_duplicated_customer_id_fails(self):
         self.rewrite_customers(lambda c: c[1].update(customer_id=c[0]["customer_id"]))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("duplicado", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("duplicated", output)
 
 
-class NumeracaoTest(ValidateTestCase):
-    def test_numero_em_via_sem_numeracao_reprova(self):
-        def fabricar(customers):
+class NumberingTest(ValidateTestCase):
+    def test_number_on_street_without_numbering_fails(self):
+        def fabricate(customers):
             for customer in customers:
                 if customer["numbering_type"] == "0":
                     customer["house_number"] = 42
                     return
-            raise AssertionError("a fixture nao gerou nenhum tramo sem numeracao")
+            raise AssertionError("the fixture generated no tramo without numbering")
 
-        self.rewrite_customers(fabricar)
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("endereco fabricado", saida)
+        self.rewrite_customers(fabricate)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("fabricated address", output)
 
-    def test_paridade_errada_reprova(self):
-        def quebrar(customers):
+    def test_wrong_parity_fails(self):
+        def break_parity(customers):
             for customer in customers:
                 if customer["numbering_type"] == "1" and customer["house_number"]:
                     customer["house_number"] += 1
                     return
-            raise AssertionError("a fixture nao gerou numero impar")
+            raise AssertionError("the fixture generated no odd number")
 
-        self.rewrite_customers(quebrar)
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("contraria numbering_type", saida)
+        self.rewrite_customers(break_parity)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("contradicts numbering_type", output)
 
-    def test_numero_fora_da_faixa_real_reprova(self):
-        def estourar(customers):
+    def test_number_outside_the_real_range_fails(self):
+        def overflow(customers):
             for customer in customers:
                 if customer["numbering_type"] == "1" and customer["house_number"]:
                     customer["house_number"] = 10001
                     return
-            raise AssertionError("a fixture nao gerou numero impar")
+            raise AssertionError("the fixture generated no odd number")
 
-        self.rewrite_customers(estourar)
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("fora da faixa real", saida)
+        self.rewrite_customers(overflow)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("outside the tramo's real range", output)
 
 
-class IntegridadeTest(ValidateTestCase):
-    def test_checksum_divergente_reprova(self):
+class IntegrityTest(ValidateTestCase):
+    def test_checksum_mismatch_fails(self):
         with open(customers_path(self.partition), "a", encoding="utf-8") as handle:
             handle.write(" ")
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("checksum divergente", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("checksum mismatch", output)
 
-    def test_arquivo_nao_declarado_no_manifesto_reprova(self):
-        with open(os.path.join(self.partition, "sobra.json"), "w") as handle:
+    def test_file_not_declared_in_manifest_fails(self):
+        with open(os.path.join(self.partition, "leftover.json"), "w") as handle:
             handle.write("{}")
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("fora do manifesto", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("outside the manifest", output)
 
-    def test_success_ausente_contradiz_complete(self):
+    def test_missing_success_contradicts_complete(self):
         os.unlink(success_path(self.partition))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("_SUCCESS", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("_SUCCESS", output)
 
-    def test_manifesto_ausente_reprova(self):
+    def test_missing_manifest_fails(self):
         os.unlink(manifest_path(self.partition))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("manifesto nao encontrado", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("manifest not found", output)
 
-    def test_totais_adulterados_no_manifesto_reprovam(self):
+    def test_tampered_totals_in_manifest_fail(self):
         with open(manifest_path(self.partition), encoding="utf-8") as handle:
             manifest = json.load(handle)
         manifest["totals"]["customer_rows"] = 999
         write_json(manifest_path(self.partition), manifest)
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("totals.customer_rows", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("totals.customer_rows", output)
 
-    def test_versao_de_manifesto_desconhecida_reprova(self):
+    def test_unknown_manifest_version_fails(self):
         with open(manifest_path(self.partition), encoding="utf-8") as handle:
             manifest = json.load(handle)
         manifest["manifest_version"] = 99
         write_json(manifest_path(self.partition), manifest)
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("manifest_version", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("manifest_version", output)
 
-    def test_schema_fingerprint_divergente_reprova(self):
-        self.rewrite_customers(lambda c: c[0].update(campo_novo=1))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("schema_fingerprint", saida)
+    def test_schema_fingerprint_mismatch_fails(self):
+        self.rewrite_customers(lambda c: c[0].update(new_field=1))
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("schema_fingerprint", output)
 
-    def test_campo_obrigatorio_removido_reprova(self):
+    def test_removed_required_field_fails(self):
         self.rewrite_customers(lambda c: c[0].pop("birth_year"))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("birth_year", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("birth_year", output)
 
 
-class ReferenciaTest(ValidateTestCase):
-    def test_referencia_ausente_reprova(self):
+class ReferenceTest(ValidateTestCase):
+    def test_missing_reference_fails(self):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            codigo = validate_run(
-                support.validate_args(self.partition, os.path.join(self.tmp.name, "nada"))
+            code = validate_run(
+                support.validate_args(self.partition, os.path.join(self.tmp.name, "nothing"))
             )
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("referencia inutilizavel", buffer.getvalue())
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("reference unusable", buffer.getvalue())
 
-    def test_referencia_de_outro_snapshot_do_callejero_reprova(self):
-        """Validar contra uma referencia diferente da que gerou nao prova nada."""
-        outra = support.write_reference(os.path.join(self.tmp.name, "outra"))
-        path = os.path.join(outra, "address_candidates.json")
+    def test_reference_from_another_callejero_snapshot_fails(self):
+        """Validating against a reference other than the one that generated proves nothing."""
+        other = support.write_reference(os.path.join(self.tmp.name, "other"))
+        path = os.path.join(other, "address_candidates.json")
         with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)
         payload["callejero_ingestion_date"] = "2026-01-01"
@@ -248,55 +248,55 @@ class ReferenciaTest(ValidateTestCase):
 
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            codigo = validate_run(support.validate_args(self.partition, outra))
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("outro snapshot do Callejero", buffer.getvalue())
+            code = validate_run(support.validate_args(self.partition, other))
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("another Callejero snapshot", buffer.getvalue())
 
 
 if __name__ == "__main__":
     unittest.main()
 
 
-class IdadeMinimaTest(ValidateTestCase):
-    """A ultima camada, sobre o dado POUSADO.
+class MinimumAgeTest(ValidateTestCase):
+    """The last layer, on the LANDED data.
 
-    As outras duas — o corte na distribuicao exportada e a recusa da referencia de schema
-    antigo — agem antes de o cliente existir. Esta age depois: ela relê a particao e refaz a
-    conta da idade. E a diferenca entre provar a regra sobre fixture e provar o resultado.
+    The other two — the cutoff in the exported distribution and the refusal of an old-schema
+    reference — act before the customer exists. This one acts after: it re-reads the
+    partition and redoes the age math. It is the difference between proving the rule on a
+    fixture and proving the result.
     """
 
-    def test_menor_de_idade_na_particao_reprova(self):
+    def test_minor_in_the_partition_fails(self):
         self.rewrite_customers(
-            lambda customers: customers[0].update(birth_year=2020)  # 6 anos em 2026
+            lambda customers: customers[0].update(birth_year=2020)  # 6 years old in 2026
         )
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("abaixo de min_customer_age", saida)
-        self.assertIn("6 anos", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("below min_customer_age", output)
+        self.assertIn("6 years old", output)
 
-    def test_birth_year_nao_inteiro_reprova_e_nao_e_contado_como_menor(self):
-        """`null` num campo obrigatorio nao pode virar 'idade desconhecida, deixa passar'.
+    def test_non_integer_birth_year_fails_and_is_not_counted_as_minor(self):
+        """`null` in a required field cannot become 'unknown age, let it pass'.
 
-        E tambem nao pode ser somado a contagem de menores: um birth_year nulo nao e uma
-        idade baixa, e uma idade que nao existe. Juntar os dois faria o relatorio afirmar que
-        ha uma crianca na base quando nao ha nenhuma, e mandaria o operador procurar a coisa
-        errada.
+        Nor can it be added to the minors count: a null birth_year is not a low age, it is
+        an age that does not exist. Lumping both would make the report claim there is a
+        child in the base when there is none, and would send the operator looking for the
+        wrong thing.
         """
         self.rewrite_customers(lambda customers: customers[0].update(birth_year=None))
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_FAILED)
-        self.assertIn("sem birth_year inteiro", saida)
-        self.assertNotIn("abaixo de min_customer_age", saida)
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_FAILED)
+        self.assertIn("without an integer birth_year", output)
+        self.assertNotIn("below min_customer_age", output)
 
-    def test_a_idade_e_do_ingestion_date_e_nao_do_relogio(self):
-        """Um cliente de 18 anos EM 2026 passa, e continua passando em qualquer execucao.
+    def test_age_comes_from_ingestion_date_not_the_clock(self):
+        """A customer aged 18 IN 2026 passes, and keeps passing on any run.
 
-        Se a validacao usasse `datetime.now()`, esta particao imutavel comecaria a reprovar
-        sozinha assim que o calendario virasse — sem nada nela ter mudado.
+        If validation used `datetime.now()`, this immutable partition would start failing on
+        its own as soon as the calendar turned — without anything in it having changed.
         """
         self.rewrite_customers(
             lambda customers: customers[0].update(birth_year=2026 - support.MIN_CUSTOMER_AGE)
         )
-        codigo, saida = self.validate()
-        self.assertEqual(codigo, EXIT_OK, saida)
-
+        code, output = self.validate()
+        self.assertEqual(code, EXIT_OK, output)

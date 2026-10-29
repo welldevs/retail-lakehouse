@@ -1,24 +1,25 @@
-"""Validacao independente de uma particao do log de eventos.
+"""Independent validation of an event-log partition.
 
-Rele o arquivo declarado no manifesto, recalculando checksum, contagem, impressao digital e
-TODOS os totais em vez de aceitar os valores registrados, e varre o diretorio para detectar
-arquivos que o manifesto nao declara.
+Re-reads the file declared in the manifest, recomputing checksum, count, fingerprint and ALL
+totals instead of accepting the recorded values, and walks the directory to detect files the
+manifest does not declare.
 
-ALEM DISSO, e e aqui que esta o valor: rele a mesma referencia que o `extract` usou e
-reconfere, evento a evento, as quatro garantias que nenhum checksum alcanca —
+ON TOP OF THAT, and this is where the value is: it re-reads the same reference `extract` used
+and re-checks, event by event, the four guarantees no checksum reaches —
 
-  1. o cliente do pedido pertence ao armazem da particao (regra medida: 0 CEPs cruzam armazem);
-  2. todo produto pedido existe no catalogo DAQUELE armazem NAQUELA data;
-  3. o preco pago e o preco observado daquele (armazem, data, produto), casa decimal a casa
-     decimal — comparado como Decimal, nunca como float;
-  4. a sequencia de eventos de cada pedido e contigua e a maquina de estados a aceita.
+  1. the order's customer belongs to the partition's warehouse (measured rule: 0 postal codes
+     cross warehouses);
+  2. every ordered product exists in THAT warehouse's catalog ON THAT date;
+  3. the price paid is the observed price of that (warehouse, date, product), decimal place by
+     decimal place — compared as Decimal, never as float;
+  4. each order's event sequence is contiguous and the state machine accepts it.
 
-Um validador que so confere checksum provaria integridade, nao coerencia. Dai --reference ser
-obrigatorio, como na Source de clientes.
+A validator that only checks checksums would prove integrity, not coherence. Hence --reference
+is required, as in the customers Source.
 
-Dois tipos de problema:
-  - INTEGRIDADE e COERENCIA -> sempre fatal (codigo 1).
-  - QUALIDADE/DISTRIBUICAO  -> medida e reportada; fatal apenas com --strict.
+Two kinds of problem:
+  - INTEGRITY and COHERENCE -> always fatal (code 1).
+  - QUALITY/DISTRIBUTION    -> measured and reported; fatal only with --strict.
 """
 
 from __future__ import annotations
@@ -65,48 +66,48 @@ def _decimal(value):
 
 
 def _check_envelope(events, warehouse, order_date) -> list[str]:
-    """Envelope: identidade deterministica, armazem, dia e vocabulario."""
-    problemas: list[str] = []
-    vistos: set = set()
+    """Envelope: deterministic identity, warehouse, day and vocabulary."""
+    problems: list[str] = []
+    seen: set = set()
     for event in events:
-        faltando = [f for f in ENVELOPE_FIELDS if f not in event]
-        if faltando:
-            problemas.append(f"evento sem campo do envelope {faltando}: {event.get('event_id')}")
+        missing = [f for f in ENVELOPE_FIELDS if f not in event]
+        if missing:
+            problems.append(f"event missing envelope field {missing}: {event.get('event_id')}")
             continue
         if event["wh"] != warehouse:
-            problemas.append(
-                f"evento {event['event_id']} com wh={event['wh']!r}, mas a particao e de "
+            problems.append(
+                f"event {event['event_id']} with wh={event['wh']!r}, but the partition is "
                 f"{warehouse!r}"
             )
         if event["event_version"] != EVENT_VERSION:
-            problemas.append(
-                f"evento {event['event_id']} com event_version={event['event_version']!r}, "
-                f"suportado={EVENT_VERSION}"
+            problems.append(
+                f"event {event['event_id']} with event_version={event['event_version']!r}, "
+                f"supported={EVENT_VERSION}"
             )
-        # event_id e derivavel: recalcular e a unica forma de provar que ele nao foi
-        # inventado nem embaralhado entre pedidos.
-        esperado = event_id(event["order_id"], event["sequence_no"])
-        if event["event_id"] != esperado:
-            problemas.append(
-                f"event_id {event['event_id']} nao deriva de "
-                f"({event['order_id']}, {event['sequence_no']}); esperado {esperado}"
+        # event_id is derivable: recomputing it is the only way to prove it was neither
+        # invented nor shuffled between orders.
+        expected = event_id(event["order_id"], event["sequence_no"])
+        if event["event_id"] != expected:
+            problems.append(
+                f"event_id {event['event_id']} does not derive from "
+                f"({event['order_id']}, {event['sequence_no']}); expected {expected}"
             )
-        if event["event_id"] in vistos:
-            problemas.append(f"event_id duplicado: {event['event_id']}")
-        vistos.add(event["event_id"])
+        if event["event_id"] in seen:
+            problems.append(f"duplicate event_id: {event['event_id']}")
+        seen.add(event["event_id"])
         if not event["occurred_at"].startswith(order_date) and event["event_type"] == ORDER_PLACED:
-            problemas.append(
-                f"pedido {event['order_id']} colocado em {event['occurred_at']}, fora do dia "
-                f"da particao ({order_date})"
+            problems.append(
+                f"order {event['order_id']} placed at {event['occurred_at']}, outside the "
+                f"partition day ({order_date})"
             )
-    return problemas
+    return problems
 
 
 def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str], list[str], int]:
-    """Coerencia pedido a pedido contra a referencia. Retorna (erros, avisos, aprovados)."""
-    problemas: list[str] = []
-    avisos: list[str] = []
-    aprovados = 0
+    """Order-by-order coherence against the reference. Returns (errors, warnings, passed)."""
+    problems: list[str] = []
+    warnings: list[str] = []
+    passed = 0
 
     try:
         calendar = reference.calendar_of(warehouse, order_date)
@@ -114,254 +115,257 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
         return [str(exc)], [], 0
 
     price_as_of = calendar["price_as_of"]
-    catalogo = {row["source_product_id"]: row for row in reference.catalog_of(warehouse, price_as_of)}
-    clientes = {row["customer_id"]: row for row in reference.customers_of(warehouse)}
-    minima = int(float(reference.premises["min_buyer_age"]))
+    catalog = {row["source_product_id"]: row for row in reference.catalog_of(warehouse, price_as_of)}
+    customers = {row["customer_id"]: row for row in reference.customers_of(warehouse)}
+    minimum = int(float(reference.premises["min_buyer_age"]))
 
     for order_id in sorted(grouped):
-        eventos = grouped[order_id]
-        falhou = False
+        order_events = grouped[order_id]
+        failed = False
 
-        # ---- sequencia contigua ------------------------------------------------
-        esperado = list(range(1, len(eventos) + 1))
-        observado = [e["sequence_no"] for e in eventos]
-        if observado != esperado:
-            problemas.append(
-                f"{order_id}: sequence_no nao contiguo — observado {observado[:8]}..., "
-                f"esperado 1..{len(eventos)}"
+        # ---- contiguous sequence ------------------------------------------------
+        expected = list(range(1, len(order_events) + 1))
+        observed = [e["sequence_no"] for e in order_events]
+        if observed != expected:
+            problems.append(
+                f"{order_id}: sequence_no not contiguous — observed {observed[:8]}..., "
+                f"expected 1..{len(order_events)}"
             )
-            falhou = True
+            failed = True
 
-        # ---- maquina de estados -------------------------------------------------
-        estado = None
+        # ---- state machine ------------------------------------------------------
+        state = None
         try:
-            for event in eventos:
-                estado = apply_transition(estado, event["event_type"])
+            for event in order_events:
+                state = apply_transition(state, event["event_type"])
         except EventError as exc:
-            problemas.append(f"{order_id}: {exc}")
-            falhou = True
+            problems.append(f"{order_id}: {exc}")
+            failed = True
 
-        primeiro = eventos[0]
-        if primeiro["event_type"] != ORDER_PLACED:
-            problemas.append(
-                f"{order_id}: primeiro evento e {primeiro['event_type']!r}, e nao "
+        first = order_events[0]
+        if first["event_type"] != ORDER_PLACED:
+            problems.append(
+                f"{order_id}: first event is {first['event_type']!r}, not "
                 f"{ORDER_PLACED!r}"
             )
-            falhou = True
+            failed = True
             continue
 
-        placed = primeiro["payload"]
+        placed = first["payload"]
 
-        # ---- o cliente e daquele armazem, e ja existia --------------------------
-        cliente = clientes.get(placed.get("customer_id"))
-        if cliente is None:
-            problemas.append(
-                f"{order_id}: cliente {placed.get('customer_id')!r} nao pertence a "
-                f"{warehouse!r} na referencia"
+        # ---- the customer belongs to that warehouse, and already existed --------
+        customer = customers.get(placed.get("customer_id"))
+        if customer is None:
+            problems.append(
+                f"{order_id}: customer {placed.get('customer_id')!r} does not belong to "
+                f"{warehouse!r} in the reference"
             )
-            falhou = True
+            failed = True
         else:
-            versao = reference.customer_version_at(cliente["first_ingestion_date"], order_date)
-            if versao is None:
-                problemas.append(
-                    f"{order_id}: cliente {cliente['customer_id']} so existe a partir de "
-                    f"{cliente['first_ingestion_date']}, depois de {order_date}"
+            version = reference.customer_version_at(customer["first_ingestion_date"], order_date)
+            if version is None:
+                problems.append(
+                    f"{order_id}: customer {customer['customer_id']} only exists from "
+                    f"{customer['first_ingestion_date']}, after {order_date}"
                 )
-                falhou = True
-            elif placed.get("customer_ingestion_date") != versao:
-                problemas.append(
+                failed = True
+            elif placed.get("customer_ingestion_date") != version:
+                problems.append(
                     f"{order_id}: customer_ingestion_date={placed.get('customer_ingestion_date')!r} "
-                    f"nao e a versao vigente em {order_date} ({versao})"
+                    f"is not the version in force on {order_date} ({version})"
                 )
-                falhou = True
-            for campo in ("province_code", "municipality_code", "postal_code"):
-                if placed.get(campo) != cliente[campo]:
-                    problemas.append(
-                        f"{order_id}: {campo}={placed.get(campo)!r} diverge do cadastro do "
-                        f"cliente ({cliente[campo]!r})"
+                failed = True
+            for field in ("province_code", "municipality_code", "postal_code"):
+                if placed.get(field) != customer[field]:
+                    problems.append(
+                        f"{order_id}: {field}={placed.get(field)!r} differs from the customer "
+                        f"record ({customer[field]!r})"
                     )
-                    falhou = True
+                    failed = True
 
-            # ---- a faixa etaria carimbada e a que a idade do cliente produz -----
-            # RECALCULADA, e nao apenas conferida contra si mesma: e o carimbo que decide
-            # qual vetor de pesos sorteou a cesta, e um carimbo errado produziria um mix
-            # coerente com outra coorte — plausivel, sem nulo, sem total quebrado.
-            idade = int(order_date[:4]) - int(cliente["birth_year"])
-            if idade < minima:
-                problemas.append(
-                    f"{order_id}: cliente {cliente['customer_id']} tinha {idade} ano(s) em "
-                    f"{order_date}, abaixo de min_buyer_age={minima}"
+            # ---- the stamped age band is the one the customer's age produces ----
+            # RECOMPUTED, not merely checked against itself: the stamp decides which weight
+            # vector drew the basket, and a wrong stamp would produce a mix consistent with
+            # another cohort — plausible, no nulls, no broken total.
+            age = int(order_date[:4]) - int(customer["birth_year"])
+            if age < minimum:
+                problems.append(
+                    f"{order_id}: customer {customer['customer_id']} was {age} year(s) old on "
+                    f"{order_date}, below min_buyer_age={minimum}"
                 )
-                falhou = True
+                failed = True
             try:
-                esperada = reference.demand.band_of(idade)
+                expected_band = reference.demand.band_of(age)
             except DemandError as exc:
-                problemas.append(f"{order_id}: {exc}")
-                falhou = True
+                problems.append(f"{order_id}: {exc}")
+                failed = True
             else:
-                if placed.get("buyer_age_band") != esperada:
-                    problemas.append(
-                        f"{order_id}: buyer_age_band={placed.get('buyer_age_band')!r}, mas "
-                        f"a idade {idade} do cliente cai em {esperada!r}"
+                if placed.get("buyer_age_band") != expected_band:
+                    problems.append(
+                        f"{order_id}: buyer_age_band={placed.get('buyer_age_band')!r}, but "
+                        f"the customer's age {age} falls in {expected_band!r}"
                     )
-                    falhou = True
+                    failed = True
 
-        # ---- a base de preco declarada e a do calendario ------------------------
+        # ---- the declared price basis is the calendar's --------------------------
         if placed.get("price_as_of") != price_as_of:
-            problemas.append(
-                f"{order_id}: price_as_of={placed.get('price_as_of')!r}, mas o calendario diz "
-                f"{price_as_of!r} para {warehouse}/{order_date}"
+            problems.append(
+                f"{order_id}: price_as_of={placed.get('price_as_of')!r}, but the calendar says "
+                f"{price_as_of!r} for {warehouse}/{order_date}"
             )
-            falhou = True
+            failed = True
         if placed.get("price_source") != calendar["price_source"]:
-            problemas.append(
-                f"{order_id}: price_source={placed.get('price_source')!r}, mas o calendario "
-                f"diz {calendar['price_source']!r}"
+            problems.append(
+                f"{order_id}: price_source={placed.get('price_source')!r}, but the calendar "
+                f"says {calendar['price_source']!r}"
             )
-            falhou = True
+            failed = True
 
-        # ---- produto e preco de cada linha --------------------------------------
-        linhas = {}
-        bruto = Decimal("0")
-        for linha in placed.get("lines") or []:
-            linhas[linha["line_no"]] = dict(linha)
-            produto = catalogo.get(linha["source_product_id"])
-            if produto is None:
-                problemas.append(
-                    f"{order_id} linha {linha['line_no']}: produto "
-                    f"{linha['source_product_id']!r} nao existe no catalogo de {warehouse} em "
-                    f"{price_as_of}. Pedir o que o armazem nao vende seria inventar sortimento."
+        # ---- product and price of each line -------------------------------------
+        lines = {}
+        gross = Decimal("0")
+        for line in placed.get("lines") or []:
+            lines[line["line_no"]] = dict(line)
+            product = catalog.get(line["source_product_id"])
+            if product is None:
+                problems.append(
+                    f"{order_id} line {line['line_no']}: product "
+                    f"{line['source_product_id']!r} does not exist in the {warehouse} catalog "
+                    f"on {price_as_of}. Ordering what the warehouse does not sell would be "
+                    f"inventing assortment."
                 )
-                falhou = True
+                failed = True
                 continue
-            preco = _decimal(linha.get("unit_price"))
-            if preco is None or preco != produto["unit_price"]:
-                problemas.append(
-                    f"{order_id} linha {linha['line_no']}: unit_price="
-                    f"{linha.get('unit_price')!r}, mas o observado em {warehouse}/{price_as_of} "
-                    f"para {linha['source_product_id']} e {produto['unit_price']}"
+            price = _decimal(line.get("unit_price"))
+            if price is None or price != product["unit_price"]:
+                problems.append(
+                    f"{order_id} line {line['line_no']}: unit_price="
+                    f"{line.get('unit_price')!r}, but the observed price in "
+                    f"{warehouse}/{price_as_of} for {line['source_product_id']} is "
+                    f"{product['unit_price']}"
                 )
-                falhou = True
+                failed = True
                 continue
-            if not isinstance(linha.get("quantity"), int) or linha["quantity"] < 1:
-                problemas.append(
-                    f"{order_id} linha {linha['line_no']}: quantity invalida "
-                    f"({linha.get('quantity')!r})"
+            if not isinstance(line.get("quantity"), int) or line["quantity"] < 1:
+                problems.append(
+                    f"{order_id} line {line['line_no']}: invalid quantity "
+                    f"({line.get('quantity')!r})"
                 )
-                falhou = True
+                failed = True
                 continue
-            bruto += preco * linha["quantity"]
+            gross += price * line["quantity"]
 
-        declarado = _decimal(placed.get("gross_amount"))
-        if declarado is None or declarado != bruto:
-            problemas.append(
-                f"{order_id}: gross_amount={placed.get('gross_amount')!r} nao e a soma das "
-                f"linhas colocadas ({bruto})"
+        declared = _decimal(placed.get("gross_amount"))
+        if declared is None or declared != gross:
+            problems.append(
+                f"{order_id}: gross_amount={placed.get('gross_amount')!r} is not the sum of "
+                f"the placed lines ({gross})"
             )
-            falhou = True
-        if placed.get("line_count") != len(linhas):
-            problemas.append(
-                f"{order_id}: line_count={placed.get('line_count')!r} diverge das "
-                f"{len(linhas)} linha(s) presentes"
+            failed = True
+        if placed.get("line_count") != len(lines):
+            problems.append(
+                f"{order_id}: line_count={placed.get('line_count')!r} differs from the "
+                f"{len(lines)} line(s) present"
             )
-            falhou = True
+            failed = True
 
-        # ---- o fold: substituicao e remocao mudam a cesta ------------------------
-        efetivo = {no: dict(linha) for no, linha in linhas.items()}
-        for event in eventos[1:]:
+        # ---- the fold: substitution and removal change the basket ----------------
+        effective = {no: dict(line) for no, line in lines.items()}
+        for event in order_events[1:]:
             payload = event["payload"]
             if event["event_type"] == ORDER_LINE_SUBSTITUTED:
                 no = payload.get("line_no")
-                if no not in efetivo:
-                    problemas.append(f"{order_id}: substituicao de linha inexistente {no!r}")
-                    falhou = True
+                if no not in effective:
+                    problems.append(f"{order_id}: substitution of nonexistent line {no!r}")
+                    failed = True
                     continue
-                substituto = catalogo.get(payload.get("substitute_source_product_id"))
-                if substituto is None:
-                    problemas.append(
-                        f"{order_id} linha {no}: substituto "
-                        f"{payload.get('substitute_source_product_id')!r} nao existe no "
-                        f"catalogo de {warehouse} em {price_as_of}"
+                substitute = catalog.get(payload.get("substitute_source_product_id"))
+                if substitute is None:
+                    problems.append(
+                        f"{order_id} line {no}: substitute "
+                        f"{payload.get('substitute_source_product_id')!r} does not exist in "
+                        f"the {warehouse} catalog on {price_as_of}"
                     )
-                    falhou = True
+                    failed = True
                     continue
-                preco = _decimal(payload.get("substitute_unit_price"))
-                if preco is None or preco != substituto["unit_price"]:
-                    problemas.append(
-                        f"{order_id} linha {no}: substitute_unit_price="
-                        f"{payload.get('substitute_unit_price')!r}, observado "
-                        f"{substituto['unit_price']}"
+                price = _decimal(payload.get("substitute_unit_price"))
+                if price is None or price != substitute["unit_price"]:
+                    problems.append(
+                        f"{order_id} line {no}: substitute_unit_price="
+                        f"{payload.get('substitute_unit_price')!r}, observed "
+                        f"{substitute['unit_price']}"
                     )
-                    falhou = True
+                    failed = True
                     continue
-                efetivo[no]["unit_price"] = str(preco)
+                effective[no]["unit_price"] = str(price)
             elif event["event_type"] == ORDER_LINE_REMOVED:
                 no = payload.get("line_no")
-                if no not in efetivo:
-                    problemas.append(f"{order_id}: remocao de linha inexistente {no!r}")
-                    falhou = True
+                if no not in effective:
+                    problems.append(f"{order_id}: removal of nonexistent line {no!r}")
+                    failed = True
                     continue
                 if payload.get("reason") != "unavailable":
-                    problemas.append(
-                        f"{order_id} linha {no}: reason={payload.get('reason')!r} fora do "
-                        f"vocabulario"
+                    problems.append(
+                        f"{order_id} line {no}: reason={payload.get('reason')!r} outside the "
+                        f"vocabulary"
                     )
-                    falhou = True
-                efetivo.pop(no)
+                    failed = True
+                effective.pop(no)
             elif event["event_type"] == ORDER_PICKED:
-                liquido = sum(
-                    (_decimal(l["unit_price"]) * l["quantity"] for l in efetivo.values()),
+                net = sum(
+                    (_decimal(l["unit_price"]) * l["quantity"] for l in effective.values()),
                     Decimal("0"),
                 )
-                declarado_picked = _decimal(payload.get("picked_amount"))
-                if declarado_picked is None or declarado_picked != liquido:
-                    problemas.append(
-                        f"{order_id}: picked_amount={payload.get('picked_amount')!r} nao fecha "
-                        f"com as linhas cumpridas ({liquido})"
+                declared_picked = _decimal(payload.get("picked_amount"))
+                if declared_picked is None or declared_picked != net:
+                    problems.append(
+                        f"{order_id}: picked_amount={payload.get('picked_amount')!r} does not "
+                        f"match the fulfilled lines ({net})"
                     )
-                    falhou = True
-                if payload.get("picked_line_count") != len(efetivo):
-                    problemas.append(
+                    failed = True
+                if payload.get("picked_line_count") != len(effective):
+                    problems.append(
                         f"{order_id}: picked_line_count={payload.get('picked_line_count')!r} "
-                        f"diverge das {len(efetivo)} linha(s) cumpridas"
+                        f"differs from the {len(effective)} fulfilled line(s)"
                     )
-                    falhou = True
+                    failed = True
 
-        # ---- o tempo nao anda para tras dentro de um pedido ----------------------
-        instantes = [e["occurred_at"] for e in eventos]
-        if instantes != sorted(instantes):
-            problemas.append(f"{order_id}: occurred_at regride dentro do pedido")
-            falhou = True
+        # ---- time does not go backwards within an order --------------------------
+        instants = [e["occurred_at"] for e in order_events]
+        if instants != sorted(instants):
+            problems.append(f"{order_id}: occurred_at goes backwards within the order")
+            failed = True
 
-        if not falhou:
-            aprovados += 1
+        if not failed:
+            passed += 1
 
-    # ---- avisos de distribuicao ----------------------------------------------
+    # ---- distribution warnings ------------------------------------------------
     total = len(grouped)
     if total:
-        mudaram = sum(
+        changed = sum(
             1
-            for eventos in grouped.values()
+            for order_events in grouped.values()
             if any(
-                e["event_type"] in (ORDER_LINE_SUBSTITUTED, ORDER_LINE_REMOVED) for e in eventos
+                e["event_type"] in (ORDER_LINE_SUBSTITUTED, ORDER_LINE_REMOVED)
+                for e in order_events
             )
         )
-        if mudaram == 0:
-            # O aviso mais importante desta Source. Se nenhuma cesta mudou, o valor final e
-            # derivavel do primeiro evento, o fold e trivial e o modelo de eventos vira
-            # decoracao — que e exatamente o que o ARCHITECTURE.md recusa.
-            avisos.append(
-                "nenhum pedido teve linha substituida ou removida: o fold ficou trivial e o "
-                "log deixa de justificar o modelo de eventos"
+        if changed == 0:
+            # The most important warning of this Source. If no basket changed, the final value
+            # is derivable from the first event, the fold is trivial and the event model
+            # becomes decoration — which is exactly what ARCHITECTURE.md refuses.
+            warnings.append(
+                "no order had a substituted or removed line: the fold became trivial and the "
+                "log no longer justifies the event model"
             )
-        terminais = sum(
-            1 for eventos in grouped.values()
-            if any(e["event_type"] in TERMINAL_STATES for e in eventos)
+        terminal = sum(
+            1 for order_events in grouped.values()
+            if any(e["event_type"] in TERMINAL_STATES for e in order_events)
         )
-        if terminais == total and total > 1:
-            avisos.append("todos os pedidos terminaram no mesmo evento")
+        if terminal == total and total > 1:
+            warnings.append("all orders ended on the same event")
 
-    return problemas, avisos, aprovados
+    return problems, warnings, passed
 
 
 def run(args) -> int:
@@ -371,23 +375,23 @@ def run(args) -> int:
 
     path = manifest_path(partition)
     if not os.path.exists(path):
-        print(f"ERRO: manifesto nao encontrado em {path}")
+        print(f"ERROR: manifest not found at {path}")
         return EXIT_FAILED
     try:
         manifest, _ = read_json(path)
     except CorruptFileError as exc:
-        print(f"ERRO: manifesto ilegivel: {exc}")
+        print(f"ERROR: manifest unreadable: {exc}")
         return EXIT_FAILED
     if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
-        print(f"ERRO: manifesto sem a lista 'files': {path}")
+        print(f"ERROR: manifest has no 'files' list: {path}")
         return EXIT_FAILED
 
-    # A raiz do snapshot fica dois niveis acima: ingestion_date= e wh=.
+    # The snapshot root is two levels up: ingestion_date= and wh=.
     root = os.path.abspath(os.path.join(partition, "..", ".."))
     version = manifest.get("manifest_version")
     if version != MANIFEST_VERSION:
         errors.append(
-            f"manifest_version {version!r} diferente do suportado ({MANIFEST_VERSION})"
+            f"manifest_version {version!r} differs from the supported one ({MANIFEST_VERSION})"
         )
 
     partition_block = manifest.get("partition") or {}
@@ -395,55 +399,55 @@ def run(args) -> int:
     order_date = partition_block.get("ingestion_date")
     config = manifest.get("config") or {}
 
-    print(f"particao ......... {partition}")
+    print(f"partition ........ {partition}")
     print(f"run_id ........... {manifest.get('run_id')}")
     print(f"source ........... {(manifest.get('source') or {}).get('name')}")
     print(f"warehouse ........ {warehouse}")
-    print(f"dia do pedido .... {order_date}")
+    print(f"order day ........ {order_date}")
     print(f"seed ............. {config.get('seed')}")
-    print(f"premissas ........ {str(config.get('premises_sha256'))[:16]}...")
-    print(f"demanda .......... {config.get('demand_model_version')}")
-    print(f"completa ......... {manifest.get('complete')}")
+    print(f"premises ......... {str(config.get('premises_sha256'))[:16]}...")
+    print(f"demand ........... {config.get('demand_model_version')}")
+    print(f"complete ......... {manifest.get('complete')}")
 
-    # ---- Integridade dos arquivos declarados -------------------------------
+    # ---- Integrity of the declared files --------------------------------------
     checked = 0
     declared: set = set()
     events: list = []
     for entry in manifest["files"]:
         if not isinstance(entry, dict) or "path" not in entry:
-            errors.append(f"entrada de manifesto malformada: {entry!r}")
+            errors.append(f"malformed manifest entry: {entry!r}")
             continue
         target = os.path.join(root, entry["path"])
         if not _inside(root, target):
-            errors.append(f"caminho fora da raiz do snapshot: {entry['path']}")
+            errors.append(f"path outside the snapshot root: {entry['path']}")
             continue
         declared.add(os.path.abspath(target))
         if not os.path.exists(target):
-            errors.append(f"arquivo ausente: {entry['path']}")
+            errors.append(f"missing file: {entry['path']}")
             continue
         blob = read_bytes(target)
         checked += 1
         if digest(blob) != entry.get("sha256"):
-            errors.append(f"checksum divergente: {entry['path']}")
+            errors.append(f"checksum mismatch: {entry['path']}")
         if len(blob) != entry.get("bytes"):
-            errors.append(f"tamanho divergente: {entry['path']}")
+            errors.append(f"size mismatch: {entry['path']}")
         try:
             rows, _ = read_jsonl(target)
         except CorruptFileError as exc:
-            errors.append(f"arquivo ilegivel: {exc}")
+            errors.append(f"unreadable file: {exc}")
             continue
         events.extend(events_of(rows))
         if len(rows) != entry.get("records"):
             errors.append(
-                f"contagem divergente em {entry['path']}: "
-                f"manifesto={entry.get('records')} arquivo={len(rows)}"
+                f"count mismatch in {entry['path']}: "
+                f"manifest={entry.get('records')} file={len(rows)}"
             )
-    print(f"arquivos ......... {checked}/{len(manifest['files'])} lidos e conferidos")
+    print(f"files ............ {checked}/{len(manifest['files'])} read and checked")
 
     if manifest.get("failures"):
-        errors.append(f"{len(manifest['failures'])} falha(s) registrada(s) no manifesto")
+        errors.append(f"{len(manifest['failures'])} failure(s) recorded in the manifest")
 
-    # ---- Arquivos em disco nao declarados no manifesto ---------------------
+    # ---- Files on disk not declared in the manifest ---------------------------
     orphans: list[str] = []
     known_root_files = {MANIFEST_NAME, SUCCESS_NAME}
     partition_abs = os.path.abspath(partition)
@@ -454,40 +458,40 @@ def run(args) -> int:
                 continue
             if candidate_path not in declared:
                 orphans.append(os.path.relpath(candidate_path, partition_abs))
-    print(f"orfaos ........... {len(orphans)}")
+    print(f"orphans .......... {len(orphans)}")
     if orphans:
-        errors.append(f"arquivo(s) em disco fora do manifesto: {orphans}")
+        errors.append(f"file(s) on disk outside the manifest: {orphans}")
 
-    # ---- Marcador _SUCCESS coerente com 'complete' -------------------------
+    # ---- _SUCCESS marker consistent with 'complete' ---------------------------
     has_success = os.path.exists(success_path(partition))
     if bool(manifest.get("complete")) != has_success:
         errors.append(
-            f"_SUCCESS {'presente' if has_success else 'ausente'} contradiz "
+            f"_SUCCESS {'present' if has_success else 'absent'} contradicts "
             f"complete={manifest.get('complete')}"
         )
 
-    # ---- Schema e campos obrigatorios --------------------------------------
+    # ---- Schema and required fields -------------------------------------------
     absent = missing_fields(events)
     if absent:
-        errors.append(f"campo(s) declarado(s) ausente(s) em algum evento: {absent[:MAX_REPORTED]}")
+        errors.append(f"declared field(s) missing from some event: {absent[:MAX_REPORTED]}")
     declared_fingerprint = manifest.get("schema_fingerprint") or {}
     if fingerprint().get("sha256") != declared_fingerprint.get("sha256"):
         errors.append(
-            f"schema_fingerprint divergente: manifesto={declared_fingerprint.get('sha256')} "
-            f"vocabulario deste codigo={fingerprint().get('sha256')}"
+            f"schema_fingerprint mismatch: manifest={declared_fingerprint.get('sha256')} "
+            f"this code's vocabulary={fingerprint().get('sha256')}"
         )
 
-    # ---- Ordenacao total do log ---------------------------------------------
-    chaves = [(e.get("occurred_at"), e.get("order_id"), e.get("sequence_no")) for e in events]
-    if chaves != sorted(chaves):
+    # ---- Total ordering of the log ---------------------------------------------
+    order_keys = [(e.get("occurred_at"), e.get("order_id"), e.get("sequence_no")) for e in events]
+    if order_keys != sorted(order_keys):
         errors.append(
-            "log fora de ordem: as linhas tem de estar ordenadas por "
+            "log out of order: lines must be sorted by "
             "(occurred_at, order_id, sequence_no)"
         )
 
     errors.extend(_check_envelope(events, warehouse, order_date)[:MAX_REPORTED])
 
-    # ---- Totais reconferidos contra a releitura ----------------------------
+    # ---- Totals re-checked against the re-read --------------------------------
     observed_totals = totals_of(events)
     observed_totals["bytes"] = sum(
         e.get("bytes", 0) for e in manifest["files"] if isinstance(e, dict)
@@ -496,63 +500,63 @@ def run(args) -> int:
     for key, observed in sorted(observed_totals.items()):
         if totals.get(key) != observed:
             errors.append(
-                f"totals.{key} divergente: manifesto={totals.get(key)} observado={observed}"
+                f"totals.{key} mismatch: manifest={totals.get(key)} observed={observed}"
             )
     if totals.get("order_rows") != config.get("orders"):
         errors.append(
-            f"config.orders={config.get('orders')} nao bate com "
+            f"config.orders={config.get('orders')} does not match "
             f"totals.order_rows={totals.get('order_rows')}"
         )
 
-    # ---- Coerencia contra a referencia --------------------------------------
+    # ---- Coherence against the reference --------------------------------------
     try:
         reference = load(args.reference)
     except ReferenceError as exc:
         print()
-        print(f"FALHOU: referencia inutilizavel: {exc}")
+        print(f"FAILED: unusable reference: {exc}")
         return EXIT_FAILED
 
     declared_demand = (manifest.get("config") or {}).get("demand_model_version")
     if declared_demand != reference.demand.version:
         errors.append(
-            f"referencia com outro modelo de demanda: manifesto={declared_demand} "
-            f"arquivo={reference.demand.version}. O mix por tras destes pedidos nao e o que "
-            f"o perfil deste diretorio descreve."
+            f"reference with a different demand model: manifest={declared_demand} "
+            f"file={reference.demand.version}. The mix behind these orders is not what "
+            f"this directory's profile describes."
         )
 
     declared_premises = (manifest.get("reference") or {}).get("premises_sha256")
     if declared_premises != reference.premises_sha256:
         errors.append(
-            f"referencia com outra tabela de premissas: manifesto={declared_premises} "
-            f"arquivo={reference.premises_sha256}. As taxas por tras destes pedidos nao sao "
-            f"as que estao neste diretorio."
+            f"reference with a different premises table: manifest={declared_premises} "
+            f"file={reference.premises_sha256}. The rates behind these orders are not "
+            f"the ones in this directory."
         )
 
     grouped = group_by_order(events)
-    order_errors, order_warnings, aprovados = _check_orders(
+    order_errors, order_warnings, passed = _check_orders(
         grouped, reference, warehouse, order_date
     )
     errors.extend(order_errors[:MAX_REPORTED])
     if len(order_errors) > MAX_REPORTED:
-        errors.append(f"... e mais {len(order_errors) - MAX_REPORTED} problema(s) de coerencia")
+        errors.append(f"... and {len(order_errors) - MAX_REPORTED} more coherence problem(s)")
     warnings.extend(order_warnings)
-    print(f"coerencia ........ {aprovados}/{len(grouped)} pedidos com cliente, produto e "
-          f"preco reais de {warehouse}")
-    print(f"fold ............. colocado {observed_totals['gross_amount_placed']} / "
-          f"separado {observed_totals['net_amount_picked']} "
-          f"({observed_totals['substituted_lines']} substituicao(oes), "
-          f"{observed_totals['removed_lines']} remocao(oes))")
+    print(f"coherence ........ {passed}/{len(grouped)} orders with real customer, product and "
+          f"price from {warehouse}")
+    print(f"fold ............. placed {observed_totals['gross_amount_placed']} / "
+          f"picked {observed_totals['net_amount_picked']} "
+          f"({observed_totals['substituted_lines']} substitution(s), "
+          f"{observed_totals['removed_lines']} removal(s))")
 
     if args.strict and warnings:
-        errors.append(f"{len(warnings)} aviso(s) de distribuicao (--strict)")
+        errors.append(f"{len(warnings)} distribution warning(s) (--strict)")
 
     print()
     for item in warnings:
-        print(f"AVISO: {item}")
+        print(f"WARNING: {item}")
     if errors:
-        print(f"FALHOU ({len(errors)} problema(s)):")
+        print(f"FAILED ({len(errors)} problem(s)):")
         for item in errors:
             print(f"  - {item}")
         return EXIT_FAILED
-    print("OK: integridade, schema, totais, maquina de estados e coerencia validados.")
+    print("OK: integrity, schema, totals, state machine and coherence validated.")
     return EXIT_OK

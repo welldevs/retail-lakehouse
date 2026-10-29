@@ -1,10 +1,10 @@
 """Mercadona Catalog API Source.
 
-Source de dados de catalogo: extrai produto, categoria e preco da API publica da
-Mercadona e produz snapshots particionados, reproduziveis e validaveis.
+Catalog data Source: extracts product, category and price from Mercadona's public API
+and produces partitioned, reproducible, verifiable snapshots.
 
-Este pacote e uma Source, nao uma plataforma de transformacao. Ver CONTRACT.md.
-Somente biblioteca padrao.
+This package is a Source, not a transformation platform. See CONTRACT.md.
+Standard library only.
 """
 
 from __future__ import annotations

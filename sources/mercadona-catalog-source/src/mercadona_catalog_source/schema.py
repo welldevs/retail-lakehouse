@@ -1,11 +1,11 @@
-"""Forma esperada dos payloads da fonte e impressao digital de schema.
+"""Expected shape of the source payloads and schema fingerprint.
 
-A Source nao transforma o payload, mas precisa saber navega-lo para contar registros e
-para detectar quando a fonte muda de formato. Todas as funcoes aqui sao defensivas:
-recebem qualquer objeto JSON e nunca levantam excecao por forma inesperada.
+The Source does not transform the payload, but it needs to navigate it to count records and
+to detect when the source changes format. Every function here is defensive: it accepts
+any JSON object and never raises on an unexpected shape.
 
-A impressao digital gravada no manifesto permite ao consumidor detectar mudanca de
-schema entre snapshots comparando um unico campo.
+The fingerprint written into the manifest lets the consumer detect a schema change
+between snapshots by comparing a single field.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import json
 
 
 class SchemaError(Exception):
-    """Payload com forma incompativel com o contrato da Source."""
+    """Payload whose shape is incompatible with the Source contract."""
 
 
 def is_mapping(value: object) -> bool:
@@ -23,7 +23,7 @@ def is_mapping(value: object) -> bool:
 
 
 def groups_of(payload: object) -> list:
-    """Subgrupos de um arquivo de catalogo. Lista vazia para qualquer forma inesperada."""
+    """Subgroups of a catalog file. Empty list for any unexpected shape."""
     if not is_mapping(payload):
         return []
     groups = payload.get("categories")
@@ -33,7 +33,7 @@ def groups_of(payload: object) -> list:
 
 
 def products_of(group: object) -> list:
-    """Produtos de um subgrupo. Lista vazia para qualquer forma inesperada."""
+    """Products of a subgroup. Empty list for any unexpected shape."""
     if not is_mapping(group):
         return []
     products = group.get("products")
@@ -57,16 +57,16 @@ def collect_product_ids(payload: object) -> set:
 
 
 def flatten_tree(tree: object) -> list[dict]:
-    """Achata a arvore em categorias de nivel 2, deduplicadas por id.
+    """Flattens the tree into level-2 categories, deduplicated by id.
 
-    Apenas ids de nivel 2 sao acessiveis em /api/categories/{id}/; ids de nivel 1
-    respondem 404/410. Nos sem 'id' utilizavel sao descartados: sem id nao ha URL.
+    Only level-2 ids are reachable at /api/categories/{id}/; level-1 ids respond
+    404/410. Nodes without a usable 'id' are dropped: without an id there is no URL.
     """
     if not is_mapping(tree):
-        raise SchemaError("resposta de /categories/ nao e um objeto JSON")
+        raise SchemaError("/categories/ response is not a JSON object")
     level1 = tree.get("results")
     if not isinstance(level1, list):
-        raise SchemaError("resposta de /categories/ nao tem a lista 'results'")
+        raise SchemaError("/categories/ response has no 'results' list")
 
     flattened: list[dict] = []
     seen: set = set()
@@ -100,11 +100,11 @@ def count_level1(tree: object) -> int:
 
 
 def fingerprint(payloads) -> dict:
-    """Impressao digital do schema observado nos arquivos de catalogo.
+    """Fingerprint of the schema observed in the catalog files.
 
-    Registra o conjunto ordenado de chaves vistas em 'product' e em
-    'price_instructions', mais um hash estavel dos dois conjuntos. Uma renomeacao ou
-    remocao de campo na fonte altera o hash entre snapshots.
+    Records the sorted set of keys seen in 'product' and in 'price_instructions', plus a
+    stable hash of both sets. A field rename or removal at the source changes the hash
+    between snapshots.
     """
     product_keys: set = set()
     price_keys: set = set()

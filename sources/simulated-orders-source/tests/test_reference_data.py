@@ -1,4 +1,4 @@
-"""A referencia e desconfiada: truncada, vazia ou de outro schema tem de reprovar."""
+"""The reference is distrusted: truncated, empty or other-schema input must fail."""
 
 from __future__ import annotations
 
@@ -21,62 +21,62 @@ from .support import (
 )
 
 
-class CargaTest(unittest.TestCase):
+class LoadTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = write_reference(os.path.join(self.tmp.name, "ref"))
 
-    def test_carrega_e_indexa(self):
+    def test_loads_and_indexes(self):
         reference = load(self.dir)
         self.assertEqual(reference.warehouses(), [WH])
         self.assertEqual(reference.order_dates(WH), [ORDER_DATE])
         self.assertEqual(len(reference.catalog_of(WH, PRICE_AS_OF)), 30)
         self.assertEqual(len(reference.customers_of(WH)), 8)
 
-    def test_preco_vira_decimal_e_nao_float(self):
-        # Obrigacao 4.4 do contrato da Mercadona: float perde precisao decimal em moeda.
-        preco = load(self.dir).catalog_of(WH, PRICE_AS_OF)[0]["unit_price"]
-        self.assertIsInstance(preco, Decimal)
+    def test_price_becomes_decimal_not_float(self):
+        # Obligation 4.4 of the Mercadona contract: float loses decimal precision for currency.
+        price = load(self.dir).catalog_of(WH, PRICE_AS_OF)[0]["unit_price"]
+        self.assertIsInstance(price, Decimal)
 
-    def test_diretorio_ausente_reprova(self):
+    def test_missing_directory_fails(self):
         with self.assertRaises(ReferenceError):
-            load(os.path.join(self.tmp.name, "nao-existe"))
+            load(os.path.join(self.tmp.name, "does-not-exist"))
 
-    def test_arquivo_ausente_reprova(self):
+    def test_missing_file_fails(self):
         os.unlink(os.path.join(self.dir, "catalog.json"))
         with self.assertRaises(ReferenceError) as caught:
             load(self.dir)
-        self.assertIn("ausente", str(caught.exception))
+        self.assertIn("missing", str(caught.exception))
 
-    def test_json_invalido_reprova(self):
+    def test_invalid_json_fails(self):
         with open(os.path.join(self.dir, "calendar.json"), "w", encoding="utf-8") as handle:
-            handle.write("{nao e json")
+            handle.write("{not json")
         with self.assertRaises(ReferenceError):
             load(self.dir)
 
-    def test_rows_vazio_reprova(self):
-        # Um export truncado nao pode virar "zero pedidos" em silencio.
+    def test_empty_rows_fails(self):
+        # A truncated export must not silently become "zero orders".
         write_reference(self.dir, catalog=[])
         with self.assertRaises(ReferenceError) as caught:
             load(self.dir)
-        self.assertIn("vazia", str(caught.exception))
+        self.assertIn("empty", str(caught.exception))
 
-    def test_campo_obrigatorio_ausente_reprova(self):
-        magro = [{k: v for k, v in row.items() if k != "unit_price"} for row in catalog_rows()]
-        write_reference(self.dir, catalog=magro)
+    def test_missing_required_field_fails(self):
+        slim = [{k: v for k, v in row.items() if k != "unit_price"} for row in catalog_rows()]
+        write_reference(self.dir, catalog=slim)
         with self.assertRaises(ReferenceError) as caught:
             load(self.dir)
         self.assertIn("unit_price", str(caught.exception))
 
-    def test_preco_nao_positivo_reprova(self):
-        ruim = catalog_rows()
-        ruim[0]["unit_price"] = "0.00"
-        write_reference(self.dir, catalog=ruim)
+    def test_non_positive_price_fails(self):
+        bad = catalog_rows()
+        bad[0]["unit_price"] = "0.00"
+        write_reference(self.dir, catalog=bad)
         with self.assertRaises(ReferenceError):
             load(self.dir)
 
-    def test_price_source_fora_do_vocabulario_reprova(self):
+    def test_price_source_outside_vocabulary_fails(self):
         write_reference(
             self.dir,
             calendar=[
@@ -84,7 +84,7 @@ class CargaTest(unittest.TestCase):
                     "wh": WH,
                     "order_date": ORDER_DATE,
                     "price_as_of": PRICE_AS_OF,
-                    "price_source": "chutado",
+                    "price_source": "guessed",
                 }
             ],
         )
@@ -92,17 +92,17 @@ class CargaTest(unittest.TestCase):
             load(self.dir)
         self.assertIn("price_source", str(caught.exception))
 
-    def test_armazem_sem_cliente_reprova_na_consulta(self):
+    def test_warehouse_without_customers_fails_on_lookup(self):
         with self.assertRaises(ReferenceError):
             load(self.dir).customers_of("svq1")
 
-    def test_dia_fora_da_janela_reprova_na_consulta(self):
+    def test_day_outside_window_fails_on_lookup(self):
         with self.assertRaises(ReferenceError) as caught:
             load(self.dir).calendar_of(WH, "2026-01-01")
-        self.assertIn("janela", str(caught.exception))
+        self.assertIn("window", str(caught.exception))
 
 
-class VersaoDeClienteTest(unittest.TestCase):
+class CustomerVersionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -116,30 +116,30 @@ class VersaoDeClienteTest(unittest.TestCase):
             )
         )
 
-    def test_escolhe_a_maior_geracao_ate_a_data_do_pedido(self):
+    def test_picks_the_latest_generation_up_to_the_order_date(self):
         reference = self._reference(["2026-08-24", "2026-08-27"], "2026-08-24")
         self.assertEqual(reference.customer_version_at("2026-08-24", "2026-08-25"), "2026-08-24")
         self.assertEqual(reference.customer_version_at("2026-08-24", "2026-08-27"), "2026-08-27")
         self.assertEqual(reference.customer_version_at("2026-08-24", "2026-09-01"), "2026-08-27")
 
-    def test_pedido_antes_da_primeira_aparicao_nao_tem_versao(self):
+    def test_order_before_first_appearance_has_no_version(self):
         reference = self._reference(["2026-08-27"], "2026-08-27")
         self.assertIsNone(reference.customer_version_at("2026-08-27", "2026-08-24"))
 
 
-class SubstituicaoTest(unittest.TestCase):
+class SubstitutionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.reference = load(write_reference(os.path.join(self.tmp.name, "ref")))
 
-    def test_indice_de_subgrupo_aponta_para_o_mesmo_subgrupo(self):
-        catalogo = self.reference.catalog_of(WH, PRICE_AS_OF)
-        alvo = catalogo[0]["subgroup_id"]
-        for posicao in self.reference.substitutes_in_subgroup(WH, PRICE_AS_OF, alvo):
-            self.assertEqual(catalogo[posicao]["subgroup_id"], alvo)
+    def test_subgroup_index_points_to_the_same_subgroup(self):
+        catalog = self.reference.catalog_of(WH, PRICE_AS_OF)
+        target = catalog[0]["subgroup_id"]
+        for position in self.reference.substitutes_in_subgroup(WH, PRICE_AS_OF, target):
+            self.assertEqual(catalog[position]["subgroup_id"], target)
 
-    def test_subgrupo_inexistente_devolve_lista_vazia(self):
+    def test_nonexistent_subgroup_returns_empty_list(self):
         self.assertEqual(self.reference.substitutes_in_subgroup(WH, PRICE_AS_OF, 99999), [])
 
 

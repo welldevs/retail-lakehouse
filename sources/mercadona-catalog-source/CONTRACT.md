@@ -1,205 +1,208 @@
 # Source Contract — `mercadona_catalog_api`
 
-Contrato entre esta Source e qualquer componente que consuma seus snapshots.
-Tudo aqui é imposto por código e coberto por teste, salvo onde marcado como **[fonte]** —
-característica da API de origem, fora do controle desta Source.
+Contract between this Source and any component that consumes its snapshots.
+Everything here is enforced by code and covered by a test, except where marked **[source]** —
+a characteristic of the upstream API, outside this Source's control.
 
-## 1. Identidade do snapshot
+## 1. Snapshot identity
 
-Cada execução completa produz um snapshot identificado por três chaves:
+Each complete run produces a snapshot identified by three keys:
 
-| Chave | Valor | Onde vive |
+| Key | Value | Where it lives |
 |---|---|---|
 | `source` | `mercadona_catalog_api` | `_manifest.json` → `source.name` |
-| `ingestion_date` | `YYYY-MM-DD` (UTC) | diretório da partição e `partition.ingestion_date` |
-| `warehouse` | ex.: `mad1` | diretório da partição e `partition.warehouse` |
+| `ingestion_date` | `YYYY-MM-DD` (UTC) | partition directory and `partition.ingestion_date` |
+| `warehouse` | e.g. `mad1` | partition directory and `partition.warehouse` |
 
 ```
 <root>/ingestion_date=YYYY-MM-DD/wh=<warehouse>/
 ├── categories/categories.json
 ├── catalog/category_id=<id>.json
 ├── _manifest.json
-├── _SUCCESS          (só existe quando complete = true)
+├── _SUCCESS          (only exists when complete = true)
 └── _run.log
 ```
 
-Blocos de primeiro nível do `_manifest.json`: `manifest_version`, `run_id`,
+Top-level blocks of `_manifest.json`: `manifest_version`, `run_id`,
 `started_at_utc`, `finished_at_utc`, `duration_seconds`, `complete`, `source`,
 `partition`, `config`, `totals`, `schema_fingerprint`, `files[]`, `failures[]`,
 `anomalies[]`, `history[]`.
 
-**Compatibilidade dentro de uma versão de manifesto:** uma lista ausente equivale à lista
-vazia. Snapshots gravados antes da introdução de `anomalies[]` não têm o campo, e devem ser
-lidos como "nenhuma anomalia registrada". Consumidores devem usar
-`manifest.get("anomalies", [])`, nunca indexação direta.
+**Compatibility within a manifest version:** a missing list is equivalent to an empty
+list. Snapshots written before `anomalies[]` was introduced do not have the field, and must
+be read as "no anomaly recorded". Consumers must use
+`manifest.get("anomalies", [])`, never direct indexing.
 
-## 2. Conteúdo garantido
+## 2. Guaranteed content
 
-O snapshot preserva **category**, **product**, **price**, **source metadata** e
+The snapshot preserves **category**, **product**, **price**, **source metadata** and
 **ingestion metadata**.
 
-| Campo | Caminho |
+| Field | Path |
 |---|---|
-| Categoria nível 1 (árvore) | `categories/categories.json` → `results[].name` |
-| Categoria nível 2 (árvore) | `categories/categories.json` → `results[].categories[].name` |
-| Categoria nível 2 (catálogo) | `catalog/category_id=<id>.json` → `name` |
-| Categoria nível 1 (catálogo) | `.categories[].products[].categories[0].name` |
-| Subgrupo | `.categories[].name` |
-| Produto | `.categories[].products[].display_name` |
-| Preço | `.categories[].products[].price_instructions.unit_price` |
+| Level-1 category (tree) | `categories/categories.json` → `results[].name` |
+| Level-2 category (tree) | `categories/categories.json` → `results[].categories[].name` |
+| Level-2 category (catalog) | `catalog/category_id=<id>.json` → `name` |
+| Level-1 category (catalog) | `.categories[].products[].categories[0].name` |
+| Subgroup | `.categories[].name` |
+| Product | `.categories[].products[].display_name` |
+| Price | `.categories[].products[].price_instructions.unit_price` |
 
-**O JSON é o contrato físico.** Não há schema relacional: a estrutura da resposta da API é
-preservada como recebida, e a Source não define tipos, chaves primárias ou normalização.
+**The JSON is the physical contract.** There is no relational schema: the structure of the
+API response is preserved as received, and the Source does not define types, primary keys
+or normalization.
 
-## 3. Garantias
+## 3. Guarantees
 
-1. **Escrita atômica.** Nenhum arquivo de dados é observável em estado parcial. Toda
-   gravação usa arquivo temporário + `os.replace`, com `fsync` antes da troca.
-2. **Forma canônica.** Todo arquivo é `json.dumps(ensure_ascii=False, sort_keys=True,
-   indent=2)` + newline final. O mesmo conteúdo produz sempre os mesmos bytes e o mesmo
-   SHA-256, independentemente da ordem em que a API devolveu as chaves.
-3. **Integridade verificável.** `_manifest.json` declara `sha256`, `bytes` e `records` de
-   cada arquivo. `validate` recalcula os três a partir do disco.
-4. **Inventário fechado.** Todo arquivo dentro da partição, em qualquer profundidade,
-   está declarado no manifesto. A extração varre o diretório ao final e declara arquivos
-   de catálogo válidos que a execução não visitou; `validate` varre recursivamente e trata
-   arquivo não declarado como erro.
-5. **Imutabilidade.** Uma partição com `complete: true` não pode ser reescrita sem
-   `--overwrite` explícito — inclusive quando o `_manifest.json` foi removido e só o
-   `_SUCCESS` restou. Um arquivo reaproveitado cujo conteúdo divergiu do manifesto anterior
-   é rebaixado da fonte e registrado em `anomalies[]`, nunca promovido a nova verdade.
-6. **`lang` fixo por partição.** Reabrir uma partição com outro idioma é recusado (salvo
-   `--overwrite`, que reescreve a partição inteira), o que torna impossível uma partição
-   de idioma misto.
-7. **Retomada segura.** Uma partição incompleta pode ser completada reexecutando o mesmo
-   comando. Arquivo ilegível, com forma inesperada ou fora da forma canônica é rebaixado da
-   fonte, não propagado.
-8. **Proveniência preservada.** `history[]` acumula o resumo de cada execução anterior
-   sobre a partição: `run_id`, janela, requisições, retries e totais.
-9. **Detecção de mudança de schema.** `schema_fingerprint` registra o conjunto ordenado de
-   chaves de `product` e de `price_instructions` mais um hash. `validate` recalcula e
-   compara.
-10. **Marcador de conclusão.** `_SUCCESS` existe se e somente se `complete: true`. A
-    incoerência entre os dois é erro de validação.
-11. **Identidade persistida antes do fan-out.** Um manifesto preliminar
-    (`complete: false`) é gravado logo após a árvore de categorias. Uma interrupção no meio
-    da extração deixa a partição com identidade em disco — `source.lang`, `partition`,
-    `run_id` — de modo que as garantias 5 e 6 continuam valendo na retomada.
-12. **Forma canônica verificada no reuso.** Um arquivo já presente só é reaproveitado se
-    seus bytes forem exatamente a serialização canônica do seu próprio conteúdo. Um arquivo
-    com o mesmo valor JSON mas outra grafia é rebaixado da fonte, para que o SHA-256
-    declarado seja sempre o digest canônico.
-13. **Anomalias registradas.** `anomalies[]` lista eventos tratados durante a extração —
-    arquivo não canônico, conteúdo divergente do manifesto anterior, arquivo ilegível não
-    visitado. `validate` os reporta como aviso, sem reprovar uma partição já corrigida.
-14. **Cobertura verificada.** `validate` confere que toda categoria de nível 2 da árvore
-    tem arquivo de catálogo, exceto em partição parcial (`--limit`), onde vira aviso.
-15. **Totais reconferidos.** `totals.product_rows`, `totals.unique_product_ids`,
-    `totals.catalog_files` e `totals.bytes` são recalculados da releitura, e `records` e
-    `bytes` são reconferidos arquivo a arquivo — inclusive o `records` da árvore.
-16. **Falha registrada é fatal na validação.** Qualquer entrada em `failures[]` reprova a
-    partição.
+1. **Atomic write.** No data file is observable in a partial state. Every write uses a
+   temporary file + `os.replace`, with `fsync` before the swap.
+2. **Canonical form.** Every file is `json.dumps(ensure_ascii=False, sort_keys=True,
+   indent=2)` + trailing newline. The same content always produces the same bytes and the
+   same SHA-256, regardless of the order in which the API returned the keys.
+3. **Verifiable integrity.** `_manifest.json` declares the `sha256`, `bytes` and `records` of
+   each file. `validate` recomputes all three from disk.
+4. **Closed inventory.** Every file inside the partition, at any depth, is declared in the
+   manifest. The extraction sweeps the directory at the end and declares valid catalog
+   files the run did not visit; `validate` sweeps recursively and treats an undeclared file
+   as an error.
+5. **Immutability.** A partition with `complete: true` cannot be rewritten without an
+   explicit `--overwrite` — even when `_manifest.json` was removed and only `_SUCCESS`
+   remains. A reused file whose content diverged from the previous manifest is
+   re-downloaded from the source and recorded in `anomalies[]`, never promoted to the new truth.
+6. **`lang` fixed per partition.** Reopening a partition with another language is refused
+   (unless `--overwrite`, which rewrites the whole partition), which makes a mixed-language
+   partition impossible.
+7. **Safe resume.** An incomplete partition can be completed by re-running the same
+   command. A file that is unreadable, has an unexpected shape or is not in canonical form
+   is re-downloaded from the source, not propagated.
+8. **Provenance preserved.** `history[]` accumulates the summary of each previous run over
+   the partition: `run_id`, window, requests, retries and totals.
+9. **Schema change detection.** `schema_fingerprint` records the sorted set of keys of
+   `product` and of `price_instructions` plus a hash. `validate` recomputes and compares.
+10. **Completion marker.** `_SUCCESS` exists if and only if `complete: true`. An
+    inconsistency between the two is a validation error.
+11. **Identity persisted before the fan-out.** A preliminary manifest (`complete: false`)
+    is written right after the category tree. An interruption midway through the
+    extraction leaves the partition with an identity on disk — `source.lang`, `partition`,
+    `run_id` — so guarantees 5 and 6 still hold on resume.
+12. **Canonical form verified on reuse.** A file already present is only reused if its
+    bytes are exactly the canonical serialization of its own content. A file with the same
+    JSON value but a different spelling is re-downloaded from the source, so the declared
+    SHA-256 is always the canonical digest.
+13. **Anomalies recorded.** `anomalies[]` lists events handled during the extraction —
+    non-canonical file, content diverging from the previous manifest, unreadable file not
+    visited. `validate` reports them as warnings, without failing an already corrected
+    partition.
+14. **Coverage verified.** `validate` checks that every level-2 category in the tree has a
+    catalog file, except in a partial partition (`--limit`), where it becomes a warning.
+15. **Totals re-checked.** `totals.product_rows`, `totals.unique_product_ids`,
+    `totals.catalog_files` and `totals.bytes` are recomputed from the re-read, and `records`
+    and `bytes` are re-checked file by file — including the tree's `records`.
+16. **A recorded failure is fatal in validation.** Any entry in `failures[]` fails the
+    partition.
 
-## 4. Obrigações do consumidor
+## 4. Consumer obligations
 
-1. **Itere `manifest.files[]`.** Não faça `glob` no diretório: o manifesto é o inventário
-   autoritativo. **`files[].path` é relativo à raiz do snapshot, não à partição** — ou
-   seja, começa em `ingestion_date=…/wh=…/`. Para resolvê-lo:
-   `os.path.join(partition, "..", "..", entry["path"])`. A garantia 4 torna `glob` e
-   manifesto equivalentes numa partição validada; a regra existe para partições que você
-   não validou.
-2. **Trate a partição como imutável.** Não escreva dentro dela.
-3. **Carregue `ingestion_date` e `warehouse` como colunas.** Nenhum payload contém o
-   armazém: essa identidade existe apenas no caminho e no manifesto. Ingerir o conteúdo
-   sem o caminho perde o armazém de forma irrecuperável.
-4. **Leia `unit_price` como string.** É string em 100% dos registros. Converter para
-   `float` perde precisão decimal em moeda.
-5. **`unit_price` nem sempre é o preço de uma unidade comprável.** Quando
-   `price_instructions.selling_method = 1` (seletor de peso, `bunch_selector: true`) **e**
-   `unit_size` é nulo, a API devolve `unit_price = reference_price × 99` — o preço do
-   **teto** do seletor, não de nada que um domicílio compre **[fonte]**. Medido em
-   2026-08-31 sobre as 9 partições de catálogo: o fator é exatamente `99,000` em 10
-   combinações produto×armazém (105 linhas no grão do snapshot), com `unit_price` chegando a
-   **3.663,00** para um congelado a granel de **37,00 por kg**. Nas outras 21 do mesmo
-   `selling_method` o fator é `0,200`, que é a própria `unit_size`, e essas estão corretas.
+1. **Iterate `manifest.files[]`.** Do not `glob` the directory: the manifest is the
+   authoritative inventory. **`files[].path` is relative to the snapshot root, not to the
+   partition** — that is, it starts at `ingestion_date=…/wh=…/`. To resolve it:
+   `os.path.join(partition, "..", "..", entry["path"])`. Guarantee 4 makes `glob` and the
+   manifest equivalent in a validated partition; the rule exists for partitions you have
+   not validated.
+2. **Treat the partition as immutable.** Do not write inside it.
+3. **Load `ingestion_date` and `warehouse` as columns.** No payload contains the
+   warehouse: that identity exists only in the path and in the manifest. Ingesting the
+   content without the path loses the warehouse irrecoverably.
+4. **Read `unit_price` as a string.** It is a string in 100% of records. Converting to
+   `float` loses decimal precision in currency.
+5. **`unit_price` is not always the price of a purchasable unit.** When
+   `price_instructions.selling_method = 1` (weight selector, `bunch_selector: true`) **and**
+   `unit_size` is null, the API returns `unit_price = reference_price × 99` — the price of
+   the selector's **ceiling**, not of anything a household buys **[source]**. Measured on
+   2026-08-31 over the 9 catalog partitions: the factor is exactly `99,000` in 10
+   product×warehouse combinations (105 rows at the snapshot grain), with `unit_price`
+   reaching **3.663,00** for a loose frozen item at **37.00 per kg**. In the other 21 with
+   the same `selling_method` the factor is `0,200`, which is the `unit_size` itself, and
+   those are correct.
 
-   O preço da porção comprável é **`reference_price × min_bunch_amount`**, e ambos os
-   campos vêm da fonte:
+   The price of the purchasable portion is **`reference_price × min_bunch_amount`**, and
+   both fields come from the source:
 
    ```
-   Alistado mediano congelado   reference_price 37,00/kg   min_bunch_amount 0,15
-     unit_price       3.663,00   <- teto do seletor, NÃO use
-     porção comprável     5,55   <- 37,00 x 0,15
+   Alistado mediano congelado   reference_price 37.00/kg   min_bunch_amount 0.15
+     unit_price           3.663,00   <- selector ceiling, do NOT use
+     purchasable portion      5.55   <- 37.00 x 0.15
    ```
 
-   Consequência para quem soma dinheiro: usar `unit_price` aqui infla receita por três
-   ordens de grandeza numa linha. Numa cesta sintética indiferente ao preço, estas 10
-   linhas produziram **16,6% de toda a receita** de 6.400 pedidos, e nenhum teste de
-   totalização reprovou — porque o número continuava internamente consistente.
-6. **`min_bunch_amount` e `increment_bunch_amount` são a granularidade de compra**, não
-   metadado decorativo. Um produto a granel só é comprável em múltiplos de
-   `increment_bunch_amount`; tratá-lo como unidade inteira inventa uma embalagem que não
-   existe.
-7. **Distinga `source_product_id` de identidade de negócio.** São duas coisas, e a fonte
-   só entrega a primeira.
-   - **`source_product_id`** é `product.id` (string). É a chave **da fonte** e a única
-     disponível para join — use-a. Dentro de um snapshot ela é consistente: as aparições
-     repetidas do mesmo id diferem apenas no array `categories[]`, que reflete o arquivo de
-     onde a linha foi lida, e nunca em preço ou nome.
-   - **Identidade de negócio** — "o mesmo item comercial ao longo do tempo" — **não é
-     fornecida nem derivável** desta fonte. Sem `ean`/`gtin`/`barcode` (§6), dois fatos a
-     tornam indecidível: o mesmo `display_name` aparece sob ids diferentes no mesmo
-     snapshot, com preços diferentes; e um id pode ser substituído por outro entre
-     snapshots consecutivos com nome, categoria e subgrupo idênticos **[fonte]**.
-     Resolvê-la é do consumidor, com chave externa ou regra de casamento declarada como
-     premissa.
-8. **Não assuma moeda a partir do payload** — a API não a declara **[fonte]**.
-9. **Verifique `schema_fingerprint` entre snapshots** se depender da forma dos campos.
-10. **Espere repetição de produto.** Um produto pode aparecer em mais de uma categoria e em
-   mais de um subgrupo. É semântica da fonte **[fonte]** e não é removida aqui.
+   Consequence for anyone summing money: using `unit_price` here inflates revenue by three
+   orders of magnitude on one row. In a price-indifferent synthetic basket, these 10
+   rows produced **16.6% of all revenue** across 6,400 orders, and no totals test
+   failed — because the number remained internally consistent.
+6. **`min_bunch_amount` and `increment_bunch_amount` are the purchase granularity**, not
+   decorative metadata. A loose product is only purchasable in multiples of
+   `increment_bunch_amount`; treating it as a whole unit invents a package that does not
+   exist.
+7. **Distinguish `source_product_id` from business identity.** They are two things, and the
+   source only delivers the first.
+   - **`source_product_id`** is `product.id` (string). It is the **source's** key and the
+     only one available for joins — use it. Within a snapshot it is consistent: repeated
+     appearances of the same id differ only in the `categories[]` array, which reflects the
+     file the row was read from, and never in price or name.
+   - **Business identity** — "the same commercial item over time" — **is neither provided
+     nor derivable** from this source. Without `ean`/`gtin`/`barcode` (§6), two facts make
+     it undecidable: the same `display_name` appears under different ids in the same
+     snapshot, with different prices; and an id can be replaced by another between
+     consecutive snapshots with identical name, category and subgroup **[source]**.
+     Resolving it is the consumer's job, with an external key or a matching rule declared
+     as a premise.
+8. **Do not infer currency from the payload** — the API does not declare it **[source]**.
+9. **Check `schema_fingerprint` across snapshots** if you depend on the shape of the fields.
+10. **Expect product repetition.** A product can appear in more than one category and in
+   more than one subgroup. It is source semantics **[source]** and is not removed here.
 
-## 5. O que a Source não faz
+## 5. What the Source does not do
 
-Deduplicação · modelagem dimensional · normalização · fatos e dimensões · transformação
-Silver · Gold/Marts · enriquecimento · histórico analítico · cálculo de métricas · SCD ·
-detecção de variação de preço · ingestão em Snowflake · envio para S3 · Spark · dbt ·
+Deduplication · dimensional modeling · normalization · facts and dimensions · Silver
+transformation · Gold/Marts · enrichment · analytical history · metric computation · SCD ·
+price-change detection · ingestion into Snowflake · upload to S3 · Spark · dbt ·
 Airflow · Kafka.
 
-Cada execução é uma **fotografia**. Interpretação temporal é da camada posterior. Os campos
-`unit_price`, `reference_price`, `bulk_price`, `previous_unit_price`, `price_decreased`,
-`tax_percentage`, `selling_method`, `bunch_selector`, `min_bunch_amount`,
-`increment_bunch_amount` e `unit_size` são preservados no payload sem interpretação — o que
-inclui **não corrigir** o `unit_price` de teto descrito na obrigação 5. Corrigi-lo aqui
-apagaria a evidência do que a API devolveu; a porção comprável é derivada uma camada acima,
-em `silver_product_price`, ao lado do valor original.
+Each run is a **snapshot in time**. Temporal interpretation belongs to the downstream
+layer. The fields `unit_price`, `reference_price`, `bulk_price`, `previous_unit_price`,
+`price_decreased`, `tax_percentage`, `selling_method`, `bunch_selector`, `min_bunch_amount`,
+`increment_bunch_amount` and `unit_size` are preserved in the payload without
+interpretation — which includes **not correcting** the ceiling `unit_price` described in
+obligation 5. Correcting it here would erase the evidence of what the API returned; the
+purchasable portion is derived one layer up, in `silver_product_price`, next to the
+original value.
 
-## 6. Escopo e limites da fonte **[fonte]**
+## 6. Source scope and limits **[source]**
 
-- Um snapshot cobre **um armazém**. `complete: true` significa "todas as categorias de
-  nível 2 deste `(ingestion_date, wh)` foram gravadas", não "catálogo completo da rede".
-- Apenas ids de categoria de **nível 2** são acessíveis em `/api/categories/{id}/`; ids de
-  nível 1 respondem `404`/`410`.
-- Não há chave cross-source: `ean`, `gtin`, `barcode`, `brand` e `origin` não existem nos
-  payloads deste endpoint. `product.id` é a **chave da fonte**: identifica o registro dentro
-  do snapshot, e **não** carrega garantia de estabilidade temporal — a fonte pode reemitir o
-  mesmo item comercial sob outro id, e não sinaliza quando o faz. `price_decreased` e
-  `previous_unit_price` não cobrem esse caso: são atributos do id novo, que não conhece o
-  antigo. Ver §4.5.
-- Nenhum endpoint conhecido expõe venda, pedido ou estoque. Esta Source não tem fato
-  transacional.
-- `robots.txt` de `tienda.mercadona.es` declara `Disallow: /api`, e a Source envia um
-  User-Agent de navegador. Ver README, seção "Restrições da fonte".
+- A snapshot covers **one warehouse**. `complete: true` means "every level-2 category of
+  this `(ingestion_date, wh)` was written", not "complete catalog of the chain".
+- Only **level-2** category ids are reachable at `/api/categories/{id}/`; level-1 ids
+  respond `404`/`410`.
+- There is no cross-source key: `ean`, `gtin`, `barcode`, `brand` and `origin` do not exist
+  in this endpoint's payloads. `product.id` is the **source key**: it identifies the record
+  within the snapshot, and carries **no** guarantee of temporal stability — the source may
+  reissue the same commercial item under another id, and does not signal when it does.
+  `price_decreased` and `previous_unit_price` do not cover that case: they are attributes of
+  the new id, which does not know the old one. See §4.5.
+- No known endpoint exposes sales, orders or stock. This Source has no transactional
+  fact.
+- `robots.txt` of `tienda.mercadona.es` declares `Disallow: /api`, and the Source sends a
+  browser User-Agent. See README, section "Source restrictions".
 
-## 7. Códigos de saída
+## 7. Exit codes
 
-| Código | `extract` | `validate` |
+| Code | `extract` | `validate` |
 |---|---|---|
-| 0 | nenhuma categoria alvo falhou | aprovado |
-| 1 | falha parcial, registrada em `failures[]` | reprovado |
-| 2 | falha fatal: partição inutilizável ou uso inválido | — |
-| 3 | exceção não tratada | exceção não tratada |
+| 0 | no target category failed | passed |
+| 1 | partial failure, recorded in `failures[]` | failed |
+| 2 | fatal failure: unusable partition or invalid use | — |
+| 3 | unhandled exception | unhandled exception |
 
-## 8. Versão do contrato
+## 8. Contract version
 
-`manifest_version: 2`. `validate` recusa manifesto de versão diferente da suportada pelo
-código, em vez de interpretá-lo por adivinhação.
+`manifest_version: 2`. `validate` refuses a manifest whose version differs from the one
+supported by the code, instead of interpreting it by guesswork.

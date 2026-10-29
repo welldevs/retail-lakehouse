@@ -1,16 +1,16 @@
-"""Simulated OLTP Source — clientes sinteticos com geografia real.
+"""Simulated OLTP Source — synthetic customers with real geography.
 
-Gera clientes sinteticos ancorados em enderecos e demografia REAIS do Lakehouse: o
-cliente e inventado, o lugar onde ele mora nao. Nenhum CEP, municipio ou via e
-fabricado — todos vem do Callejero do INE, e o peso de cada municipio vem da populacao
-municipal observada.
+Generates synthetic customers anchored in REAL addresses and demographics from the
+Lakehouse: the customer is invented, the place where they live is not. No postal code,
+municipality or street is fabricated — all of them come from the INE Callejero, and each
+municipality's weight comes from the observed municipal population.
 
-Esta e a primeira source DERIVADA do repo: as outras tres sao upstream de dado externo
-(API da Mercadona, API do INE, arquivos do Callejero), esta consome o Silver que elas
-produziram. A inversao e deliberada e esta documentada no CONTRACT.md secao 2.
+This is the first DERIVED source in the repo: the other three are upstream of external data
+(Mercadona API, INE API, Callejero files); this one consumes the Silver they produced. The
+inversion is deliberate and is documented in CONTRACT.md section 2.
 
-Este pacote e uma Source, nao uma plataforma de transformacao. Ver CONTRACT.md.
-Somente biblioteca padrao.
+This package is a Source, not a transformation platform. See CONTRACT.md.
+Standard library only.
 """
 
 from __future__ import annotations

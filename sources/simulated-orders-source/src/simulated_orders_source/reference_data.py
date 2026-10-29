@@ -1,19 +1,19 @@
-"""Leitura e validacao estrutural dos cinco arquivos de referencia.
+"""Reading and structural validation of the five reference files.
 
-A Source nao fala com o Lakehouse: le cinco JSON planos que a plataforma escreveu com
-`retail-platform export-orders-reference`. Este modulo e a unica porta de entrada desse
-insumo, e ele DESCONFIA do arquivo — um export truncado, de schema antigo, ou vazio para um
-armazem tem de REPROVAR a geracao, nunca produzir pedidos enviesados em silencio.
+The Source does not talk to the Lakehouse: it reads five flat JSON files the platform wrote
+with `retail-platform export-orders-reference`. This module is the only entry point for that
+input, and it DISTRUSTS the file — a truncated export, an old schema, or one that is empty for
+a warehouse must FAIL the generation, never silently produce biased orders.
 
-ORDEM IMPORTA. Tudo aqui e lista, na ordem do arquivo — nunca `set` nem `dict` reconstruido
-fora de ordem, cuja iteracao depende de PYTHONHASHSEED e quebraria a reprodutibilidade por
-seed. Os indices por (armazem, data) sao consultados por chave, jamais iterados.
+ORDER MATTERS. Everything here is a list, in file order — never a `set` or a `dict` rebuilt out
+of order, whose iteration depends on PYTHONHASHSEED and would break per-seed reproducibility.
+The (warehouse, date) indexes are looked up by key, never iterated.
 
-PRECO E STRING, E CONTINUA STRING
-----------------------------------
-`unit_price` chega como string e vira `decimal.Decimal`, nunca `float`. E a obrigacao 4.4 do
-contrato da Mercadona: converter moeda para float perde precisao decimal. `Decimal` e stdlib,
-entao a fronteira FROZEN continua de pe.
+PRICE IS A STRING, AND STAYS A STRING
+-------------------------------------
+`unit_price` arrives as a string and becomes `decimal.Decimal`, never `float`. That is
+obligation 4.4 of the Mercadona contract: converting currency to float loses decimal precision.
+`Decimal` is stdlib, so the FROZEN boundary still stands.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ CATALOG_FIELDS = (
     "subgroup_id",
     "unit_price",
     "tax_percentage",
-    # Resolvido PELA PLATAFORMA contra o de-para versionado. Chega aqui como rotulo, e o
-    # gerador nao sabe — nem precisa saber — que regra o produziu.
+    # Resolved BY THE PLATFORM against the versioned mapping. It arrives here as a label, and
+    # the generator does not know — nor needs to know — which rule produced it.
     "demand_group",
 )
 CALENDAR_FIELDS = ("wh", "order_date", "price_as_of", "price_source")
@@ -62,53 +62,53 @@ PRICE_SOURCES = (PRICE_OBSERVED, PRICE_CARRIED_FORWARD)
 
 
 class ReferenceError(Exception):
-    """Referencia ausente, ilegivel, incompleta ou incoerente."""
+    """Missing, unreadable, incomplete or inconsistent reference."""
 
 
 def _load_file(directory: str, name: str) -> dict:
     path = os.path.join(directory, name)
     if not os.path.exists(path):
         raise ReferenceError(
-            f"arquivo de referencia ausente: {path}. Gere-o com "
-            f"`make orders-export-reference` antes de extrair."
+            f"reference file missing: {path}. Generate it with "
+            f"`make orders-export-reference` before extracting."
         )
     try:
         with open(path, "rb") as handle:
             payload = json.loads(handle.read().decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise ReferenceError(f"{path}: JSON invalido ({exc})") from exc
+        raise ReferenceError(f"{path}: invalid JSON ({exc})") from exc
     if not isinstance(payload, dict):
-        raise ReferenceError(f"{path}: raiz nao e um objeto JSON")
+        raise ReferenceError(f"{path}: root is not a JSON object")
     rows = payload.get("rows")
     if not isinstance(rows, list) or not rows:
-        raise ReferenceError(f"{path}: sem a lista 'rows' ou lista vazia")
+        raise ReferenceError(f"{path}: missing 'rows' list or empty list")
     return payload
 
 
 def _require_fields(path: str, rows: list, fields: tuple, limit: int = 200) -> None:
-    """Confere os campos obrigatorios. Amostra as primeiras linhas, nao o arquivo todo.
+    """Check required fields. Samples the first rows, not the whole file.
 
-    `catalog.json` tem dezenas de milhares de linhas: varrer tudo a cada execucao custaria
-    mais do que protege. Um export truncado ou de schema antigo se denuncia nas primeiras
-    linhas, e o resto e coberto na hora de usar cada campo.
+    `catalog.json` has tens of thousands of rows: scanning all of them on every run would cost
+    more than it protects. A truncated or old-schema export gives itself away in the first
+    rows, and the rest is covered when each field is used.
     """
     for position, row in enumerate(rows[:limit]):
         if not isinstance(row, dict):
-            raise ReferenceError(f"{path}: linha {position} nao e um objeto JSON")
+            raise ReferenceError(f"{path}: row {position} is not a JSON object")
         missing = [field for field in fields if field not in row]
         if missing:
-            raise ReferenceError(f"{path}: linha {position} sem o(s) campo(s) {missing}")
+            raise ReferenceError(f"{path}: row {position} missing field(s) {missing}")
 
 
 def _decimal(value, path: str, field: str) -> Decimal:
     try:
         return Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError) as exc:
-        raise ReferenceError(f"{path}: {field} nao e decimal: {value!r}") from exc
+        raise ReferenceError(f"{path}: {field} is not a decimal: {value!r}") from exc
 
 
 class Reference:
-    """Indice imutavel sobre os quatro arquivos, pronto para amostragem deterministica."""
+    """Immutable index over the four files, ready for deterministic sampling."""
 
     def __init__(self, directory: str, customers: dict, catalog: dict, calendar: dict,
                  premises: dict, demand: dict):
@@ -123,99 +123,99 @@ class Reference:
         self.carried_forward_rows = calendar.get("carried_forward_rows")
 
         if not self.customer_ingestion_dates:
-            raise ReferenceError(f"{CUSTOMERS_FILE}: sem customer_ingestion_dates no cabecalho")
+            raise ReferenceError(f"{CUSTOMERS_FILE}: no customer_ingestion_dates in the header")
 
-        # wh -> [cliente, ...] na ordem do arquivo. A POSICAO nao e carregada para o evento
-        # (diferente do candidate_index da Fase 1), mas a ordem ainda importa: e ela que a
-        # amostragem por indice percorre, e ela precisa ser estavel entre execucoes.
+        # wh -> [customer, ...] in file order. The POSITION is not carried into the event
+        # (unlike Phase 1's candidate_index), but order still matters: it is what index-based
+        # sampling walks, and it must be stable across runs.
         self._customers_by_wh: dict[str, list[dict]] = {}
         for row in customers["rows"]:
             self._customers_by_wh.setdefault(row["wh"], []).append(row)
 
-        # (wh, price_as_of) -> [produto, ...]. Guardamos a linha inteira: o gerador precisa
-        # de preco, nome, categoria e subgrupo para montar a cesta e para substituir dentro
-        # do mesmo subgrupo.
+        # (wh, price_as_of) -> [product, ...]. We keep the whole row: the generator needs
+        # price, name, category and subgroup to build the basket and to substitute within
+        # the same subgroup.
         self._catalog: dict[tuple, list[dict]] = {}
         for row in catalog["rows"]:
             row = dict(row)
             row["unit_price"] = _decimal(row["unit_price"], CATALOG_FILE, "unit_price")
             if row["unit_price"] <= 0:
                 raise ReferenceError(
-                    f"{CATALOG_FILE}: unit_price nao positivo para "
-                    f"{row.get('source_product_id')!r} em {row.get('wh')!r}"
+                    f"{CATALOG_FILE}: non-positive unit_price for "
+                    f"{row.get('source_product_id')!r} in {row.get('wh')!r}"
                 )
             self._catalog.setdefault((row["wh"], row["price_as_of"]), []).append(row)
 
-        # (wh, price_as_of, subgroup_id) -> [posicao no catalogo daquele par, ...]. Indice de
-        # substituicao: trocar um produto por outro do MESMO subgrupo mantem a troca dentro
-        # do sortimento que aquele armazem realmente vende naquele dia.
+        # (wh, price_as_of, subgroup_id) -> [position in that pair's catalog, ...]. Substitution
+        # index: swapping a product for another of the SAME subgroup keeps the swap within the
+        # assortment that warehouse actually sells on that day.
         self._by_subgroup: dict[tuple, list[int]] = {}
         self._by_category: dict[tuple, list[int]] = {}
-        # (wh, price_as_of, demand_group) -> [posicao, ...], mais a TUPLA ORDENADA de grupos
-        # presentes em cada par. A tupla e ordenada aqui, uma vez, e nao no laco do sorteio:
-        # ordenar por chave e o que impede a CDF de depender de PYTHONHASHSEED.
+        # (wh, price_as_of, demand_group) -> [position, ...], plus the SORTED TUPLE of groups
+        # present in each pair. The tuple is sorted here, once, and not in the draw loop:
+        # sorting by key is what keeps the CDF from depending on PYTHONHASHSEED.
         self._by_demand_group: dict[tuple, list[int]] = {}
-        grupos_por_par: dict[tuple, set] = {}
-        for key, produtos in self._catalog.items():
-            for position, row in enumerate(produtos):
+        groups_by_pair: dict[tuple, set] = {}
+        for key, products in self._catalog.items():
+            for position, row in enumerate(products):
                 self._by_subgroup.setdefault(key + (row["subgroup_id"],), []).append(position)
                 self._by_category.setdefault(key + (row["category_id"],), []).append(position)
-                grupo = row.get("demand_group")
-                if not grupo:
+                group = row.get("demand_group")
+                if not group:
                     raise ReferenceError(
-                        f"{CATALOG_FILE}: produto {row.get('source_product_id')!r} sem "
-                        f"demand_group. O export da referencia precisa carimba-lo."
+                        f"{CATALOG_FILE}: product {row.get('source_product_id')!r} has no "
+                        f"demand_group. The reference export must stamp it."
                     )
-                self._by_demand_group.setdefault(key + (grupo,), []).append(position)
-                grupos_por_par.setdefault(key, set()).add(grupo)
+                self._by_demand_group.setdefault(key + (group,), []).append(position)
+                groups_by_pair.setdefault(key, set()).add(group)
         self._demand_groups_of: dict[tuple, tuple] = {
-            key: tuple(sorted(grupos)) for key, grupos in grupos_por_par.items()
+            key: tuple(sorted(groups)) for key, groups in groups_by_pair.items()
         }
 
-        # CDF por (par, COORTE), calculada uma vez. Recalcula-la por linha custaria uma
-        # varredura de dezenas de grupos por linha da cesta, e o resultado seria identico.
+        # CDF per (pair, COHORT), computed once. Recomputing it per line would cost a scan of
+        # dozens of groups per basket line, and the result would be identical.
         #
-        # SO AS COORTES ALCANCAVEIS. A comunidade e fixa dentro de um armazem, entao um par
-        # (armazem, data) tem no maximo tantas coortes quantas sao as faixas etarias — nao o
-        # produto cartesiano. Montar as 16 combinacoes para cada par gastaria memoria em
-        # vetores que nenhum sorteio daquele armazem pode alcancar.
+        # ONLY THE REACHABLE COHORTS. The region is fixed within a warehouse, so a
+        # (warehouse, date) pair has at most as many cohorts as there are age bands — not the
+        # cartesian product. Building all 16 combinations for each pair would spend memory on
+        # vectors no draw for that warehouse can reach.
         self.demand = DemandModel(demand)
         self._demand_cdf: dict[tuple, tuple] = {}
-        for key, grupos in self._demand_groups_of.items():
+        for key, groups in self._demand_groups_of.items():
             wh = key[0]
             try:
-                regiao = self.demand.region_of(wh)
+                region = self.demand.region_of(wh)
             except DemandError as exc:
                 raise ReferenceError(f"{DEMAND_FILE}: {exc}") from exc
-            for banda, _teto in self.demand.age_bands:
-                coorte = f"{banda}|{regiao}"
-                if coorte not in self.demand.cohort_weights:
+            for band, _ceiling in self.demand.age_bands:
+                cohort = f"{band}|{region}"
+                if cohort not in self.demand.cohort_weights:
                     raise ReferenceError(
-                        f"{DEMAND_FILE}: o armazem {wh!r} pode ter cliente da faixa "
-                        f"{banda!r}, mas a coorte {coorte!r} nao tem vetor de pesos."
+                        f"{DEMAND_FILE}: warehouse {wh!r} may have a customer in band "
+                        f"{band!r}, but cohort {cohort!r} has no weight vector."
                     )
                 try:
-                    self._demand_cdf[key + (coorte,)] = self.demand.cumulative(grupos, coorte)
+                    self._demand_cdf[key + (cohort,)] = self.demand.cumulative(groups, cohort)
                 except DemandError as exc:
                     raise ReferenceError(
-                        f"{DEMAND_FILE}: {exc} (par {key}, coorte {coorte})"
+                        f"{DEMAND_FILE}: {exc} (pair {key}, cohort {cohort})"
                     ) from exc
 
-        # (wh, order_date) -> linha do calendario.
+        # (wh, order_date) -> calendar row.
         self._calendar: dict[tuple, dict] = {}
         for row in calendar["rows"]:
             if row["price_source"] not in PRICE_SOURCES:
                 raise ReferenceError(
-                    f"{CALENDAR_FILE}: price_source fora do vocabulario: "
+                    f"{CALENDAR_FILE}: price_source outside the vocabulary: "
                     f"{row['price_source']!r}"
                 )
             self._calendar[(row["wh"], row["order_date"])] = row
 
         self.premises = dict(premises.get("values") or {})
         if not self.premises:
-            raise ReferenceError(f"{PREMISES_FILE}: sem o bloco 'values'")
+            raise ReferenceError(f"{PREMISES_FILE}: missing the 'values' block")
 
-    # -- consultas -----------------------------------------------------------------
+    # -- queries -------------------------------------------------------------------
 
     def warehouses(self) -> list[str]:
         return sorted(self._customers_by_wh)
@@ -227,8 +227,8 @@ class Reference:
         rows = self._customers_by_wh.get(wh)
         if not rows:
             raise ReferenceError(
-                f"referencia sem nenhum cliente para wh={wh!r}. "
-                f"Warehouses disponiveis: {self.warehouses()}"
+                f"reference has no customer for wh={wh!r}. "
+                f"Available warehouses: {self.warehouses()}"
             )
         return rows
 
@@ -236,8 +236,8 @@ class Reference:
         row = self._calendar.get((wh, order_date))
         if row is None:
             raise ReferenceError(
-                f"referencia sem linha de calendario para wh={wh!r} dia={order_date!r}. "
-                f"A janela exportada foi {self.window_from} a {self.window_to}."
+                f"reference has no calendar row for wh={wh!r} day={order_date!r}. "
+                f"The exported window was {self.window_from} to {self.window_to}."
             )
         return row
 
@@ -245,18 +245,18 @@ class Reference:
         rows = self._catalog.get((wh, price_as_of))
         if not rows:
             raise ReferenceError(
-                f"referencia sem catalogo para wh={wh!r} price_as_of={price_as_of!r}"
+                f"reference has no catalog for wh={wh!r} price_as_of={price_as_of!r}"
             )
         return rows
 
     def demand_groups_of(self, wh: str, price_as_of: str) -> tuple:
-        """Grupos com produto naquele (armazem, dia), em ordem estavel."""
-        grupos = self._demand_groups_of.get((wh, price_as_of))
-        if not grupos:
+        """Groups with products in that (warehouse, day), in stable order."""
+        groups = self._demand_groups_of.get((wh, price_as_of))
+        if not groups:
             raise ReferenceError(
-                f"referencia sem grupo de demanda para wh={wh!r} price_as_of={price_as_of!r}"
+                f"reference has no demand group for wh={wh!r} price_as_of={price_as_of!r}"
             )
-        return grupos
+        return groups
 
     def demand_cdf_of(self, wh: str, price_as_of: str, cohort: str) -> tuple:
         return self._demand_cdf[(wh, price_as_of, cohort)]
@@ -271,38 +271,38 @@ class Reference:
         return self._by_category.get((wh, price_as_of, category_id), [])
 
     def customer_version_at(self, first_ingestion_date: str, order_date: str) -> str | None:
-        """Geracao de cliente vigente na data do pedido, ou None se ele ainda nao existia.
+        """Customer generation in force on the order date, or None if they did not exist yet.
 
-        A base e append-only (crescer preserva os primeiros N byte a byte), entao um cliente
-        presente numa geracao esta presente em todas as posteriores; basta a maior data <=
-        order_date que nao seja anterior a primeira aparicao dele.
+        The base is append-only (growing preserves the first N byte for byte), so a customer
+        present in one generation is present in all later ones; it is enough to take the
+        largest date <= order_date that is not before their first appearance.
         """
         if order_date < first_ingestion_date:
             return None
-        candidatas = [d for d in self.customer_ingestion_dates if d <= order_date]
-        return max(candidatas) if candidatas else None
+        candidates = [d for d in self.customer_ingestion_dates if d <= order_date]
+        return max(candidates) if candidates else None
 
 
 def _load_plain(directory: str, name: str) -> dict:
-    """Le um JSON de referencia que NAO tem a lista `rows` (premissas, perfil de demanda)."""
+    """Read a reference JSON that does NOT have the `rows` list (premises, demand profile)."""
     path = os.path.join(directory, name)
     if not os.path.exists(path):
-        raise ReferenceError(f"arquivo de referencia ausente: {path}")
+        raise ReferenceError(f"reference file missing: {path}")
     try:
         with open(path, "rb") as handle:
             payload = json.loads(handle.read().decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise ReferenceError(f"{path}: JSON invalido ({exc})") from exc
+        raise ReferenceError(f"{path}: invalid JSON ({exc})") from exc
     if not isinstance(payload, dict):
-        raise ReferenceError(f"{path}: raiz nao e um objeto JSON")
+        raise ReferenceError(f"{path}: root is not a JSON object")
     return payload
 
 
 def load(directory: str) -> Reference:
-    """Le e valida os cinco arquivos de referencia de um diretorio."""
+    """Read and validate the five reference files of a directory."""
     if not os.path.isdir(directory):
         raise ReferenceError(
-            f"diretorio de referencia nao encontrado: {directory}. Gere-o com "
+            f"reference directory not found: {directory}. Generate it with "
             f"`make orders-export-reference`."
         )
     customers = _load_file(directory, CUSTOMERS_FILE)

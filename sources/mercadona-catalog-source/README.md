@@ -1,43 +1,43 @@
 # Mercadona Catalog API Source
 
-Source de dados de catálogo. Extrai **produto, categoria e preço** da API pública da
-Mercadona (`https://tienda.mercadona.es/api`) e produz snapshots particionados,
-reproduzíveis e validáveis.
+Catalog data Source. Extracts **product, category and price** from Mercadona's public API
+(`https://tienda.mercadona.es/api`) and produces partitioned, reproducible and verifiable
+snapshots.
 
-Este repositório é uma **Source**, não uma plataforma de transformação. O contrato completo
-com o consumidor está em [CONTRACT.md](CONTRACT.md).
+This repository is a **Source**, not a transformation platform. The full contract with the
+consumer is in [CONTRACT.md](CONTRACT.md).
 
-- **Faz:** conecta à API · descobre a árvore de categorias · extrai produtos e preços ·
-  controla a taxa de requisição · executa retries com backoff · retoma partições
-  incompletas · produz snapshots particionados · registra metadata e proveniência · valida
-  integridade, cobertura, schema e qualidade.
-- **Não faz:** deduplicação · modelagem dimensional · normalização · Silver/Gold ·
-  enriquecimento · histórico · métricas · Spark · dbt · Airflow · Kafka · Snowflake · S3.
+- **Does:** connects to the API · discovers the category tree · extracts products and prices ·
+  controls the request rate · retries with backoff · resumes incomplete partitions ·
+  produces partitioned snapshots · records metadata and provenance · validates
+  integrity, coverage, schema and quality.
+- **Does not:** deduplication · dimensional modeling · normalization · Silver/Gold ·
+  enrichment · history · metrics · Spark · dbt · Airflow · Kafka · Snowflake · S3.
 
-## Requisitos
+## Requirements
 
-Python 3.12+ e nada mais. Somente biblioteca padrão. `dependencies = []` no
-[pyproject.toml](pyproject.toml) — não há o que instalar.
+Python 3.12+ and nothing else. Standard library only. `dependencies = []` in
+[pyproject.toml](pyproject.toml) — there is nothing to install.
 
-## Localização
+## Location
 
-Esta Source vive em `sources/mercadona-catalog-source/` do monorepo e permanece independente
-(`pyproject.toml` próprio, `dependencies = []`, suíte própria — ver
-[ARCHITECTURE.md](../../ARCHITECTURE.md)). No dia a dia use o **Makefile da raiz**
-(`make -C ../.. extract validate`), que aponta `--out` para o `data/` compartilhado; rodar
-`make extract` **daqui** grava em vez disso um `data/mercadona/` local, útil só para teste
-isolado.
+This Source lives in `sources/mercadona-catalog-source/` of the monorepo and stays independent
+(its own `pyproject.toml`, `dependencies = []`, its own suite — see
+[ARCHITECTURE.md](../../ARCHITECTURE.md)). Day to day, use the **root Makefile**
+(`make -C ../.. extract validate`), which points `--out` at the shared `data/`; running
+`make extract` **from here** writes a local `data/mercadona/` instead, useful only for
+isolated testing.
 
-## Uso
+## Usage
 
 ```bash
-make test                  # 145 testes, sem rede e sem dependências
-make extract               # snapshot de hoje (UTC), ~4 min
-make validate              # valida a partição de hoje em modo --strict
+make test                  # 145 tests, no network and no dependencies
+make extract               # today's snapshot (UTC), ~4 min
+make validate              # validates today's partition in --strict mode
 make check                 # test + validate
 ```
 
-Sem `make`, com `PYTHONPATH=src`:
+Without `make`, with `PYTHONPATH=src`:
 
 ```bash
 PYTHONPATH=src python3 -m mercadona_catalog_source extract  --out data/mercadona
@@ -46,369 +46,372 @@ PYTHONPATH=src python3 -m mercadona_catalog_source validate \
 PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```
 
-Instalando o pacote, o console script `mercadona-catalog-source` fica disponível com os
-mesmos subcomandos, sem precisar de `PYTHONPATH`:
+Once the package is installed, the `mercadona-catalog-source` console script is available
+with the same subcommands, without needing `PYTHONPATH`:
 
 ```bash
-make install               # cria venv/, instala ferramentas de build e o pacote (-e .)
+make install               # creates venv/, installs the build tools and the package (-e .)
 ./venv/bin/mercadona-catalog-source --version
 ./venv/bin/mercadona-catalog-source validate "data/mercadona/ingestion_date=$(date -u +%F)/wh=mad1" --strict
 ```
 
 ### `extract`
 
-| Flag | Padrão | Efeito |
+| Flag | Default | Effect |
 |---|---|---|
-| `--out` | `data/mercadona` | diretório raiz do snapshot |
-| `--wh` | `mad1` | armazém. Validado como token `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; a existência do código só é conhecida na resposta da API — e essa resposta não distingue: **qualquer** código, inclusive um erro de digitação (`zzz9`, `mad9`, ou nenhum `--wh`), devolve `200` caindo no conteúdo de `vlc1` (medido, ver [ARCHITECTURE.md § "Dois fatos da fonte que mudam como se opera isto"](../../ARCHITECTURE.md)). Os 7 armazéns que de fato servem catálogo (medido em `2026-08-24`): `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1` — mais `vlc2`/`pmi1`, reconhecidos pelo servidor mas com árvore de categorias vazia (`200`, não `404`) |
-| `--lang` | `es` | idioma da API. **Fixo por partição**: reabrir com outro idioma é recusado com código 2, salvo `--overwrite`, que reescreve a partição inteira |
-| `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
-| `--delay` | `1.5` | intervalo mínimo entre requisições, em segundos |
-| `--timeout` | `30.0` | timeout de cada requisição |
-| `--max-retries` | `5` | tentativas extras por requisição |
-| `--limit` | — | processa apenas as N primeiras categorias de nível 2. **`N ≥ 1`**; `0` e negativos são recusados com código 2. Marca a partição como `complete: false` |
-| `--overwrite` | desligado | reescreve a partição, inclusive se estiver completa |
+| `--out` | `data/mercadona` | snapshot root directory |
+| `--wh` | `mad1` | warehouse. Validated as the token `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; whether the code exists is only known from the API response — and that response does not tell: **any** code, including a typo (`zzz9`, `mad9`, or no `--wh` at all), returns `200` falling back to the content of `vlc1` (measured, see [ARCHITECTURE.md § "Two facts about the source that change how this is operated"](../../ARCHITECTURE.md)). The 7 warehouses that actually serve a catalog (measured on `2026-08-24`): `mad1`, `mad2`, `mad3`, `bcn1`, `vlc1`, `svq1`, `alc1` — plus `vlc2`/`pmi1`, recognized by the server but with an empty category tree (`200`, not `404`) |
+| `--lang` | `es` | API language. **Fixed per partition**: reopening with another language is refused with code 2, unless `--overwrite`, which rewrites the whole partition |
+| `--date` | today (UTC) | partition date. Validated as `YYYY-MM-DD` |
+| `--delay` | `1.5` | minimum interval between requests, in seconds |
+| `--timeout` | `30.0` | timeout of each request |
+| `--max-retries` | `5` | extra attempts per request |
+| `--limit` | — | processes only the first N level-2 categories. **`N ≥ 1`**; `0` and negatives are refused with code 2. Marks the partition as `complete: false` |
+| `--overwrite` | off | rewrites the partition, even if it is complete |
 
 ### `validate`
 
-| Argumento | Efeito |
+| Argument | Effect |
 |---|---|
-| `partition` | caminho da partição (posicional, obrigatório) |
-| `--strict` | além da integridade, falha se houver registro com campo de escopo ausente |
+| `partition` | partition path (positional, required) |
+| `--strict` | besides integrity, fails if any record has a missing in-scope field |
 
-## Estrutura
+## Layout
 
 ```
 .
-├── CONTRACT.md                      # contrato com o consumidor
+├── CONTRACT.md                      # contract with the consumer
 ├── Makefile                         # test / extract / validate / check / venv / install / freeze
-├── pyproject.toml                   # metadados; dependencies = []
-├── requirements.txt                 # runtime: vazio por construção, verificado por teste
-├── requirements-build.txt           # setuptools / wheel / packaging, congelados
+├── pyproject.toml                   # metadata; dependencies = []
+├── requirements.txt                 # runtime: empty by construction, verified by a test
+├── requirements-build.txt           # setuptools / wheel / packaging, frozen
 ├── src/mercadona_catalog_source/
-│   ├── __init__.py                  # nome da source, versão do manifesto
+│   ├── __init__.py                  # source name, manifest version
 │   ├── __main__.py                  # python -m mercadona_catalog_source
-│   ├── cli.py                       # subcomandos e códigos de saída
-│   ├── canonical.py                 # forma canônica + escrita atômica
-│   ├── http_client.py               # cliente sequencial, throttle e backoff
-│   ├── schema.py                    # navegação defensiva e fingerprint
-│   ├── partition.py                 # identidade, imutabilidade, _SUCCESS
-│   ├── extract.py                   # as duas etapas de extração
-│   └── validate.py                  # validação independente
-├── tests/                           # 145 testes, stdlib unittest, sem rede
-└── venv/                            # ambiente de build, criado por `make venv`; ignorado
+│   ├── cli.py                       # subcommands and exit codes
+│   ├── canonical.py                 # canonical form + atomic write
+│   ├── http_client.py               # sequential client, throttle and backoff
+│   ├── schema.py                    # defensive navigation and fingerprint
+│   ├── partition.py                 # identity, immutability, _SUCCESS
+│   ├── extract.py                   # the two extraction stages
+│   └── validate.py                  # independent validation
+├── tests/                           # 145 tests, stdlib unittest, no network
+└── venv/                            # build environment, created by `make venv`; ignored
 ```
 
-Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
-`<raiz>/data/mercadona/ingestion_date=…/wh=…/`, dois níveis acima, com esta forma:
+The snapshots **do not live here**. The partition the platform consumes lives in
+`<root>/data/mercadona/ingestion_date=…/wh=…/`, two levels up, with this shape:
 
 ```
 data/mercadona/ingestion_date=2026-08-24/
 └── wh=mad1/
     ├── categories/categories.json
-    ├── catalog/category_id=<id>.json     (151 arquivos)
+    ├── catalog/category_id=<id>.json     (151 files)
     ├── _manifest.json
     ├── _SUCCESS
     └── _run.log
 ```
 
-O `.gitignore` fica na raiz do monorepo e cobre `venv/`, `data/` e os temporários da
-escrita atômica.
+The `.gitignore` sits at the monorepo root and covers `venv/`, `data/` and the atomic
+write's temporary files.
 
-## Forma dos arquivos
+## Output layout
 
-Os arquivos contêm o payload da API **íntegro em conteúdo** — nenhum campo é adicionado,
-removido, renomeado ou convertido de tipo (preços permanecem strings, ex.: `"17.75"`) — mas
-**reserializados de forma canônica**: `json.dumps(ensure_ascii=False, sort_keys=True,
-indent=2)` mais newline final.
+The files contain the API payload **intact in content** — no field is added, removed,
+renamed or type-converted (prices stay strings, e.g. `"17.75"`) — but **re-serialized
+canonically**: `json.dumps(ensure_ascii=False, sort_keys=True, indent=2)` plus a trailing
+newline.
 
-Portanto **não são os bytes originais da resposta HTTP**. Não se preservam: ordem original
-das chaves, formatação, escapes Unicode e a grafia léxica de floats; chaves duplicadas, se
-existirem, colapsam na última ocorrência. Nada da camada HTTP (headers, `ETag`,
-`Content-Encoding`) é guardado.
+So they **are not the original bytes of the HTTP response**. Not preserved: original key
+order, formatting, Unicode escapes and the lexical spelling of floats; duplicate keys, if
+any, collapse to the last occurrence. Nothing from the HTTP layer (headers, `ETag`,
+`Content-Encoding`) is kept.
 
-O **SHA-256 registrado é o do arquivo canônico produzido pela Source**, não o da resposta
-HTTP. É a canonicalização que torna o digest estável entre execuções com o mesmo conteúdo —
-bytes crus produziriam digests diferentes para dados idênticos a cada reordenação de chaves
-do servidor. A escrita é atômica (temporário + `fsync` + `os.replace`): um processo
-interrompido nunca deixa arquivo parcial no lugar final.
+The **recorded SHA-256 is that of the canonical file produced by the Source**, not that of
+the HTTP response. Canonicalization is what makes the digest stable across runs with the
+same content — raw bytes would produce different digests for identical data every time the
+server reordered keys. The write is atomic (temporary file + `fsync` + `os.replace`): an
+interrupted process never leaves a partial file in the final place.
 
-**[`sample-catalog-response.json`](sample-catalog-response.json)** é uma captura real,
-byte a byte como a Source grava: `category_id=112` (nível 2 `Aceite, vinagre y sal`),
-capturada em `wh=mad1`, `ingestion_date=2026-09-04`, sha256
-`b5bfb47c7dfea67081dfe1ad3b2dde3c5fc775b2fecf80b39475fa1aed5919f0`. Ela existe pra não
-copiar preço a mão neste README: preço do Mercadona muda, e um número digitado aqui
-apodreceria na primeira atualização real enquanto o texto continuasse afirmando o
-contrário — abra o arquivo pra ver o preço vigente na data da captura.
+**[`sample-catalog-response.json`](sample-catalog-response.json)** is a real capture,
+byte for byte as the Source writes it: `category_id=112` (level 2 `Aceite, vinagre y sal`),
+captured at `wh=mad1`, `ingestion_date=2026-09-04`, sha256
+`b5bfb47c7dfea67081dfe1ad3b2dde3c5fc775b2fecf80b39475fa1aed5919f0`. It exists so that prices
+are not copied by hand into this README: Mercadona prices change, and a number typed here
+would rot at the first real update while the text kept claiming otherwise — open the file
+to see the price in force on the capture date.
 
-Estruturalmente, o que vale independente de qualquer atualização: dentro dele, subgrupo
-`Aceite de oliva` → produto `Aceite de oliva 0,4º Hacendado` aparece **duas vezes**, uma
-vez como id `4241` (5 L) e outra como id `4240` (1 L) — mesmo `display_name`, embalagens
-diferentes. A chave é `id`, não o nome. Nenhum dos arquivos contém `currency`, `EUR` ou
-`€`.
+Structurally, what holds regardless of any update: inside it, subgroup
+`Aceite de oliva` → product `Aceite de oliva 0,4º Hacendado` appears **twice**, once as
+id `4241` (5 L) and once as id `4240` (1 L) — same `display_name`, different packages. The
+key is `id`, not the name. None of the files contains `currency`, `EUR` or `€`.
 
 ### `_manifest.json`
 
-Registra `manifest_version`, `run_id`, janela de execução, duração, `complete`, `source`,
-`partition`, `config`, `totals`, `schema_fingerprint` e a lista de arquivos com `sha256`,
-`bytes` e `records`. Categorias que falharam ficam em `failures[]`; eventos tratados
-durante a extração ficam em `anomalies[]`; o resumo das execuções anteriores sobre a mesma
-partição fica em `history[]`.
+Records `manifest_version`, `run_id`, run window, duration, `complete`, `source`,
+`partition`, `config`, `totals`, `schema_fingerprint` and the file list with `sha256`,
+`bytes` and `records`. Categories that failed go into `failures[]`; events handled during
+the extraction go into `anomalies[]`; the summary of previous runs over the same partition
+goes into `history[]`.
 
-`files[].path` é relativo à **raiz do snapshot** (`--out`), não à partição: começa em
-`ingestion_date=…/wh=…/`. Para resolvê-lo a partir do caminho da partição, suba dois
-níveis.
+`files[].path` is relative to the **snapshot root** (`--out`), not to the partition: it
+starts at `ingestion_date=…/wh=…/`. To resolve it from the partition path, go up two
+levels.
 
-## Execução registrada
+## Recorded run
 
-Ambiente: Python 3.12.7, Linux. Três partições em disco, todas `wh=mad1`, todas validadas.
+Environment: Python 3.12.7, Linux. Three partitions on disk, all `wh=mad1`, all validated.
 
-| Métrica | `2026-08-15` | `2026-08-16` | `2026-08-24` |
+| Metric | `2026-08-15` | `2026-08-16` | `2026-08-24` |
 |---|---|---|---|
 | `run_id` | `20260815T143445Z_mad1` | `20260816T214655Z_mad1` | `20260824T140006Z_mad1` |
-| Requisições HTTP | 152 (1 árvore + 151 categorias) | 152 | 152 |
-| Retries / Falhas | 0 / 0 | 0 / 0 | 0 / 0 |
-| Duração | 227,3 s | 227,0 s | 227,8 s |
-| Categorias nível 1 / nível 2 | 26 / 151 | 26 / 151 | 26 / 151 |
-| Arquivos de catálogo | 151 | 151 | 151 |
-| Linhas de produto | 4.600 | 4.599 | 4.581 |
-| Produtos únicos | 4.329 | 4.328 | 4.311 |
-| Volume | 8.291.070 bytes | 8.289.262 bytes | 8.261.218 bytes |
-| `schema_fingerprint` | `37a3d95d…` | `37a3d95d…` | `37a3d95d…` (igual nas três) |
-| `complete` | `true`, com `_SUCCESS` | `true`, com `_SUCCESS` | `true`, com `_SUCCESS` |
+| HTTP requests | 152 (1 tree + 151 categories) | 152 | 152 |
+| Retries / Failures | 0 / 0 | 0 / 0 | 0 / 0 |
+| Duration | 227.3 s | 227.0 s | 227.8 s |
+| Level-1 / level-2 categories | 26 / 151 | 26 / 151 | 26 / 151 |
+| Catalog files | 151 | 151 | 151 |
+| Product rows | 4,600 | 4,599 | 4,581 |
+| Unique products | 4,329 | 4,328 | 4,311 |
+| Volume | 8,291,070 bytes | 8,289,262 bytes | 8,261,218 bytes |
+| `schema_fingerprint` | `37a3d95d…` | `37a3d95d…` | `37a3d95d…` (same in all three) |
+| `complete` | `true`, with `_SUCCESS` | `true`, with `_SUCCESS` | `true`, with `_SUCCESS` |
 
-Todas em `manifest_version: 2`, todas com 152 arquivos declarados. A partição de
-`2026-08-15` foi gravada antes da introdução de `anomalies[]` e não tem o campo — leia como
-lista vazia, conforme [CONTRACT.md § 1](CONTRACT.md).
+All in `manifest_version: 2`, all with 152 declared files. The `2026-08-15` partition was
+written before `anomalies[]` was introduced and does not have the field — read it as an
+empty list, per [CONTRACT.md § 1](CONTRACT.md).
 
-**Há um vão de 8 dias** entre `2026-08-16` e `2026-08-24`. Os dias `08-17` a `08-23` **não
-existem e não podem ser recuperados**: a API serve apenas o preço de hoje, e a Source não
-tem como reconstruir o passado. É a razão pela qual a extração precisa ser agendada, e não
-disparada à mão.
+**There is an 8-day gap** between `2026-08-16` and `2026-08-24`. The days `08-17` to `08-23`
+**do not exist and cannot be recovered**: the API only serves today's price, and the Source
+has no way to reconstruct the past. That is why the extraction needs to be scheduled, not
+triggered by hand.
 
-**Validação** (`--strict`, todas): 152/152 arquivos conferidos por checksum, 0 órfãos,
-0 anomalias, cobertura 151/151 categorias, schema igual, totais reconferidos, 0 produtos
-sem nome, 0 sem preço, 0 sem categoria — 100,00% de completude. Saída `OK`, código 0.
+**Validation** (`--strict`, all): 152/152 files checked by checksum, 0 orphans,
+0 anomalies, coverage 151/151 categories, same schema, totals re-checked, 0 products
+without a name, 0 without a price, 0 without a category — 100.00% completeness. Output `OK`,
+code 0.
 
-**Suite**: 145 testes, `OK`, sem acesso à rede.
+**Suite**: 145 tests, `OK`, no network access.
 
-**Imutabilidade**: reexecutar `extract` sobre uma partição completa retorna código 2 com
-`particao ja esta completa e e imutavel`.
+**Immutability**: re-running `extract` on a complete partition returns code 2 with
+`partition is already complete and is immutable`.
 
-### Variação observada entre partições
+### Variation observed between partitions
 
-Mudança temporal na fonte, medida sobre os snapshots — não inferida.
+Temporal change at the source, measured over the snapshots — not inferred.
 
-**Janela de 1 dia**, `2026-08-15` → `2026-08-16`:
+**1-day window**, `2026-08-15` → `2026-08-16`:
 
-- **17 preços alterados**, quase todos hortifruti: `Coliflor` 3.50 → 3.63, `Patata`
+- **17 prices changed**, almost all fresh produce: `Coliflor` 3.50 → 3.63, `Patata`
   0.42 → 0.44, `Mango` 1.50 → 1.46, `Piña` 3.72 → 3.66, `Melocotón amarillo` 0.57 → 0.60.
-- **2 produtos saíram**, **1 entrou**: `Chicles gragea original frutas sin azúcar Hacendado`
-  trocou de `id` 65135 (1.00) para 24537 (1.95) — o mesmo `display_name`, na mesma categoria
-  (95) e no mesmo subgrupo (389), com outra chave e outro preço. Nem o nome nem o `id` servem
-  como identidade de negócio: a fonte não diz se é o mesmo item rechaveado ou um item
-  retirado e outro lançado.
-- `schema_fingerprint` idêntico: a forma da resposta não mudou entre os dois dias.
+- **2 products left**, **1 came in**: `Chicles gragea original frutas sin azúcar Hacendado`
+  switched from `id` 65135 (1.00) to 24537 (1.95) — the same `display_name`, in the same
+  category (95) and the same subgroup (389), with another key and another price. Neither the
+  name nor the `id` works as business identity: the source does not say whether it is the
+  same item re-keyed or one item withdrawn and another launched.
+- `schema_fingerprint` identical: the response shape did not change between the two days.
 
-**Janela de 8 dias**, `2026-08-16` → `2026-08-24` — a mesma fonte, medida num intervalo
-maior, muda muito mais:
+**8-day window**, `2026-08-16` → `2026-08-24` — the same source, measured over a longer
+interval, changes much more:
 
-- **152 preços alterados** entre os 4.295 ids presentes nos dois snapshots.
-- **33 ids saíram**, **16 entraram**. Destes 16, **5 têm `display_name` que já existia** em
-  `08-16` — ou seja, a fonte reemitiu itens sob outra chave, sem sinalizar. Ver
-  [CONTRACT.md § 4.5](CONTRACT.md): `source_product_id` não é identidade de negócio.
-- `schema_fingerprint` idêntico também aqui.
+- **152 prices changed** among the 4,295 ids present in both snapshots.
+- **33 ids left**, **16 came in**. Of those 16, **5 have a `display_name` that already
+  existed** on `08-16` — that is, the source reissued items under another key, without
+  signaling. See [CONTRACT.md § 4.5](CONTRACT.md): `source_product_id` is not business
+  identity.
+- `schema_fingerprint` identical here too.
 
-**`price_decreased` é falso em 100% das linhas nas três partições**, apesar dos 152 preços
-alterados. O campo que a fonte oferece para sinalizar variação não sinaliza nada: a única
-forma de detectar mudança de preço é o **diff de snapshots**. Fato da fonte, registrado
-aqui; a Source não o interpreta.
+**`price_decreased` is false in 100% of rows across the three partitions**, despite the 152
+changed prices. The field the source offers to signal variation signals nothing: the only
+way to detect a price change is a **snapshot diff**. A fact about the source, recorded
+here; the Source does not interpret it.
 
-A Source **não interpreta** isso: ela entrega os snapshots. Qualquer leitura de
-histórico, SCD ou variação de preço é da camada seguinte.
+The Source **does not interpret** this: it delivers the snapshots. Any reading of history,
+SCD or price variation belongs to the next layer.
 
-### Repetição de linhas
+### Row repetition
 
-Números da partição `2026-08-15`. As 4.600 linhas contêm 4.329 produtos únicos, e as
-**271 linhas excedentes** são:
+Figures from the `2026-08-15` partition. The 4,600 rows contain 4,329 unique products, and
+the **271 surplus rows** are:
 
-- **261** — o mesmo produto em **duas categorias de nível 2 diferentes** (4.068 produtos em
-  1 categoria, 261 em 2; nenhum em 3 ou mais).
-- **10** — o mesmo produto em **dois subgrupos do mesmo arquivo**: 8 refrigerantes de cola
-  em `Cola sin cafeína` / `Cola zero` (categoria 158), 1 em `Cepillo de dientes` /
-  `Pasta de dientes` (186) e 1 em `Pollo` / `Pavo y otras aves` (38).
+- **261** — the same product in **two different level-2 categories** (4,068 products in
+  1 category, 261 in 2; none in 3 or more).
+- **10** — the same product in **two subgroups of the same file**: 8 cola soft drinks
+  in `Cola sin cafeína` / `Cola zero` (category 158), 1 in `Cepillo de dientes` /
+  `Pasta de dientes` (186) and 1 in `Pollo` / `Pavo y otras aves` (38).
 
-Semântica da fonte, preservada deliberadamente. A resolução é da camada posterior.
+Source semantics, deliberately preserved. Resolution belongs to the downstream layer.
 
-### Campos de preço observados
+### Observed price fields
 
-Presentes em 100% dos registros das três partições: `unit_price`, `reference_price`,
+Present in 100% of records across the three partitions: `unit_price`, `reference_price`,
 `reference_format`, `bulk_price`, `previous_unit_price`, `price_decreased`,
 `tax_percentage`.
 
-Preenchimento medido:
+Measured fill rate:
 
 | | `2026-08-15` | `2026-08-16` | `2026-08-24` |
 |---|---|---|---|
-| `unit_price` string, não-nulo | 100% | 100% | 100% |
-| `tax_percentage` não-nulo | 100% | 100% | 100% |
-| `previous_unit_price` não-nulo | 205 (4,5%) | 211 (4,6%) | 194 (4,2%) |
-| `price_decreased` verdadeiro | **0** | **0** | **0** |
+| `unit_price` string, non-null | 100% | 100% | 100% |
+| `tax_percentage` non-null | 100% | 100% | 100% |
+| `previous_unit_price` non-null | 205 (4.5%) | 211 (4.6%) | 194 (4.2%) |
+| `price_decreased` true | **0** | **0** | **0** |
 
-Duas observações factuais que o consumidor precisa saber, ambas medidas e nenhuma
-interpretada aqui:
+Two factual observations the consumer needs to know, both measured and neither
+interpreted here:
 
-1. **`previous_unit_price` vem com espaços à esquerda** — `"       18.75"` — em **100% dos
-   não-nulos** (205/205, 211/211, 194/194). Aparar antes de converter é obrigação do
-   consumidor; motores diferentes toleram o padding de formas diferentes.
-2. **`iva` é nulo em 100% das linhas** enquanto `tax_percentage` está preenchido. O campo
-   útil é o segundo.
+1. **`previous_unit_price` comes with leading spaces** — `"       18.75"` — in **100% of
+   non-nulls** (205/205, 211/211, 194/194). Trimming before converting is the consumer's
+   obligation; different engines tolerate the padding in different ways.
+2. **`iva` is null in 100% of rows** while `tax_percentage` is filled. The useful field is
+   the second one.
 
-## Comportamento operacional
+## Operational behavior
 
-**Throttle.** Requisições sequenciais, limitadas a `1/--delay` req/s, medindo do início da
-requisição anterior. Com o padrão de 1,5 s, a execução registrada levou 227,3 s para 152
-requisições, com 0 bloqueios.
+**Throttle.** Sequential requests, limited to `1/--delay` req/s, measured from the start of
+the previous request. With the 1.5 s default, the recorded run took 227.3 s for 152
+requests, with 0 blocks.
 
-**Retry.** Status `403, 408, 429, 500, 502, 503, 504` e qualquer erro não-HTTP (timeout,
-reset de conexão, corpo JSON inválido) são repetidos com backoff exponencial
-`5s → 10s → 20s → 40s → 60s` (teto de 60 s), até `--max-retries`. Demais status falham
-imediatamente — é o caso de `404`/`410` dos ids de nível 1.
+**Retry.** Status `403, 408, 429, 500, 502, 503, 504` and any non-HTTP error (timeout,
+connection reset, invalid JSON body) are retried with exponential backoff
+`5s → 10s → 20s → 40s → 60s` (60 s cap), up to `--max-retries`. Other statuses fail
+immediately — which is the case for the `404`/`410` of level-1 ids.
 
-**Retomada.** Um arquivo já presente na partição não é rebaixado, salvo com `--overwrite`.
-É rebaixado da fonte automaticamente quando está ilegível, truncado, com forma inesperada,
-**fora da forma canônica** ou **divergente do manifesto anterior** — nos três últimos casos
-o evento entra em `anomalies[]`. Uma partição é imutável: conteúdo alterado em disco não é
-insumo válido e não é promovido a nova verdade por uma reexecução.
+**Resume.** A file already present in the partition is not re-downloaded, unless
+`--overwrite`. It is automatically re-downloaded from the source when it is unreadable,
+truncated, has an unexpected shape, is **not in canonical form** or **differs from the
+previous manifest** — in the last three cases the event goes into `anomalies[]`. A
+partition is immutable: content altered on disk is not valid input and is not promoted to
+the new truth by a re-run.
 
-**Identidade antes do fan-out.** Um manifesto preliminar (`complete: false`) é gravado logo
-após a árvore de categorias. Sem ele, uma execução interrompida deixaria a partição sem
-manifesto — e as travas de imutabilidade e de idioma fixo, que dependem dele, ficariam
-desligadas na retomada.
+**Identity before the fan-out.** A preliminary manifest (`complete: false`) is written right
+after the category tree. Without it, an interrupted run would leave the partition without a
+manifest — and the immutability and fixed-language locks, which depend on it, would be
+switched off on resume.
 
-**Inventário.** Ao final, a extração varre `catalog/` e declara no manifesto os arquivos
-válidos que aquela execução não visitou (caso de `--limit`, ou de categoria que saiu da
-árvore da fonte). Assim o manifesto descreve a partição, não apenas o que a execução tocou.
+**Inventory.** At the end, the extraction sweeps `catalog/` and declares in the manifest the
+valid files that run did not visit (the `--limit` case, or a category that left the
+source's tree). That way the manifest describes the partition, not just what the run
+touched.
 
-**Códigos de saída.** Ver [CONTRACT.md § 7](CONTRACT.md). São do processo que executa; o
-consumidor a jusante decide por `_SUCCESS` e `_manifest.json`.
+**Exit codes.** See [CONTRACT.md § 7](CONTRACT.md). They belong to the process that runs;
+the downstream consumer decides by `_SUCCESS` and `_manifest.json`.
 
-## Restrições da fonte
+## Source restrictions
 
-Verificadas contra a API, não presumidas:
+Verified against the API, not assumed:
 
-- **Só ids de categoria de nível 2** são acessíveis em `/api/categories/{id}/`. Ids de
-  nível 1 respondem `404`/`410`. A árvore é achatada para nível 2, com deduplicação por id.
-- **Comportamento sob carga.** Com 8 threads, 152 requisições em 9 s produziram ~20% de
-  `403`, e o host passou a responder `403` de forma intermitente por alguns minutos. As
-  mesmas 152 requisições sequenciais a 1,5 s tiveram 0 falhas, em execuções repetidas.
-  **Comportamento além de 152 requisições por execução não foi medido**, e não se
-  distinguiu WAF de rate limit de borda — observou-se apenas o status.
-- **`wh` altera sortimento E preço.** Medido no catálogo inteiro, `mad1` vs `bcn1` em
-  `2026-08-24`: 4.311 produtos em `mad1`, 4.320 em `bcn1`, **4.040 em comum** — ou seja
-  271 exclusivos de um e 280 do outro. Dos 4.040 comuns, **124 (3,1%) têm preço
-  diferente**, com variação de até ±24%, concentrada em perecíveis (`Sandía` 4,82 → 3,86;
-  `Solomillo de cerdo` 3,90 → 4,84) e refrigerantes.
+- **Only level-2 category ids** are reachable at `/api/categories/{id}/`. Level-1 ids
+  respond `404`/`410`. The tree is flattened to level 2, deduplicated by id.
+- **Behavior under load.** With 8 threads, 152 requests in 9 s produced ~20% `403`s, and
+  the host started answering `403` intermittently for a few minutes. The same 152
+  sequential requests at 1.5 s had 0 failures, across repeated runs.
+  **Behavior beyond 152 requests per run was not measured**, and a WAF was not
+  distinguished from an edge rate limit — only the status was observed.
+- **`wh` changes assortment AND price.** Measured over the whole catalog, `mad1` vs `bcn1`
+  on `2026-08-24`: 4,311 products in `mad1`, 4,320 in `bcn1`, **4,040 in common** — that is,
+  271 exclusive to one and 280 to the other. Of the 4,040 in common, **124 (3.1%) have a
+  different price**, with variation of up to ±24%, concentrated in perishables (`Sandía`
+  4.82 → 3.86; `Solomillo de cerdo` 3.90 → 4.84) and soft drinks.
 
-  Uma medição anterior deste arquivo, restrita à **categoria 112** (35 produtos comuns),
-  não encontrou nenhuma diferença de preço e concluía que `wh` variava só o sortimento.
-  **Essa conclusão estava errada** — era artefato do tamanho da amostra. Registrado aqui
-  porque um consumidor que trate preço como independente do armazém erra em 3% das linhas.
+  An earlier measurement in this file, restricted to **category 112** (35 products in
+  common), found no price difference and concluded that `wh` only varied the assortment.
+  **That conclusion was wrong** — it was an artifact of the sample size. Recorded here
+  because a consumer who treats price as independent of the warehouse is wrong on 3% of the
+  rows.
 
-  `pmi1` é reconhecido pelo servidor mas devolve árvore de categorias vazia (`200`,
-  `content-length: 52`) — não `404` (ver [ARCHITECTURE.md § 2.2](../../ARCHITECTURE.md)).
-- **`robots.txt` de `tienda.mercadona.es` declara `Disallow: /api`**, e o cliente envia um
-  **User-Agent de navegador Chrome**, não um identificador de robô
-  ([http_client.py](src/mercadona_catalog_source/http_client.py)). Usar esta rota como
-  fonte é decisão do operador, tomada com esses dois fatos à vista. A Source opera no menor
-  impacto possível — sequencial, 152 requisições por execução, sem paralelismo — mas isso
-  não anula a diretiva. Note ainda que `403` está entre os status retentáveis: um bloqueio
-  deliberado é repetido até 5 vezes. Alternativa liberada por `robots.txt` (`Disallow:`
-  vazio): o espelho `mercadonacercademi.com`, ao custo de ~2 h por extração e sem preço nas
-  páginas de listagem.
-- **Sem chave cross-source.** `ean`, `gtin`, `barcode`, `brand` e `origin` não existem nos
-  payloads deste endpoint; `product.id` é a **chave da fonte**, sem garantia de estabilidade
-  temporal — identifica o registro dentro do snapshot, mas a fonte pode reemitir o mesmo item
-  comercial sob outro id sem sinalizar ([CONTRACT.md § 4.5](CONTRACT.md)). O endpoint
-  `/api/products/{id}/` os traria, ao custo de +4.329 requisições (~1h50 no throttle
-  seguro) contra um host com `Disallow: /api`, e está fora do escopo produto/categoria/preço.
-- **Sem fato transacional.** Nenhum endpoint conhecido da API expõe venda, pedido ou
-  estoque.
+  `pmi1` is recognized by the server but returns an empty category tree (`200`,
+  `content-length: 52`) — not `404` (see [ARCHITECTURE.md § 2.2](../../ARCHITECTURE.md)).
+- **`robots.txt` of `tienda.mercadona.es` declares `Disallow: /api`**, and the client sends
+  a **Chrome browser User-Agent**, not a robot identifier
+  ([http_client.py](src/mercadona_catalog_source/http_client.py)). Using this route as a
+  source is the operator's decision, taken with these two facts in view. The Source
+  operates at the lowest possible impact — sequential, 152 requests per run, no
+  parallelism — but that does not cancel the directive. Note also that `403` is among the
+  retryable statuses: a deliberate block is retried up to 5 times. An alternative allowed
+  by `robots.txt` (empty `Disallow:`): the mirror `mercadonacercademi.com`, at the cost of
+  ~2 h per extraction and no prices on the listing pages.
+- **No cross-source key.** `ean`, `gtin`, `barcode`, `brand` and `origin` do not exist in
+  this endpoint's payloads; `product.id` is the **source key**, with no guarantee of
+  temporal stability — it identifies the record within the snapshot, but the source may
+  reissue the same commercial item under another id without signaling
+  ([CONTRACT.md § 4.5](CONTRACT.md)). The `/api/products/{id}/` endpoint would bring them,
+  at the cost of +4,329 requests (~1h50 at the safe throttle) against a host with
+  `Disallow: /api`, and it is outside the product/category/price scope.
+- **No transactional fact.** No known API endpoint exposes sales, orders or stock.
 
-## Validação
+## Validation
 
-`validate` relê e reparseia todos os arquivos declarados no manifesto, recalculando
-checksums, contagens e fingerprint em vez de aceitar os valores registrados, e varre o
-diretório em busca de arquivos não declarados.
+`validate` re-reads and re-parses every file declared in the manifest, recomputing
+checksums, counts and the fingerprint instead of accepting the recorded values, and sweeps
+the directory for undeclared files.
 
-**Integridade** — sempre fatal: manifesto ausente, ilegível ou sem a lista `files` ·
-`manifest_version` incompatível · entrada de manifesto malformada (sem `path`) · entrada
-apontando para fora da raiz do snapshot · arquivo declarado e ausente · SHA-256 ou tamanho
-divergente · JSON inválido · contagem de registros divergente, inclusive a da árvore ·
-arquivo em disco fora do manifesto, em qualquer profundidade · `_SUCCESS` incoerente com
-`complete` · árvore de categorias ausente ou ilegível · categoria de nível 2 sem arquivo
-(quando a partição não é parcial) · `schema_fingerprint` divergente ·
-`totals.product_rows`, `totals.unique_product_ids`, `totals.catalog_files` ou
-`totals.bytes` divergentes da releitura · nenhum produto lido havendo arquivos de catálogo
-· falha registrada em `failures[]`.
+**Integrity** — always fatal: manifest missing, unreadable or without the `files` list ·
+incompatible `manifest_version` · malformed manifest entry (no `path`) · entry pointing
+outside the snapshot root · declared file missing · SHA-256 or size mismatch · invalid
+JSON · record count mismatch, including the tree's · file on disk not in the manifest, at
+any depth · `_SUCCESS` inconsistent with `complete` · category tree missing or unreadable ·
+level-2 category without a file (when the partition is not partial) · `schema_fingerprint`
+mismatch · `totals.product_rows`, `totals.unique_product_ids`, `totals.catalog_files` or
+`totals.bytes` differing from the re-read · no product read despite catalog files ·
+failure recorded in `failures[]`.
 
-**Avisos** — reportados, nunca fatais: cobertura incompleta em partição `--limit`; cada
-entrada de `anomalies[]`.
+**Warnings** — reported, never fatal: incomplete coverage in a `--limit` partition; each
+entry of `anomalies[]`.
 
-**Qualidade** — medida e reportada; fatal apenas com `--strict`: produto sem
-`display_name`, sem `price_instructions.unit_price` ou sem linhagem de categoria.
+**Quality** — measured and reported; fatal only with `--strict`: product without
+`display_name`, without `price_instructions.unit_price` or without category lineage.
 
-Numa partição parcial (`--limit`), a cobertura incompleta vira **aviso**, não erro.
+In a partial partition (`--limit`), incomplete coverage becomes a **warning**, not an error.
 
-## Dependências e container
+## Dependencies and container
 
-**Runtime: nenhuma.** Todo import do pacote e dos testes é da biblioteca padrão do
-Python 3.12, e `[project.dependencies]` está vazio. Isso não é uma afirmação de
-documentação: `tests/test_dependencies.py` percorre a AST de todos os módulos e falha se
-aparecer qualquer import de terceiro, além de conferir que `requirements.txt` não lista
-pacote nenhum e que o metadata instalado declara `requires: None`.
+**Runtime: none.** Every import in the package and in the tests is from the Python 3.12
+standard library, and `[project.dependencies]` is empty. This is not a documentation
+claim: `tests/test_dependencies.py` walks the AST of every module and fails if any
+third-party import appears, and also checks that `requirements.txt` lists no package
+and that the installed metadata declares `requires: None`.
 
-| Arquivo | Conteúdo | Quando é necessário |
+| File | Content | When it is needed |
 |---|---|---|
-| [requirements.txt](requirements.txt) | vazio, só comentários | nunca — não há dependência de runtime |
-| [requirements-build.txt](requirements-build.txt) | `setuptools==84.0.0`, `wheel==0.48.0`, `packaging==26.3` | apenas para `pip install .` / construir a wheel |
+| [requirements.txt](requirements.txt) | empty, comments only | never — there is no runtime dependency |
+| [requirements-build.txt](requirements-build.txt) | `setuptools==84.0.0`, `wheel==0.48.0`, `packaging==26.3` | only for `pip install .` / building the wheel |
 
-`make freeze` regrava o segundo arquivo a partir do `venv/`, excluindo o `pip` e o próprio
-pacote — que não existe no PyPI e quebraria um `pip install -r`.
+`make freeze` rewrites the second file from `venv/`, excluding `pip` and the package
+itself — which does not exist on PyPI and would break a `pip install -r`.
 
 ### Container
 
-A imagem **não precisa instalar nenhum pacote de terceiros**. Dois modos, ambos válidos:
+The image **does not need to install any third-party package**. Two modes, both valid:
 
-| Modo | Como | Custo |
+| Mode | How | Cost |
 |---|---|---|
-| Sem instalação | copiar `src/` e rodar com `PYTHONPATH=src python -m mercadona_catalog_source` | zero `pip install`; imagem = `python:3.12-slim` + código |
-| Com instalação | `pip install -r requirements-build.txt` e `pip install --no-build-isolation .` | traz o console script; build tooling não precisa ficar na imagem final |
+| No install | copy `src/` and run with `PYTHONPATH=src python -m mercadona_catalog_source` | zero `pip install`; image = `python:3.12-slim` + code |
+| With install | `pip install -r requirements-build.txt` and `pip install --no-build-isolation .` | brings the console script; build tooling does not need to stay in the final image |
 
-Verificado: um venv limpo, com apenas `requirements-build.txt` instalado, constrói e instala
-o pacote com `--no-build-isolation` (sem buscar dependência de build na rede) e o console
-script responde.
+Verified: a clean venv, with only `requirements-build.txt` installed, builds and installs
+the package with `--no-build-isolation` (without fetching build dependencies from the
+network) and the console script responds.
 
-**Não existe `Dockerfile` para esta Source, e por ora não é necessário.** O monorepo tem
-`infra/Dockerfile.airflow`, que é a imagem do *orquestrador*: nela a Source roda no próprio
-interpretador do Airflow, via `PYTHONPATH`, **sem instalar nada** — exatamente o "modo sem
-instalação" da tabela acima. É o retorno prático de `dependencies = []`: zero dependência
-significa que ela cabe em qualquer imagem sem negociar versão com ninguém.
+**There is no `Dockerfile` for this Source, and none is needed for now.** The monorepo has
+`infra/Dockerfile.airflow`, which is the *orchestrator* image: in it the Source runs on
+Airflow's own interpreter, via `PYTHONPATH`, **installing nothing** — exactly the "no
+install mode" of the table above. That is the practical payoff of `dependencies = []`: zero
+dependencies means it fits in any image without negotiating versions with anyone.
 
-Uma imagem dedicada só passa a valer se a Source for executada fora do orquestrador; nesse
-caso o modo sem instalação permite um estágio final `distroless`/`slim` sem `pip`.
+A dedicated image only becomes worthwhile if the Source is run outside the orchestrator; in
+that case the no-install mode allows a `distroless`/`slim` final stage without `pip`.
 
-Pontos que o container vai precisar respeitar: `data/` deve ser volume, não camada da
-imagem (o snapshot é artefato, não código); o processo precisa de saída de rede para
-`tienda.mercadona.es`; e os códigos de saída 0/1/2/3 do [CONTRACT.md § 7](CONTRACT.md) são
-o contrato com o orquestrador.
+Points the container will need to respect: `data/` must be a volume, not an image layer
+(the snapshot is an artifact, not code); the process needs network egress to
+`tienda.mercadona.es`; and the exit codes 0/1/2/3 of [CONTRACT.md § 7](CONTRACT.md) are
+the contract with the orchestrator.
 
-## Testes
+## Tests
 
-145 testes em `unittest` da biblioteca padrão, sem acesso à rede — o cliente HTTP é
-substituído por um duplo que responde de memória, exercitando o mesmo código de extração.
-Cada garantia do contrato tem teste correspondente: escrita atômica sob falha e sob
-`KeyboardInterrupt`, determinismo da forma canônica, recusa de travessia de caminho,
-imutabilidade, idioma fixo, retomada, arquivo truncado/vazio/adulterado, mudança de forma
-da fonte, detecção de órfãos, coerência de `_SUCCESS`, adulteração de totais e de
-fingerprint, partição sem nenhum produto, e ausência de dependência de terceiros.
+145 tests in standard-library `unittest`, no network access — the HTTP client is replaced
+by a double that answers from memory, exercising the same extraction code. Every contract
+guarantee has a corresponding test: atomic write under failure and under
+`KeyboardInterrupt`, canonical form determinism, refusal of path traversal, immutability,
+fixed language, resume, truncated/empty/tampered file, source shape change, orphan
+detection, `_SUCCESS` consistency, tampering with totals and fingerprint, partition with no
+product at all, and absence of third-party dependencies.

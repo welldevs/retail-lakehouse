@@ -1,16 +1,16 @@
-"""Validacao independente de uma particao do snapshot.
+"""Independent validation of a snapshot partition.
 
-Rele todos os arquivos declarados no manifesto, recalculando checksum e estatisticas de
-linha em vez de aceitar os valores registrados. Alem disso varre o diretorio para
-detectar arquivos que o manifesto nao declara.
+Rereads every file declared in the manifest, recomputing checksum and line statistics
+instead of accepting the recorded values. It also scans the directory to detect files the
+manifest does not declare.
 
-Dois tipos de problema:
-  - INTEGRIDADE -> sempre fatal (codigo 1).
-  - COBERTURA/QUALIDADE -> medida e reportada; fatal apenas com --strict.
+Two kinds of problem:
+  - INTEGRITY -> always fatal (exit 1).
+  - COVERAGE/QUALITY -> measured and reported; fatal only with --strict.
 
-Cobertura aqui e "toda combinacao (provincia, dataset) configurada em manifest.config
-tem arquivo landado" — os mesmos dados que a propria execucao de intake declarou como
-alvo, igual ao papel de manifest.config.tables na source de populacao.
+Coverage here means "every (province, dataset) combination configured in manifest.config
+has a landed file" — the same data the intake run itself declared as its target, like the
+role of manifest.config.tables in the population source.
 """
 
 from __future__ import annotations
@@ -39,72 +39,72 @@ def run(args) -> int:
 
     path = manifest_path(partition)
     if not os.path.exists(path):
-        print(f"ERRO: manifesto nao encontrado em {path}")
+        print(f"ERROR: manifest not found at {path}")
         return EXIT_FAILED
     try:
         manifest, _ = read_json(path)
     except CorruptFileError as exc:
-        print(f"ERRO: manifesto ilegivel: {exc}")
+        print(f"ERROR: manifest unreadable: {exc}")
         return EXIT_FAILED
     if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
-        print(f"ERRO: manifesto sem a lista 'files': {path}")
+        print(f"ERROR: manifest has no 'files' list: {path}")
         return EXIT_FAILED
 
     root = os.path.abspath(os.path.join(partition, ".."))
     version = manifest.get("manifest_version")
     if version != MANIFEST_VERSION:
         errors.append(
-            f"manifest_version {version!r} diferente do suportado ({MANIFEST_VERSION})"
+            f"manifest_version {version!r} differs from the supported one ({MANIFEST_VERSION})"
         )
 
-    print(f"particao ......... {partition}")
+    print(f"partition ........ {partition}")
     print(f"run_id ........... {manifest.get('run_id')}")
     print(f"source ........... {(manifest.get('source') or {}).get('name')}")
-    print(f"completa ......... {manifest.get('complete')}")
+    print(f"complete ......... {manifest.get('complete')}")
 
-    # ---- Integridade dos arquivos declarados -------------------------------
+    # ---- Integrity of the declared files ----------------------------------
     checked = 0
     declared: set = set()
     for entry in manifest["files"]:
         if not isinstance(entry, dict) or "path" not in entry:
-            errors.append(f"entrada de manifesto malformada: {entry!r}")
+            errors.append(f"malformed manifest entry: {entry!r}")
             continue
         target = os.path.join(root, entry["path"])
         if not _inside(root, target):
-            errors.append(f"caminho fora da raiz do snapshot: {entry['path']}")
+            errors.append(f"path outside the snapshot root: {entry['path']}")
             continue
         declared.add(os.path.abspath(target))
         if not os.path.exists(target):
-            errors.append(f"arquivo ausente: {entry['path']}")
+            errors.append(f"missing file: {entry['path']}")
             continue
         blob = read_bytes(target)
         checked += 1
         if digest(blob) != entry.get("sha256"):
-            errors.append(f"checksum divergente: {entry['path']}")
+            errors.append(f"checksum mismatch: {entry['path']}")
         if len(blob) != entry.get("bytes"):
-            errors.append(f"tamanho divergente: {entry['path']}")
+            errors.append(f"size mismatch: {entry['path']}")
         stats = line_stats(target)
         if stats["line_count"] != entry.get("line_count"):
             errors.append(
-                f"contagem de linhas divergente em {entry['path']}: "
-                f"manifesto={entry.get('line_count')} arquivo={stats['line_count']}"
+                f"line count mismatch in {entry['path']}: "
+                f"manifest={entry.get('line_count')} file={stats['line_count']}"
             )
         observed_width = dominant_width(stats)
         if observed_width != entry.get("dominant_line_width"):
             warnings.append(
-                f"largura de linha dominante divergiu em {entry['path']}: "
-                f"manifesto={entry.get('dominant_line_width')} arquivo={observed_width} "
-                f"(pode indicar mudanca de layout do INE)"
+                f"dominant line width diverged in {entry['path']}: "
+                f"manifest={entry.get('dominant_line_width')} file={observed_width} "
+                f"(may indicate an INE layout change)"
             )
-    print(f"arquivos ......... {checked}/{len(manifest['files'])} lidos e conferidos")
+    print(f"files ............ {checked}/{len(manifest['files'])} read and checked")
 
     if manifest.get("failures"):
         errors.append(
-            f"{len(manifest['failures'])} combinacao(oes) provincia/dataset registradas "
-            f"como falha no manifesto"
+            f"{len(manifest['failures'])} province/dataset combination(s) recorded "
+            f"as failed in the manifest"
         )
 
-    # ---- Arquivos em disco nao declarados no manifesto ---------------------
+    # ---- Files on disk not declared in the manifest -----------------------
     orphans: list[str] = []
     known_root_files = {MANIFEST_NAME, SUCCESS_NAME, RUN_LOG_NAME}
     partition_abs = os.path.abspath(partition)
@@ -115,19 +115,19 @@ def run(args) -> int:
                 continue
             if candidate not in declared:
                 orphans.append(os.path.relpath(candidate, partition_abs))
-    print(f"orfaos ........... {len(orphans)}")
+    print(f"orphans .......... {len(orphans)}")
     if orphans:
-        errors.append(f"arquivo(s) em disco fora do manifesto: {orphans}")
+        errors.append(f"file(s) on disk not in the manifest: {orphans}")
 
-    # ---- Marcador _SUCCESS coerente com 'complete' -------------------------
+    # ---- _SUCCESS marker consistent with 'complete' ------------------------
     has_success = os.path.exists(success_path(partition))
     if bool(manifest.get("complete")) != has_success:
         errors.append(
-            f"_SUCCESS {'presente' if has_success else 'ausente'} contradiz "
+            f"_SUCCESS {'present' if has_success else 'absent'} contradicts "
             f"complete={manifest.get('complete')}"
         )
 
-    # ---- Cobertura: toda combinacao (provincia, dataset) configurada tem arquivo --
+    # ---- Coverage: every configured (province, dataset) combination has a file --
     configured_provinces = list((manifest.get("config") or {}).get("provinces") or [])
     configured_datasets = list((manifest.get("config") or {}).get("datasets") or DATASETS)
     expected = {(p, d) for p in configured_provinces for d in configured_datasets}
@@ -136,12 +136,12 @@ def run(args) -> int:
         for entry in manifest["files"]
         if isinstance(entry, dict)
     }
-    print(f"cobertura ........ {len(present)}/{len(expected)} combinacoes provincia/dataset")
+    print(f"coverage ......... {len(present)}/{len(expected)} province/dataset combinations")
     missing = expected - present
     if missing:
-        errors.append(f"combinacao(oes) configurada(s) sem arquivo: {sorted(missing)}")
+        errors.append(f"configured combination(s) without a file: {sorted(missing)}")
 
-    # ---- Totais reconferidos contra a releitura ----------------------------
+    # ---- Totals rechecked against the reread -------------------------------
     totals = manifest.get("totals") or {}
     observed_totals = {
         "files_landed": checked,
@@ -150,19 +150,19 @@ def run(args) -> int:
     for key, observed in observed_totals.items():
         if totals.get(key) != observed:
             errors.append(
-                f"totals.{key} divergente: manifesto={totals.get(key)} observado={observed}"
+                f"totals.{key} mismatch: manifest={totals.get(key)} observed={observed}"
             )
 
     if args.strict and warnings:
-        errors.append(f"{len(warnings)} aviso(s) de largura de linha (--strict)")
+        errors.append(f"{len(warnings)} line-width warning(s) (--strict)")
 
     print()
     for item in warnings:
-        print(f"AVISO: {item}")
+        print(f"WARNING: {item}")
     if errors:
-        print(f"FALHOU ({len(errors)} problema(s)):")
+        print(f"FAILED ({len(errors)} problem(s)):")
         for item in errors:
             print(f"  - {item}")
         return EXIT_FAILED
-    print("OK: integridade, cobertura e totais validados.")
+    print("OK: integrity, coverage and totals validated.")
     return EXIT_OK

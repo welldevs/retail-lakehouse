@@ -1,53 +1,52 @@
 # INE Population Source
 
-Source de dados de população. Extrai **séries de população** da API pública Tempus3 do
-INE (`https://servicios.ine.es/wstempus/js`) e produz snapshots particionados,
-reproduzíveis e validáveis. Mecanismo genérico por `table_id` (ver "Uso" abaixo) — hoje
-alimenta série por **província** (`table_id=31304`) e por **município**
-(`table_id=29005`), configurado fora desta Source (ver `--tables` e o Makefile da
-plataforma).
+Population data Source. Extracts **population series** from the INE's public Tempus3 API
+(`https://servicios.ine.es/wstempus/js`) and produces partitioned, reproducible, verifiable
+snapshots. Generic mechanism by `table_id` (see "Usage" below) — today it feeds a series by
+**province** (`table_id=31304`) and by **municipality** (`table_id=29005`), configured
+outside this Source (see `--tables` and the platform Makefile).
 
-Este repositório é uma **Source**, não uma plataforma de transformação. O contrato
-completo com o consumidor está em [CONTRACT.md](CONTRACT.md).
+This repository is a **Source**, not a transformation platform. The full contract with the
+consumer is in [CONTRACT.md](CONTRACT.md).
 
-Segunda source do monorepo, ao lado de
-[`mercadona-catalog-source`](../mercadona-catalog-source/). As duas são pacotes irmãos
-independentes — nenhum código é compartilhado entre elas, cada uma com seu próprio
-`pyproject.toml`, `CONTRACT.md` e suíte de testes. Ver
-[ARCHITECTURE.md](../../ARCHITECTURE.md) para a razão dessa escolha.
+Second source of the monorepo, alongside
+[`mercadona-catalog-source`](../mercadona-catalog-source/). The two are independent sibling
+packages — no code is shared between them, each with its own `pyproject.toml`,
+`CONTRACT.md` and test suite. See [ARCHITECTURE.md](../../ARCHITECTURE.md) for the reason
+behind this choice.
 
-- **Faz:** conecta à API Tempus3 · busca a série completa de um ou mais `table_id` ·
-  controla a taxa de requisição · executa retries com backoff · retoma partições
-  incompletas · produz snapshots particionados · registra metadata e proveniência · valida
-  integridade, cobertura, schema e qualidade.
-- **Não faz:** deduplicação · modelagem dimensional · normalização · Silver/Gold ·
-  extração de código de província · cruzamento com outra fonte · métricas · Spark · dbt ·
+- **Does:** connects to the Tempus3 API · fetches the full series of one or more
+  `table_id`s · controls the request rate · retries with backoff · resumes incomplete
+  partitions · produces partitioned snapshots · records metadata and provenance · validates
+  integrity, coverage, schema and quality.
+- **Does not:** deduplication · dimensional modeling · normalization · Silver/Gold ·
+  province-code extraction · joining with another source · metrics · Spark · dbt ·
   Airflow.
 
-## Requisitos
+## Requirements
 
-Python 3.12+ e nada mais. Somente biblioteca padrão. `dependencies = []` no
-[pyproject.toml](pyproject.toml) — não há o que instalar. A API Tempus3 é JSON puro sobre
-HTTPS, sem necessidade de cliente de terceiros nem de chave de API.
+Python 3.12+ and nothing else. Standard library only. `dependencies = []` in
+[pyproject.toml](pyproject.toml) — there is nothing to install. The Tempus3 API is plain
+JSON over HTTPS, with no need for a third-party client or an API key.
 
-## Localização
+## Location
 
-Esta Source vive em `sources/ine-population-source/` do monorepo e permanece independente
-(`pyproject.toml` próprio, `dependencies = []`, suíte própria — ver
-[ARCHITECTURE.md](../../ARCHITECTURE.md)). No dia a dia use o **Makefile da raiz**
-(`make -C ../.. ine-extract ine-validate`), que aponta `--out` para o `data/` compartilhado
-do monorepo.
+This Source lives in `sources/ine-population-source/` of the monorepo and stays independent
+(its own `pyproject.toml`, `dependencies = []`, its own suite — see
+[ARCHITECTURE.md](../../ARCHITECTURE.md)). Day to day, use the **root Makefile**
+(`make -C ../.. ine-extract ine-validate`), which points `--out` at the monorepo's shared
+`data/`.
 
-## Uso
+## Usage
 
 ```bash
-make test                  # suíte, sem rede e sem dependências
-make extract               # snapshot de hoje (UTC) da tabela 31304
-make validate              # valida a partição de hoje em modo --strict
+make test                  # suite, no network and no dependencies
+make extract               # today's (UTC) snapshot of table 31304
+make validate              # validate today's partition in --strict mode
 make check                 # test + validate
 ```
 
-Sem `make`, com `PYTHONPATH=src`:
+Without `make`, with `PYTHONPATH=src`:
 
 ```bash
 PYTHONPATH=src python3 -m ine_population_source extract --out data/ine
@@ -56,58 +55,58 @@ PYTHONPATH=src python3 -m ine_population_source validate \
 PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```
 
-Instalando o pacote, o console script `ine-population-source` fica disponível com os
-mesmos subcomandos, sem precisar de `PYTHONPATH`:
+Installing the package makes the `ine-population-source` console script available with the
+same subcommands, without needing `PYTHONPATH`:
 
 ```bash
-make install               # cria venv/, instala ferramentas de build e o pacote (-e .)
+make install               # creates venv/, installs build tools and the package (-e .)
 ./venv/bin/ine-population-source --version
 ```
 
 ### `extract`
 
-| Flag | Padrão | Efeito |
+| Flag | Default | Effect |
 |---|---|---|
-| `--out` | `data/ine` | diretório raiz do snapshot |
-| `--tables` | `31304` | `table_id`(s) do INE Tempus3, separados por vírgula. `31304` (província+idade+sexo) e `29005` (município+sexo) são os confirmados — ver [CONTRACT.md § 2](CONTRACT.md). A plataforma (Makefile da raiz) passa `31304,29005` por padrão |
-| `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
-| `--delay` | `0.5` | intervalo mínimo entre requisições, em segundos. Boa prática de cliente HTTP, não resposta a bloqueio medido — ver "Restrições da fonte" |
-| `--timeout` | `30.0` | timeout de cada requisição |
-| `--max-retries` | `5` | tentativas extras por requisição |
-| `--overwrite` | desligado | reescreve a partição, inclusive se estiver completa |
+| `--out` | `data/ine` | snapshot root directory |
+| `--tables` | `31304` | INE Tempus3 `table_id`(s), comma-separated. `31304` (province+age+sex) and `29005` (municipality+sex) are the confirmed ones — see [CONTRACT.md § 2](CONTRACT.md). The platform (root Makefile) passes `31304,29005` by default |
+| `--date` | today (UTC) | partition date. Validated as `YYYY-MM-DD` |
+| `--delay` | `0.5` | minimum interval between requests, in seconds. HTTP-client good practice, not a response to a measured block — see "Source restrictions" |
+| `--timeout` | `30.0` | timeout of each request |
+| `--max-retries` | `5` | extra attempts per request |
+| `--overwrite` | off | rewrites the partition, even if it is complete |
 
 ### `validate`
 
-| Argumento | Efeito |
+| Argument | Effect |
 |---|---|
-| `partition` | caminho da partição (posicional, obrigatório) |
-| `--strict` | além da integridade, falha se houver série sem nenhum ponto com `Valor` |
+| `partition` | partition path (positional, required) |
+| `--strict` | beyond integrity, fails if any series has no point with a `Valor` |
 
-## Estrutura
+## Layout
 
 ```
 .
-├── CONTRACT.md                      # contrato com o consumidor
+├── CONTRACT.md                      # contract with the consumer
 ├── Makefile                         # test / extract / validate / check / venv / install / freeze
-├── pyproject.toml                   # metadados; dependencies = []
-├── requirements.txt                 # runtime: vazio por construção, verificado por teste
+├── pyproject.toml                   # metadata; dependencies = []
+├── requirements.txt                 # runtime: empty by construction, verified by a test
 ├── requirements-build.txt           # setuptools / wheel / packaging
 ├── src/ine_population_source/
-│   ├── __init__.py                  # nome da source, versão do manifesto
+│   ├── __init__.py                  # source name, manifest version
 │   ├── __main__.py                  # python -m ine_population_source
-│   ├── cli.py                       # subcomandos e códigos de saída
-│   ├── canonical.py                 # forma canônica + escrita atômica
-│   ├── http_client.py               # cliente sequencial, throttle e backoff
-│   ├── schema.py                    # navegação defensiva e fingerprint
-│   ├── partition.py                 # identidade, imutabilidade, _SUCCESS — sem eixo de armazém
-│   ├── extract.py                   # uma busca por table_id, sem crawl de árvore
-│   └── validate.py                  # validação independente
-├── tests/                           # stdlib unittest, sem rede
-└── venv/                            # ambiente de build, criado por `make venv`; ignorado
+│   ├── cli.py                       # subcommands and exit codes
+│   ├── canonical.py                 # canonical form + atomic write
+│   ├── http_client.py               # sequential client, throttle and backoff
+│   ├── schema.py                    # defensive navigation and fingerprint
+│   ├── partition.py                 # identity, immutability, _SUCCESS — no warehouse axis
+│   ├── extract.py                   # one fetch per table_id, no tree crawl
+│   └── validate.py                  # independent validation
+├── tests/                           # stdlib unittest, no network
+└── venv/                            # build environment, created by `make venv`; ignored
 ```
 
-Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
-`<raiz>/data/ine/ingestion_date=…/`, um nível acima (não dois: sem eixo de armazém):
+The snapshots **do not live here**. The partition the platform consumes lives at
+`<root>/data/ine/ingestion_date=…/`, one level deep (not two: no warehouse axis):
 
 ```
 data/ine/ingestion_date=2026-08-25/
@@ -118,15 +117,15 @@ data/ine/ingestion_date=2026-08-25/
 └── _run.log
 ```
 
-## Forma dos arquivos
+## Output layout
 
-Os arquivos contêm o payload da API **íntegro em conteúdo** — nenhum campo é adicionado,
-removido, renomeado ou convertido de tipo — mas **reserializados de forma canônica**:
-`json.dumps(ensure_ascii=False, sort_keys=True, indent=2)` mais newline final. Portanto
-**não são os bytes originais da resposta HTTP**; o SHA-256 registrado é o do arquivo
-canônico produzido pela Source, não o da resposta HTTP.
+The files contain the API payload **with its content intact** — no field is added,
+removed, renamed or type-converted — but **re-serialized in canonical form**:
+`json.dumps(ensure_ascii=False, sort_keys=True, indent=2)` plus a trailing newline. So they
+**are not the original bytes of the HTTP response**; the recorded SHA-256 is that of the
+canonical file produced by the Source, not that of the HTTP response.
 
-Forma de uma série (`tables/table_id=31304.json` é uma **lista** dessas):
+Shape of one series (`tables/table_id=31304.json` is a **list** of these):
 
 ```json
 {
@@ -140,123 +139,123 @@ Forma de uma série (`tables/table_id=31304.json` é uma **lista** dessas):
 }
 ```
 
-`Data[]` cobre muitos anos numa única resposta — cada snapshot já é a série histórica
-inteira, não um incremento.
+`Data[]` covers many years in a single response — each snapshot is already the whole
+historical series, not an increment.
 
 ### `_manifest.json`
 
-Registra `manifest_version`, `run_id`, janela de execução, duração, `complete`, `source`,
-`partition`, `config`, `totals`, `schema_fingerprint` e a lista de arquivos com `sha256`,
-`bytes` e `records` (contagem de séries). `table_id`s que falharam ficam em `failures[]`;
-eventos tratados durante a extração ficam em `anomalies[]`; o resumo das execuções
-anteriores sobre a mesma partição fica em `history[]`.
+Records `manifest_version`, `run_id`, run window, duration, `complete`, `source`,
+`partition`, `config`, `totals`, `schema_fingerprint` and the list of files with `sha256`,
+`bytes` and `records` (series count). `table_id`s that failed go in `failures[]`; events
+handled during extraction go in `anomalies[]`; the summary of previous runs over the same
+partition goes in `history[]`.
 
-`files[].path` é relativo à **raiz do snapshot** (`--out`), não à partição: começa em
-`ingestion_date=…/`. Para resolvê-lo a partir do caminho da partição, suba **um** nível
-(não dois: não há eixo de armazém entre a raiz e a partição).
+`files[].path` is relative to the **snapshot root** (`--out`), not to the partition: it
+starts at `ingestion_date=…/`. To resolve it from the partition path, go up **one** level
+(not two: there is no warehouse axis between the root and the partition).
 
-## Comportamento operacional
+## Operational behavior
 
-**Throttle.** Requisições sequenciais, limitadas a `1/--delay` req/s. Ao contrário da
-Mercadona Catalog Source, isto **não é resposta a um bloqueio medido** — não há
-concorrência nenhuma aqui para medir, já que uma execução busca um punhado de `table_id`
-sequencialmente. É boa prática de cliente HTTP, mantida por padrão.
+**Throttle.** Sequential requests, limited to `1/--delay` req/s. Unlike the Mercadona
+Catalog Source, this **is not a response to a measured block** — there is no concurrency at
+all here to measure, since a run fetches a handful of `table_id`s sequentially. It is
+HTTP-client good practice, kept by default.
 
-**Retry.** Status `408, 429, 500, 502, 503, 504` e qualquer erro não-HTTP (timeout, reset
-de conexão, corpo JSON inválido) são repetidos com backoff exponencial
-`5s → 10s → 20s → 40s → 60s` (teto de 60 s), até `--max-retries`. `403` **não** está entre
-os retentáveis aqui — diferente da Mercadona, onde há evidência medida de bloqueio
-intermitente sob rajada; sem essa evidência para o INE, tratar `403` como transitório
-seria inventar uma política sem base.
+**Retry.** Statuses `408, 429, 500, 502, 503, 504` and any non-HTTP error (timeout,
+connection reset, invalid JSON body) are retried with exponential backoff
+`5s → 10s → 20s → 40s → 60s` (60 s cap), up to `--max-retries`. `403` is **not** among the
+retryable statuses here — unlike Mercadona, where there is measured evidence of
+intermittent blocking under bursts; without that evidence for the INE, treating `403` as
+transient would be inventing a policy with no basis.
 
-**Retomada.** Um arquivo já presente na partição não é rebaixado, salvo com `--overwrite`.
-É rebaixado da fonte automaticamente quando está ilegível, truncado, com forma inesperada,
-fora da forma canônica ou divergente do manifesto anterior — nos três últimos casos o
-evento entra em `anomalies[]`.
+**Resume.** A file already present in the partition is not downloaded again, unless with
+`--overwrite`. It is downloaded again from the source automatically when it is unreadable,
+truncated, has an unexpected shape, is not in canonical form or differs from the previous
+manifest — in the last three cases the event goes into `anomalies[]`.
 
-**Identidade antes do fan-out.** Um manifesto preliminar (`complete: false`) é gravado
-assim que a partição é criada, antes de qualquer `table_id` ser buscado.
+**Identity before fan-out.** A preliminary manifest (`complete: false`) is written as soon
+as the partition is created, before any `table_id` is fetched.
 
-**Inventário.** Ao final, a extração varre `tables/` e declara no manifesto os arquivos
-válidos que aquela execução não visitou (caso de um `table_id` removido de `--tables`
-entre execuções, mas cujo arquivo permanece em disco).
+**Inventory.** At the end, the extraction scans `tables/` and declares in the manifest the
+valid files that run did not visit (the case of a `table_id` removed from `--tables`
+between runs, but whose file remains on disk).
 
-**Códigos de saída.** Ver [CONTRACT.md § 7](CONTRACT.md).
+**Exit codes.** See [CONTRACT.md § 7](CONTRACT.md).
 
-## Restrições da fonte
+## Source restrictions
 
-- **Rate-limit não foi medido contra esta fonte.** Ao contrário da Mercadona (403
-  intermitente sob concorrência, medido e documentado), esta Source não tem cenário local
-  de fan-out concorrente que motivasse medir isso ainda — uma execução é sequencial por
-  natureza. Se um dia isso mudar (ex.: muitos `table_id` em paralelo), meça antes de
-  presumir que o throttle atual basta.
-- **`table_id: 31304` e `table_id: 29005` foram confirmados.** Consultei
-  `GRUPOS_TABLA/31304` (dimensões: `Sexo`, `Edad`, `Provincias`) e `DATOS_TABLA/31304` e
-  `DATOS_TABLA/29005` (formato de `Nombre` de cada um) diretamente na API antes de fixar
-  este contrato. Outros `table_id` do INE podem ser passados via `--tables`, mas o
-  formato de `Nombre` para eles não foi verificado — pode divergir do documentado em
+- **Rate-limit has not been measured against this source.** Unlike Mercadona
+  (intermittent 403 under concurrency, measured and documented), this Source has no local
+  concurrent fan-out scenario that would have motivated measuring it yet — a run is
+  sequential by nature. If that ever changes (e.g. many `table_id`s in parallel), measure
+  before assuming the current throttle is enough.
+- **`table_id: 31304` and `table_id: 29005` were confirmed.** I queried
+  `GRUPOS_TABLA/31304` (dimensions: `Sexo`, `Edad`, `Provincias`) and `DATOS_TABLA/31304`
+  and `DATOS_TABLA/29005` (the `Nombre` format of each) directly against the API before
+  fixing this contract. Other INE `table_id`s can be passed via `--tables`, but their
+  `Nombre` format was not verified — it may differ from what is documented in
   [CONTRACT.md § 2](CONTRACT.md).
-- **Cadência de publicação é irregular.** O INE atualiza Cifras de População de forma não
-  fixa — historicamente da ordem de 1-2 vezes ao ano, às vezes com meses entre uma
-  publicação e outra. Isto molda a orquestração desta Source na plataforma (sem cron
-  fixo; ver `orchestration/`), não o comportamento desta Source em si — ela extrai o que
-  a API tiver no momento em que for chamada.
-- **Sem autenticação.** A API Tempus3 é pública; nenhuma chave ou credencial é enviada.
+- **Publication cadence is irregular.** The INE updates the Cifras de Población on no fixed
+  schedule — historically on the order of 1-2 times a year, sometimes with months between
+  one publication and the next. This shapes how the platform orchestrates this Source (no
+  fixed cron; see `orchestration/`), not the behavior of this Source itself — it extracts
+  whatever the API has at the moment it is called.
+- **No authentication.** The Tempus3 API is public; no key or credential is sent.
 
-## Validação
+## Validation
 
-`validate` relê e reparseia todos os arquivos declarados no manifesto, recalculando
-checksums, contagens e fingerprint em vez de aceitar os valores registrados, e varre o
-diretório em busca de arquivos não declarados.
+`validate` re-reads and re-parses every file declared in the manifest, recomputing
+checksums, counts and fingerprint instead of accepting the recorded values, and scans the
+directory for undeclared files.
 
-**Integridade** — sempre fatal: manifesto ausente, ilegível ou sem a lista `files` ·
-`manifest_version` incompatível · entrada de manifesto malformada (sem `path`) · entrada
-apontando para fora da raiz do snapshot · arquivo declarado e ausente · SHA-256 ou tamanho
-divergente · JSON inválido · contagem de registros divergente · arquivo em disco fora do
-manifesto, em qualquer profundidade · `_SUCCESS` incoerente com `complete` · `table_id`
-configurado sem arquivo · `schema_fingerprint` divergente · `totals.series_count`,
-`totals.data_point_count`, `totals.table_files` ou `totals.bytes` divergentes da releitura
-· falha registrada em `failures[]`.
+**Integrity** — always fatal: manifest missing, unreadable or without the `files` list ·
+incompatible `manifest_version` · malformed manifest entry (no `path`) · entry pointing
+outside the snapshot root · declared file missing · SHA-256 or size mismatch · invalid
+JSON · record count mismatch · file on disk not in the manifest, at any depth · `_SUCCESS`
+inconsistent with `complete` · configured `table_id` without a file ·
+`schema_fingerprint` mismatch · `totals.series_count`, `totals.data_point_count`,
+`totals.table_files` or `totals.bytes` differing from the re-read · failure recorded in
+`failures[]`.
 
-**Avisos** — reportados, nunca fatais: cada entrada de `anomalies[]`.
+**Warnings** — reported, never fatal: each entry of `anomalies[]`.
 
-**Qualidade** — medida e reportada; fatal apenas com `--strict`: série sem nenhum ponto
-com `Valor`.
+**Quality** — measured and reported; fatal only with `--strict`: a series without any point
+with a `Valor`.
 
-## Dependências e container
+## Dependencies and container
 
-**Runtime: nenhuma.** Todo import do pacote e dos testes é da biblioteca padrão do
-Python 3.12, e `[project.dependencies]` está vazio. `tests/test_dependencies.py` percorre
-a AST de todos os módulos e falha se aparecer qualquer import de terceiro.
+**Runtime: none.** Every import of the package and of the tests is from the Python 3.12
+standard library, and `[project.dependencies]` is empty. `tests/test_dependencies.py` walks
+the AST of every module and fails if any third-party import appears.
 
-| Arquivo | Conteúdo | Quando é necessário |
+| File | Content | When it is needed |
 |---|---|---|
-| [requirements.txt](requirements.txt) | vazio, só comentários | nunca — não há dependência de runtime |
-| [requirements-build.txt](requirements-build.txt) | `setuptools`, `wheel`, `packaging` | apenas para `pip install .` / construir a wheel |
+| [requirements.txt](requirements.txt) | empty, comments only | never — there is no runtime dependency |
+| [requirements-build.txt](requirements-build.txt) | `setuptools`, `wheel`, `packaging` | only for `pip install .` / building the wheel |
 
 ### Container
 
-A imagem **não precisa instalar nenhum pacote de terceiros**, pelo mesmo motivo da
-Mercadona Catalog Source: `dependencies = []` significa que o código roda com
-`PYTHONPATH=src python -m ine_population_source` no próprio interpretador do Airflow, sem
-`pip install` nenhum. Não existe `Dockerfile` dedicado, e não é necessário pelo mesmo
-raciocínio documentado no README da Mercadona Catalog Source.
+The image **does not need to install any third-party package**, for the same reason as the
+Mercadona Catalog Source: `dependencies = []` means the code runs with
+`PYTHONPATH=src python -m ine_population_source` in Airflow's own interpreter, with no
+`pip install` at all. There is no dedicated `Dockerfile`, and none is needed, by the same
+reasoning documented in the Mercadona Catalog Source README.
 
-## Testes
+## Tests
 
-Suíte em `unittest` da biblioteca padrão, sem acesso à rede — o cliente HTTP é substituído
-por um duplo que responde de memória, exercitando o mesmo código de extração. Cobre:
-escrita atômica sob falha e sob `KeyboardInterrupt`, determinismo da forma canônica,
-recusa de travessia de caminho, imutabilidade, retomada, arquivo truncado/vazio/adulterado,
-mudança de forma da fonte, detecção de órfãos, coerência de `_SUCCESS`, adulteração de
-totais e de fingerprint, e ausência de dependência de terceiros.
+Suite in the standard library's `unittest`, with no network access — the HTTP client is
+replaced by a double that answers from memory, exercising the same extraction code.
+Covers: atomic write under failure and under `KeyboardInterrupt`, canonical-form
+determinism, path-traversal rejection, immutability, resume, truncated/empty/tampered file,
+source shape change, orphan detection, `_SUCCESS` consistency, tampering with totals and
+fingerprint, and absence of third-party dependencies.
 
-**Validação contra a API real** aconteceu (2026-08-26, `--tables 31304,29005`): 40.791
-séries, 2.253.624 pontos, ~402 MB pousados no MinIO — números completos e o incidente de
-rede (retry por payload grande corrompido em trânsito) em
-[CONTRACT.md § 2](CONTRACT.md). `validate` rodou **sem `--strict`**: essa mesma execução
-achou 6 séries de `29005` sem nenhum ponto de dado, em 2 municípios fora do escopo da
-plataforma que consome esta Source — decisão registrada em CONTRACT.md e no comentário do
-alvo `ine-validate` do Makefile raiz. O `Makefile` desta pasta (`make validate`, alvo
-`check`) continua chamando `--strict`, porque seu `TABLES` default (`31304` sozinho) nunca
-produziu série vazia nos testes feitos até aqui.
+**Validation against the real API** happened (2026-08-26, `--tables 31304,29005`): 40,791
+series, 2,253,624 data points, ~402 MB landed in MinIO — full numbers and the network
+incident (retry because a large payload was corrupted in transit) in
+[CONTRACT.md § 2](CONTRACT.md). `validate` ran **without `--strict`**: that same run found
+6 series of `29005` without any data point, in 2 municipalities outside the scope of the
+platform that consumes this Source — a decision recorded in CONTRACT.md and in the comment
+of the root Makefile's `ine-validate` target. The `Makefile` in this folder (`make
+validate`, `check` target) still calls `--strict`, because its default `TABLES` (`31304`
+alone) has never produced an empty series in the tests done so far.

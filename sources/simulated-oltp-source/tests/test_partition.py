@@ -1,4 +1,4 @@
-"""Caminho, tokens e imutabilidade da particao."""
+"""Partition path, tokens and immutability."""
 
 from __future__ import annotations
 
@@ -22,102 +22,102 @@ from simulated_oltp_source.partition import (
 )
 
 
-class CaminhoTest(unittest.TestCase):
-    def test_particao_usa_o_eixo_wh(self):
-        """O eixo tem de ser `wh=`: e o unico que manifest.py da plataforma entende."""
+class PathTest(unittest.TestCase):
+    def test_partition_uses_the_wh_axis(self):
+        """The axis must be `wh=`: it is the only one the platform's manifest.py understands."""
         self.assertEqual(
-            partition_path("raiz", "2026-08-27", "mad1"),
-            os.path.join("raiz", "ingestion_date=2026-08-27", "wh=mad1"),
+            partition_path("root", "2026-08-27", "mad1"),
+            os.path.join("root", "ingestion_date=2026-08-27", "wh=mad1"),
         )
 
-    def test_token_com_separador_de_caminho_e_recusado(self):
-        for maligno in ("../etc", "a/b", "..", "", "-comeca-com-hifen"):
-            with self.subTest(token=maligno):
+    def test_token_with_path_separator_is_rejected(self):
+        for malicious in ("../etc", "a/b", "..", "", "-starts-with-hyphen"):
+            with self.subTest(token=malicious):
                 with self.assertRaises(PartitionError):
-                    validate_token("wh", maligno)
+                    validate_token("wh", malicious)
 
-    def test_data_fora_do_formato_iso_e_recusada(self):
-        for maligno in ("2026-8-27", "27-08-2026", "hoje", ""):
-            with self.subTest(data=maligno):
+    def test_date_outside_iso_format_is_rejected(self):
+        for malicious in ("2026-8-27", "27-08-2026", "today", ""):
+            with self.subTest(date=malicious):
                 with self.assertRaises(PartitionError):
-                    validate_date(maligno)
+                    validate_date(malicious)
 
-    def test_data_iso_valida_passa(self):
+    def test_valid_iso_date_passes(self):
         self.assertEqual(validate_date("2026-08-27"), "2026-08-27")
 
 
-class ImutabilidadeTest(unittest.TestCase):
+class ImmutabilityTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.partition = partition_path(self.tmp.name, "2026-08-27", "mad1")
         os.makedirs(self.partition, exist_ok=True)
 
-    def completar(self, seed=7):
+    def complete(self, seed=7):
         write_manifest(
             self.partition,
             {"run_id": "r1", "complete": True, "files": [], "config": {"seed": seed}},
         )
         mark_success(self.partition, True, "r1")
 
-    def test_particao_nova_e_gravavel(self):
+    def test_new_partition_is_writable(self):
         self.assertIsNone(assert_writable(self.partition, overwrite=False))
 
-    def test_particao_completa_e_imutavel(self):
-        self.completar()
+    def test_complete_partition_is_immutable(self):
+        self.complete()
         with self.assertRaises(PartitionError):
             assert_writable(self.partition, overwrite=False)
 
-    def test_overwrite_libera_a_reescrita(self):
-        self.completar()
+    def test_overwrite_allows_rewriting(self):
+        self.complete()
         previous = assert_writable(self.partition, overwrite=True)
         self.assertEqual(previous["run_id"], "r1")
 
-    def test_apagar_o_manifesto_nao_contorna_a_imutabilidade(self):
-        """_SUCCESS sozinho ainda testemunha uma particao completa."""
-        self.completar()
+    def test_deleting_the_manifest_does_not_bypass_immutability(self):
+        """_SUCCESS alone still witnesses a complete partition."""
+        self.complete()
         os.unlink(manifest_path(self.partition))
         with self.assertRaises(PartitionError):
             assert_writable(self.partition, overwrite=False)
 
-    def test_manifesto_ilegivel_reprova_sem_overwrite(self):
+    def test_unreadable_manifest_fails_without_overwrite(self):
         with open(manifest_path(self.partition), "w") as handle:
-            handle.write("{ nao e json")
+            handle.write("{ not json")
         with self.assertRaises(PartitionError):
             assert_writable(self.partition, overwrite=False)
 
-    def test_success_e_removido_quando_a_particao_nao_esta_completa(self):
-        self.completar()
+    def test_success_is_removed_when_partition_is_not_complete(self):
+        self.complete()
         mark_success(self.partition, False, "r2")
         self.assertFalse(os.path.exists(success_path(self.partition)))
 
-    def test_write_manifest_carimba_a_versao(self):
+    def test_write_manifest_stamps_the_version(self):
         write_manifest(self.partition, {"files": []})
         self.assertEqual(read_manifest(self.partition)["manifest_version"], MANIFEST_VERSION)
 
 
-class HistoricoTest(unittest.TestCase):
-    def test_historico_vazio_para_particao_nova(self):
+class HistoryTest(unittest.TestCase):
+    def test_empty_history_for_new_partition(self):
         self.assertEqual(build_history(None), [])
 
-    def test_historico_guarda_a_seed_da_execucao_anterior(self):
-        """Sem a seed no historico, um --overwrite trocaria as pessoas por tras dos
-        mesmos customer_id sem deixar rastro."""
-        anterior = {
+    def test_history_keeps_the_previous_run_seed(self):
+        """Without the seed in the history, an --overwrite would swap the people behind the
+        same customer_id without leaving a trace."""
+        previous = {
             "run_id": "r1",
             "started_at_utc": "2026-08-27T00:00:00Z",
             "complete": True,
             "config": {"seed": 42, "count": 200},
             "totals": {"customer_rows": 200},
         }
-        historico = build_history(anterior)
-        self.assertEqual(len(historico), 1)
-        self.assertEqual(historico[0]["seed"], 42)
-        self.assertEqual(historico[0]["customer_rows"], 200)
+        history = build_history(previous)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["seed"], 42)
+        self.assertEqual(history[0]["customer_rows"], 200)
 
-    def test_historico_acumula(self):
-        anterior = {"run_id": "r2", "history": [{"run_id": "r1"}], "config": {}, "totals": {}}
-        self.assertEqual(len(build_history(anterior)), 2)
+    def test_history_accumulates(self):
+        previous = {"run_id": "r2", "history": [{"run_id": "r1"}], "config": {}, "totals": {}}
+        self.assertEqual(len(build_history(previous)), 2)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Intake ponta a ponta, sem rede: cada gap fechado tem um teste que falha sem a correcao."""
+"""End-to-end intake, no network: every closed gap has a test that fails without the fix."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class IntakeHappyPathTest(unittest.TestCase):
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
         self.in_dir = build_input_dir(self.root, provinces=("28",))
 
-    def test_intake_completo(self):
+    def test_complete_intake(self):
         code, _ = run_intake(self.root, self.in_dir, provinces=["28"])
         self.assertEqual(code, 0)
 
@@ -40,18 +40,18 @@ class IntakeHappyPathTest(unittest.TestCase):
         self.assertEqual(manifest["failures"], [])
         self.assertEqual(manifest["history"], [])
 
-    def test_marcador_success_criado_quando_completo(self):
+    def test_success_marker_created_when_complete(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         self.assertTrue(os.path.exists(part.success_path(self.partition)))
 
-    def test_nome_original_do_arquivo_e_preservado(self):
+    def test_original_file_name_is_preserved(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         landed = os.path.join(
             self.partition, "provinces", "province=28", "VIAS.P28.D260630.G260702"
         )
         self.assertTrue(os.path.exists(landed))
 
-    def test_bytes_landados_sao_identicos_ao_arquivo_de_entrada(self):
+    def test_landed_bytes_are_identical_to_input_file(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         original = os.path.join(
             self.in_dir, "call_p28_726", "call_p28_072026", "SECC.P28.D260630.G260702"
@@ -61,7 +61,7 @@ class IntakeHappyPathTest(unittest.TestCase):
         )
         self.assertEqual(read_bytes(original), read_bytes(landed))
 
-    def test_tram_e_landado_como_os_demais(self):
+    def test_tram_is_landed_like_the_others(self):
         in_dir = build_input_dir(self.root, provinces=("41",))
         code, _ = run_intake(self.root, in_dir, provinces=["41"])
         self.assertEqual(code, 0)
@@ -70,12 +70,12 @@ class IntakeHappyPathTest(unittest.TestCase):
         self.assertEqual(len(landed_names), 5)
         self.assertTrue(any(name.startswith("TRAM") for name in landed_names))
 
-    def test_multiplas_provincias(self):
+    def test_multiple_provinces(self):
         in_dir = build_input_dir(self.root, provinces=("08", "28", "41", "46"))
         code, _ = run_intake(self.root, in_dir, provinces=["08", "28", "41", "46"])
         self.assertEqual(code, 0)
         manifest = part.read_manifest(self.partition)
-        self.assertEqual(manifest["totals"]["files_landed"], 20)  # 4 provincias x 5 datasets
+        self.assertEqual(manifest["totals"]["files_landed"], 20)  # 4 provinces x 5 datasets
 
 
 class ArgumentGuardTest(unittest.TestCase):
@@ -83,33 +83,33 @@ class ArgumentGuardTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         self.in_dir = build_input_dir(self.root, provinces=("28",))
 
-    def test_lista_de_provincias_vazia_e_recusada(self):
+    def test_empty_province_list_is_rejected(self):
         self.assertEqual(run_intake(self.root, self.in_dir, provinces=[])[0], 2)
 
-    def test_provincia_malformada_e_recusada(self):
+    def test_malformed_province_is_rejected(self):
         self.assertEqual(run_intake(self.root, self.in_dir, provinces=["280"])[0], 2)
 
-    def test_data_invalida_e_recusada(self):
+    def test_invalid_date_is_rejected(self):
         self.assertEqual(run_intake(self.root, self.in_dir, date="25-08-2026")[0], 2)
 
-    def test_in_dir_inexistente_e_recusado(self):
-        code, output = run_intake(self.root, os.path.join(self.root, "nao-existe"))
+    def test_missing_in_dir_is_rejected(self):
+        code, output = run_intake(self.root, os.path.join(self.root, "does-not-exist"))
         self.assertEqual(code, 2)
         self.assertIn("--in", output)
 
 
 class MissingFileTest(unittest.TestCase):
-    """Cobertura parcial: uma provincia sem todos os datasets em --in e falha parcial."""
+    """Partial coverage: a province without all datasets in --in is a partial failure."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
         self.in_dir = os.path.join(self.root, "in")
-        # so 4 dos 5 datasets: falta PSEU
+        # only 4 of the 5 datasets: PSEU is missing
         for dataset in ("SECC", "UP", "VIAS", "TRAM"):
             write_callejero_file(self.in_dir, dataset, "28", subdir="call_p28_726/call_p28_072026")
 
-    def test_falha_parcial_devolve_1_e_nao_marca_success(self):
+    def test_partial_failure_returns_1_and_does_not_mark_success(self):
         code, _ = run_intake(self.root, self.in_dir, provinces=["28"])
         self.assertEqual(code, 1)
         manifest = part.read_manifest(self.partition)
@@ -118,7 +118,7 @@ class MissingFileTest(unittest.TestCase):
         self.assertEqual(manifest["failures"][0]["dataset"], "PSEU")
         self.assertFalse(os.path.exists(part.success_path(self.partition)))
 
-    def test_reexecucao_retoma_apos_arquivo_faltante_aparecer(self):
+    def test_rerun_resumes_after_missing_file_appears(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         write_callejero_file(self.in_dir, "PSEU", "28", subdir="call_p28_726/call_p28_072026")
         code, _ = run_intake(self.root, self.in_dir, provinces=["28"])
@@ -127,7 +127,7 @@ class MissingFileTest(unittest.TestCase):
         self.assertTrue(manifest["complete"])
         self.assertEqual(manifest["totals"]["files_landed"], 5)
 
-    def test_historico_preserva_a_execucao_anterior(self):
+    def test_history_keeps_the_previous_run(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         write_callejero_file(self.in_dir, "PSEU", "28", subdir="call_p28_726/call_p28_072026")
         run_intake(self.root, self.in_dir, provinces=["28"])
@@ -142,40 +142,40 @@ class ResumeAndImmutabilityTest(unittest.TestCase):
         self.partition = os.path.join(self.root, "ingestion_date=2026-01-01")
         self.in_dir = build_input_dir(self.root, provinces=("28",))
 
-    def test_reexecucao_de_particao_incompleta_reaproveita_o_que_ja_landou(self):
-        # so 3 dos 5 datasets em --in: primeira execucao fica incompleta (resumivel).
+    def test_rerun_of_incomplete_partition_reuses_what_already_landed(self):
+        # only 3 of the 5 datasets in --in: the first run stays incomplete (resumable).
         from tests.support import write_callejero_file
 
-        parcial_in = os.path.join(self.root, "in-parcial")
+        partial_in = os.path.join(self.root, "in-partial")
         for dataset in ("SECC", "UP", "VIAS"):
-            write_callejero_file(parcial_in, dataset, "28", subdir="call_p28_726/call_p28_072026")
-        run_intake(self.root, parcial_in, provinces=["28"])
+            write_callejero_file(partial_in, dataset, "28", subdir="call_p28_726/call_p28_072026")
+        run_intake(self.root, partial_in, provinces=["28"])
 
-        code, _ = run_intake(self.root, self.in_dir, provinces=["28"])  # in_dir tem os 5
+        code, _ = run_intake(self.root, self.in_dir, provinces=["28"])  # in_dir has all 5
         self.assertEqual(code, 0)
         manifest = part.read_manifest(self.partition)
-        por_dataset = {f["dataset"]: f["reused"] for f in manifest["files"]}
-        self.assertTrue(por_dataset["SECC"])  # ja landado antes, --in nao mudou: reaproveita
-        self.assertFalse(por_dataset["PSEU"])  # so apareceu em --in nesta execucao
+        by_dataset = {f["dataset"]: f["reused"] for f in manifest["files"]}
+        self.assertTrue(by_dataset["SECC"])  # landed before, --in unchanged: reused
+        self.assertFalse(by_dataset["PSEU"])  # only appeared in --in in this run
 
-    def test_particao_completa_e_imutavel_sem_overwrite(self):
+    def test_complete_partition_is_immutable_without_overwrite(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         code, output = run_intake(self.root, self.in_dir, provinces=["28"])
         self.assertEqual(code, 2)
-        self.assertIn("imutavel", output)
+        self.assertIn("immutable", output)
 
-    def test_overwrite_reescreve_particao_completa(self):
+    def test_overwrite_rewrites_complete_partition(self):
         run_intake(self.root, self.in_dir, provinces=["28"])
         code, _ = run_intake(self.root, self.in_dir, provinces=["28"], overwrite=True)
         self.assertEqual(code, 0)
 
 
 class TamperedLandedFileTest(unittest.TestCase):
-    """Um arquivo ja landado que diverge do --in atual exige decisao explicita.
+    """An already landed file that diverges from the current --in requires an explicit decision.
 
-    So testavel numa particao INCOMPLETA: uma particao completa ja e bloqueada por
-    assert_writable antes de qualquer comparacao de conteudo (imutabilidade), entao a
-    divergencia so importa quando ha algo a retomar.
+    Only testable on an INCOMPLETE partition: a complete partition is already blocked by
+    assert_writable before any content comparison (immutability), so the divergence only
+    matters when there is something to resume.
     """
 
     def setUp(self):
@@ -184,7 +184,7 @@ class TamperedLandedFileTest(unittest.TestCase):
         self.in_dir = os.path.join(self.root, "in")
         from tests.support import write_callejero_file
 
-        # so 3 dos 5 datasets: particao fica incompleta, resumivel sem --overwrite.
+        # only 3 of the 5 datasets: partition stays incomplete, resumable without --overwrite.
         for dataset in ("SECC", "UP", "VIAS"):
             write_callejero_file(self.in_dir, dataset, "28", subdir="call_p28_726/call_p28_072026")
         run_intake(self.root, self.in_dir, provinces=["28"])
@@ -192,16 +192,16 @@ class TamperedLandedFileTest(unittest.TestCase):
             self.partition, "provinces", "province=28", "SECC.P28.D260630.G260702"
         )
 
-    def test_divergencia_do_landado_com_in_atual_e_falha_sem_overwrite(self):
+    def test_landed_diverging_from_current_in_fails_without_overwrite(self):
         with open(self.landed, "ab") as handle:
-            handle.write(b"adulterado")
+            handle.write(b"tampered")
         code, output = run_intake(self.root, self.in_dir, provinces=["28"])
         self.assertEqual(code, 1)
         self.assertIn("diverge", output)
 
-    def test_overwrite_resolve_a_divergencia_a_favor_de_in(self):
+    def test_overwrite_resolves_divergence_in_favor_of_in(self):
         with open(self.landed, "ab") as handle:
-            handle.write(b"adulterado")
+            handle.write(b"tampered")
         run_intake(self.root, self.in_dir, provinces=["28"], overwrite=True)
         original = os.path.join(
             self.in_dir, "call_p28_726", "call_p28_072026", "SECC.P28.D260630.G260702"

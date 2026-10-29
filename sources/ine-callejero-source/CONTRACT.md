@@ -1,196 +1,196 @@
 # Source Contract — `ine_callejero`
 
-Contrato entre esta Source e qualquer componente que consuma seus snapshots.
-Tudo aqui é imposto por código e coberto por teste, salvo onde marcado como **[fonte]** —
-característica do dataset do INE, fora do controle desta Source.
+Contract between this Source and any component that consumes its snapshots.
+Everything here is enforced by code and covered by a test, except where marked **[source]** —
+a characteristic of the INE dataset, outside this Source's control.
 
-**Diferença estrutural das outras duas Sources: não há API.** O Callejero só é
-distribuído para download manual no site do INE. `extract` aqui não faz nenhuma
-requisição de rede — incorpora arquivos que já foram baixados e colocados num
-diretório local (`--in`). O verbo é mantido por uniformidade de interface com as
-outras Sources; o significado muda. O que as três compartilham (escrita atômica,
-inventário fechado, imutabilidade, retomada segura) é hygiene genérica de partição,
-mantida verbatim.
+**Structural difference from the other two Sources: there is no API.** The Callejero is
+only distributed for manual download on the INE website. `extract` here makes no
+network request — it ingests files that were already downloaded and placed in a
+local directory (`--in`). The verb is kept for interface uniformity with the
+other Sources; the meaning changes. What the three share (atomic writes,
+closed inventory, immutability, safe resume) is generic partition hygiene,
+kept verbatim.
 
-## 1. Identidade do snapshot
+## 1. Snapshot identity
 
-| Chave | Valor | Onde vive |
+| Key | Value | Where it lives |
 |---|---|---|
 | `source` | `ine_callejero` | `_manifest.json` → `source.name` |
-| `ingestion_date` | `YYYY-MM-DD` (UTC) | diretório da partição e `partition.ingestion_date` |
+| `ingestion_date` | `YYYY-MM-DD` (UTC) | partition directory and `partition.ingestion_date` |
 
-Sem segundo eixo de partição — nem por warehouse, nem por província: o artefato é um
-intake do dataset oficial inteiro, não um recorte.
+No second partition axis — neither by warehouse nor by province: the artifact is an
+intake of the whole official dataset, not a slice.
 
 ```
 <root>/ingestion_date=YYYY-MM-DD/
-├── provinces/province=<código>/<nome ORIGINAL do arquivo baixado>
+├── provinces/province=<code>/<ORIGINAL name of the downloaded file>
 ├── _manifest.json
-├── _SUCCESS          (só existe quando complete = true)
+├── _SUCCESS          (only exists when complete = true)
 └── _run.log
 ```
 
-`provinces/province=<código>/` é estrutura de DIRETÓRIO dentro da partição —
-equivalente ao `tables/` da source de população — não um eixo formal do lado da
-plataforma. O nome do arquivo landado é o mesmo do download (ex.:
-`VIAS.P28.D260630.G260702`), não um nome genérico: preserva proveniência (data e
-geração do INE) sem precisar de outro mecanismo.
+`provinces/province=<code>/` is DIRECTORY structure inside the partition —
+equivalent to `tables/` in the population source — not a formal axis on the
+platform side. The landed file name is the same as the download (e.g.
+`VIAS.P28.D260630.G260702`), not a generic name: it preserves provenance (INE date and
+generation) without needing another mechanism.
 
-Blocos de primeiro nível do `_manifest.json`: `manifest_version`, `run_id`,
+Top-level blocks of `_manifest.json`: `manifest_version`, `run_id`,
 `started_at_utc`, `finished_at_utc`, `duration_seconds`, `complete`, `source`,
 `partition`, `config`, `totals`, `files[]`, `failures[]`, `history[]`.
 
-## 2. Conteúdo garantido
+## 2. Guaranteed content
 
-**Os downloads do Callejero trazem 5 arquivos por província: `SECC`, `UP`, `VIAS`,
-`PSEU` e `TRAM`. Esta Source incorpora os 5.** `TRAM` (tramos de via) entrou depois dos
-outros 4 porque é o único que liga, num só registro, seção censitária + entidade/núcleo
-+ via ou pseudovia + **código postal (CEP)** + faixa de numeração — os outros 4 não têm
-CEP.
+**The Callejero downloads contain 5 files per province: `SECC`, `UP`, `VIAS`,
+`PSEU` and `TRAM`. This Source ingests all 5.** `TRAM` (street segments) was added after the
+other 4 because it is the only one that links, in a single record, census section +
+entity/nucleus + street or pseudo-street + **postal code** + number range — the other 4 have no
+postal code.
 
-**Encoding real: ISO-8859-1 (Latin-1)**, linhas terminadas em CRLF — medido com `file`
-contra os arquivos reais, não presumido. **RAW preserva os bytes originais**: esta
-Source não decodifica, não converte encoding, não normaliza fim de linha. O SHA-256
-registrado é sobre o arquivo exatamente como o INE o distribui.
+**Actual encoding: ISO-8859-1 (Latin-1)**, lines terminated with CRLF — measured with `file`
+against the real files, not assumed. **RAW preserves the original bytes**: this
+Source does not decode, does not convert encoding, does not normalize line endings. The
+recorded SHA-256 is over the file exactly as INE distributes it.
 
-**`SECC`/`UP`/`VIAS`/`PSEU` não têm código postal nem um conceito oficial de "bairro"
-urbano** — medido inspecionando o conteúdo real, não assumido por ausência de busca.
-`TRAM` tem CEP (campo `CPOS`, ver tabela abaixo). O mais próximo de "bairro" continua
-sendo o nome de unidade populacional (núcleo) do `UP` — sub-municipal, mas não é uma
-divisão administrativa oficial de bairro (isso pertence à prefeitura de cada cidade, não
-ao INE). Medido: Madrid/Barcelona/Sevilla capital são uma entidade única sem núcleo
-nomeado no `UP`; València tem 16 núcleos/pedanias nomeados (histórico de anexação de
-vilas — l'Horta), por isso é a única dos 4 warehouses onde núcleo aproxima "bairro" com
-algum significado.
+**`SECC`/`UP`/`VIAS`/`PSEU` have no postal code nor any official concept of an urban
+"neighborhood"** — measured by inspecting the real content, not assumed from a lack of searching.
+`TRAM` has the postal code (field `CPOS`, see the table below). The closest thing to a
+"neighborhood" is still the population unit (nucleus) name in `UP` — sub-municipal, but not an
+official administrative neighborhood division (that belongs to each city's council, not
+to INE). Measured: Madrid/Barcelona/Sevilla city are a single entity with no named nucleus
+in `UP`; València has 16 named nuclei/pedanías (a history of annexing villages —
+l'Horta), which is why it is the only one of the 4 warehouses where the nucleus approximates a
+"neighborhood" with any meaning.
 
-**Layout medido de cada arquivo** (posições 0-indexadas, `[início:fim)`), contra os
-arquivos reais das 4 províncias dos warehouses. Para `SECC`/`UP`/`VIAS`/`PSEU`, sem
-documentação oficial anexada ao download — reconstruído por evidência. Para `TRAM`, o
-layout abaixo foi medido E cruzado com o "Diseños de registro de los ficheros de
-intercambio de información INE-Ayuntamientos" (INE, publicado pelo IDA-Padrón — ver
-seção 6), que nomeia os campos do "Tramero" na mesma ordem observada nos bytes reais
+**Measured layout of each file** (0-indexed positions, `[start:end)`), against the
+real files of the 4 warehouse provinces. For `SECC`/`UP`/`VIAS`/`PSEU`, there is no
+official documentation attached to the download — reconstructed from evidence. For `TRAM`, the
+layout below was measured AND cross-checked against the "Diseños de registro de los ficheros de
+intercambio de información INE-Ayuntamientos" (INE, published by IDA-Padrón — see
+section 6), which names the fields of the "Tramero" in the same order observed in the real bytes
 (`CPRO CMUN DIST SECC LSECC SUBSC CUN CVIA CPSVIA MANZ CPOS TINUM EIN CEIN ESN CESN`)
-— essa doc descreve o formato de *intercâmbio* de variações (INE↔Ayuntamentos), não o
-snapshot completo que baixamos, então os offsets abaixo continuam sendo os medidos
-contra o arquivo real, só confirmados pela ordem/nome oficial dos campos, não copiados
-da doc:
+— that document describes the *exchange* format for changes (INE↔Ayuntamientos), not the
+full snapshot we download, so the offsets below are still the ones measured
+against the real file, only confirmed by the official field order/names, not copied
+from the document:
 
-| Dataset | Largura | Campos |
+| Dataset | Width | Fields |
 |---|---|---|
-| `SECC` | 11 chars (10 de código + 1 espaço à direita) | `[0:2]` província · `[2:5]` município · `[5:7]` distrito · `[7:10]` seção |
-| `VIAS` | 132 chars | `[0:10]` código (província+município+id via) · `[10:38]` nome curto · `[38:46]` data · `[47:52]` id via · `[52:57]` tipo de via (CALLE/PLAZA/CMNO/PRAJE...) · `[57:107]` nome completo · `[107:132]` nome curto alternativo |
-| `PSEU` | 127 chars | `[0:10]` código (província+município+id) · `[10:63]` nome · `[63:71]` data · `[72:77]` id · `[77:127]` nome completo — sem campo de tipo (pseudovias não são classificadas por tipo de via) |
-| `UP` | 604 chars | `[0:12]` código (província+município(3)+sufixo(7), sufixo `0000000` = linha agregada do MUNICÍPIO) · `[15:23]` data · `[94:314]` nome do MUNICÍPIO · `[459:529]` nome da UNIDADE POPULACIONAL/núcleo (ex. `*DISEMINADO*` para população dispersa). Campos redundantes em outras larguras (70/50/25 chars, mais duas repetições) existem mas não são extraídos nesta versão — são formas abreviadas das mesmas duas informações, confirmado comparando o conteúdo, não assumido. |
-| `TRAM` | 273 chars | `[0:10]` código de **seção** (mesmo formato de `SECC`) · `[13:20]` `CUN` — sufixo de entidade/núcleo (mesmo formato de `UP`) · `[20:25]` `CVIA` — id de via (mesmo formato de `VIAS`, `00000` quando não se aplica) · `[25:30]` `CPSVIA` — id de pseudovia (mesmo formato de `PSEU`, `00000` quando não se aplica; mutuamente exclusivo com `CVIA` — medido em 305 mil linhas nas 4 províncias, 0 exceções de "ambos preenchidos") · `[30:42]` `MANZ` — manzana catastral (quase sempre em branco; a doc oficial confirma que na prática nunca foi implantado) · `[42:47]` **`CPOS` — código postal**, 5 dígitos, sempre com o prefixo correto da província (medido: 304.905/304.952 linhas corretas nas 4 províncias, 47 exceções só em Barcelona, 0,015%) · `[47:48]` `TINUM` — tipo de numeração (`0`=sem numeração, `1`=ímpar, `2`=par) · `[48:52]`+`[52:53]` `EIN`+`CEIN` — extremo inferior da faixa de numeração + qualificador de duplicado (letra A-Z ou branco) · `[53:57]`+`[57:58]` `ESN`+`CESN` — extremo superior + qualificador · `[61:69]` data de referência (`YYYYMMDD`, mesma data do arquivo). O restante do registro (até 273 chars) não foi decodificado — inclui pelo menos um campo repetido no fim que espelha `CPOS`+`TINUM`+`EIN`+`ESN` já capturados no início; nada além disso é extraído ou afirmado. |
+| `SECC` | 11 chars (10 of code + 1 trailing space) | `[0:2]` province · `[2:5]` municipality · `[5:7]` district · `[7:10]` section |
+| `VIAS` | 132 chars | `[0:10]` code (province+municipality+street id) · `[10:38]` short name · `[38:46]` date · `[47:52]` street id · `[52:57]` street type (CALLE/PLAZA/CMNO/PRAJE...) · `[57:107]` full name · `[107:132]` alternative short name |
+| `PSEU` | 127 chars | `[0:10]` code (province+municipality+id) · `[10:63]` name · `[63:71]` date · `[72:77]` id · `[77:127]` full name — no type field (pseudo-streets are not classified by street type) |
+| `UP` | 604 chars | `[0:12]` code (province+municipality(3)+suffix(7), suffix `0000000` = MUNICIPALITY aggregate row) · `[15:23]` date · `[94:314]` MUNICIPALITY name · `[459:529]` POPULATION UNIT/nucleus name (e.g. `*DISEMINADO*` for scattered population). Redundant fields at other widths (70/50/25 chars, plus two repetitions) exist but are not extracted in this version — they are abbreviated forms of the same two pieces of information, confirmed by comparing the content, not assumed. |
+| `TRAM` | 273 chars | `[0:10]` **section** code (same format as `SECC`) · `[13:20]` `CUN` — entity/nucleus suffix (same format as `UP`) · `[20:25]` `CVIA` — street id (same format as `VIAS`, `00000` when not applicable) · `[25:30]` `CPSVIA` — pseudo-street id (same format as `PSEU`, `00000` when not applicable; mutually exclusive with `CVIA` — measured on 305 thousand lines across the 4 provinces, 0 "both filled" exceptions) · `[30:42]` `MANZ` — cadastral block (almost always blank; the official document confirms it was never implemented in practice) · `[42:47]` **`CPOS` — postal code**, 5 digits, always with the correct province prefix (measured: 304,905/304,952 correct lines across the 4 provinces, 47 exceptions only in Barcelona, 0.015%) · `[47:48]` `TINUM` — numbering type (`0`=no numbering, `1`=odd, `2`=even) · `[48:52]`+`[52:53]` `EIN`+`CEIN` — lower end of the number range + duplicate qualifier (letter A-Z or blank) · `[53:57]`+`[57:58]` `ESN`+`CESN` — upper end + qualifier · `[61:69]` reference date (`YYYYMMDD`, same date as the file). The rest of the record (up to 273 chars) has not been decoded — it includes at least one repeated field at the end that mirrors `CPOS`+`TINUM`+`EIN`+`ESN` already captured at the start; nothing beyond that is extracted or claimed. |
 
-Validado contra endereços reais: "Alcalá" no município 079 (Madrid), "Gran Vía" em 3
-municípios diferentes, "Abrera"/"Can Vilalba"/"Sant Miquel" (Barcelona), municípios
-079/019/091/250 = Madrid/Barcelona/Sevilla/València — os mesmos códigos já usados no seed
-`warehouse_province_map_seed.csv` da plataforma (fonte independente), exposto ao Silver
-como pass-through pelo model `warehouse_province_map`. `CPOS` validado contra
-geografia real: València cidade tem 30 CEPs distintos (46001-46026 + exceções), e
-núcleos/pedanias específicos batem com o CEP real conhecido da área (ex. Pinedo/El Saler
-→ 46012, zona sul da cidade — geograficamente correto).
+Validated against real addresses: "Alcalá" in municipality 079 (Madrid), "Gran Vía" in 3
+different municipalities, "Abrera"/"Can Vilalba"/"Sant Miquel" (Barcelona), municipalities
+079/019/091/250 = Madrid/Barcelona/Sevilla/València — the same codes already used in the platform seed
+`warehouse_province_map_seed.csv` (an independent source), exposed to Silver
+as a pass-through by the `warehouse_province_map` model. `CPOS` validated against
+real geography: València city has 30 distinct postal codes (46001-46026 + exceptions), and
+specific nuclei/pedanías match the known real postal code of the area (e.g. Pinedo/El Saler
+→ 46012, southern part of the city — geographically correct).
 
-**O texto de largura fixa é o contrato físico.** Não há schema relacional; a Source não
-parseia campos — só copia o arquivo e registra fatos estruturais (contagem de linhas,
-largura dominante) para a revalidação. A tabela acima documenta o que foi medido para
-orientar o consumidor (Silver); não é imposta nem verificada pelo código desta Source.
+**The fixed-width text is the physical contract.** There is no relational schema; the Source does not
+parse fields — it only copies the file and records structural facts (line count,
+dominant width) for revalidation. The table above documents what was measured to
+guide the consumer (Silver); it is neither enforced nor checked by this Source's code.
 
-## 3. Garantias
+## 3. Guarantees
 
-1. **Escrita atômica.** Nenhum arquivo é observável em estado parcial.
-2. **Bytes preservados.** O arquivo landado é idêntico, byte a byte, ao arquivo em
-   `--in`. Nenhuma reserialização.
-3. **Integridade verificável.** `_manifest.json` declara `sha256`, `bytes`,
-   `line_count` e `dominant_line_width` de cada arquivo. `validate` recalcula os
-   quatro a partir do disco.
-4. **Inventário fechado.** Todo arquivo dentro da partição está declarado no manifesto.
-5. **Imutabilidade.** Uma partição com `complete: true` não pode ser reescrita sem
-   `--overwrite` explícito.
-6. **Divergência exige decisão explícita.** Um arquivo já landado (numa partição
-   incompleta, sendo retomada) cujo conteúdo diverge do arquivo atual em `--in` não é
-   silenciosamente sobrescrito nem silenciosamente mantido — vira falha registrada,
-   resolvida só com `--overwrite`.
-7. **Retomada segura.** Uma partição incompleta pode ser completada reexecutando o
-   mesmo comando, com `--in` contendo os arquivos que faltavam.
-8. **Proveniência preservada.** `history[]` acumula o resumo de cada execução anterior;
-   o nome original do arquivo (data e geração do INE) é preservado no path landado.
-9. **Marcador de conclusão.** `_SUCCESS` existe se e somente se `complete: true`.
-10. **Identidade persistida antes do fan-out.** Um manifesto preliminar (`complete:
-    false`) é gravado assim que a partição é criada, antes de qualquer arquivo ser
-    copiado.
-11. **Cobertura verificada.** `validate` confere que toda combinação (província,
-    dataset) em `manifest.config` tem arquivo landado.
-12. **Totais reconferidos.** `totals.files_landed` e `totals.bytes` são recalculados da
-    releitura.
-13. **Falha registrada é fatal na validação.** Qualquer entrada em `failures[]` reprova
-    a partição.
-14. **Mudança de layout é aviso, não é corrigida.** Uma largura de linha dominante
-    diferente da registrada no manifesto vira aviso em `validate` (fatal só com
-    `--strict`) — sinal para o consumidor de que o INE pode ter mudado o formato; esta
-    Source não tenta adivinhar nem se adaptar.
+1. **Atomic writes.** No file is observable in a partial state.
+2. **Bytes preserved.** The landed file is identical, byte for byte, to the file in
+   `--in`. No reserialization.
+3. **Verifiable integrity.** `_manifest.json` declares `sha256`, `bytes`,
+   `line_count` and `dominant_line_width` for each file. `validate` recomputes all
+   four from disk.
+4. **Closed inventory.** Every file inside the partition is declared in the manifest.
+5. **Immutability.** A partition with `complete: true` cannot be rewritten without an
+   explicit `--overwrite`.
+6. **Divergence requires an explicit decision.** An already landed file (in an
+   incomplete partition being resumed) whose content diverges from the current file in `--in` is
+   neither silently overwritten nor silently kept — it becomes a recorded failure,
+   resolved only with `--overwrite`.
+7. **Safe resume.** An incomplete partition can be completed by rerunning the
+   same command, with `--in` containing the missing files.
+8. **Provenance preserved.** `history[]` accumulates the summary of each previous run;
+   the original file name (INE date and generation) is preserved in the landed path.
+9. **Completion marker.** `_SUCCESS` exists if and only if `complete: true`.
+10. **Identity persisted before the fan-out.** A preliminary manifest (`complete:
+    false`) is written as soon as the partition is created, before any file is
+    copied.
+11. **Coverage verified.** `validate` checks that every (province,
+    dataset) combination in `manifest.config` has a landed file.
+12. **Totals rechecked.** `totals.files_landed` and `totals.bytes` are recomputed from the
+    reread.
+13. **A recorded failure is fatal in validation.** Any entry in `failures[]` fails
+    the partition.
+14. **A layout change is a warning, not corrected.** A dominant line width
+    different from the one recorded in the manifest becomes a warning in `validate` (fatal only with
+    `--strict`) — a signal to the consumer that INE may have changed the format; this
+    Source does not try to guess or adapt.
 
-**Deliberadamente sem equivalente aqui** (existem nas outras Sources, não fazem
-sentido nesta): forma canônica de reserialização (não há JSON aqui para reserializar);
-`schema_fingerprint` de chaves nomeadas (texto de largura fixa não tem chaves);
-detecção de "arquivo fora da forma canônica" (não há forma além da original).
+**Deliberately without an equivalent here** (they exist in the other Sources, but make no
+sense in this one): canonical reserialization form (there is no JSON here to reserialize);
+`schema_fingerprint` of named keys (fixed-width text has no keys);
+detection of "file outside the canonical form" (there is no form other than the original).
 
-## 4. Obrigações do consumidor
+## 4. Consumer obligations
 
-1. **Itere `manifest.files[]`.** `files[].path` é relativo à raiz do snapshot,
-   começando em `ingestion_date=…/`.
-2. **Trate a partição como imutável.** Não escreva dentro dela.
-3. **Parseie os campos você mesmo, usando a tabela da seção 2 como ponto de partida —
-   e revalide contra uma amostra real antes de depender de um offset.** Esta Source não
-   garante que o layout medido aqui continua válido para uma `ingestion_date` futura;
-   ela só garante os bytes que copiou.
-4. **Não assuma cadência de atualização.** O Callejero é publicado semestralmente pelo
-   INE, sem garantia de conteúdo diferente entre publicações.
-5. **`warehouse → província/município` não vem desta Source.** Essa relação é decisão
-   da plataforma, não do INE — vive no seed `warehouse_province_map_seed.csv`, exposto
-   ao Silver pelo model `warehouse_province_map` (um pass-through do seed para o object
-   storage), consumida via JOIN no Silver/Gold. Esta Source não sabe que warehouses
-   existem.
+1. **Iterate `manifest.files[]`.** `files[].path` is relative to the snapshot root,
+   starting at `ingestion_date=…/`.
+2. **Treat the partition as immutable.** Do not write inside it.
+3. **Parse the fields yourself, using the table in section 2 as a starting point —
+   and revalidate against a real sample before relying on an offset.** This Source does not
+   guarantee that the layout measured here remains valid for a future `ingestion_date`;
+   it only guarantees the bytes it copied.
+4. **Do not assume an update cadence.** The Callejero is published twice a year by
+   INE, with no guarantee of different content between publications.
+5. **`warehouse → province/municipality` does not come from this Source.** That relationship is a
+   platform decision, not INE's — it lives in the seed `warehouse_province_map_seed.csv`, exposed
+   to Silver by the `warehouse_province_map` model (a pass-through of the seed to object
+   storage), consumed via JOIN in Silver/Gold. This Source does not know warehouses
+   exist.
 
-## 5. O que a Source não faz
+## 5. What the Source does not do
 
-Parsing de campo · deduplicação · modelagem dimensional · normalização · fatos e
-dimensões · transformação Silver · Gold/Marts · mapeamento warehouse → província ·
-cálculo de área de atendimento/logística · ingestão em object storage · Spark · dbt ·
+Field parsing · deduplication · dimensional modeling · normalization · facts and
+dimensions · Silver transformation · Gold/Marts · warehouse → province mapping ·
+service-area/logistics computation · ingestion into object storage · Spark · dbt ·
 Airflow.
 
-Cada execução incorpora uma **cópia fiel** dos arquivos pedidos. Interpretação
-(extrair rua, seção, cruzar com warehouse) é da camada posterior.
+Each run ingests a **faithful copy** of the requested files. Interpretation
+(extracting street, section, joining with warehouse) belongs to the downstream layer.
 
-## 6. Escopo e limites da fonte **[fonte]**
+## 6. Source scope and limits **[source]**
 
-- O Callejero é publicado pelo INE sem API — só download manual, semestral. Publicação
-  de janeiro = referência 31/dez do ano anterior; publicação de julho = referência
-  30/jun do mesmo ano.
-- Página oficial do INE sobre o Callejero (o que é, composição dos 5 arquivos,
-  cadência): [Cartografía secciones censales y callejero de Censo Electoral](https://www.ine.es/ss/Satellite?L=es_ES&c=Page&cid=1259952026632&pagename=ProductosYServicios%2FPYSLayout).
-  O "Diseño de registro" oficial usado para confirmar a ordem dos campos de `TRAM`
-  (seção 2) está em [idapadron.ine.es/repositorio/DisReg/disregok.PDF](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)
-  — descreve o formato de *intercâmbio* INE↔Ayuntamentos (`marzo 2015`), não o snapshot
-  completo baixado; usado só para nomear/ordenar campos, os offsets em si continuam
-  medidos contra os bytes reais.
-- Layout de arquivo **não documentado oficialmente dentro do próprio download** (sem
-  "Diseño de Registro" anexado ao zip); a tabela da seção 2 foi reconstruída por
-  evidência, com `TRAM` adicionalmente cruzado contra a doc acima.
-- Nenhum dos 5 arquivos contém densidade populacional. Só `TRAM` contém código postal.
-- "Bairro" administrativo (distrito de prefeitura) não existe em nenhum dos 5 arquivos.
+- The Callejero is published by INE without an API — manual download only, twice a year. The
+  January publication = reference Dec 31 of the previous year; the July publication = reference
+  Jun 30 of the same year.
+- Official INE page on the Callejero (what it is, composition of the 5 files,
+  cadence): [Cartografía secciones censales y callejero de Censo Electoral](https://www.ine.es/ss/Satellite?L=es_ES&c=Page&cid=1259952026632&pagename=ProductosYServicios%2FPYSLayout).
+  The official "Diseño de registro" used to confirm the field order of `TRAM`
+  (section 2) is at [idapadron.ine.es/repositorio/DisReg/disregok.PDF](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)
+  — it describes the INE↔Ayuntamientos *exchange* format (`marzo 2015`), not the full
+  downloaded snapshot; used only to name/order fields, the offsets themselves are still
+  measured against the real bytes.
+- File layout **not officially documented inside the download itself** (no
+  "Diseño de Registro" attached to the zip); the table in section 2 was reconstructed from
+  evidence, with `TRAM` additionally cross-checked against the document above.
+- None of the 5 files contains population density. Only `TRAM` contains a postal code.
+- An administrative "neighborhood" (council district) does not exist in any of the 5 files.
 
-## 7. Códigos de saída
+## 7. Exit codes
 
-| Código | `extract` | `validate` |
+| Code | `extract` | `validate` |
 |---|---|---|
-| 0 | toda combinação (província, dataset) alvo foi landada | aprovado |
-| 1 | falha parcial, registrada em `failures[]` | reprovado |
-| 2 | falha fatal: partição inutilizável ou uso inválido | — |
-| 3 | exceção não tratada | exceção não tratada |
+| 0 | every target (province, dataset) combination was landed | passed |
+| 1 | partial failure, recorded in `failures[]` | failed |
+| 2 | fatal failure: partition unusable or invalid usage | — |
+| 3 | unhandled exception | unhandled exception |
 
-## 8. Versão do contrato
+## 8. Contract version
 
-`manifest_version: 1`. Contador independente das outras duas Sources — são contratos
-separados. `validate` recusa manifesto de versão diferente da suportada pelo código.
+`manifest_version: 1`. A counter independent of the other two Sources — they are separate
+contracts. `validate` rejects a manifest whose version differs from the one supported by the code.

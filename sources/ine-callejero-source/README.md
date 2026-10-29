@@ -1,83 +1,83 @@
 # INE Callejero Source
 
-Source de geografia oficial do INE. Incorpora **seções censitárias, unidades
-populacionais, vias, pseudovias e tramos de via com código postal** (`SECC`, `UP`,
-`VIAS`, `PSEU`, `TRAM`) do Callejero, baixado manualmente do site do INE — **não há
-API** para este dataset — e produz snapshots particionados, reproduzíveis e
-validáveis, byte a byte idênticos ao download.
+Official INE geography Source. Ingests **census sections, population
+units, streets, pseudo-streets and street segments with postal code** (`SECC`, `UP`,
+`VIAS`, `PSEU`, `TRAM`) from the Callejero, downloaded manually from the INE website — **there is no
+API** for this dataset — and produces partitioned, reproducible and
+verifiable snapshots, byte-for-byte identical to the download.
 
-Este repositório é uma **Source**, não uma plataforma de transformação. O contrato
-completo com o consumidor está em [CONTRACT.md](CONTRACT.md).
+This repository is a **Source**, not a transformation platform. The full
+contract with the consumer is in [CONTRACT.md](CONTRACT.md).
 
-Terceira source do monorepo, ao lado de
-[`mercadona-catalog-source`](../mercadona-catalog-source/) e
-[`ine-population-source`](../ine-population-source/). Pacote irmão independente —
-nenhum código é compartilhado. Ver [ARCHITECTURE.md](../../ARCHITECTURE.md).
+Third source in the monorepo, alongside
+[`mercadona-catalog-source`](../mercadona-catalog-source/) and
+[`ine-population-source`](../ine-population-source/). An independent sibling package —
+no code is shared. See [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
-- **Faz:** localiza os arquivos esperados por província num diretório de entrada ·
-  copia verbatim (sem reserialização) · calcula checksum · retoma partições incompletas
-  · produz snapshots particionados · registra metadata e proveniência · valida
-  integridade, cobertura e coerência estrutural.
-- **Não faz:** requisição de rede · parsing de campo · deduplicação · modelagem
-  dimensional · Silver/Gold · mapeamento warehouse → província · Spark · dbt · Airflow.
+- **Does:** locates the expected files per province in an input directory ·
+  copies them verbatim (no reserialization) · computes checksums · resumes incomplete partitions
+  · produces partitioned snapshots · records metadata and provenance · validates
+  integrity, coverage and structural consistency.
+- **Does not:** network requests · field parsing · deduplication · dimensional
+  modeling · Silver/Gold · warehouse → province mapping · Spark · dbt · Airflow.
 
-## De onde vêm os dados
+## Where the data comes from
 
-O Callejero é um produto oficial do INE (Instituto Nacional de Estadística da
-Espanha) — **não existe API**: é publicado como um conjunto de arquivos ASCII
-comprimidos em `.zip`, um por província, para download manual no site do INE. Página
-oficial: [Cartografía secciones censales y callejero de Censo Electoral](https://www.ine.es/ss/Satellite?L=es_ES&c=Page&cid=1259952026632&pagename=ProductosYServicios%2FPYSLayout).
+The Callejero is an official product of INE (Instituto Nacional de Estadística of
+Spain) — **there is no API**: it is published as a set of ASCII files
+compressed in `.zip`, one per province, for manual download on the INE website. Official
+page: [Cartografía secciones censales y callejero de Censo Electoral](https://www.ine.es/ss/Satellite?L=es_ES&c=Page&cid=1259952026632&pagename=ProductosYServicios%2FPYSLayout).
 
-- **Cadência**: publicação semestral. A de janeiro tem data de referência 31/dez do
-  ano anterior; a de julho, 30/jun do mesmo ano. Sem garantia de conteúdo diferente
-  entre duas publicações.
-- **Conteúdo de cada `.zip`**: 5 arquivos de texto de largura fixa, em ISO-8859-1
-  (Latin-1), um por dataset — `SECC` (seções censitárias), `UP` (unidades
-  populacionais/núcleos), `VIAS` (vias), `PSEU` (pseudovias) e `TRAM` (tramos de via,
-  o único com código postal). Nome oficial, ex.: `VIAS.P28.D260630.G260702`
-  (dataset + província + data + geração).
-- **Processo manual, ponta a ponta**: baixar o(s) `.zip` da(s) província(s) desejada(s)
-  no site do INE → extrair para um diretório local (`--in`) → rodar `extract`, que
-  **copia os arquivos verbatim** (sem download, sem transformação) para a partição.
-  Essa é a única forma de entrada desta Source — não existe fallback de rede.
-- **Layout dos campos** não vem documentado dentro do `.zip`. O layout usado nesta
-  Source (CONTRACT.md § 2) foi medido diretamente contra os arquivos reais e, para
-  `TRAM`, cruzado com o "Diseño de registro" oficial do INE/IDA-Padrón
-  ([PDF](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)), que nomeia os
-  campos do "Tramero" na mesma ordem observada nos bytes.
+- **Cadence**: published twice a year. The January release has reference date Dec 31 of the
+  previous year; the July release, Jun 30 of the same year. No guarantee of different content
+  between two publications.
+- **Content of each `.zip`**: 5 fixed-width text files, in ISO-8859-1
+  (Latin-1), one per dataset — `SECC` (census sections), `UP` (population
+  units/nuclei), `VIAS` (streets), `PSEU` (pseudo-streets) and `TRAM` (street segments,
+  the only one with a postal code). Official name, e.g. `VIAS.P28.D260630.G260702`
+  (dataset + province + date + generation).
+- **Manual process, end to end**: download the `.zip` for the desired province(s)
+  from the INE website → extract into a local directory (`--in`) → run `extract`, which
+  **copies the files verbatim** (no download, no transformation) into the partition.
+  This is the only input path for this Source — there is no network fallback.
+- **Field layout** is not documented inside the `.zip`. The layout used in this
+  Source (CONTRACT.md § 2) was measured directly against the real files and, for
+  `TRAM`, cross-checked with the official INE/IDA-Padrón "Diseño de registro"
+  ([PDF](https://idapadron.ine.es/repositorio/DisReg/disregok.PDF)), which names the
+  fields of the "Tramero" in the same order observed in the bytes.
 
-## Requisitos
+## Requirements
 
-Python 3.12+ e nada mais. Somente biblioteca padrão. `dependencies = []` no
-[pyproject.toml](pyproject.toml) — não há o que instalar, e não há cliente HTTP porque
-não há API.
+Python 3.12+ and nothing else. Standard library only. `dependencies = []` in
+[pyproject.toml](pyproject.toml) — there is nothing to install, and there is no HTTP client because
+there is no API.
 
-## Localização
+## Location
 
-Esta Source vive em `sources/ine-callejero-source/` do monorepo e permanece independente
-(`pyproject.toml` próprio, `dependencies = []`, suíte própria). No dia a dia use o
-**Makefile da raiz** (`make -C ../.. callejero-extract IN=../../temp`), que escreve em
-`<raiz>/data/callejero`.
+This Source lives in `sources/ine-callejero-source/` of the monorepo and remains independent
+(its own `pyproject.toml`, `dependencies = []`, its own suite). Day to day, use the
+**root Makefile** (`make -C ../.. callejero-extract IN=../../temp`), which writes to
+`<root>/data/callejero`.
 
-## Uso
+## Usage
 
 ```bash
-make test                        # suíte, sem rede e sem dependências
-make extract IN=../../temp       # incorpora os arquivos de IN para a partição de hoje
-make validate                    # valida a partição de hoje em modo --strict
+make test                        # suite, no network and no dependencies
+make extract IN=../../temp       # ingest the files from IN into today's partition
+make validate                    # validate today's partition in --strict mode
 make check                       # test + validate
 ```
 
-Sem `make`, com `PYTHONPATH=src`:
+Without `make`, with `PYTHONPATH=src`:
 
 ```bash
-PYTHONPATH=src python3 -m ine_callejero_source extract --in /caminho/do/download --out data/callejero
+PYTHONPATH=src python3 -m ine_callejero_source extract --in /path/to/download --out data/callejero
 PYTHONPATH=src python3 -m ine_callejero_source validate \
     "data/callejero/ingestion_date=$(date -u +%F)" --strict
 PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```
 
-Instalando o pacote, o console script `ine-callejero-source` fica disponível:
+Installing the package makes the `ine-callejero-source` console script available:
 
 ```bash
 make install
@@ -86,54 +86,54 @@ make install
 
 ### `extract`
 
-**Não busca rede.** Localiza, dentro de `--in`, os arquivos de cada (província,
-dataset) configurados e copia verbatim para a partição.
+**Does not touch the network.** Locates, inside `--in`, the file for each configured (province,
+dataset) and copies it verbatim into the partition.
 
-| Flag | Padrão | Efeito |
+| Flag | Default | Effect |
 |---|---|---|
-| `--in` | *(obrigatório)* | diretório onde os arquivos do Callejero foram baixados manualmente. Varrido recursivamente — a estrutura de pastas dos downloads originais é aceita como está |
-| `--out` | `data/callejero` | diretório raiz do snapshot |
-| `--provinces` | `08,28,41,46` | código(s) de província do INE, separados por vírgula. As 4 dos warehouses |
-| `--date` | hoje (UTC) | data da partição. Validada como `YYYY-MM-DD` |
-| `--overwrite` | desligado | reescreve a partição, inclusive se estiver completa |
+| `--in` | *(required)* | directory where the Callejero files were downloaded manually. Scanned recursively — the folder structure of the original downloads is accepted as is |
+| `--out` | `data/callejero` | snapshot root directory |
+| `--provinces` | `08,28,41,46` | INE province code(s), comma-separated. The 4 warehouse provinces |
+| `--date` | today (UTC) | partition date. Validated as `YYYY-MM-DD` |
+| `--overwrite` | off | rewrites the partition, even if it is complete |
 
 ### `validate`
 
-| Argumento | Efeito |
+| Argument | Effect |
 |---|---|
-| `partition` | caminho da partição (posicional, obrigatório) |
-| `--strict` | além da integridade, falha se houver aviso de largura de linha divergente |
+| `partition` | partition path (positional, required) |
+| `--strict` | besides integrity, fails if there is a diverging line-width warning |
 
-## Estrutura
+## Layout
 
 ```
 .
-├── CONTRACT.md                      # contrato com o consumidor
+├── CONTRACT.md                      # contract with the consumer
 ├── Makefile                         # test / extract / validate / check / venv / install / freeze
-├── pyproject.toml                   # metadados; dependencies = []
-├── requirements.txt                 # runtime: vazio por construção, verificado por teste
+├── pyproject.toml                   # metadata; dependencies = []
+├── requirements.txt                 # runtime: empty by construction, checked by a test
 ├── requirements-build.txt           # setuptools / wheel / packaging
 ├── src/ine_callejero_source/
-│   ├── __init__.py                  # nome da source, versão do manifesto
+│   ├── __init__.py                  # source name, manifest version
 │   ├── __main__.py                  # python -m ine_callejero_source
-│   ├── cli.py                       # subcomandos e códigos de saída
-│   ├── canonical.py                 # manifesto JSON canônico + copia verbatim atômica
-│   ├── schema.py                    # fatos estruturais (contagem/largura de linha), sem parsing de campo
-│   ├── partition.py                 # identidade, imutabilidade, nome oficial do INE — sem eixo de armazém
-│   ├── intake.py                    # localizar em --in, copiar, sem rede
-│   └── validate.py                  # validação independente
-├── tests/                           # stdlib unittest, sem rede, sem os 110 MB reais
-└── venv/                            # ambiente de build, criado por `make venv`; ignorado
+│   ├── cli.py                       # subcommands and exit codes
+│   ├── canonical.py                 # canonical JSON manifest + atomic verbatim copy
+│   ├── schema.py                    # structural facts (line count/width), no field parsing
+│   ├── partition.py                 # identity, immutability, official INE name — no warehouse axis
+│   ├── intake.py                    # locate in --in, copy, no network
+│   └── validate.py                  # independent validation
+├── tests/                           # stdlib unittest, no network, without the real 110 MB
+└── venv/                            # build environment, created by `make venv`; ignored
 ```
 
-Os snapshots **não ficam aqui**. A partição que a plataforma consome vive em
-`<raiz>/data/callejero/ingestion_date=…/`:
+The snapshots **do not live here**. The partition the platform consumes lives in
+`<root>/data/callejero/ingestion_date=…/`:
 
 ```
 data/callejero/ingestion_date=2026-08-25/
 ├── provinces/
-│   ├── province=08/{SECC,UP,VIAS,PSEU,TRAM}.P08.D<data>.G<geracao>
-│   ├── province=28/{SECC,UP,VIAS,PSEU,TRAM}.P28.D<data>.G<geracao>
+│   ├── province=08/{SECC,UP,VIAS,PSEU,TRAM}.P08.D<date>.G<generation>
+│   ├── province=28/{SECC,UP,VIAS,PSEU,TRAM}.P28.D<date>.G<generation>
 │   ├── province=41/...
 │   └── province=46/...
 ├── _manifest.json
@@ -141,112 +141,112 @@ data/callejero/ingestion_date=2026-08-25/
 └── _run.log
 ```
 
-## Forma dos arquivos
+## Output layout
 
-**Bytes originais, sem reserialização.** Ao contrário das outras duas Sources (que
-reserializam JSON numa forma canônica), os 5 datasets são texto de largura fixa em
-ISO-8859-1 (Latin-1) com CRLF — copiados exatamente como o INE os distribui. O SHA-256
-registrado é sobre o arquivo original, não sobre uma transformação desta Source.
+**Original bytes, no reserialization.** Unlike the other two Sources (which
+reserialize JSON into a canonical form), the 5 datasets are fixed-width text in
+ISO-8859-1 (Latin-1) with CRLF — copied exactly as INE distributes them. The recorded SHA-256
+is over the original file, not over a transformation by this Source.
 
-O layout de coluna medido de cada dataset está em
-[CONTRACT.md § 2](CONTRACT.md#2-conteúdo-garantido). Resumo: `SECC` é só um código de
-10 dígitos (província+município+distrito+seção); `VIAS`/`PSEU` têm código + nome de
-via/pseudovia em 2-3 formas redundantes; `UP` tem 604 caracteres com o nome do
-município numa posição e o nome da unidade populacional (núcleo) noutra; `TRAM` liga,
-num só registro, seção + entidade/núcleo + via ou pseudovia + **código postal** +
-faixa de numeração — é o único dos 5 com CEP. Nenhum dos 5 tem bairro administrativo
-oficial (isso é da prefeitura de cada cidade, não do INE).
+The measured column layout of each dataset is in
+[CONTRACT.md § 2](CONTRACT.md#2-guaranteed-content). Summary: `SECC` is just a
+10-digit code (province+municipality+district+section); `VIAS`/`PSEU` have a code + the
+street/pseudo-street name in 2-3 redundant forms; `UP` has 604 characters with the
+municipality name in one position and the population unit (nucleus) name in another; `TRAM` links,
+in a single record, section + entity/nucleus + street or pseudo-street + **postal code** +
+number range — it is the only one of the 5 with a postal code. None of the 5 has an official
+administrative neighborhood (that belongs to each city's council, not to INE).
 
 ### `_manifest.json`
 
-Registra `manifest_version`, `run_id`, janela de execução, duração, `complete`,
+Records `manifest_version`, `run_id`, run window, duration, `complete`,
 `source`, `partition`, `config` (`in_dir`, `provinces`, `datasets`, `overwrite`),
-`totals` e a lista de arquivos com `sha256`, `bytes`, `line_count` e
-`dominant_line_width`. Combinações (província, dataset) que não foram encontradas em
-`--in` ficam em `failures[]`; o resumo das execuções anteriores sobre a mesma partição
-fica em `history[]`.
+`totals` and the file list with `sha256`, `bytes`, `line_count` and
+`dominant_line_width`. (province, dataset) combinations not found in
+`--in` go into `failures[]`; the summary of previous runs over the same partition
+goes into `history[]`.
 
-`files[].path` é relativo à **raiz do snapshot** (`--out`), começando em
+`files[].path` is relative to the **snapshot root** (`--out`), starting at
 `ingestion_date=…/`.
 
-## Comportamento operacional
+## Operational behavior
 
-**Sem rede, sem throttle, sem retry.** `extract` só lê arquivos locais.
+**No network, no throttle, no retry.** `extract` only reads local files.
 
-**Retomada.** Um arquivo já landado numa partição incompleta é reaproveitado se ainda
-bater com o arquivo atual em `--in`; se divergir, vira falha (`--overwrite` resolve a
-favor do que está em `--in` agora).
+**Resume.** An already landed file in an incomplete partition is reused if it still
+matches the current file in `--in`; if it diverges, it becomes a failure (`--overwrite` resolves it in
+favor of what is in `--in` now).
 
-**Identidade antes do fan-out.** Um manifesto preliminar (`complete: false`) é gravado
-assim que a partição é criada, antes de qualquer arquivo ser copiado.
+**Identity before the fan-out.** A preliminary manifest (`complete: false`) is written
+as soon as the partition is created, before any file is copied.
 
-**Códigos de saída.** Ver [CONTRACT.md § 7](CONTRACT.md).
+**Exit codes.** See [CONTRACT.md § 7](CONTRACT.md).
 
-## Restrições da fonte
+## Source restrictions
 
-- **Sem API.** O Callejero só é distribuído para download manual, no site do INE (ver
-  [De onde vêm os dados](#de-onde-vêm-os-dados)).
-- **Publicação semestral**, sem garantia de conteúdo diferente entre publicações —
-  molda a orquestração desta Source na plataforma (sem cron; sob demanda), não o
-  comportamento desta Source em si.
-- **Layout não documentado dentro do próprio `.zip`.** A tabela em CONTRACT.md § 2 foi
-  reconstruída medindo os arquivos reais das 4 províncias dos warehouses (e, para
-  `TRAM`, cruzada contra o "Diseño de registro" oficial do INE/IDA-Padrón); pode não
-  generalizar para outras províncias sem revalidação.
-- **CEP só em `TRAM`** (campo `CPOS`); os outros 4 datasets não têm. **Bairro
-  administrativo oficial não existe em nenhum dos 5** — confirmado por inspeção, não
-  presumido por ausência de busca. O mais próximo é o núcleo/pedania do `UP`, que só
-  tem granularidade útil em València entre os 4 warehouses (16 núcleos nomeados);
-  Madrid/Barcelona/Sevilla capital são uma entidade única sem subdivisão no `UP`.
+- **No API.** The Callejero is only distributed for manual download, on the INE website (see
+  [Where the data comes from](#where-the-data-comes-from)).
+- **Published twice a year**, with no guarantee of different content between publications —
+  this shapes how the platform orchestrates this Source (no cron; on demand), not the
+  behavior of this Source itself.
+- **Layout not documented inside the `.zip` itself.** The table in CONTRACT.md § 2 was
+  reconstructed by measuring the real files of the 4 warehouse provinces (and, for
+  `TRAM`, cross-checked against the official INE/IDA-Padrón "Diseño de registro"); it may not
+  generalize to other provinces without revalidation.
+- **Postal code only in `TRAM`** (field `CPOS`); the other 4 datasets do not have it. **An official
+  administrative neighborhood does not exist in any of the 5** — confirmed by inspection, not
+  assumed from a lack of searching. The closest is the `UP` nucleus/pedanía, which only
+  has useful granularity in València among the 4 warehouses (16 named nuclei);
+  Madrid/Barcelona/Sevilla city are a single entity with no subdivision in `UP`.
 
-## Validação
+## Validation
 
-`validate` relê todos os arquivos declarados no manifesto, recalculando checksum e
-estatísticas de linha em vez de aceitar os valores registrados, e varre o diretório em
-busca de arquivos não declarados.
+`validate` rereads every file declared in the manifest, recomputing checksum and
+line statistics instead of accepting the recorded values, and scans the directory
+for undeclared files.
 
-**Integridade** — sempre fatal: manifesto ausente, ilegível ou sem a lista `files` ·
-`manifest_version` incompatível · entrada malformada · entrada apontando para fora da
-raiz do snapshot · arquivo declarado e ausente · SHA-256, tamanho ou contagem de linhas
-divergente · arquivo em disco fora do manifesto · `_SUCCESS` incoerente com `complete`
-· combinação (província, dataset) configurada sem arquivo · `totals.files_landed` ou
-`totals.bytes` divergentes da releitura · falha registrada em `failures[]`.
+**Integrity** — always fatal: manifest missing, unreadable or without the `files` list ·
+incompatible `manifest_version` · malformed entry · entry pointing outside the
+snapshot root · declared file missing · SHA-256, size or line count
+mismatch · file on disk not in the manifest · `_SUCCESS` inconsistent with `complete`
+· configured (province, dataset) combination without a file · `totals.files_landed` or
+`totals.bytes` diverging from the reread · failure recorded in `failures[]`.
 
-**Avisos** — reportados, fatais só com `--strict`: largura de linha dominante diferente
-da registrada no manifesto (sinal de possível mudança de layout do INE).
+**Warnings** — reported, fatal only with `--strict`: dominant line width different
+from the one recorded in the manifest (a sign of a possible INE layout change).
 
-## Dependências e container
+## Dependencies and container
 
-**Runtime: nenhuma.** `tests/test_dependencies.py` percorre a AST de todos os módulos
-e falha se aparecer qualquer import de terceiro.
+**Runtime: none.** `tests/test_dependencies.py` walks the AST of every module
+and fails if any third-party import appears.
 
-| Arquivo | Conteúdo | Quando é necessário |
+| File | Content | When it is needed |
 |---|---|---|
-| [requirements.txt](requirements.txt) | vazio, só comentários | nunca |
-| [requirements-build.txt](requirements-build.txt) | `setuptools`, `wheel`, `packaging` | apenas para `pip install .` / construir a wheel |
+| [requirements.txt](requirements.txt) | empty, comments only | never |
+| [requirements-build.txt](requirements-build.txt) | `setuptools`, `wheel`, `packaging` | only for `pip install .` / building the wheel |
 
 ### Container
 
-A imagem **não precisa instalar nenhum pacote de terceiros** — `dependencies = []`
-significa que o código roda com `PYTHONPATH=src python -m ine_callejero_source` no
-próprio interpretador do Airflow. Sem `Dockerfile` dedicado.
+The image **does not need to install any third-party package** — `dependencies = []`
+means the code runs with `PYTHONPATH=src python -m ine_callejero_source` on
+Airflow's own interpreter. No dedicated `Dockerfile`.
 
-## Testes
+## Tests
 
-Suíte em `unittest` da biblioteca padrão, sem rede e sem os 110 MB de arquivos reais —
-`tests/support.py` gera arquivos de amostra com a mesma largura fixa medida contra os
-arquivos de produção. Cobre: cópia atômica sob falha, preservação de bytes (inclusive
-sequências inválidas em UTF-8, já que o encoding real é Latin-1), recusa de nome de
-arquivo fora do padrão do INE, imutabilidade, retomada de partição incompleta,
-divergência entre arquivo já landado e `--in` atual, inclusão de `TRAM` (5º dataset),
-detecção de órfãos, coerência de `_SUCCESS`, adulteração de totais, e ausência de
-dependência de terceiros.
+A standard-library `unittest` suite, with no network and without the 110 MB of real files —
+`tests/support.py` generates sample files with the same fixed widths measured against the
+production files. Covers: atomic copy under failure, byte preservation (including
+invalid UTF-8 sequences, since the real encoding is Latin-1), rejection of file
+names outside the INE pattern, immutability, resume of an incomplete partition,
+divergence between an already landed file and the current `--in`, inclusion of `TRAM` (5th dataset),
+orphan detection, `_SUCCESS` consistency, tampered totals, and absence of
+third-party dependencies.
 
-**Validação contra os arquivos reais do Callejero** foi feita durante o
-desenvolvimento desta Source: medição de encoding, largura e offsets de coluna para
-os 5 datasets (ver CONTRACT.md § 2), incluindo o campo `CPOS` (CEP) de `TRAM`
-cross-validado contra ~305 mil linhas reais das 4 províncias e contra geografia real
-(prefixo de província sempre correto, núcleos de València batendo com o CEP conhecido
-da área). Execução `make callejero-refresh` completa (extract → validate --strict →
-land → verify-landing → silver) contra os arquivos de produção das 4 províncias — ver
+**Validation against the real Callejero files** was done during the
+development of this Source: measurement of encoding, width and column offsets for
+the 5 datasets (see CONTRACT.md § 2), including the `CPOS` (postal code) field of `TRAM`
+cross-validated against ~305 thousand real lines from the 4 provinces and against real geography
+(province prefix always correct, València nuclei matching the known postal code
+of the area). A full `make callejero-refresh` run (extract → validate --strict →
+land → verify-landing → silver) against the production files of the 4 provinces — see
 [DECISIONS.md](../../DECISIONS.md#third-source-ine-callejero).

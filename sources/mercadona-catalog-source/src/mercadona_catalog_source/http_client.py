@@ -1,8 +1,8 @@
-"""Cliente HTTP sequencial contra a API publica da Mercadona.
+"""Sequential HTTP client for Mercadona's public API.
 
-Comportamento medido contra a fonte (ver README.md, secao "Restricoes da fonte"):
-requisicoes sequenciais espacadas nao foram bloqueadas; rajadas concorrentes produziram
-403 intermitente. Por isso o cliente e estritamente sequencial e limitado por taxa.
+Behavior measured against the source (see README.md, section "Source restrictions"):
+spaced sequential requests were not blocked; concurrent bursts produced intermittent
+403s. That is why the client is strictly sequential and rate-limited.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import urllib.request
 
 BASE_URL = "https://tienda.mercadona.es/api"
 
-# Identidade enviada a fonte. Ver README.md, secao "Restricoes da fonte": o host declara
-# Disallow: /api em robots.txt e este User-Agent nao se identifica como robo.
+# Identity sent to the source. See README.md, section "Source restrictions": the host declares
+# Disallow: /api in robots.txt and this User-Agent does not identify itself as a robot.
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -29,7 +29,7 @@ BACKOFF_CAP_SECONDS = 60.0
 
 
 class Fetcher:
-    """Cliente HTTP sequencial com throttle por taxa e backoff exponencial."""
+    """Sequential HTTP client with rate throttling and exponential backoff."""
 
     def __init__(
         self,
@@ -49,19 +49,20 @@ class Fetcher:
         self._last_request_at = 0.0
 
     def _throttle(self) -> None:
-        """Limita a taxa a 1/delay req/s, medindo do inicio da requisicao anterior."""
+        """Limits the rate to 1/delay req/s, measured from the start of the previous request."""
         elapsed = time.monotonic() - self._last_request_at
         if self._last_request_at and elapsed < self.delay:
             time.sleep(self.delay - elapsed)
 
     def get_json(self, path: str, params: dict) -> tuple[object | None, str | None]:
-        """Retorna (payload, None) em sucesso ou (None, motivo) apos esgotar as tentativas.
+        """Returns (payload, None) on success or (None, reason) after exhausting the attempts.
 
-        O payload nao e validado aqui: qualquer JSON valido e devolvido como veio. A
-        checagem de forma e responsabilidade de schema.py.
+        The payload is not validated here: any valid JSON is returned as received. Shape
+        checking is schema.py's responsibility.
         """
         query = urllib.parse.urlencode(sorted(params.items()))
         url = f"{self.base_url}{path}?{query}" if query else f"{self.base_url}{path}"
+        # Kept verbatim ("no attempt"): it can be persisted into the manifest's failures[].error.
         last_error = "sem tentativa"
 
         for attempt in range(self.max_retries + 1):
@@ -77,7 +78,7 @@ class Fetcher:
             except urllib.error.HTTPError as exc:
                 last_error = f"HTTP {exc.code}"
                 retryable = exc.code in RETRYABLE_STATUS
-            except Exception as exc:  # timeout, reset de conexao, corpo JSON invalido
+            except Exception as exc:  # timeout, connection reset, invalid JSON body
                 last_error = f"{type(exc).__name__}: {exc}"
                 retryable = True
 
@@ -87,8 +88,8 @@ class Fetcher:
             self.retries += 1
             backoff = min(BACKOFF_BASE_SECONDS * (2**attempt), BACKOFF_CAP_SECONDS)
             self.log(
-                f"    retry {attempt + 1}/{self.max_retries} apos {last_error}; "
-                f"aguardando {backoff:.0f}s"
+                f"    retry {attempt + 1}/{self.max_retries} after {last_error}; "
+                f"waiting {backoff:.0f}s"
             )
             time.sleep(backoff)
 
