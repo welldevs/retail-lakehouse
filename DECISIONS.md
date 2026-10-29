@@ -3501,4 +3501,26 @@ Numbers         English notation (7,285,229 · 65.0%) in every current doc and g
 Loss             Nothing that was true stops being true.
 ```
 
+### CR-015 · MinIO images that can still be pulled
+
+```
+Need             CI's `platform` job red since 2026-09-14 (dde29c8, 48d59a5, d90ab31), always
+                 at `make up`. Cause measured against the registries: minio/minio and
+                 minio/mc answer 401 on Docker Hub and on quay.io (postgres answers 200).
+                 Every local machine kept working on a 13-month-old cached image, so nothing
+                 but a cacheless runner could see it.
+Component        infra/docker-compose.yml: services `minio` and `mc` only.
+Change           minio/minio:latest → pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+                 minio/mc:latest    → pgsty/mc:RELEASE.2026-10-26T00-00-00Z
+                 Community build of the same MinIO binary: same CLI, same S3 API, `mc`
+                 still inside the server image (the healthcheck `mc ready local` needs it).
+                 Pinned, not `latest`: a floating tag is how this break arrived unannounced.
+Contracts        Unchanged: endpoint, ports, credentials, bucket names, RAW versioning, the
+                 `minio-data` volume.
+Proof            2026-10-29, the CI sequence on a clean clone in an isolated compose project:
+                 `make up` (minio healthy), `compose wait mc` exit 0 (buckets created, RAW
+                 versioning enabled), `make silver` PASS=70 with every source ABSENT.
+Loss             The images are no longer published by MinIO itself.
+```
+
 Decisions logged on 2026-10-29.

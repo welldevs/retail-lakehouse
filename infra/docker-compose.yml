@@ -122,8 +122,12 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
+  # pgsty/*, not minio/*: the official images stopped being publicly pullable (Docker Hub
+  # and quay.io answer 401), which broke CI's `make up` on any machine without a cache.
+  # Same MinIO binary, community-built. PINNED: `latest` is how that break arrived silently.
+  # See DECISIONS.md § "CR-015".
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     container_name: retail-minio
     command: server /data --console-address ":9001"
     environment:
@@ -150,7 +154,7 @@ services:
   # Creates the buckets and exits. `versioning` on the RAW bucket: a landed partition is never
   # silently overwritten, mirroring the immutability the Source guarantees on disk.
   mc:
-    image: minio/mc:latest
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
     container_name: retail-mc
     depends_on:
       minio:
