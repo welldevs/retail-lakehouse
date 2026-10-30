@@ -179,7 +179,10 @@ INDICATORS: tuple[Indicator, ...] = (
                    round(((colocado - apurado - delta_separacao)
                          /nullif(pedidos - separados,0))::numeric,2) from t
             union all
-            select 3, 'TOTAL unfulfilled', colocado - apurado, pedidos - separados, null from t
+            -- The total spreads over EVERY placed order: it showed the 9,423 dead orders
+            -- next to a total that also holds the picking loss of 201,944 others.
+            select 3, 'TOTAL unfulfilled', colocado - apurado, pedidos,
+                   round(((colocado - apurado)/nullif(pedidos,0))::numeric,2) from t
             order by ordem
         """,
     ),

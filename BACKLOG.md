@@ -26,7 +26,6 @@ test catches.
 | **Margin, profit, COGS** | The Mercadona API exposes **selling** price, never acquisition cost. No other source has cost. | A per-product cost source. |
 | **Seasonality, YoY, monthly comparison** | The observed catalog covers days, not months. A trend over 9 days measures noise. | A months-long catalog window — which requires running the extraction over months, not a modeling decision. |
 | **Observed inventory** | No source in this repository measures actual stock. Phase 7's ledger is **calculated** from observed consumption plus a declared policy, and the `synthetic` label travels with every row. | A stock-balance or stock-movement source. |
-| **Day-of-week cadence** | `daily_order_rate` is fixed by construction, so the daily order count per warehouse is constant. There's no Monday effect and no weekend effect, and inventing one would mean picking a curve nobody measured. | A source that measures weekly purchase cadence in Spanish grocery retail. |
 
 ---
 
@@ -66,24 +65,6 @@ value-share target per block, is the same mechanism as the MAPA groups.
 **Declared trade-off.** `13.1.1.3` lumps perfume, shampoo and make-up together: the EPF would
 fix cleaning against personal care, never perfume against shampoo. Saying more than that would
 be inventing the split.
-
-### The projection rebuild is O(n²)
-
-**Measured on 2026-09-01.** `orders-rebuild-projection` rebuilt 206,523 orders in **414
-commits and ~55 minutes**. Each commit is a pyiceberg `upsert` against the whole table, so
-the per-batch cost grows with what's already been written. In Phase 3, with 6,400 orders,
-this took seconds and was invisible.
-
-**This is the one place in the project where volume actually hurt** — and the irony is worth
-noting: Spark's justification says the volume trigger never fired, and it fired here, on the
-Python path.
-
-**The trigger, which is also the fix.** When `--reset` is used, the table starts **empty**
-and there's no concurrent writer: there's nothing to `upsert` against. A single-batch
-`append` path in that case trades 414 commits for a handful, and the cost goes back to
-linear. It wasn't done because the regeneration is one-off and happens before the freeze —
-but **on a fresh machine it's a 55-minute tax**, and that's reason enough for the item to sit
-here instead of disappearing.
 
 ### Second-pass order generator
 

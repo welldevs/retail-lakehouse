@@ -4,7 +4,7 @@
 from [`prices.py`](../../platform/src/retail_platform/indicators/prices.py), where the query and the explanation
 live together.
 
-Derived from `prices.py` sha256 `3c363ec255626b09ceb39c3087735bbd5174ba61a22f71564e9a1b428898e84f` — a hash, not a date, so
+Derived from `prices.py` sha256 `ba2784bcaea12393f4d1f1b4f18a2b80186e2f51a77777b47667790762b511e7` — a hash, not a date, so
 regenerating an up-to-date page changes no byte.
 
 ## What it's for
@@ -206,6 +206,7 @@ select
 
 1. `taxa_de_mudanca` divides changed transitions by TOTAL transitions observed in that category (changed + stable + new), not by product count — a category sampled on more days naturally accumulates more transitions. It answers "how often does a look at this category show something different", not "what fraction of its catalog changed".
 2. `oscilacao_media_pct` is built on `purchasable_price_delta_pct`, and so is `change_type` itself — never on the source's raw `unit_price`, which is a selector ceiling (not a real price) for a small number of weight-sold products.
+3. A category needs at least 10 price changes in the period to be ranked: ordered by average swing, `Carne` (Congelados) topped the list on 2026-10-30 with ONE change in 43 transitions. One observation is an anecdote, not volatility.
 
 ```sql
 select
@@ -221,7 +222,7 @@ select
             from "MART".mart_price_evolution
             where snapshot_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             group by 1, 2
-            having count(*) filter (where change_type = 'preco_alterado') > 0
+            having count(*) filter (where change_type = 'preco_alterado') >= 10
             order by oscilacao_media_pct desc nulls last
 ```
 
@@ -326,6 +327,8 @@ select
 **Caveats when rebuilding elsewhere**
 
 1. `is_new_arrival` and `is_pack` are source flags carried straight through from `fact_price_snapshot`, scoped out of this panel's own verification on purpose: unlike the source's `price_decreased` flag (measured false on 100% of rows and replaced by a derived column), nothing in this project's data has yet shown `is_new_arrival` to be unreliable. Declared as unverified, not assumed correct — the same distinction the rest of this panel draws between observed and proven.
+2. `is_new_arrival` is the source's "new" BADGE, which stays on for weeks: about 100 flagged products per warehouse per day, against 207 `entrou` rows over the whole 2026-08-24..09-01 window. Two different questions — never label the badge "entered the catalog".
+3. `products_exclusive_here` is null on a day only one warehouse was collected (mad1 alone on 2026-08-15 and 08-16): with nothing to compare against, every product would count as exclusive.
 
 ```sql
 select
@@ -333,8 +336,14 @@ select
                 sum(products)                as produtos,
                 sum(new_arrivals)             as novidades,
                 sum(packs)                    as pacotes,
-                sum(products_exclusive_here)  as exclusivos_do_armazem
-            from "MART".mart_assortment_daily
+                -- On a day only ONE warehouse was collected, every product is "exclusive"
+                -- to it (mad1 on 08-15 and 08-16: 4,329 of 4,329). Null, not a number.
+                -- Counted over ALL warehouses, not the filtered ones: exclusivity is
+                -- against the whole network, and a one-warehouse filter must not blank it.
+                case when (select count(distinct o.wh) from "MART".mart_assortment_daily o
+                           where o.snapshot_date = a.snapshot_date) > 1
+                     then sum(products_exclusive_here) end as exclusivos_do_armazem
+            from "MART".mart_assortment_daily a
             where snapshot_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             group by 1, 2
             order by 1, 2

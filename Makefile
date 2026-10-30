@@ -125,7 +125,7 @@ ORDERS_PARTITION        = $(ORDERS_DATA_ROOT)/ingestion_date=$(ORDERS_DATE)/wh=$
 ORDERS_DATE            ?= $(ORDERS_FROM)
 ORDERS_OVERWRITE       ?=
 
-.PHONY: help up down logs status venv secrets test source-test platform-test \
+.PHONY: dashboard-shots dashboard-shots-approve help up down logs status venv secrets test source-test platform-test \
         extract validate land verify-landing silver daily query duckdb-secret \
         airflow airflow-down airflow-logs airflow-trigger clean-duckdb \
         ine-extract ine-validate ine-land ine-verify-landing ine-refresh ine-trigger \
@@ -292,6 +292,8 @@ help:
 	@echo "  dashboard                 operations panel at http://localhost:$(DASHBOARD_PORT)"
 	@echo "  price-dashboard           prices panel at http://localhost:$(PRICE_DASHBOARD_PORT)"
 	@echo "  dashboard-check           renders both panels and demands zero exceptions (live warehouse)"
+	@echo "  dashboard-shots           every tab of both panels, to the bottom, into docs/screens/dashboard/"
+	@echo "  dashboard-shots-approve   records that every PNG was READ (NOTE=...); make test needs it"
 	@echo ""
 	@echo "derived seeds (on demand; the versioned CSV is the truth, the script is the provenance) —"
 	@echo "  seed-province-map         wh -> province/municipality, re-checked against the Callejero"
@@ -1011,6 +1013,22 @@ PRICE_DASHBOARD_PORT ?= 8502
 price-dashboard:
 	$(PLATFORM_PY) -m streamlit run streamlit/prices_app.py \
 	  --server.port $(PRICE_DASHBOARD_PORT) --server.headless true
+
+# ---- dashboard screenshots — published evidence, so never unread ---------------------
+# REQUIRES both panels running (make dashboard / make price-dashboard) and Playwright for
+# Node (`npx playwright install chromium`; point SHOTS_NODE_PATH at its node_modules).
+# Each tab is measured and shot to the bottom, or the run fails (CR-018: a review trusted
+# shots cut at 1000 px). The manifest carries the seal the shots show and `reviewed_at:
+# null`: test_docs.py stays red until the seal matches docs/FREEZE.md AND someone has opened
+# every PNG and run dashboard-shots-approve. A regeneration (new seal) turns it red again.
+SHOTS_DIR       ?= docs/screens/dashboard
+SHOTS_NODE_PATH ?= $(patsubst %/playwright,%,$(firstword $(wildcard $(HOME)/.npm/_npx/*/node_modules/playwright)))
+dashboard-shots:
+	@CAPTURE=$$(grep -o '[0-9a-f]\{64\}' docs/FREEZE.md | head -1); \
+	  NODE_PATH=$(SHOTS_NODE_PATH) node scripts/dashboard_shots.js $(SHOTS_DIR) $$CAPTURE
+
+dashboard-shots-approve:
+	@$(PLATFORM_PY) scripts/approve_dashboard_shots.py $(SHOTS_DIR) "$(NOTE)"
 
 warehouse-trigger:
 	$(COMPOSE) exec airflow-scheduler airflow dags unpause warehouse_load

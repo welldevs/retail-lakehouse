@@ -6,7 +6,7 @@ byte-for-byte in object storage, models it with dbt on DuckDB, and serves a dime
 warehouse and two dashboards — with synthetic customers and orders flowing, on demand,
 through an OLTP → Kafka → Iceberg stream plane.
 
-![Operations dashboard — commercial tab, reading only the MART](docs/screens/dashboard-commercial-en.png)
+![Operations dashboard — commercial tab, reading only the MART](docs/screens/dashboard/cover.png)
 
 The customer is invented, the address where they live is not; the order is invented, but
 who buys, what is bought, and how much it costs is not. Every Source is a **frozen,
@@ -214,6 +214,22 @@ The most actionable gap: **no mart joins customer with order** — the link exis
 `FACT_ORDER.customer_sk`, in GOLD, out of `retail_reader`'s reach by design (debt item #4).
 `make dashboard-check` renders both panels with `AppTest` against the live warehouse and
 demands zero exceptions. Details in [`streamlit/README.md`](streamlit/README.md).
+
+## Dashboards — every tab, seal `a781ea46…`, 2026-10-30
+
+Every tab of both panels, shot to the bottom by `make dashboard-shots` and read before
+publishing (CR-018). Orders, customers and stock are **synthetic**, shaped by INE and MAPA;
+prices and assortment are **observed** Mercadona snapshots.
+
+| | |
+|---|---|
+| ![Commercial](docs/screens/dashboard/operations-01-commercial.png) **Commercial** — funnel, where orders leak, value lost by cause, orders placed per day (Sunday orders exist; Sunday deliveries do not) | ![Operations](docs/screens/dashboard/operations-02-operations.png) **Operations** — picking SLA, time per stage (the ~27 h wait is the chosen slot, D+1 at the earliest), 92% inside the delivery window |
+| ![Basket](docs/screens/dashboard/operations-03-basket.png) **Basket** — revenue by category, substitution higher in fresh food, consumption profile by age band | ![Assortment and price](docs/screens/dashboard/operations-04-assortment-and-price.png) **Assortment and price** — catalog per warehouse, catalog movement, largest observed price changes |
+| ![Supply and demand](docs/screens/dashboard/operations-05-supply-and-demand.png) **Supply and demand** — products offered vs ordered, by category | ![Customers](docs/screens/dashboard/operations-06-customers.png) **Customers** — the synthetic base by age band and sex, coverage of every municipality in the service area |
+| ![Inventory](docs/screens/dashboard/operations-07-inventory.png) **Inventory** — computed stock ledger. Declared open defect: 87% of the shortage falls on 2026-09-01, because the min-max policy does not know Sunday has no picking (CR-018) | ![Price drops](docs/screens/dashboard/prices-01-drops-offers.png) **Price Watch: drops** — observed decreases between two snapshots, not confirmed promotions |
+| ![Price increases](docs/screens/dashboard/prices-02-increases.png) **Price Watch: increases** | ![Daily movement](docs/screens/dashboard/prices-03-daily-movement.png) **Price Watch: daily movement** — gaps are days the catalog was not collected |
+| ![Categories](docs/screens/dashboard/prices-04-categories.png) **Price Watch: categories** — volatility ranked only with at least 10 changes | ![Product](docs/screens/dashboard/prices-05-product.png) **Price Watch: one product** — avocado, warehouse by warehouse |
+| ![Catalog](docs/screens/dashboard/prices-06-catalog.png) **Price Watch: catalog** — Mercadona's "new" badge per day, not catalog entries | |
 
 ## Orchestration — the six pipelines, run on 2026-10-30
 

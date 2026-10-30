@@ -3671,3 +3671,70 @@ Loss             Customer, order and stock numbers published before this CR desc
 ```
 
 Decision logged on 2026-10-30.
+
+### CR-018 · Reading every tab to the bottom — what the panel still said wrong
+
+```
+Need             Answer whether the two Streamlit panels are consistent end to end. The
+                 CR-017 visual pass had read only the first screen of each tab: Streamlit
+                 scrolls inside its own container, so the screenshots stopped at 1000 px.
+Evidence         Taken again at full height, 2026-10-30:
+                 1. "Orders delivered by day" showed ~9,800 deliveries on Sunday 08-30. The
+                    series is keyed by ORDER date; the operation never delivers on Sunday
+                    (by delivery date, GOLD: 0 on 08-30, 33,738 on Monday 08-31). Relabelled
+                    "by order date", it was still read as Sunday deliveries, so the chart
+                    now shows orders PLACED; delivered stays in the table, named as later.
+                    Its axis, left to Vega, mixed "Mon 24 … Aug 30 … September" (the Sunday
+                    and the 1st looked like another kind of day) and the tooltip said 8848:
+                    `display.daily_bars` draws it in Altair, one label per day ("Sun 30").
+                 2. Unstacked bars over a date axis overlapped: bcn1 was hidden behind mad1,
+                    and the catalog chart looked as if only vlc1 was collected.
+                 3. Value loss TOTAL showed 9,423 orders (the dead ones) next to a total that
+                    also holds the picking loss of 201,944 other orders.
+                 4. "Exclusive to this warehouse" = 4,329 of 4,329 on 08-15/16, the days only
+                    mad1 was collected.
+                 5. "New arrivals" (~100 per warehouse per day, Mercadona's "Novedad" badge)
+                    sat beside `entrou` (207 in nine days) with no word on the difference.
+                 6. Raw aliases and codes on screen: PRODUTOS_NO_DIA, TAXA_DE_ATENDIMENTO,
+                    MOEDA, CATEGORIA_NIVEL1, FIM/INICIO/LINHAS, `estavel`/`preco_alterado`,
+                    an empty change type as "None", Hombres/Mujeres, 151.000000 for a
+                    category id, "00:00:00" on every date, a "streamlit-generated" axis.
+                 7. BACKLOG still listed "Day-of-week cadence" and "projection rebuild is
+                    O(n²)" as open; CR-017 closed both.
+                 8. Reading every full-height shot before publishing found more: tables cut
+                    sideways in every side-by-side layout (the stage table lost its Orders
+                    column), the age-profile chart with its axes swapped, coverage as 0.99
+                    beside percentages, "most volatile" led by a category with ONE change in
+                    43 transitions, drops hidden under increases, and the product chart
+                    drawing four "aguacate" products as one 1.60-3.50 sawtooth.
+                 9. docs/screens/dashboard-inventory-en.png (2026-09-04) still showed 206,523
+                    orders and a 95,11 ticket in Portuguese notation, two regenerations old.
+Component        streamlit/display.py (dates, null text, ids, CHANGE_TYPE), operations_app.py
+                 and prices_app.py (labels, stacked/line charts, order-date captions),
+                 indicators: `decomposicao_perda` (TOTAL over all placed orders: 211,367,
+                 4.48 per order) and `entradas_e_pacotes` (exclusivity null on a
+                 one-warehouse day, counted over the whole network), docs/indicators
+                 regenerated, streamlit/smoke.py, BACKLOG; volatility needs >= 10 changes;
+                 docs/screens/dashboard/ (cover + 13 tabs, README gallery) replaces
+                 dashboard-commercial-en.png and the stale dashboard-inventory-en.png.
+Contracts        None. MART untouched; two catalog queries change their output.
+Regression       `make dashboard-check` fails on any upper-case column header reaching the
+                 screen (it caught FIM/INICIO/LINHAS/MART after the first fix round).
+                 `make dashboard-shots` (scripts/dashboard_shots.js) measures every tab and
+                 fails on a truncated tab or a table that scrolls sideways (it caught three
+                 after the layout fix); its MANIFEST.json carries the seal and `reviewed_at`.
+                 `test_docs.DashboardScreenshotsTest` keeps `make test` red while the shots
+                 are of another seal, unapproved (`make dashboard-shots-approve`, written
+                 only after reading every PNG), or outside docs/screens/dashboard/. User
+                 rule, 2026-10-30: no screenshot is published unread.
+Proof            2026-10-30: dashboard-check PASSED (operations 13 metrics / 20 tables,
+                 prices 6 / 7, zero warnings, GOLD and STAGE refused); `make test` green;
+                 every tab of both panels re-shot at full height and read.
+Loss             None in data. Found and NOT fixed, because it is a model decision: the
+                 min-max stock ledger has no weekday awareness. With no Sunday picking and
+                 the Monday backlog (CR-017), nothing is ordered on Sunday, so nothing
+                 arrives on Tuesday 09-01, which takes 20,133 of the 23,024 short units
+                 (87%). The 99.61% fulfilment KPI hides it.
+```
+
+Decision logged on 2026-10-30.

@@ -1,0 +1,106 @@
+{
+  "capture_id": "a781ea4602b03a759da7608006446c724554c787bbd91054f8105d9edc4a6e6a",
+  "taken_at": "2026-10-30T17:56:54.347Z",
+  "reviewed_at": "2026-10-30T17:57:33+00:00",
+  "reviewed_note": "All 14 PNGs read at full height on 2026-10-30 after CR-018 fixes: no hidden column (sideways guard), English labels, order-date axes, TOTAL over 211,367, one product per price chart. Known and declared: 87% of stock shortage on 2026-09-01 (min-max ledger without weekday awareness, open in CR-018).",
+  "files": [
+    {
+      "file": "cover.png",
+      "panel": "operations",
+      "tab": "cover",
+      "height": 1000,
+      "content_height": 1000
+    },
+    {
+      "file": "operations-01-commercial.png",
+      "panel": "operations",
+      "tab": "Commercial",
+      "height": 2200,
+      "content_height": 2200
+    },
+    {
+      "file": "operations-02-operations.png",
+      "panel": "operations",
+      "tab": "Operations",
+      "height": 1399,
+      "content_height": 1399
+    },
+    {
+      "file": "operations-03-basket.png",
+      "panel": "operations",
+      "tab": "Basket",
+      "height": 3493,
+      "content_height": 3493
+    },
+    {
+      "file": "operations-04-assortment-and-price.png",
+      "panel": "operations",
+      "tab": "Assortment and price",
+      "height": 1657,
+      "content_height": 1657
+    },
+    {
+      "file": "operations-05-supply-and-demand.png",
+      "panel": "operations",
+      "tab": "Supply and demand",
+      "height": 1433,
+      "content_height": 1433
+    },
+    {
+      "file": "operations-06-customers.png",
+      "panel": "operations",
+      "tab": "Customers",
+      "height": 1734,
+      "content_height": 1734
+    },
+    {
+      "file": "operations-07-inventory.png",
+      "panel": "operations",
+      "tab": "Inventory",
+      "height": 2848,
+      "content_height": 2848
+    },
+    {
+      "file": "prices-01-drops-offers.png",
+      "panel": "prices",
+      "tab": "Drops (offers?)",
+      "height": 1117,
+      "content_height": 1117
+    },
+    {
+      "file": "prices-02-increases.png",
+      "panel": "prices",
+      "tab": "Increases",
+      "height": 1079,
+      "content_height": 1079
+    },
+    {
+      "file": "prices-03-daily-movement.png",
+      "panel": "prices",
+      "tab": "Daily movement",
+      "height": 1483,
+      "content_height": 1483
+    },
+    {
+      "file": "prices-04-categories.png",
+      "panel": "prices",
+      "tab": "Categories",
+      "height": 1602,
+      "content_height": 1602
+    },
+    {
+      "file": "prices-05-product.png",
+      "panel": "prices",
+      "tab": "Product",
+      "height": 1567,
+      "content_height": 1567
+    },
+    {
+      "file": "prices-06-catalog.png",
+      "panel": "prices",
+      "tab": "Catalog",
+      "height": 1506,
+      "content_height": 1506
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 from [`operations.py`](../../platform/src/retail_platform/indicators/operations.py), where the query and the explanation
 live together.
 
-Derived from `operations.py` sha256 `5c15683abc2588d172c41b15edcbaaa75c438ea8a809a3dc7e84c1f9c0bf1a79` — a hash, not a date, so
+Derived from `operations.py` sha256 `9e04dcf41e523fe98be085571365cb32283f2ea3c307ba2366c9b35e86f21907` — a hash, not a date, so
 regenerating an up-to-date page changes no byte.
 
 ## What it's for
@@ -214,7 +214,10 @@ with t as (
                    round(((colocado - apurado - delta_separacao)
                          /nullif(pedidos - separados,0))::numeric,2) from t
             union all
-            select 3, 'TOTAL unfulfilled', colocado - apurado, pedidos - separados, null from t
+            -- The total spreads over EVERY placed order: it showed the 9,423 dead orders
+            -- next to a total that also holds the picking loss of 201,944 others.
+            select 3, 'TOTAL unfulfilled', colocado - apurado, pedidos,
+                   round(((colocado - apurado)/nullif(pedidos,0))::numeric,2) from t
             order by ordem
 ```
 

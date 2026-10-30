@@ -195,6 +195,9 @@ INDICATORS: tuple[Indicator, ...] = (
             "`oscilacao_media_pct` is built on `purchasable_price_delta_pct`, and so is "
             "`change_type` itself — never on the source's raw `unit_price`, which is a "
             "selector ceiling (not a real price) for a small number of weight-sold products.",
+            "A category needs at least 10 price changes in the period to be ranked: ordered "
+            "by average swing, `Carne` (Congelados) topped the list on 2026-10-30 with ONE "
+            "change in 43 transitions. One observation is an anecdote, not volatility.",
         ),
         sql=f"""
             select
@@ -210,7 +213,7 @@ INDICATORS: tuple[Indicator, ...] = (
             from {MART}.mart_price_evolution
             where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
-            having count(*) filter (where change_type = 'preco_alterado') > 0
+            having count(*) filter (where change_type = 'preco_alterado') >= 10
             order by oscilacao_media_pct desc nulls last
         """,
     ),
@@ -316,6 +319,13 @@ INDICATORS: tuple[Indicator, ...] = (
             "replaced by a derived column), nothing in this project's data has yet shown "
             "`is_new_arrival` to be unreliable. Declared as unverified, not assumed correct — "
             "the same distinction the rest of this panel draws between observed and proven.",
+            "`is_new_arrival` is the source's \"new\" BADGE, which stays on for weeks: about "
+            "100 flagged products per warehouse per day, against 207 `entrou` rows over the "
+            "whole 2026-08-24..09-01 window. Two different questions — never label the badge "
+            "\"entered the catalog\".",
+            "`products_exclusive_here` is null on a day only one warehouse was collected "
+            "(mad1 alone on 2026-08-15 and 08-16): with nothing to compare against, every "
+            "product would count as exclusive.",
         ),
         sql=f"""
             select
@@ -323,8 +333,14 @@ INDICATORS: tuple[Indicator, ...] = (
                 sum(products)                as produtos,
                 sum(new_arrivals)             as novidades,
                 sum(packs)                    as pacotes,
-                sum(products_exclusive_here)  as exclusivos_do_armazem
-            from {MART}.mart_assortment_daily
+                -- On a day only ONE warehouse was collected, every product is "exclusive"
+                -- to it (mad1 on 08-15 and 08-16: 4,329 of 4,329). Null, not a number.
+                -- Counted over ALL warehouses, not the filtered ones: exclusivity is
+                -- against the whole network, and a one-warehouse filter must not blank it.
+                case when (select count(distinct o.wh) from {MART}.mart_assortment_daily o
+                           where o.snapshot_date = a.snapshot_date) > 1
+                     then sum(products_exclusive_here) end as exclusivos_do_armazem
+            from {MART}.mart_assortment_daily a
             where {SNAPSHOT_DATE_FILTER} and {WAREHOUSE_FILTER}
             group by 1, 2
             order by 1, 2

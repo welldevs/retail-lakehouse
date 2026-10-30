@@ -23,7 +23,8 @@ lives only in the generated page that measured it. See
 Last revised: **2026-10-30** — price window widened and capture re-sealed (CR-010, CR-016),
 renames, the indicator catalog move and English across the code (CR-012 to CR-014), pinned
 MinIO images (CR-015), the daily schedule actually running (CR-016), and customers, orders
-and stock regenerated to look like a real online grocer, anchored on INE and MAPA (CR-017).
+and stock regenerated to look like a real online grocer, anchored on INE and MAPA (CR-017),
+and every panel tab read to the bottom (CR-018).
 
 ## Real scale
 

@@ -293,6 +293,54 @@ class NoTrackedJunkTest(unittest.TestCase):
         )
 
 
+class DashboardScreenshotsTest(unittest.TestCase):
+    """A published dashboard screenshot is a claim about the data, so it must show THIS data
+    and must have been read.
+
+    On 2026-10-30 a review trusted shots cut at 1000 px and missed ten defects below the fold,
+    and `docs/screens/dashboard-inventory-en.png` was still showing 206,523 orders from a model
+    two regenerations old (CR-018). `make dashboard-shots` measures every tab and refuses a
+    truncated one; this test refuses shots of another seal, a shot outside the manifest, and
+    a set nobody approved after reading it (`make dashboard-shots-approve`).
+    """
+
+    SHOTS = ROOT / "docs" / "screens" / "dashboard"
+
+    def _manifest(self) -> dict:
+        import json
+
+        path = self.SHOTS / "MANIFEST.json"
+        self.assertTrue(path.exists(), "docs/screens/dashboard/MANIFEST.json is gone: "
+                        "run make dashboard-shots")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_shots_show_the_sealed_capture(self):
+        sealed = re.search(r"`capture_id` = `([0-9a-f]{64})`",
+                           (ROOT / "docs" / "FREEZE.md").read_text(encoding="utf-8"))
+        self.assertIsNotNone(sealed, "docs/FREEZE.md no longer states the capture_id")
+        self.assertEqual(
+            self._manifest()["capture_id"], sealed.group(1),
+            "the dashboard screenshots show another seal: the data was regenerated after "
+            "they were taken. Run make dashboard-shots, READ every PNG, then approve.",
+        )
+
+    def test_shots_were_read_before_publishing(self):
+        manifest = self._manifest()
+        self.assertTrue(manifest.get("reviewed_at") and manifest.get("reviewed_note"),
+                        "the screenshots were never approved: open every PNG, then run "
+                        "make dashboard-shots-approve NOTE=\"what you checked\"")
+        self.assertGreaterEqual(manifest["reviewed_at"], manifest["taken_at"][:19],
+                                "approved before the current shots were taken")
+
+    def test_no_shot_outside_the_manifest(self):
+        listed = {entry["file"] for entry in self._manifest()["files"]}
+        present = {path.name for path in self.SHOTS.glob("*.png")}
+        self.assertEqual(present, listed, "screenshots outside the manifest (or missing)")
+        stray = sorted(path.name for path in (ROOT / "docs" / "screens").glob("dashboard*.png"))
+        self.assertEqual(stray, [], "dashboard screenshots outside docs/screens/dashboard/ "
+                         "escape this check — move them in or delete them")
+
+
 class MakefileExplainsItselfTest(unittest.TestCase):
     """`make help` is the repository's only interface. A target outside it does not exist
     in practice, and a script without a target is a file nobody knows how to run.

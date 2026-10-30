@@ -26,6 +26,7 @@ until someone searches, so it does not count toward its dataframe minimum.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +48,14 @@ def check(name: str) -> list[str]:
         print(f"EXCEPTION: {str(exc.value)[:300]}")
     if app.exception:
         problems.append(f"{len(app.exception)} exception(s) while rendering")
+    # A column the panel forgot to rename reaches the reader as the catalog's alias
+    # (PRODUTOS_NO_DIA, MOEDA): Portuguese, upper case, and meaningless to a business user.
+    raw = sorted({str(column) for frame in app.dataframe
+                  for column in getattr(frame.value, "columns", [])
+                  if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", str(column))})
+    if raw:
+        print(f"RAW COLUMN NAMES ON SCREEN: {', '.join(raw)}")
+        problems.append(f"{name}: {len(raw)} column(s) not renamed")
     counts = {"metric": len(app.metric), "tabs": len(app.tabs),
               "dataframe": len(app.dataframe), "warning": len(app.warning)}
     print(f"== {name} ({script})")

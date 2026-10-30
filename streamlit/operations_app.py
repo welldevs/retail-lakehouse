@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
-from display import fmt_currency, fmt_int, table  # noqa: E402
+from display import CHANGE_TYPE, daily_bars, fmt_currency, fmt_int, table  # noqa: E402
 from retail_platform.indicators import operations as I  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
@@ -191,12 +191,24 @@ with tabs[0]:
         "NET_AMOUNT_PICKED": "Fulfilled revenue", "AMOUNT_DELTA": "Amount variance",
         "TICKET_MEDIO": "Average ticket", "DELIVERY_RATE": "Delivery rate",
     })
+    # Keyed by the day the order was PLACED — no MART has a delivery-date grain. A chart of
+    # "delivered" over that axis showed a bar on Sunday, the day the operation never
+    # delivers (those are Sunday ORDERS, delivered Monday to Wednesday), and was read as
+    # Sunday deliveries even after relabelling. So the axis only carries what happened on
+    # that day. Stacked, because orders and revenue add up across warehouses.
     e, d = st.columns(2)
-    e.caption(f"Fulfilled revenue by day ({currency})")
-    e.bar_chart(series, x="Date", y="Fulfilled revenue", color="Warehouse", stack=False)
-    d.caption("Orders delivered by day")
-    d.bar_chart(series, x="Date", y="Orders delivered", color="Warehouse", stack=False)
-    table(series, hide_index=True, width="stretch")
+    e.caption(f"Fulfilled revenue, by order date ({currency})")
+    with e:
+        daily_bars(series, "Date", "Fulfilled revenue", "Warehouse", "Order date",
+                   value_format=",.2f")
+    d.caption("Orders placed, by order date")
+    with d:
+        daily_bars(series, "Date", "Orders placed", "Warehouse", "Order date")
+    table(series.rename(columns={"Date": "Order date",
+                                 "Orders delivered": "Of which delivered (on a later day)"}),
+          hide_index=True, width="stretch")
+    st.caption("Every date here is the day the order was placed. Delivery is on a later "
+               "day, Monday to Saturday — an order placed on Sunday is delivered from Monday.")
 
 # ---------------------------------------------------------------- Operations
 with tabs[1]:
@@ -212,7 +224,8 @@ with tabs[1]:
     dd.metric("Orders with picking", fmt_int(s["PEDIDOS_COM_SEPARACAO"]))
 
     st.divider()
-    e, d = st.columns([3, 2])
+    # Stacked, not side by side: in a 3:2 split the stage table lost its Orders column.
+    e = d = st.container()
     with e:
         st.subheader("Time per stage")
         pct = numeric(query(ind["percentis_etapa"].sql, P),
@@ -247,8 +260,8 @@ with tabs[2]:
     cat = numeric(query(ind["receita_categoria"].sql, P),
                    ["RECEITA_APURADA", "VALOR_PEDIDO", "VALOR_PERDIDO",
                     "LINHAS_PEDIDAS", "UNIDADES_ENTREGUES"])
-    cat = cat.rename(columns={
-        "CATEGORIA": "Category", "RECEITA_APURADA": "Fulfilled revenue",
+    cat = cat.drop(columns=["MOEDA"], errors="ignore").rename(columns={
+        "CATEGORIA_NIVEL1": "Department", "CATEGORIA": "Category", "RECEITA_APURADA": "Fulfilled revenue",
         "VALOR_PEDIDO": "Order value", "VALOR_PERDIDO": "Lost value",
         "LINHAS_PEDIDAS": "Lines placed", "UNIDADES_ENTREGUES": "Units delivered",
         "DIAS": "Days",
@@ -285,7 +298,8 @@ with tabs[2]:
     })
     if not profile.empty:
         extremes = pd.concat([profile.head(8), profile.tail(8)])
-        st.bar_chart(extremes, x="Group", y=["% <35", "% ≥65"], horizontal=True)
+        st.bar_chart(extremes, x="Group", y=["% <35", "% ≥65"], horizontal=True,
+                     x_label="Demand group", y_label="Share of the age band's lines (%)")
     table(profile, hide_index=True, width="stretch")
 
     st.divider()
@@ -293,7 +307,7 @@ with tabs[2]:
     region = numeric(query(ind["pedidos_por_regiao"].sql, P),
                       ["DIAS", "LINHAS", "UNIDADES", "RECEITA"])
     table(
-        region.rename(columns={
+        region.drop(columns=["MOEDA"], errors="ignore").rename(columns={
             "ARMAZEM": "Warehouse", "DIAS": "Days", "LINHAS": "Lines",
             "UNIDADES": "Units", "RECEITA": "Revenue",
         }),
@@ -312,17 +326,20 @@ with tabs[3]:
             "PRODUTOS_MEDIA_DIA": "Products, avg/day",
             "PRODUTOS_MAXIMO_DIA": "Products, max/day",
             "EXCLUSIVOS_MEDIA_DIA": "Exclusive, avg/day",
-            "PRECO_MEDIO": "Average price", "NOVIDADES_PERIODO": "New arrivals in period",
+            "PRECO_MEDIO": "Average price",
+            "NOVIDADES_PERIODO": "Flagged new by Mercadona",
         }),
         hide_index=True, width="stretch",
     )
 
     st.divider()
-    e, d = st.columns([2, 3])
+    e = d = st.container()
     with e:
         st.subheader("Catalog movement")
         movement = numeric(query(ind["movimento_catalogo"].sql, P),
                        ["PRODUTOS", "PRODUTOS_DISTINTOS", "DIAS"])
+        movement["TIPO_DE_MUDANCA"] = movement["TIPO_DE_MUDANCA"].map(CHANGE_TYPE).fillna(
+            "First observation (no earlier snapshot)")
         table(
             movement.rename(columns={
                 "TIPO_DE_MUDANCA": "Change type", "PRODUTOS": "Products",
@@ -336,15 +353,21 @@ with tabs[3]:
                        ["PRECO_ANTERIOR", "PRECO", "VARIACAO", "VARIACAO_PCT",
                         "DIAS_DESDE_O_ANTERIOR"])
         table(
-            var.head(50).rename(columns={
+            # Every row here is a price change, and the absolute change is the two prices
+            # side by side: both columns pushed the identity flag out of the frame.
+            var.head(50).drop(columns=["TIPO_DE_MUDANCA", "VARIACAO"], errors="ignore")
+            .rename(columns={
                 "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "PRODUTO": "Product",
-                "CATEGORIA": "Category", "PRECO_ANTERIOR": "Previous price",
-                "PRECO": "Price", "VARIACAO": "Change", "VARIACAO_PCT": "Change %",
-                "DIAS_DESDE_O_ANTERIOR": "Days since previous",
-                "TIPO_DE_MUDANCA": "Change type",
-                "IDENTIDADE_AMBIGUA": "Identity ambiguous",
+                "CATEGORIA": "Category", "PRECO_ANTERIOR": "Before",
+                "PRECO": "After", "VARIACAO_PCT": "Change %",
+                "DIAS_DESDE_O_ANTERIOR": "Days apart",
+                "IDENTIDADE_AMBIGUA": "Review identity",
             }),
             hide_index=True, width="stretch",
+            # Fixed widths: a long product name ends in "…" inside its cell instead of
+            # pushing the last columns out of the frame.
+            column_config={"Product": st.column_config.TextColumn(width="large"),
+                           "Category": st.column_config.TextColumn(width="medium")},
         )
 
 # ---------------------------------------------------------------- Supply and demand
@@ -356,7 +379,7 @@ with tabs[4]:
     sd = sd.rename(columns={
         "CATEGORIA": "Category", "PRODUTOS_OFERTADOS": "Products offered",
         "PRODUTOS_PEDIDOS": "Products ordered",
-        "COBERTURA_DEMANDA": "Demand coverage",
+        "COBERTURA_DEMANDA": "Share of offered products ordered",
         "LINHAS_PEDIDAS": "Lines placed", "RECEITA_APURADA": "Fulfilled revenue",
     })
     st.scatter_chart(sd.head(60), x="Products offered", y="Fulfilled revenue",
@@ -369,11 +392,12 @@ with tabs[4]:
 # ---------------------------------------------------------------- Customers
 with tabs[5]:
     st.caption("Current version of the base — the period filter doesn't apply on this tab.")
-    e, d = st.columns(2)
+    e = d = st.container()
     with e:
         st.subheader("Customer base")
         base = numeric(query(ind["base_clientes"].sql), ["CLIENTES", "IDADE_MEDIA",
                                                             "MUNICIPIOS", "CEPS"])
+        base["SEXO"] = base["SEXO"].replace({"Hombres": "Men", "Mujeres": "Women"})
         base = base.rename(columns={
             "ARMAZEM": "Warehouse", "FAIXA_ETARIA": "Age band", "SEXO": "Sex",
             "CLIENTES": "Customers", "IDADE_MEDIA": "Average age",
@@ -448,31 +472,42 @@ with tabs[6]:
         st.divider()
         st.subheader("Stockouts: units and categories affected")
         table(
-            stockout.sort_values("UNIDADES_EM_FALTA", ascending=False).head(20).rename(
+            stockout.sort_values("UNIDADES_EM_FALTA", ascending=False).head(20)
+                .drop(columns=["CATEGORY_ID"]).rename(
                 columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
                          "UNIDADES_PEDIDAS": "Ordered", "UNIDADES_ATENDIDAS": "Fulfilled",
                          "UNIDADES_EM_FALTA": "Short",
-                         "PRODUTOS_COM_FALTA": "Products short"}),
+                         "PRODUTOS_COM_FALTA": "Products short",
+                         "PRODUTOS_NO_DIA": "Products stocked",
+                         "TAXA_DE_ATENDIMENTO": "Fulfillment rate"}),
             hide_index=True, width="stretch",
         )
 
         st.divider()
-        e, d = st.columns(2)
+        e = d = st.container()
         with e:
             st.subheader("Replenishment: orders issued")
             table(
-                replenishment.sort_values("ORDENS_EMITIDAS", ascending=False).head(20).rename(
+                replenishment.sort_values("ORDENS_EMITIDAS", ascending=False).head(20)
+                    .drop(columns=["CATEGORY_ID"]).rename(
                     columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
                              "ORDENS_EMITIDAS": "Orders",
-                             "UNIDADES_PEDIDAS_AO_FORNECEDOR": "Units to supplier"}),
+                             "UNIDADES_PEDIDAS_AO_FORNECEDOR": "Units to supplier",
+                             "PRODUTOS_NO_DIA": "Products stocked",
+                             "FRACAO_DE_PRODUTOS_REPONDO": "Share reordering"}),
                 hide_index=True, width="stretch",
             )
         with d:
             st.subheader("Daily turnover by category")
             table(
                 turnover.sort_values("GIRO_DIARIO", ascending=False, na_position="last").head(20)
+                    .drop(columns=["CATEGORY_ID"])
                     .rename(columns={"DIA": "Day", "ARMAZEM": "Warehouse",
                                       "CATEGORIA": "Category",
-                                      "GIRO_DIARIO": "Daily turnover"}),
+                                      "GIRO_DIARIO": "Daily turnover",
+                                      "UNIDADES_VENDIDAS": "Units sold",
+                                      "SALDO_ABERTURA": "Opening balance",
+                                      "SALDO_FECHAMENTO": "Closing balance",
+                                      "UNIDADES_EM_FALTA": "Units short"}),
                 hide_index=True, width="stretch",
             )
