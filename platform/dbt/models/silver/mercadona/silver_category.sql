@@ -7,7 +7,7 @@
 -- level-1 ids respond 404/410. Level 1 exists only in this tree.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_category',
-    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
+    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite': 1}
 ) }}
 
 with tree as (

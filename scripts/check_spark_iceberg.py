@@ -630,6 +630,24 @@ def verdict(rows_before: int, ddl_before: str) -> int:
                     "anything else. See `jdbc.schema-version`.")
     except Exception as exc:
         failed("H6. Spark did NOT change the schema of the catalog tables", exc)
+    # H7 informs, it does not rule: `drop table ... purge` on the JdbcCatalog leaves the
+    # data and metadata files behind, and 60 orphan objects piled up under the spike prefix
+    # before anyone noticed (CR-016). The check removes what it wrote.
+    try:
+        from retail_platform.config import from_env
+
+        bucket, _, root = proj.WAREHOUSE.removeprefix("s3://").partition("/")
+        prefix = f"{root}/{NAMESPACE}/"
+        client = from_env().client()
+        keys = [o["Key"] for page in client.get_paginator("list_objects_v2").paginate(
+                    Bucket=bucket, Prefix=prefix) for o in page.get("Contents") or []]
+        for start in range(0, len(keys), 1000):
+            client.delete_objects(Bucket=bucket, Delete={
+                "Objects": [{"Key": k} for k in keys[start:start + 1000]]})
+        answer("H7. no files left under the spike prefix", True,
+               f"s3://{bucket}/{prefix}: {len(keys)} orphan objects removed")
+    except Exception as exc:
+        failed("H7. no files left under the spike prefix", exc)
 
     print()
     print("=" * 80)

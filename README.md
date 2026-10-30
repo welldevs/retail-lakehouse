@@ -41,8 +41,8 @@ L4  Gold       conformed DIM_* / FACT_*, SCD2 history
 L5  Mart       MART_*, with the grain declared in each table
 ```
 
-The analytical warehouse does **not** receive the whole Silver: 7,285,229 of 11,204,828 rows
-cross the boundary (**65.0%** on 2026-10-29, over the 18 Silver tables). The ratio **is not
+The analytical warehouse does **not** receive the whole Silver: 7,320,026 of 11,241,291 rows
+cross the boundary (**65.1%** on 2026-10-30, over the 18 Silver tables). The ratio **is not
 a property of the pipeline** — it's a function of how much of each source falls within the
 geographic scope, which is why it moved on its own (3.85% in Phase 2, 46.9% on 2026-09-01)
 with nobody loosening the cut. The INE population is national and delivers 1.8%; orders and
@@ -119,8 +119,8 @@ whether the documentation backs up what it claims.
 | 10 | How does it handle **gaps**? | `seq == last + 1` applies; `seq > last + 1` is a gap and **stops** instead of applying out of order | `make orders-prove-stream` |
 | 11 | How does it handle **concurrency**? | Optimistic conflict on Iceberg with the full cycle: detect → reload → reapply → retry, and an old `seq` **never** overwrites a newer `seq`. Demonstrated even **across different engines** | `make orders-prove-projection` · `make check-spark-iceberg` |
 | 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 206,523 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
-| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 163 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
-| 14 | What **limitations** remain? | Seven debt items, each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
+| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 167 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
+| 14 | What **limitations** remain? | Eight debt items (three open), each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
 
 ### What is **not** demonstrated in this project
 
@@ -214,6 +214,19 @@ The most actionable gap: **no mart joins customer with order** — the link exis
 `make dashboard-check` renders both panels with `AppTest` against the live warehouse and
 demands zero exceptions. Details in [`streamlit/README.md`](streamlit/README.md).
 
+## Orchestration — the six pipelines, run on 2026-10-30
+
+![Airflow — the six DAGs, all active, none failing](docs/screens/airflow-dags-overview.png)
+
+| | |
+|---|---|
+| ![mercadona_catalog_daily](docs/screens/airflow-mercadona-daily.png) **`mercadona_catalog_daily`** — the first *scheduled* run to succeed: the red `guard_date` row is every earlier scheduled run, refused until CR-016 | ![warehouse_load](docs/screens/airflow-warehouse-load.png) **`warehouse_load`** — triggered by the daily DAG: cut → load `STAGE` → `dbt build` GOLD/MART on Postgres |
+| ![ine_population_on_demand](docs/screens/airflow-ine-population.png) **`ine_population_on_demand`** — run on the landed release: the gate verifies the destination and skips the rest | ![ine_callejero_on_demand](docs/screens/airflow-ine-callejero.png) **`ine_callejero_on_demand`** — same: no re-download, no duplicate partition |
+| ![simulated_oltp_customers](docs/screens/airflow-customers.png) **`simulated_oltp_customers`** — reference re-exported, the four sealed partitions verified, nothing regenerated | ![simulated_orders_events](docs/screens/airflow-orders.png) **`simulated_orders_events`** — the sealed 9-day window re-verified across four warehouses |
+
+Pink is `skipped`: an on-demand DAG run on data that already landed must change nothing, and
+the short-circuit proving the destination intact is the evidence.
+
 ## Language
 
 Everything written for this repository — docs, code, comments, CLI output, tests — is in
@@ -260,8 +273,8 @@ Mercadona category and product names, INE labels, and values such as the
 ## Verification
 
 ```bash
-make test          # 1,139 tests on 2026-10-29, no network: 145 Mercadona + 136 INE population
-                   #   + 95 Callejero + 140 simulated OLTP + 163 orders + 460 platform
+make test          # 1,144 tests on 2026-10-30, no network: 145 Mercadona + 136 INE population
+                   #   + 95 Callejero + 140 simulated OLTP + 163 orders + 465 platform
 make silver        # dbt build on DuckDB: 25 models + 16 seeds + the data tests
 make warehouse     # dbt build on Postgres (default): 24 models + the data tests
 ```

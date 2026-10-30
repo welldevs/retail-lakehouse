@@ -31,7 +31,7 @@
 -- used to discard them.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_product_price',
-    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
+    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite': 1}
 ) }}
 
 with catalog_file as (

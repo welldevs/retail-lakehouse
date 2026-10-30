@@ -3524,3 +3524,53 @@ Loss             The images are no longer published by MinIO itself.
 ```
 
 Decisions logged on 2026-10-29.
+
+### CR-016 · The daily schedule never ran — and three silent defects found by running every DAG
+
+```
+Need             Run all six Airflow DAGs end to end and keep screenshots as evidence. Doing
+                 it surfaced defects that nothing had flagged.
+Evidence         1. `mercadona_catalog_daily`: 48 of 48 SCHEDULED runs failed at
+                    `guard_date`; all 32 successful collections were manual triggers. A cron
+                    run's logical date (`ds`) is the START of its interval, so the 06:00 run
+                    executing on 10-30 claimed 10-29 and the guard refused it as backfill.
+                    CR-010's "the daily DAG kept extracting" was, in fact, someone triggering.
+                 2. After the collection, `silver` died with DuckDB "Out of Memory" in the
+                    container only. The image rebuilt on 2026-10-29 had pulled duckdb 2.0.0
+                    (`duckdb>=1.1`, no ceiling) while the host venv had 1.5.5; rebuilt on
+                    1.5.6, the same task passed. Memory limits and fewer dbt threads were
+                    measured and rejected: neither moved the peak, and a limit broke models.
+                 3. Partitioned Silver models wrote with `overwrite_or_ignore`, which only
+                    replaces same-named files: a run producing `data_0`+`data_1` followed by
+                    one producing `data_0` left a stale `data_1`, and
+                    `assert_product_price_grain_is_unique` found 8,648 duplicate rows. The
+                    stale files came from an experiment in this CR, but any change in file
+                    count (threads, volume, DuckDB version) produces the same thing.
+                 4. 60 orphan objects under s3://retail-lakehouse/iceberg/spike_spark/: the
+                    Spark check's `drop table ... purge` leaves files on the JdbcCatalog.
+                 5. `simulated_orders_events` still defaulted to window_to 2026-08-27 (the
+                    landed window ends 09-01); `pyproject.toml` kept a Portuguese
+                    description; ARCHITECTURE's CI section ignored CR-015; debt item 3 (dbt
+                    deprecation warning) no longer reproduces on dbt-duckdb 1.11.
+Component        orchestration/airflow/dags/mercadona_catalog_daily.py (`collection_date`:
+                 the later of logical date and interval end), simulated_orders_events.py
+                 (default window), platform/pyproject.toml (`duckdb>=1.1,<2`), the three
+                 partitioned Mercadona models (`overwrite: 1`), scripts/check_spark_iceberg.py
+                 (H7 removes its own prefix), ARCHITECTURE (constraint 1, CI, debt 3 closed,
+                 debt 8 opened), README (orchestration gallery, numbers), docs/screens.
+Contracts        None. Same partitions, layout, models and grains.
+Regression       test_silver_gate.py: DailyCollectionDateTest (4 tests, red on the old DAG)
+                 and PartitionedSilverOverwritesTest. `overwrite` measured on MinIO with
+                 DuckDB 1.5 before adoption: it clears the stale file.
+Proof            2026-10-30, live: the failed scheduled run, cleared, passed `guard_date` and
+                 landed 2026-10-30 for mad1/bcn1/vlc1/svq1; `silver` green on the rebuilt
+                 image; `warehouse_load` green (PASS=205). The four on-demand DAGs, run on
+                 their landed dates, ended success with the gate verifying the destination.
+                 `make freeze-check`: exactly 4 differences, all "NEW partition" for 10-30 —
+                 re-sealed: capture_id 6bb299bd…, 167 partitions, 2,616,199 records. Silver
+                 PASS=392 (11,241,291 rows over the 18 tables); cut 7,320,026 rows (65.1%).
+Loss             The 6dc09846… seal stops being the guard. New debt item 8: with the
+                 schedule working, the seal goes red every day by design.
+```
+
+Decision logged on 2026-10-30.

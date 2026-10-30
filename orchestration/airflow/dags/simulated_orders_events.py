@@ -295,11 +295,12 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     params={
-        # Measured on 2026-08-28: the 4 warehouses have catalog from 08-24 to 08-27, and the
-        # customer base exists since 08-24. Outside that the export REFUSES, instead of
-        # inventing a price.
+        # The window that is landed and sealed (Phase 7: 2026-08-24..09-01). Triggering with
+        # these defaults re-verifies it without generating anything new. Widening it is a
+        # regeneration (CR-010), and outside the catalog coverage the export REFUSES
+        # instead of inventing a price.
         "window_from": "2026-08-24",
-        "window_to": "2026-08-27",
+        "window_to": "2026-09-01",
         "seed": 20260828,
         # Deliberate regeneration. Adding a DAY does not need this — each day derives its
         # own sub-seed and the earlier ones stay identical. `overwrite` is for changing the

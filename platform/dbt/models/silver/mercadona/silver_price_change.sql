@@ -26,7 +26,7 @@
 -- silver_product_price.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_price_change',
-    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite_or_ignore': 1}
+    options = {'partition_by': 'ingestion_date, warehouse', 'overwrite': 1}
 ) }}
 
 with priced as (

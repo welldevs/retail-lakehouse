@@ -309,5 +309,80 @@ class DagTriggerRulesTest(unittest.TestCase):
         self.assertGreaterEqual(seen, 1)
 
 
+class PartitionedSilverOverwritesTest(unittest.TestCase):
+    """`overwrite_or_ignore` on a PARTITIONED write only replaces files with the same name:
+    when one run writes `data_0` + `data_1` into a partition and the next writes only
+    `data_0`, the stale `data_1` stays and every reader counts its rows twice. Seen on
+    2026-10-30: 8,648 duplicated grain rows in `silver_product_price` (CR-016). `overwrite`
+    clears the target first — measured to work on MinIO with DuckDB 1.5.
+    """
+
+    def test_no_partitioned_model_keeps_stale_files(self):
+        models = os.path.join(REPO, "platform", "dbt", "models")
+        seen = 0
+        for root, _, files in os.walk(models):
+            for name in files:
+                if not name.endswith(".sql"):
+                    continue
+                with open(os.path.join(root, name), encoding="utf-8") as fh:
+                    source = fh.read()
+                if "'partition_by'" not in source:
+                    continue
+                seen += 1
+                self.assertIn("'overwrite': 1", source, name)
+                self.assertNotIn("overwrite_or_ignore", source, name)
+        self.assertEqual(seen, 3, "expected the three partitioned Mercadona models")
+
+
+def _load_function(path: str, name: str):
+    """Executes ONE top-level function of a DAG file without importing Airflow."""
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    namespace: dict = {}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), path, "exec"),
+         {"datetime": __import__("datetime").datetime}, namespace)
+    return namespace[name]
+
+
+class DailyCollectionDateTest(unittest.TestCase):
+    """The daily DAG's scheduled runs were ALL refused by `guard_date` (48 of 48): a cron run
+    is dated with the START of its interval, so the 06:00 run executing on 10-30 claimed
+    10-29. Every collection that landed came from a manual trigger. CR-016.
+    """
+
+    def setUp(self):
+        from datetime import datetime, timezone
+        self.at = lambda *a: datetime(*a, tzinfo=timezone.utc)
+        self.collection_date = _load_function(
+            os.path.join(DAGS, "mercadona_catalog_daily.py"), "collection_date")
+
+    def test_a_scheduled_run_collects_the_day_it_executes(self):
+        # logical date = interval start (yesterday 06:00); interval end = today 06:00
+        self.assertEqual(
+            self.collection_date(self.at(2026, 10, 29, 6), self.at(2026, 10, 30, 6)),
+            "2026-10-30")
+
+    def test_a_manual_run_collects_the_trigger_day(self):
+        # interval of a manual run ends at the last 06:00 BEFORE the trigger
+        self.assertEqual(
+            self.collection_date(self.at(2026, 10, 30, 3, 15), self.at(2026, 10, 29, 6)),
+            "2026-10-30")
+
+    def test_a_manual_run_dated_in_the_past_stays_in_the_past(self):
+        """So `guard_date` still refuses it: no backfill for this source."""
+        self.assertEqual(
+            self.collection_date(self.at(2026, 10, 1, 12), self.at(2026, 10, 1, 6)),
+            "2026-10-01")
+
+    def test_no_task_of_the_daily_dag_reads_ds(self):
+        with open(os.path.join(DAGS, "mercadona_catalog_daily.py"), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                self.assertNotIn("ds", [a.arg for a in node.args.args],
+                                 f"{node.name} takes `ds` — a scheduled run's ds is yesterday")
+
+
 if __name__ == "__main__":
     unittest.main()

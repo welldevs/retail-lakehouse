@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "retail-platform"
 version = "0.1.0"
-description = "Camada de plataforma: RAW no object storage e Silver sobre os snapshots da Source"
+description = "Platform layer: RAW in object storage and Silver over the Sources' snapshots"
 requires-python = ">=3.12"
 
 # THE BOUNDARY: these dependencies belong to the PLATFORM. The Source, in
@@ -13,7 +13,11 @@ requires-python = ">=3.12"
 # The two sets never meet, and nothing here imports mercadona_catalog_source.
 dependencies = [
     "boto3>=1.34",
-    "duckdb>=1.1",
+    # UPPER BOUND, measured: the Airflow image rebuilt on 2026-10-29 pulled duckdb 2.0.0
+    # while the host venv had 1.5.5, and the same Silver build that passes on 1.5.5 died
+    # of "Out of Memory" in the container on 2.0.0 (CR-016). An unbounded floor is how a
+    # rebuild silently changes the engine. Lift it deliberately, with a measured build.
+    "duckdb>=1.1,<2",
     "dbt-core>=1.8",
     "dbt-duckdb>=1.8",
     # Second dbt target. The Silver SQL keeps running on duckdb; the models/warehouse/

@@ -135,7 +135,22 @@ def partition_path(ingestion_date: str, warehouse: str) -> str:
     return f"{DATA_ROOT}/ingestion_date={ingestion_date}/wh={warehouse}"
 
 
-def guard_date(ds: str, **_) -> None:
+def collection_date(logical_date: datetime, data_interval_end: datetime) -> str:
+    """The day this run collects — the later of the run's two dates, as YYYY-MM-DD.
+
+    NOT `ds`. A SCHEDULED cron run carries the START of its interval as logical date: the
+    06:00 run that executes on 10-30 is dated 10-29. Using `ds` made `guard_date` refuse
+    every scheduled run since the DAG existed (48 of 48 failed; every collection that
+    landed was a manual trigger, whose logical date is the trigger moment). The interval
+    END is the day the run actually executes. A manual run's interval ends at the last
+    06:00 before the trigger, so for it the logical date is the later one. Taking the max
+    covers both, and a manual trigger dated in the past still lands in the past — which
+    `guard_date` then refuses.
+    """
+    return max(logical_date, data_interval_end).strftime("%Y-%m-%d")
+
+
+def guard_date(logical_date: datetime, data_interval_end: datetime, **_) -> None:
     """Fail if the DAG run is not for today (UTC).
 
     THERE IS NO BACKFILL for this source: the API only serves TODAY's price. A run dated in
@@ -152,17 +167,19 @@ def guard_date(ds: str, **_) -> None:
     next day, when dates between start_date and today become schedulable by manual
     trigger — which is exactly when the mistake becomes possible.
     """
+    day = collection_date(logical_date, data_interval_end)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if ds != today:
+    if day != today:
         raise ValueError(
-            f"run dated {ds}, today is {today}. The API only serves today's price: "
+            f"run dated {day}, today is {today}. The API only serves today's price: "
             f"extracting for a past date would produce wrong data. Backfill does not exist "
             f"for this source."
         )
-    print(f"date checks out: {ds}")
+    print(f"date checks out: {day}")
 
 
-def already_landed(ds: str, warehouse: str, **_) -> bool:
+def already_landed(logical_date: datetime, data_interval_end: datetime, warehouse: str,
+                   **_) -> bool:
     """Short-circuit that looks at the DESTINATION, not the local disk.
 
     Reusing `verify-landing` as the gate, instead of checking a marker, has three effects
@@ -176,6 +193,7 @@ def already_landed(ds: str, warehouse: str, **_) -> bool:
     Checking the LOCAL `_SUCCESS` here would be a mistake: it would skip `land` for a
     partition extracted by hand and never landed.
     """
+    ds = collection_date(logical_date, data_interval_end)
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code == EXIT_OK:
         print("partition already landed and verified at the destination: nothing to do.")
@@ -184,13 +202,15 @@ def already_landed(ds: str, warehouse: str, **_) -> bool:
     return True
 
 
-def extract(ds: str, warehouse: str, **_) -> None:
+def extract(logical_date: datetime, data_interval_end: datetime, warehouse: str,
+            **_) -> None:
     """Run the Source's extract.
 
     The Source has ZERO runtime dependencies, so it runs on the worker's own interpreter via
     PYTHONPATH, with no venv and no clash with Airflow's pinned dependencies. That is the
     practical payoff of keeping dependencies = [].
     """
+    ds = collection_date(logical_date, data_interval_end)
     # A complete partition on disk is IMMUTABLE: re-running returns exit 2. That is not a
     # failure of the day — it is guarantee 5 of the contract working. We detect it BEFORE
     # calling, so success is not turned into an error. A PARTIAL partition does not enter
@@ -211,20 +231,26 @@ def extract(ds: str, warehouse: str, **_) -> None:
         raise RuntimeError(f"extract returned exit {code}")
 
 
-def validate(ds: str, warehouse: str, **_) -> None:
+def validate(logical_date: datetime, data_interval_end: datetime, warehouse: str,
+             **_) -> None:
     """Gate. Exit 1 rejects without retry: rereading the same bytes gives the same result."""
+    ds = collection_date(logical_date, data_interval_end)
     code = _run_source(["validate", partition_path(ds, warehouse), "--strict"])
     if code != EXIT_OK:
         raise RuntimeError(f"validate rejected the partition (exit {code})")
 
 
-def land(ds: str, warehouse: str, **_) -> None:
+def land(logical_date: datetime, data_interval_end: datetime, warehouse: str,
+         **_) -> None:
+    ds = collection_date(logical_date, data_interval_end)
     code = _run_platform(["land", partition_path(ds, warehouse)])
     if code != EXIT_OK:
         raise RuntimeError(f"land failed (exit {code})")
 
 
-def verify_landing(ds: str, warehouse: str, **_) -> None:
+def verify_landing(logical_date: datetime, data_interval_end: datetime, warehouse: str,
+                   **_) -> None:
+    ds = collection_date(logical_date, data_interval_end)
     code = _run_platform(["verify-landing", partition_path(ds, warehouse)])
     if code != EXIT_OK:
         raise RuntimeError(f"verify-landing rejected the destination (exit {code})")
