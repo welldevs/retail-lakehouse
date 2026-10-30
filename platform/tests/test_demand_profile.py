@@ -185,8 +185,13 @@ def write_seeds(
 
 
 def catalog(groups):
-    """Catalog rows already stamped: (demand_group, content in kg)."""
-    return [{"demand_group": g, "net_content_kg_l": kg} for g, kg in groups]
+    """Catalog rows already stamped: (demand_group, content in kg).
+
+    Uniform popularity and one unit per line, so the kg per line is the plain mean of the
+    contents — the product-choice weighting has its own tests in test_product_choice.py.
+    """
+    return [{"demand_group": g, "net_content_kg_l": kg, "popularity_weight": "1.000000",
+             "quantity_max": 1} for g, kg in groups]
 
 
 # --------------------------------------------------------------------------------
@@ -355,7 +360,7 @@ class BuildTest(unittest.TestCase):
         ]))
         by_group = {g["demand_group"]: g for g in profile["groups"]}
         self.assertEqual(by_group["HUEVOS"]["target_path"], "lines")
-        self.assertIsNone(by_group["HUEVOS"]["mean_kg_per_unit"])
+        self.assertIsNone(by_group["HUEVOS"]["mean_kg_per_line"])
         self.assertEqual(by_group["FRUTA"]["target_path"], "volume")
 
     def test_larger_package_gets_fewer_lines_for_the_same_target(self):
@@ -407,7 +412,7 @@ class BuildTest(unittest.TestCase):
             ("AGUA", "1.0"), ("SIN_BENCHMARK", "1"), ("NO_FOOD", None),
         ]))
         fruit = next(g for g in profile["groups"] if g["demand_group"] == "FRUTA")
-        self.assertEqual(fruit["mean_kg_per_unit"], "1.000000")
+        self.assertEqual(fruit["mean_kg_per_line"], "1.000000")
 
     def test_profile_carries_version_hashes_and_seasonality(self):
         profile = self._profile(catalog([("FRUTA", "1"), ("AGUA", "1"), ("NO_FOOD", None)]))

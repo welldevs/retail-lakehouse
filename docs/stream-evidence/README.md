@@ -11,81 +11,88 @@ construction. What they cannot cover is the **semantics** of the real engines: t
 Kafka preserves order by key, that Postgres really does undo, that Iceberg refuses a
 commit over a stale snapshot. This is the record that it was exercised against them.
 
-| captured at | 2026-09-01 22:04:10 UTC |
+| captured at | 2026-10-30 16:51:52 UTC |
 |---|---|
 
 ## Transactional plane — OLTP and outbox
 
-The transactional-outbox mechanism itself (same-transaction write, unique
-`event_id`, rollback on replay) is explained in
-[DECISIONS.md § "Phase 3, second half"](../../DECISIONS.md). What follows is what a
-query against the **live** OLTP measured, not the mechanism again.
+The event is born **inside the same transaction** that changes `orders` and
+`order_line`. It is not the log being republished: it is the state change and the
+event written atomically, which is the only way the two cannot diverge.
+`outbox.event_id` is unique, and the outbox insert comes **first** —
+`rowcount = 0` means the event was already applied, and the whole transaction is
+rolled back.
 
 |  |  |
 |---|---|
-| orders in `orders` | 206,523 |
-| rows in `order_line` | 3,892,062 |
-| events in `outbox` | 1,433,723 |
+| orders in `orders` | 211,367 |
+| rows in `order_line` | 4,251,892 |
+| events in `outbox` | 1,464,306 |
 | still unpublished | 0 |
-| distinct orders in the outbox | 206,523 |
-| first publication | 2026-09-01 21:56:09.143966+00:00 |
-| last publication | 2026-09-01 21:58:21.171516+00:00 |
+| distinct orders in the outbox | 211,367 |
+| first publication | 2026-10-30 14:41:28.542500+00:00 |
+| last publication | 2026-10-30 14:44:01.676796+00:00 |
 
 ### Events in the outbox, by type
 
 | event_type | events |
 |---|---|
-| `order_cancelled` | 6,052 |
-| `order_delivered` | 195,419 |
-| `order_delivery_failed` | 1,983 |
-| `order_dispatched` | 197,402 |
-| `order_line_removed` | 74,754 |
-| `order_line_substituted` | 148,633 |
-| `order_payment_authorized` | 203,454 |
-| `order_payment_failed` | 3,069 |
-| `order_picked` | 197,402 |
-| `order_picking_started` | 197,402 |
-| `order_placed` | 206,523 |
-| `order_returned` | 1,630 |
+| `order_cancelled` | 6,213 |
+| `order_delivered` | 199,920 |
+| `order_delivery_failed` | 2,024 |
+| `order_dispatched` | 201,944 |
+| `order_line_removed` | 73,856 |
+| `order_line_substituted` | 152,138 |
+| `order_payment_authorized` | 208,157 |
+| `order_payment_failed` | 3,210 |
+| `order_picked` | 201,944 |
+| `order_picking_started` | 201,944 |
+| `order_placed` | 211,367 |
+| `order_returned` | 1,589 |
 
 ### Replicated state, by OLTP fold
 
 | order status | orders |
 |---|---|
-| `CANCELLED` | 6,052 |
-| `DELIVERED` | 193,789 |
-| `DELIVERY_FAILED` | 1,983 |
-| `PAYMENT_FAILED` | 3,069 |
-| `RETURNED` | 1,630 |
+| `CANCELLED` | 6,213 |
+| `DELIVERED` | 198,331 |
+| `DELIVERY_FAILED` | 2,024 |
+| `PAYMENT_FAILED` | 3,210 |
+| `RETURNED` | 1,589 |
 
 | line status | lines |
 |---|---|
-| `fulfilled` | 3,497,011 |
-| `not_picked` | 171,664 |
-| `removed` | 74,754 |
-| `substituted` | 148,633 |
+| `fulfilled` | 3,836,762 |
+| `not_picked` | 189,136 |
+| `removed` | 73,856 |
+| `substituted` | 152,138 |
 
 ## Transport — Kafka
 
-Delivery semantics (**at-least-once** outbox-to-broker, dedup by `sequence_no`
-instead of a growing `event_id` set) are covered in
-[DECISIONS.md § "Phase 3, third half"](../../DECISIONS.md). Below is the live topic
-those semantics ran against.
+`key = order_id`, and the key is **loadable**: Kafka guarantees order within the
+partition, and that is what lets the consumer's dedup stay bounded — comparing
+`sequence_no` against the already-recorded `last_sequence_no`, with no growing set
+of `event_id` and no expiration window. Delivery is **at-least-once** from the
+outbox to the broker (publish → ack → mark, never mark → publish); consumption is
+**effectively-once** because the offset is only committed after the write.
 
-Topic `retail.orders.events.v1` on `localhost:9092`, `key = order_id`.
+Topic `retail.orders.events.v1` on `localhost:9092`.
 
 ### Watermarks by partition
 
 | partition | low | high | messages |
 |---|---|---|---|
-| 0 | 0 | 528613 | 528,613 |
-| 1 | 0 | 528886 | 528,886 |
-| 2 | 0 | 528840 | 528,840 |
-| 3 | 0 | 529188 | 529,188 |
+| 0 | 0 | 365986 | 365,986 |
+| 1 | 0 | 366060 | 366,060 |
+| 2 | 0 | 365898 | 365,898 |
+| 3 | 0 | 366362 | 366,362 |
 
-Total in the topic: **2,115,527 messages** — more than the 1,433,723 outbox events
-above, and that is **expected** given the at-least-once delivery already noted:
-duplicates on the wire are harmless because the consumer dedups by `sequence_no`.
+Total in the topic: **1,464,306 messages**.
+
+The sum can exceed the log's event count, and that is **correct**: delivery
+from the outbox to the broker is at-least-once by design, so a crash between
+the ack and marking `published_at` republishes the batch. What makes that
+harmless is the dedup by `sequence_no` on the other side.
 
 ### Lag by consumer group
 
@@ -96,7 +103,7 @@ not hold back the Postgres sink (~14s), and neither loses a message because of
 the other.
 
 **High lag is not a stale projection when the table was rebuilt in batch.**
-`orders-rebuild-projection` is the **second** writer: it writes the final state
+`orders-rebuild-projection` is the SECOND writer: it writes the final state
 straight from RAW, without going through the topic, and the consumer group's
 offset does not move with it. After a rebuild, draining the topic through the
 Iceberg sink would reprocess hundreds of thousands of events only to discard
@@ -107,10 +114,10 @@ paths converge is `make orders-reconcile`, not a consumer's offset.
 
 | partition | committed offset | high | lag |
 |---|---|---|---|
-| 0 | 528613 | 528613 | 0 |
-| 1 | 528886 | 528886 | 0 |
-| 2 | 528840 | 528840 | 0 |
-| 3 | 529188 | 529188 | 0 |
+| 0 | 365986 | 365986 | 0 |
+| 1 | 366060 | 366060 | 0 |
+| 2 | 365898 | 365898 | 0 |
+| 3 | 366362 | 366362 | 0 |
 
 Total lag: **0**.
 
@@ -118,12 +125,12 @@ Total lag: **0**.
 
 | partition | committed offset | high | lag |
 |---|---|---|---|
-| 0 | 19306 | 528613 | 509307 |
-| 1 | 11164 | 528886 | 517722 |
-| 2 | 11210 | 528840 | 517630 |
-| 3 | 11276 | 529188 | 517912 |
+| 0 | 64916 | 365986 | 301070 |
+| 1 | 64837 | 366060 | 301223 |
+| 2 | 54933 | 365898 | 310965 |
+| 3 | 64814 | 366362 | 301548 |
 
-Total lag: **2,062,571**.
+Total lag: **1,214,806**.
 
 ## Projection — Iceberg
 
@@ -138,10 +145,10 @@ isolation between two writers and a concurrent reader, plus time travel.
 |  |  |
 |---|---|
 | table | `projection.live_order_state` |
-| rows | 206,523 |
-| snapshots | 414 |
-| current snapshot | 9005236305804095059 |
-| current metadata | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00414-b70ea7c6-a1a5-49e5-a2a1-23cd4e267046.metadata.json` |
+| rows | 211,367 |
+| snapshots | 1 |
+| current snapshot | 8523992463290984971 |
+| current metadata | `s3://retail-lakehouse/iceberg/projection/live_order_state/metadata/00001-94639425-83f0-4dd1-b3ad-f1c33c1f7b5c.metadata.json` |
 
 The metadata path comes from the **catalog**, never from a storage scan. DuckDB
 refuses to guess which metadata is current — *"globbing the filesystem…
@@ -153,17 +160,17 @@ uncommitted metadata is exactly what a concurrent read cannot do.
 
 | written_by | rows |
 |---|---|
-| `rebuild` | 206,523 |
+| `rebuild` | 211,367 |
 
 ### State in the live projection
 
 | status | orders |
 |---|---|
-| `CANCELLED` | 6,052 |
-| `DELIVERED` | 193,789 |
-| `DELIVERY_FAILED` | 1,983 |
-| `PAYMENT_FAILED` | 3,069 |
-| `RETURNED` | 1,630 |
+| `CANCELLED` | 6,213 |
+| `DELIVERED` | 198,331 |
+| `DELIVERY_FAILED` | 2,024 |
+| `PAYMENT_FAILED` | 3,210 |
+| `RETURNED` | 1,589 |
 
 ## The three folds
 
@@ -181,11 +188,11 @@ fold.
 
 | source | orders |
 |---|---|
-| `iceberg` | 206,523 |
-| `oltp` | 206,523 |
-| `silver` | 206,523 |
+| `iceberg` | 211,367 |
+| `oltp` | 211,367 |
+| `silver` | 211,367 |
 
-Compared: **206,523 orders**.
+Compared: **211,367 orders**.
 
 Result: **all three agree on every order compared** — zero divergences, zero absences.
 

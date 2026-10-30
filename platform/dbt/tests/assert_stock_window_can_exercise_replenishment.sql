@@ -22,9 +22,11 @@
 -- is external — 2026-09-01 is as far as the observed catalog reaches.
 with cobertura as (
 
+    -- The LARGEST opening cover (CR-017 staggered it per series): even the best-covered
+    -- series must be consumed inside the window.
     select cast(value as double) as opening_days_of_demand
     from {{ ref('stock_premises') }}
-    where premise_key = 'opening_days_of_demand'
+    where premise_key = 'opening_days_max'
 
 ),
 

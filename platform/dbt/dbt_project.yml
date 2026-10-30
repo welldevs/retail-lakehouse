@@ -79,12 +79,12 @@ data_tests:
 
 seeds:
   retail_lakehouse:
-    # DUCKDB ONLY. The sixteen seeds feed Silver models: warehouse_service_area and
+    # DUCKDB ONLY. The seventeen seeds feed the lakehouse side: warehouse_service_area and
     # warehouse_province_map, the two INE mappings (municipality code and homonymous
-    # series), the Orders premises, the Customer ones, the Stock ones, the frozen-capture
-    # seal, and the eight demand-calibration ones — all on the lakehouse side. The
-    # warehouse tree reads exclusively `source()` over STAGE and references no seed.
-    # Without this guard, `dbt build --target snowflake` loaded all sixteen into
+    # series), the INE online-buying propensity, the Orders, Customer and Stock premises,
+    # the frozen-capture seal, and the eight demand-calibration ones. The warehouse tree
+    # reads exclusively `source()` over STAGE and references no seed. Without this guard,
+    # `dbt build --target snowflake` loaded every seed into
     # Snowflake, where they sat with no purpose and nobody to keep them up to date.
     +enabled: "{{ target.type == 'duckdb' }}"
 
@@ -137,6 +137,16 @@ seeds:
         province_code: varchar
         municipality_code: varchar
         municipality_name: varchar
+    ine_online_propensity_seed:
+      +column_types:
+        dimension: varchar
+        band: varchar
+        age_or_population_low: integer
+        age_or_population_high: integer
+        online_pct: decimal(6,2)
+        ine_table: varchar
+        provenance: varchar
+        note: varchar
     ine_ambiguous_series_seed:
       +column_types:
         series_code: varchar

@@ -440,6 +440,21 @@ def rebuild(cat, partitions, *, sla_minutes: int = None,
 
     result.orders = len(states)
     ordered = [states[k] for k in sorted(states)]
+    if reset:
+        # ONE APPEND, not batched upserts (debt item 5, closed in CR-017). After a reset the
+        # table is EMPTY and this writer is alone on it, so there is nothing to merge against
+        # — the monotonic merge exists for a second writer, and here there is none yet. Each
+        # batched upsert scanned the whole table it had already written: 414 commits and
+        # ~55 min for 206,523 orders (2026-09-01), and the streaming sink on an empty table
+        # reached only 38,300 of 211,367 orders in 80 minutes (2026-10-30).
+        import pyarrow as pa
+
+        batch = pa.Table.from_pylist(
+            [_normalize(state, WRITER_REBUILD) for state in ordered], schema=arrow_schema()
+        )
+        table.append(batch)
+        result.commits = 1
+        return result
     for start in range(0, len(ordered), batch_size):
         projection.save(ordered[start:start + batch_size])
         stats = projection.commit()

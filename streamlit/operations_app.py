@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
+from display import fmt_currency, fmt_int, table  # noqa: E402
 from retail_platform.indicators import operations as I  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
@@ -51,14 +52,6 @@ def numeric(df: pd.DataFrame, columns) -> pd.DataFrame:
     return out
 
 
-def fmt_int(value) -> str:
-    return f"{int(value):,}".replace(",", ".")
-
-
-def fmt_currency(value) -> str:
-    return f"{float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
 # ------------------------------------------------------------------------------------
 # Connection
 # ------------------------------------------------------------------------------------
@@ -83,9 +76,15 @@ with st.sidebar:
     window = query(I.WINDOW)
     start_min = pd.to_datetime(window.iloc[0, 0]).date()
     end_max = pd.to_datetime(window.iloc[0, 1]).date()
+    # The DEFAULT is the orders window, not the union of every mart: the catalog reaches
+    # further than the orders, and a header saying "08-15 to 10-30" over orders that exist
+    # for nine days misleads the first reading of every KPI.
+    orders_window = query(I.ORDERS_WINDOW)
+    default_start = pd.to_datetime(orders_window.iloc[0, 0]).date()
+    default_end = pd.to_datetime(orders_window.iloc[0, 1]).date()
 
     period = st.date_input(
-        "Period", value=(start_min, end_max),
+        "Period", value=(default_start, default_end),
         min_value=start_min, max_value=end_max, format="YYYY-MM-DD",
     )
     if isinstance(period, tuple) and len(period) == 2:
@@ -151,7 +150,7 @@ with tabs[0]:
     with left:
         st.subheader("Funnel, by milestone reached")
         funnel = numeric(query(ind["funil"].sql, P), ["PEDIDOS", "TAXA"])
-        st.dataframe(
+        table(
             funnel[["ETAPA", "PEDIDOS", "TAXA"]].rename(
                 columns={"ETAPA": "Stage", "PEDIDOS": "Orders",
                          "TAXA": "Share of placed"}),
@@ -163,7 +162,7 @@ with tabs[0]:
     with right:
         st.subheader("Leakage points")
         leak = numeric(query(ind["vazamento"].sql, P), ["PEDIDOS", "SOBRE_COLOCADOS"])
-        st.dataframe(
+        table(
             leak.rename(columns={"MOTIVO": "Reason", "PEDIDOS": "Orders",
                                 "SOBRE_COLOCADOS": "Share of placed"}),
             hide_index=True, width="stretch",
@@ -173,7 +172,7 @@ with tabs[0]:
     st.subheader("Value loss, by cause")
     loss = numeric(query(ind["decomposicao_perda"].sql, P),
                      ["VALOR", "PEDIDOS_AFETADOS", "POR_PEDIDO"])
-    st.dataframe(
+    table(
         loss[["CAUSA", "VALOR", "PEDIDOS_AFETADOS", "POR_PEDIDO"]].rename(columns={
             "CAUSA": "Cause", "VALOR": f"Amount ({currency})",
             "PEDIDOS_AFETADOS": "Orders", "POR_PEDIDO": f"Per order ({currency})"}),
@@ -197,7 +196,7 @@ with tabs[0]:
     e.bar_chart(series, x="Date", y="Fulfilled revenue", color="Warehouse", stack=False)
     d.caption("Orders delivered by day")
     d.bar_chart(series, x="Date", y="Orders delivered", color="Warehouse", stack=False)
-    st.dataframe(series, hide_index=True, width="stretch")
+    table(series, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- Operations
 with tabs[1]:
@@ -218,19 +217,23 @@ with tabs[1]:
         st.subheader("Time per stage")
         pct = numeric(query(ind["percentis_etapa"].sql, P),
                        ["MEDIA_P50", "MEDIA_P90", "PEDIDOS"])
-        st.dataframe(
-            pct[["ETAPA", "MEDIA_P50", "MEDIA_P90", "PEDIDOS"]].rename(columns={
+        pct["MEDIA_P50_H"] = pct["MEDIA_P50"] / 60
+        table(
+            pct[["ETAPA", "MEDIA_P50", "MEDIA_P90", "MEDIA_P50_H", "PEDIDOS"]].rename(columns={
                 "ETAPA": "Stage", "MEDIA_P50": "average p50 (min)",
-                "MEDIA_P90": "average p90 (min)", "PEDIDOS": "Orders"}),
+                "MEDIA_P90": "average p90 (min)", "MEDIA_P50_H": "average p50 (h)",
+                "PEDIDOS": "Orders"}),
             hide_index=True, width="stretch",
         )
+        st.caption("Delivery is the next operating day at the earliest, so most of the cycle "
+                   "is the wait for the chosen slot, not handling time.")
 
     with d:
         st.subheader("Delivery window")
         win = numeric(query(ind["janela_entrega"].sql, P), ["ENTREGAS"])
         total = win["ENTREGAS"].sum()
         win["Share of deliveries"] = win["ENTREGAS"] / total if total else 0
-        st.dataframe(
+        table(
             win[["RESULTADO", "ENTREGAS", "Share of deliveries"]].rename(
                 columns={"RESULTADO": "Result", "ENTREGAS": "Deliveries"}),
             hide_index=True, width="stretch",
@@ -252,15 +255,16 @@ with tabs[2]:
     })
     top = cat.head(20)
     st.caption(f"Top 20 by fulfilled revenue ({currency}) — of {len(cat)} categories")
-    st.bar_chart(top, x="Category", y="Fulfilled revenue", horizontal=True)
-    st.dataframe(cat, hide_index=True, width="stretch")
+    st.bar_chart(top, x="Category", y="Fulfilled revenue", horizontal=True,
+                 sort="-Fulfilled revenue")
+    table(cat, hide_index=True, width="stretch")
 
     st.divider()
     st.subheader("Substitution and line removal")
     sub = numeric(query(ind["substituicao_categoria"].sql, P),
                    ["LINHAS_PEDIDAS", "LINHAS_SUBSTITUIDAS", "LINHAS_REMOVIDAS",
                     "LINHAS_NUNCA_SEPARADAS", "TAXA_SUBSTITUICAO", "TAXA_REMOCAO"])
-    st.dataframe(
+    table(
         sub.rename(columns={
             "CATEGORIA": "Category", "LINHAS_PEDIDAS": "Lines placed",
             "LINHAS_SUBSTITUIDAS": "Lines substituted",
@@ -282,13 +286,13 @@ with tabs[2]:
     if not profile.empty:
         extremes = pd.concat([profile.head(8), profile.tail(8)])
         st.bar_chart(extremes, x="Group", y=["% <35", "% ≥65"], horizontal=True)
-    st.dataframe(profile, hide_index=True, width="stretch")
+    table(profile, hide_index=True, width="stretch")
 
     st.divider()
     st.subheader("Orders by warehouse")
     region = numeric(query(ind["pedidos_por_regiao"].sql, P),
                       ["DIAS", "LINHAS", "UNIDADES", "RECEITA"])
-    st.dataframe(
+    table(
         region.rename(columns={
             "ARMAZEM": "Warehouse", "DIAS": "Days", "LINHAS": "Lines",
             "UNIDADES": "Units", "RECEITA": "Revenue",
@@ -302,7 +306,7 @@ with tabs[3]:
     assortment = numeric(query(ind["sortimento_armazem"].sql, P),
                     ["DIAS_OBSERVADOS", "PRODUTOS_MEDIA_DIA", "PRODUTOS_MAXIMO_DIA",
                      "EXCLUSIVOS_MEDIA_DIA", "PRECO_MEDIO", "NOVIDADES_PERIODO"])
-    st.dataframe(
+    table(
         assortment.rename(columns={
             "ARMAZEM": "Warehouse", "DIAS_OBSERVADOS": "Days observed",
             "PRODUTOS_MEDIA_DIA": "Products, avg/day",
@@ -319,7 +323,7 @@ with tabs[3]:
         st.subheader("Catalog movement")
         movement = numeric(query(ind["movimento_catalogo"].sql, P),
                        ["PRODUTOS", "PRODUTOS_DISTINTOS", "DIAS"])
-        st.dataframe(
+        table(
             movement.rename(columns={
                 "TIPO_DE_MUDANCA": "Change type", "PRODUTOS": "Products",
                 "PRODUTOS_DISTINTOS": "Distinct products", "DIAS": "Days",
@@ -331,7 +335,7 @@ with tabs[3]:
         var = numeric(query(ind["variacao_preco"].sql, P),
                        ["PRECO_ANTERIOR", "PRECO", "VARIACAO", "VARIACAO_PCT",
                         "DIAS_DESDE_O_ANTERIOR"])
-        st.dataframe(
+        table(
             var.head(50).rename(columns={
                 "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "PRODUTO": "Product",
                 "CATEGORIA": "Category", "PRECO_ANTERIOR": "Previous price",
@@ -357,7 +361,7 @@ with tabs[4]:
     })
     st.scatter_chart(sd.head(60), x="Products offered", y="Fulfilled revenue",
                      size="Lines placed")
-    st.dataframe(
+    table(
         sd,
         hide_index=True, width="stretch",
     )
@@ -376,13 +380,13 @@ with tabs[5]:
             "MUNICIPIOS": "Municipalities", "CEPS": "Postal codes",
         })
         st.bar_chart(base, x="Age band", y="Customers", color="Warehouse", stack=True)
-        st.dataframe(base, hide_index=True, width="stretch")
+        table(base, hide_index=True, width="stretch")
     with d:
         st.subheader("Municipal coverage")
         cov = numeric(query(ind["cobertura_municipal"].sql),
                        ["MUNICIPIOS_NA_AUF", "MUNICIPIOS_SEM_CLIENTE", "CLIENTES",
                         "POPULACAO_AUF", "CLIENTES_POR_10K"])
-        st.dataframe(
+        table(
             cov.rename(columns={
                 "ARMAZEM": "Warehouse", "PROVINCIA": "Province",
                 "MUNICIPIOS_NA_AUF": "Municipalities in service area",
@@ -427,7 +431,7 @@ with tabs[6]:
         st.divider()
         st.subheader("Stock coverage by category")
         worst = coverage.sort_values("DIAS_DE_COBERTURA", na_position="last").head(20)
-        st.dataframe(
+        table(
             worst[["DIA", "ARMAZEM", "CATEGORIA", "UNIDADES_EM_ESTOQUE",
                    "DIAS_DE_COBERTURA", "COBERTURA_DO_PRODUTO_TIPICO",
                    "PARES_PRODUTO_DIA"]].rename(columns={
@@ -443,7 +447,7 @@ with tabs[6]:
 
         st.divider()
         st.subheader("Stockouts: units and categories affected")
-        st.dataframe(
+        table(
             stockout.sort_values("UNIDADES_EM_FALTA", ascending=False).head(20).rename(
                 columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
                          "UNIDADES_PEDIDAS": "Ordered", "UNIDADES_ATENDIDAS": "Fulfilled",
@@ -456,7 +460,7 @@ with tabs[6]:
         e, d = st.columns(2)
         with e:
             st.subheader("Replenishment: orders issued")
-            st.dataframe(
+            table(
                 replenishment.sort_values("ORDENS_EMITIDAS", ascending=False).head(20).rename(
                     columns={"DIA": "Day", "ARMAZEM": "Warehouse", "CATEGORIA": "Category",
                              "ORDENS_EMITIDAS": "Orders",
@@ -465,7 +469,7 @@ with tabs[6]:
             )
         with d:
             st.subheader("Daily turnover by category")
-            st.dataframe(
+            table(
                 turnover.sort_values("GIRO_DIARIO", ascending=False, na_position="last").head(20)
                     .rename(columns={"DIA": "Day", "ARMAZEM": "Warehouse",
                                       "CATEGORIA": "Category",

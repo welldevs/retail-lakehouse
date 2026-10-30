@@ -53,6 +53,10 @@ CATALOG_FIELDS = (
     # Resolved BY THE PLATFORM against the versioned mapping. It arrives here as a label, and
     # the generator does not know — nor needs to know — which rule produced it.
     "demand_group",
+    # Also stamped by the platform (product_choice.py, CR-017), never recomputed here: how
+    # likely the product is within its group, and the ceiling of units per line.
+    "popularity_weight",
+    "quantity_max",
 )
 CALENDAR_FIELDS = ("wh", "order_date", "price_as_of", "price_source")
 
@@ -144,6 +148,20 @@ class Reference:
                     f"{CATALOG_FILE}: non-positive unit_price for "
                     f"{row.get('source_product_id')!r} in {row.get('wh')!r}"
                 )
+            try:
+                row["popularity_weight"] = float(row["popularity_weight"])
+                row["quantity_max"] = int(row["quantity_max"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ReferenceError(
+                    f"{CATALOG_FILE}: popularity_weight/quantity_max missing or invalid for "
+                    f"{row.get('source_product_id')!r}. Regenerate with "
+                    f"`make orders-export-reference`."
+                ) from exc
+            if row["popularity_weight"] <= 0 or row["quantity_max"] < 1:
+                raise ReferenceError(
+                    f"{CATALOG_FILE}: non-positive popularity_weight or quantity_max for "
+                    f"{row.get('source_product_id')!r}"
+                )
             self._catalog.setdefault((row["wh"], row["price_as_of"]), []).append(row)
 
         # (wh, price_as_of, subgroup_id) -> [position in that pair's catalog, ...]. Substitution
@@ -171,6 +189,16 @@ class Reference:
         self._demand_groups_of: dict[tuple, tuple] = {
             key: tuple(sorted(groups)) for key, groups in groups_by_pair.items()
         }
+        # Cumulative popularity per (pair, group), aligned with `_by_demand_group`. Built once:
+        # a basket line draws with `bisect` instead of rescanning hundreds of products.
+        self._popularity_cdf: dict[tuple, list[float]] = {}
+        for key, positions in self._by_demand_group.items():
+            products = self._catalog[key[:2]]
+            running, cumulative = 0.0, []
+            for position in positions:
+                running += products[position]["popularity_weight"]
+                cumulative.append(running)
+            self._popularity_cdf[key] = cumulative
 
         # CDF per (pair, COHORT), computed once. Recomputing it per line would cost a scan of
         # dozens of groups per basket line, and the result would be identical.
@@ -263,6 +291,9 @@ class Reference:
 
     def positions_in_demand_group(self, wh: str, price_as_of: str, group: str) -> list[int]:
         return self._by_demand_group.get((wh, price_as_of, group), [])
+
+    def popularity_cdf_of(self, wh: str, price_as_of: str, group: str) -> list[float]:
+        return self._popularity_cdf.get((wh, price_as_of, group), [])
 
     def substitutes_in_subgroup(self, wh: str, price_as_of: str, subgroup_id) -> list[int]:
         return self._by_subgroup.get((wh, price_as_of, subgroup_id), [])

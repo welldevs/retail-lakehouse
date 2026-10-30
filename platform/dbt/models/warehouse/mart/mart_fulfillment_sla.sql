@@ -41,6 +41,13 @@
 -- a KPI breaks a test, even with a value that fits the plausible range: measured, changing
 -- the threshold from 60 to 75 fails.
 --
+-- THIRD, CR-017 (2026-10-30). Even reconciled, the window was drawn independently of the
+-- delivery time, so only 25% of deliveries landed inside it, 77.5% were delivered on the
+-- day of the order and 22% before 07:00 Madrid time. The slot is now chosen first, on the
+-- operating calendar (next operating day at the earliest, Monday to Saturday, 07:00-22:00),
+-- and picking and dispatch are scheduled backwards from it. `slot_lead_hours_*` no longer
+-- exists; adherence now reads back the declared `delivery_on_time_rate`.
+--
 -- WHAT THE MART STILL DOES THE SAME: it carries `sla_minutes`, `max_picking_minutes` and
 -- `orders_breaching_sla` SIDE BY SIDE. Before, that served to understand a structural zero;
 -- now it serves to let the reader see against which threshold the count was made. The reason has
@@ -88,6 +95,10 @@ select
     -- ---- p50 / p90 per stage --------------------------------------------------------
     percentile_cont(0.5) within group (order by f.minutes_to_confirm) as p50_minutes_to_confirm,
     percentile_cont(0.9) within group (order by f.minutes_to_confirm) as p90_minutes_to_confirm,
+    -- The wait for the slot (CR-017): picking is scheduled backwards from the delivery
+    -- window, next operating day at the earliest, so this is the longest stage of the cycle.
+    percentile_cont(0.5) within group (order by f.minutes_to_picking) as p50_minutes_to_picking,
+    percentile_cont(0.9) within group (order by f.minutes_to_picking) as p90_minutes_to_picking,
     percentile_cont(0.5) within group (order by f.minutes_to_pick)    as p50_minutes_to_pick,
     percentile_cont(0.9) within group (order by f.minutes_to_pick)    as p90_minutes_to_pick,
     percentile_cont(0.5) within group (order by f.minutes_to_dispatch) as p50_minutes_to_dispatch,

@@ -94,6 +94,14 @@ class FakeIcebergTable:
         self._snapshots.append(FakeSnapshot(len(self._snapshots) + 1))
         return None
 
+    def append(self, arrow_table):
+        rows = arrow_table.to_pylist()
+        self.appends = getattr(self, "appends", 0) + 1
+        self.journal.append(("append", len(rows)))
+        for row in rows:
+            self.rows[row["order_id"]] = dict(row)
+        self._snapshots.append(FakeSnapshot(len(self._snapshots) + 1))
+
     def refresh(self):
         self.refreshes += 1
         self.journal.append(("refresh",))
@@ -116,4 +124,18 @@ class FakeCatalog:
     def load_table(self, _name):
         self.loads += 1
         self._table.journal.append(("load_table",))
+        return self._table
+
+    # ---- what `reset_table` / `ensure_table` call ------------------------------
+    def create_namespace_if_not_exists(self, _namespace):
+        return None
+
+    def table_exists(self, _name):
+        return True
+
+    def drop_table(self, _name):
+        self._table.rows.clear()
+        self._table.journal.append(("drop_table",))
+
+    def create_table(self, _name, schema=None):
         return self._table

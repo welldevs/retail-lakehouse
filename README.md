@@ -34,15 +34,15 @@ L1  RAW        byte-identical partition in MinIO/S3, checksum verified post-PUT
     │ model  dedup by (order_id, sequence_no); TWO writers to Iceberg,      │
     │        with monotonic merge — whatever doesn't advance seq is dropped │
     └───────────────────────────────────────────────────────────────────────┘
-L2  Silver     typed parquet + order fold + price variation · DuckDB · 11.2 M rows
+L2  Silver     typed parquet + order fold + price variation · DuckDB · 11.7 M rows
 ────────────── physical boundary: COPY INTO, never ref() ──────────────
-L3  Stage      1:1 mirror of a CUT of the Silver           · Postgres (default) · 7.3 M rows
+L3  Stage      1:1 mirror of a CUT of the Silver           · Postgres (default) · 7.7 M rows
 L4  Gold       conformed DIM_* / FACT_*, SCD2 history
 L5  Mart       MART_*, with the grain declared in each table
 ```
 
-The analytical warehouse does **not** receive the whole Silver: 7,320,026 of 11,241,291 rows
-cross the boundary (**65.1%** on 2026-10-30, over the 18 Silver tables). The ratio **is not
+The analytical warehouse does **not** receive the whole Silver: 7,732,735 of 11,658,778 rows
+cross the boundary (**66.3%** on 2026-10-30, over the 18 Silver tables). The ratio **is not
 a property of the pipeline** — it's a function of how much of each source falls within the
 geographic scope, which is why it moved on its own (3.85% in Phase 2, 46.9% on 2026-09-01)
 with nobody loosening the cut. The INE population is national and delivers 1.8%; orders and
@@ -118,7 +118,7 @@ whether the documentation backs up what it claims.
 | 9 | How does it handle **duplication**? | Consumer-side dedup by `(order_id, sequence_no)`: `seq <= last` is discarded. Duplication in the window between publishing and marking the outbox is **accepted and declared** — end-to-end exactly-once is not promised | `make orders-prove-stream` · `fake_kafka.py` |
 | 10 | How does it handle **gaps**? | `seq == last + 1` applies; `seq > last + 1` is a gap and **stops** instead of applying out of order | `make orders-prove-stream` |
 | 11 | How does it handle **concurrency**? | Optimistic conflict on Iceberg with the full cycle: detect → reload → reapply → retry, and an old `seq` **never** overwrites a newer `seq`. Demonstrated even **across different engines** | `make orders-prove-projection` · `make check-spark-iceberg` |
-| 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 206,523 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
+| 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 211,367 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
 | 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 167 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
 | 14 | What **limitations** remain? | Eight debt items (three open), each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
 
@@ -160,10 +160,11 @@ Each is a **frozen** Python package, with `dependencies = []`, its own physical 
 **cannot** be asked. A platform that mixes the two without a label invites reading
 simulation density as market penetration.
 
-**The four derived seeds** have a Makefile target and reproduce byte for byte — a
+**The five derived seeds** have a Makefile target and reproduce byte for byte — a
 versioned artifact with no command that generates it is indistinguishable from a
 hand-typed number: `make seed-province-map`, `make seed-service-area`,
-`make seed-municipality-codes`, `make seed-ambiguous-series` (the last two call the INE API).
+`make seed-municipality-codes`, `make seed-ambiguous-series` and
+`make seed-online-propensity` (the last three call the INE).
 
 ## Analytical warehouse
 
@@ -254,7 +255,7 @@ Mercadona category and product names, INE labels, and values such as the
 │   ├── src/retail_platform/  # land/verify/query, the warehouse cut and loaders, the two orders
 │   │   │                     # planes, demand calibration, and the CLI that wires it together
 │   │   └── indicators/    # the indicator catalog: SQL + explanation, one generator
-│   ├── dbt/seeds/         # 16 seeds, all with a provenance column
+│   ├── dbt/seeds/         # 17 seeds, all with a provenance column
 │   ├── dbt/models/silver/     # target dev (duckdb) — 25 models, one tree per source
 │   ├── dbt/models/warehouse/  # target postgres (default) or snowflake — 24 models via source()
 │   ├── dbt/tests/ + dbt/tests/warehouse/  # singular tests, Silver and Gold/Mart separately
@@ -263,6 +264,7 @@ Mercadona category and product names, INE labels, and values such as the
 ├── streamlit/              # the two panels over the MART, as retail_reader
 │   ├── operations_app.py / prices_app.py   # the interfaces; no SQL of their own
 │   ├── connection.py                       # the read-only session, shared by both
+│   ├── display.py                          # one number format for both panels
 │   └── smoke.py                            # AppTest render check (`make dashboard-check`)
 ├── scripts/                # one Makefile target each; provenance, checks, and adversarial proofs
 ├── jobs/spark/              # the only code that runs outside the platform's venv
@@ -273,9 +275,9 @@ Mercadona category and product names, INE labels, and values such as the
 ## Verification
 
 ```bash
-make test          # 1,144 tests on 2026-10-30, no network: 145 Mercadona + 136 INE population
-                   #   + 95 Callejero + 140 simulated OLTP + 163 orders + 465 platform
-make silver        # dbt build on DuckDB: 25 models + 16 seeds + the data tests
+make test          # 1,175 tests on 2026-10-30, no network: 145 Mercadona + 136 INE population
+                   #   + 95 Callejero + 140 simulated OLTP + 178 orders + 481 platform
+make silver        # dbt build on DuckDB: 25 models + 17 seeds + the data tests
 make warehouse     # dbt build on Postgres (default): 24 models + the data tests
 ```
 

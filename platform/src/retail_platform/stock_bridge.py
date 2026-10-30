@@ -36,7 +36,7 @@ THREE SEMANTIC DECISIONS that change the number and are therefore written down:
      find; it does not leave the shelf. Neither does `not_picked`: those are orders cancelled
      or refused at payment, which never reached picking.
 
-THE LIMIT THIS LEAVES, DECLARED. The generator's `removal_rate` produces lines with reason
+THE LIMIT THIS LEAVES, DECLARED. The generator's `removal_rate_*` produces lines with reason
 "unavailable" at a FIXED, random rate, without looking at any balance. The stockout this ledger
 computes is independent of it: neither causes the other. Making them coherent would require the
 generator to READ the ledger, and that would invert the dependency of the whole project — today

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
+from display import fmt_int, table  # noqa: E402
 from retail_platform.indicators import prices as PI  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_PRICE_DASHBOARD_TTL", "60"))
@@ -50,12 +51,6 @@ def numeric(df: pd.DataFrame, columns) -> pd.DataFrame:
         if column in out.columns:
             out[column] = pd.to_numeric(out[column], errors="coerce")
     return out
-
-
-def fmt_int(value) -> str:
-    if value is None or pd.isna(value):
-        return "—"
-    return f"{int(value):,}".replace(",", ".")
 
 
 def fmt_pct(value) -> str:
@@ -120,7 +115,7 @@ with st.sidebar:
     )
     st.caption(f"Read at {ident['lido_em']}")
     with st.expander("What each mart shows"):
-        st.dataframe(freshness, hide_index=True, width="stretch")
+        table(freshness, hide_index=True, width="stretch")
 
 # ------------------------------------------------------------------------------------
 # Header and KPIs
@@ -171,7 +166,7 @@ with tabs[0]:
          "PURCHASABLE_PRICE_DELTA", "PURCHASABLE_PRICE_DELTA_PCT",
          "DAYS_SINCE_PREVIOUS_SNAPSHOT"],
     )
-    st.dataframe(
+    table(
         quedas.rename(columns={
             "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "DISPLAY_NAME": "Product",
             "CATEGORY_NAME": "Category",
@@ -193,7 +188,7 @@ with tabs[1]:
          "PURCHASABLE_PRICE_DELTA", "PURCHASABLE_PRICE_DELTA_PCT",
          "DAYS_SINCE_PREVIOUS_SNAPSHOT"],
     )
-    st.dataframe(
+    table(
         altas.rename(columns={
             "SNAPSHOT_DATE": "Date", "WH": "Warehouse", "DISPLAY_NAME": "Product",
             "CATEGORY_NAME": "Category",
@@ -218,7 +213,7 @@ with tabs[2]:
         "ALTAS": "Increases", "ENTRADAS": "New listings",
     })
     st.bar_chart(daily_wide, x="Date", y=["Drops", "Increases"], color="Warehouse", stack=False)
-    st.dataframe(daily_wide, hide_index=True, width="stretch")
+    table(daily_wide, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- Categories
 with tabs[3]:
@@ -229,7 +224,7 @@ with tabs[3]:
             query(IND["volatilidade_por_categoria"].sql, P),
             ["TRANSICOES", "MUDANCAS", "TAXA_DE_MUDANCA", "OSCILACAO_MEDIA_PCT"],
         )
-        st.dataframe(
+        table(
             vol.head(30).rename(columns={
                 "CATEGORY_NAME": "Category", "PARENT_CATEGORY_NAME": "Parent",
                 "TRANSICOES": "Transitions", "MUDANCAS": "Changes",
@@ -245,7 +240,7 @@ with tabs[3]:
             query(IND["preco_por_categoria"].sql, P),
             ["PRECO_MINIMO", "PRECO_MAXIMO", "PRECO_MEDIO", "MEDIANA_MEDIA"],
         )
-        st.dataframe(
+        table(
             niveis.head(30).rename(columns={
                 "CATEGORY_NAME": "Category", "PARENT_CATEGORY_NAME": "Parent",
                 "PRECO_MINIMO": "Min price", "PRECO_MAXIMO": "Max price",
@@ -283,7 +278,7 @@ with tabs[4]:
                 "DAYS_SINCE_PREVIOUS_SNAPSHOT": "Days since previous",
             })
             st.line_chart(historico, x="Date", y="Price", color="Warehouse")
-            st.dataframe(historico, hide_index=True, width="stretch")
+            table(historico, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- Catalog
 with tabs[5]:
@@ -299,4 +294,4 @@ with tabs[5]:
         "EXCLUSIVOS_DO_ARMAZEM": "Exclusive to this warehouse",
     })
     st.bar_chart(catalogo, x="Date", y="New arrivals", color="Warehouse", stack=False)
-    st.dataframe(catalogo, hide_index=True, width="stretch")
+    table(catalogo, hide_index=True, width="stretch")

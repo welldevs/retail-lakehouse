@@ -103,9 +103,10 @@ models:
       against a copy of the number — a copy that really went stale in Phase 7, when the
       threshold dropped from 90 to 60.
 
-      THREE OF THEM ARE DERIVED from the others, and assert_order_premises_are_internally_coherent
-      checks the derivation: slot_lead_hours_min/max come from the declared cycle, and
-      sla_minutes_picking comes from sla_picking_percentile over the basket's triangular.
+      SOME ARE DERIVED from the others, and assert_order_premises_are_internally_coherent
+      checks the derivation: the customer cadence reproduces daily_order_rate, the share
+      vectors sum to 1, the delivery window holds a slot, and sla_minutes_picking comes from
+      sla_picking_percentile over the basket's triangular (CR-017).
     columns:
       - name: premise_key
         tests: [not_null, unique]

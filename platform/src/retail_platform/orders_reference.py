@@ -55,7 +55,7 @@ import os
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 
-from . import demand_profile
+from . import demand_profile, product_choice
 
 DEFAULT_SEEDS_DIR = os.path.join("platform", "dbt", "seeds")
 PROVINCE_MAP_SEED = "warehouse_province_map_seed.csv"
@@ -83,29 +83,51 @@ REQUIRED_PREMISES = (
     "basket_lines_min",
     "basket_lines_mode",
     "basket_lines_max",
+    "min_order_amount_eur",
     "quantity_max",
-    "substitution_rate",
-    "removal_rate",
+    "quantity_max_multi",
+    "quantity_multi_price_eur",
+    "quantity_max_mid",
+    "quantity_mid_price_eur",
+    "quantity_max_high",
+    "quantity_high_price_eur",
+    "own_brand_weight",
+    "substitution_rate_fresh",
+    "substitution_rate_other",
+    "removal_rate_fresh",
+    "removal_rate_other",
     "payment_failure_rate",
     "cancellation_rate",
     "delivery_failure_rate",
     "return_rate",
-    "order_hour_min",
-    "order_hour_max",
+    "cadence_weight_7d",
+    "cadence_weight_14d",
+    "cadence_weight_21d",
+    "cadence_weight_28d",
+    "order_skip_rate",
+    *(f"order_weekday_weight_{day}" for day in range(1, 8)),
+    *(f"order_hour_weight_{hour:02d}" for hour in range(24)),
+    "delivery_closed_isoweekday",
+    "delivery_open_hour",
+    "delivery_close_hour",
     "slot_hours",
-    "slot_lead_hours_min",
-    "slot_lead_hours_max",
+    "slot_lead_day_weight_1",
+    "slot_lead_day_weight_2",
+    "slot_lead_day_weight_3",
+    *(f"slot_hour_weight_{hour:02d}" for hour in range(7, 22)),
+    "delivery_on_time_rate",
+    "delivery_early_rate",
+    "delivery_early_max_minutes",
+    "delivery_late_max_minutes",
+    "minutes_dispatch_before_slot_min",
+    "minutes_dispatch_before_slot_max",
+    "minutes_picked_before_dispatch_min",
+    "minutes_picked_before_dispatch_max",
     "minutes_to_payment_min",
     "minutes_to_payment_max",
     "minutes_to_cancel_min",
     "minutes_to_cancel_max",
-    "minutes_to_picking_min",
-    "minutes_to_picking_max",
     "minutes_per_line_picked",
-    "minutes_to_dispatch_min",
-    "minutes_to_dispatch_max",
-    "minutes_to_delivered_min",
-    "minutes_to_delivered_max",
     "minutes_to_return_min",
     "minutes_to_return_max",
     "sla_minutes_picking",
@@ -791,6 +813,11 @@ def build(connection, window_from: str, window_to: str, seeds_dir: str = DEFAULT
     calendar = _build_calendar(connection, warehouses, days)
     price_dates = sorted({row["price_as_of"] for row in calendar["rows"]})
     catalog = _build_catalog(connection, price_dates, seeds_dir)
+    # BEFORE the demand profile: its kg-per-line must be computed with the same weights the
+    # generator will draw with, or the MAPA calibration measures a basket nobody buys.
+    catalog["product_choice"] = product_choice.stamp(
+        catalog["rows"], premises["values"], demand_profile.load_benchmark(seeds_dir)
+    )
     customers = _build_customers(connection, warehouses)
 
     # The customer cohort is resolved HERE, in a single place, for the same reason

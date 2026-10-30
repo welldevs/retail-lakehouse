@@ -393,11 +393,11 @@ class PremisesTest(Base):
     def test_missing_mandatory_premise_is_refused(self):
         self.fx.populated()
         lines = premises_csv().splitlines(keepends=True)
-        without_rate = [l for l in lines if not l.startswith("substitution_rate,")]
+        without_rate = [l for l in lines if not l.startswith("substitution_rate_fresh,")]
         self.fx.write_seed("order_premises_seed.csv", "".join(without_rate))
         with self.assertRaises(OrdersReferenceError) as caught:
             build(self.fx.con, "2026-08-24", "2026-08-24", seeds_dir=self.fx.seeds)
-        self.assertIn("substitution_rate", str(caught.exception))
+        self.assertIn("substitution_rate_fresh", str(caught.exception))
 
     def test_non_numeric_value_is_refused(self):
         self.fx.populated()

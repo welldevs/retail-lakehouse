@@ -121,12 +121,22 @@ Two assumptions, **neither measured**, turn a volume share into a share of peopl
 
 ```
 warehouse → municipality weighted by observed municipal population (INE 29005)
+                         x online-buying rate of its habitat size (INE TIC-H, table 50116)
           → UNIFORM tramo among that municipality's valid candidates
           → house number within the real range, respecting parity
           → sex by observed municipal proportion (INE 29005)
           → age by the ADULT PROVINCIAL distribution (INE 31304) — proxy, truncated
+                         x online-buying rate of its age band (INE TIC-H, table 50116)
           → name from an embedded curated list
 ```
+
+**Both weights arrive ready-made in the reference** (`proportion_within_wh`, `proportion`); this
+Source reads them and never recomputes. Since CR-017 the platform multiplies the census weight
+by the share of people who bought short-duration goods online (the INE group that contains
+food): 12.3% at 65-74 against 52.4% at 25-34, 30.0% below 10,000 inhabitants against 39.5% in
+cities. The census weight survives next to it (`census_proportion_within_wh`,
+`census_proportion`), and the per-warehouse **total** is untouched — it is still the adult
+population times the penetration rate.
 
 The tramo choice is **uniform on purpose, and that is not population density**: there is no
 population per street or per tramo in any source this platform ingests. Weighting tramos
@@ -139,7 +149,7 @@ municipality choice.
 |---|---|---|
 | Municipality | **observed** municipal population (29005, `year=2025`, `reference_date` 2024-12-31, cifras oficiales, integers) | observed |
 | Sex | **observed** municipal distribution (same table) | observed |
-| Age | **ADULT provincial** distribution (31304, `year=2022`, `reference_date` 2022-06-30, `fk_periodo=27`, `fk_tipo_dato=2`), truncated at `min_customer_age` and renormalized | **proxy** |
+| Age | **ADULT provincial** distribution (31304, `year=2022`, `reference_date` 2022-06-30, `fk_periodo=27`, `fk_tipo_dato=2`), truncated at `min_customer_age`, weighted by the INE TIC-H online-buying rate of the band and renormalized | **proxy** x observed |
 | Base size | warehouse adult population × penetration rate | derived |
 
 #### The customer base is not the resident population

@@ -114,6 +114,11 @@ def tramo(municipality, street_id, code, postal, numbering="1", low="0001", high
     )
 
 
+PROPENSITY_SEED_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "dbt", "seeds", "ine_online_propensity_seed.csv")
+
+
 @unittest.skipIf(duckdb is None, "duckdb not installed")
 class OltpReferenceTestCase(unittest.TestCase):
     def setUp(self):
@@ -125,6 +130,9 @@ class OltpReferenceTestCase(unittest.TestCase):
         self._seed("warehouse_province_map_seed.csv", PROVINCE_MAP_CSV)
         self._seed("customer_premises_seed.csv", CUSTOMER_PREMISES_CSV)
         self._seed("demand_profile_seed.csv", DEMAND_PROFILE_CSV)
+        # The REAL INE seed, not a fixture: its bands are what the propensity is about.
+        with open(PROPENSITY_SEED_PATH, encoding="utf-8") as handle:
+            self._seed("ine_online_propensity_seed.csv", handle.read())
 
         self.connection = duckdb.connect(":memory:")
         self.addCleanup(self.connection.close)
@@ -534,7 +542,10 @@ class PopulationTest(OltpReferenceTestCase):
         self.assertEqual(len(wh1), 2)
         total = 90928 + 800215
         torrent = next(r for r in wh1 if r["municipality_code"] == "244")
-        self.assertAlmostEqual(torrent["proportion_within_wh"], 90928 / total, places=12)
+        self.assertAlmostEqual(torrent["census_proportion_within_wh"], 90928 / total, places=12)
+        # Torrent (90,928) falls in INE's 50k-100k band (35.2%), València in >100k (39.5%).
+        online = 90928 * 35.2 / (90928 * 35.2 + 800215 * 39.5)
+        self.assertAlmostEqual(torrent["proportion_within_wh"], online, places=12)
 
     def test_proportions_sum_to_one_per_warehouse(self):
         for wh in ("wh1", "wh2"):
@@ -653,6 +664,40 @@ class WriteTest(OltpReferenceTestCase):
         write(payloads, out)
         with open(path, "rb") as handle:
             self.assertEqual(first, handle.read())
+
+
+
+
+class OnlinePropensityTest(OltpReferenceTestCase):
+    """CR-017: the INE TIC-H rate reshapes WHO the customers are, never HOW MANY."""
+
+    def test_an_age_weighs_by_its_census_share_times_its_ine_rate(self):
+        ages = [r for r in self.build()["ages"]["rows"] if r["province_code"] == "46"]
+        by_age = {int(r["age"]): r for r in ages}
+        # The fixture pyramid is flat, so the ratio is the ratio of the INE rates.
+        self.assertAlmostEqual(by_age[30]["proportion"] / by_age[70]["proportion"],
+                               52.4 / 12.3, places=9)
+        self.assertAlmostEqual(sum(r["proportion"] for r in ages), 1.0, places=12)
+
+    def test_75_and_over_take_the_oldest_band_the_ine_measures(self):
+        ages = [r for r in self.build()["ages"]["rows"] if r["province_code"] == "46"]
+        by_age = {int(r["age"]): r for r in ages}
+        self.assertEqual(by_age[90]["online_pct"], 12.3)
+
+    def test_the_warehouse_totals_do_not_move(self):
+        """The MAPA channel closure reads these totals; the propensity must not reach them."""
+        payloads = self.build()
+        allocation = payloads["weights"]["customer_allocation"]["by_warehouse"]
+        census = {r["wh"]: 0.0 for r in payloads["weights"]["rows"]}
+        for row in payloads["weights"]["rows"]:
+            census[row["wh"]] += row["population_total"]
+        for entry in allocation:
+            self.assertEqual(entry["population_total"], census[entry["wh"]])
+
+    def test_the_header_names_the_source(self):
+        payloads = self.build()
+        for name in ("weights", "ages"):
+            self.assertIn("50116", payloads[name]["online_propensity"]["source"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+dimension,band,age_or_population_low,age_or_population_high,online_pct,ine_table,provenance,note
+total,16_74,16,74,35.8,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Total Personas'."
+age,16_24,16,24,44.6,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 16 a 24 años'."
+age,25_34,25,34,52.4,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 25 a 34 años'."
+age,35_44,35,44,46.8,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 35 a 44 años'."
+age,45_54,45,54,34.7,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 45 a 54 años'."
+age,55_64,55,64,23,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 55 a 64 años'."
+age,65_74,65,74,12.3,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Edad: De 65 a 74 años'."
+habitat,lt_10k,0,9999,30,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Hábitat: Menos de 10.000 habitantes'."
+habitat,10k_20k,10000,19999,32,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Hábitat: De 10.000 a 20.000 habitantes'."
+habitat,20k_50k,20000,49999,36.2,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Hábitat: De 20.000 a 50.000 habitantes'."
+habitat,50k_100k,50000,99999,35.2,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Hábitat: De 50.000 a 100.000 habitantes'."
+habitat,gt_100k,100000,,39.5,50116,observed,"INE TIC-H, 'Alguna compra de un producto en formato físico de corta duración', % of 'Total personas (16 a 74 años)', row 'Hábitat: Más de 100.000 habitantes y capitales de provincia'."

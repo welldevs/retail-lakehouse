@@ -146,8 +146,9 @@ models:
           arriving early and arriving late are opposite problems and it collapses both. Measured on
           2026-09-01, before the Phase 7 fix: 84% of deliveries arrived BEFORE the
           window opened, because slot_lead_hours drew 2-24h against a cycle of at most
-          8.5h. It was a model defect, not an operational one. With the premises reconciled the rate
-          started to VARY; whatever number comes out is reported, never a target.
+          8.5h. It was a model defect, not an operational one. Since CR-017 the slot is chosen
+          on the operating calendar and the delivery is scheduled into it at the declared
+          delivery_on_time_rate: this rate READS BACK a premise, it is not measured punctuality.
         tests: [not_null]
       - name: orders_delivered_before_slot
         description: >

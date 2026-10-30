@@ -4,7 +4,7 @@
 from [`operations.py`](../../platform/src/retail_platform/indicators/operations.py), where the query and the explanation
 live together.
 
-Derived from `operations.py` sha256 `65b414b197f4ad90bada221b8547f9ea69e6bfe096d8319ea806f28e23846416` — a hash, not a date, so
+Derived from `operations.py` sha256 `5c15683abc2588d172c41b15edcbaaa75c438ea8a809a3dc7e84c1f9c0bf1a79` — a hash, not a date, so
 regenerating an up-to-date page changes no byte.
 
 ## What it's for
@@ -118,7 +118,7 @@ select
 
 **Caveats when rebuilding elsewhere**
 
-1. STAGES ARE COUNTED BY MILESTONE REACHED, never by status. `order_status` holds the state of the LAST event: a returned order has status RETURNED and WAS delivered. Measured on this base: counting status='DELIVERED' gives 193,789; counting delivered_at is not null gives 195,419 — the 1,630 returned ones. A funnel built on status publishes a delivery rate 1% lower than the real one, and nothing fails.
+1. STAGES ARE COUNTED BY MILESTONE REACHED, never by status. `order_status` holds the state of the LAST event: a returned order has status RETURNED and WAS delivered. Measured on this base (2026-10-30): counting status='DELIVERED' gives 198,331; counting delivered_at is not null gives 199,920 — the 1,589 returned. A funnel built on status publishes a delivery rate 1% lower than the real one, and nothing fails.
 2. Milestone is monotonic (once reached, it doesn't go back); status isn't. The mart already resolves this — the `orders_*` columns are milestone counts. In Power BI, do NOT rebuild the funnel from a status field.
 
 ```sql
@@ -191,9 +191,9 @@ select 'Payment declined' as motivo, sum(orders_payment_failed)  as pedidos,
 
 **Caveats when rebuilding elsewhere**
 
-1. THIS IS THE EASIEST INDICATOR IN THE PANEL TO GET WRONG, and the error produces a plausible number. `SUM(gross) - SUM(net)` gives 1,278,522.89 and MIXES two losses with opposite causes. `SUM(amount_delta)` gives 393,757.28 — and that's not the same thing, nor is it wrong: `amount_delta` only exists for a PICKED order, and `sum()` ignores the null of the other 9,121.
-2. The correct decomposition, verified arithmetically (393,757.28 + 884,765.61 = 1,278,522.89): loss at PICKING = sum(amount_delta), the basket shrank through removal and substitution; loss from DEAD ORDER = the remainder, the full value of whoever never reached picking. These are problems from different areas — one is store operations, the other is payment and cancellation — and a single number hides which one is happening.
-3. THE HYPOTHESIS THAT STOOD HERE DID NOT HOLD UP, and the record is that of the test that failed it, not of a deleted sentence. Over 6,400 orders (Phase 3), the dead order was worth on average 179.51 against 135.36 for the picked one, and the hypothesis was that a bigger basket takes longer to pick and offers a wider window for cancellation. Over 206,523 orders (Phase 7) the two values converged to 97.00 and 97.11 — practically equal, over 9,121 dead orders. Either the original difference was small-sample noise, or the effect doesn't exist. It CANNOT be confirmed from the MART — there is no order grain here — so the question remains open, and the earlier hypothesis is recorded as refuted, not as pending.
+1. THIS IS THE EASIEST INDICATOR IN THE PANEL TO GET WRONG, and the error produces a plausible number. Measured 2026-10-30: `SUM(gross) - SUM(net)` gives 945,955.72 and MIXES two losses with opposite causes. `SUM(amount_delta)` gives 180,809.55 — and that's not the same thing, nor is it wrong: `amount_delta` only exists for a PICKED order, and `sum()` ignores the null of the other 9,423.
+2. The correct decomposition, verified arithmetically (180,809.55 + 765,146.17 = 945,955.72): loss at PICKING = sum(amount_delta), the basket shrank through removal and substitution; loss from DEAD ORDER = the remainder, the full value of whoever never reached picking. These are problems from different areas — one is store operations, the other is payment and cancellation — and a single number hides which one is happening.
+3. THE HYPOTHESIS THAT STOOD HERE DID NOT HOLD UP, and the record is that of the test that failed it, not of a deleted sentence. Over 6,400 orders (Phase 3), the dead order was worth on average 179.51 against 135.36 for the picked one, and the hypothesis was that a bigger basket takes longer to pick and offers a wider window for cancellation. Over 206,523 orders (Phase 7) the two values converged to 97.00 and 97.11 — practically equal, over 9,121 dead orders — and again over 211,367 orders after CR-017: 81.20 and 81.10, over 9,423. Either the original difference was small-sample noise, or the effect doesn't exist. It CANNOT be confirmed from the MART — there is no order grain here — so the question remains open, and the earlier hypothesis is recorded as refuted, not as pending.
 
 ```sql
 with t as (
@@ -232,7 +232,8 @@ with t as (
 
 **Caveats when rebuilding elsewhere**
 
-1. THE CURRENT WINDOW HAS 4 DAYS. There is no trend, seasonality or weekly comparison to extract from this — any trend line over 4 points is decoration. The axis exists so the series GROWS, and it grows every day the DAG runs.
+1. THE WINDOW HAS 9 DAYS (2026-08-24 to 09-01). The weekday shape is a DECLARED premise (`order_weekday_weight_*`: Sunday and Monday high, Saturday low), not a measurement — no source in this repository has a weekday profile. Nine points show that shape and day-to-day noise; they are not a trend.
+2. Since CR-017 each customer reorders on a CADENCE (every 7/14/21/28 days, on their own weekday) and the day only decides who skips. Before, every warehouse placed exactly the same number of orders every day — a flat line that gave the simulation away.
 
 ```sql
 select order_date, wh,
@@ -297,19 +298,24 @@ select 1 as ordem, 'Placed -> payment' as etapa,
                    sum(orders_with_confirm)             as pedidos
               from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             union all
-            select 2, 'Picking (start -> end)', round((avg(p50_minutes_to_pick))::numeric,1),
+            select 2, 'Payment -> picking starts (waits for the slot)',
+                   round((avg(p50_minutes_to_picking))::numeric,1),
+                   round((avg(p90_minutes_to_picking))::numeric,1), sum(orders_with_pick)
+              from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
+            union all
+            select 3, 'Picking (start -> end)', round((avg(p50_minutes_to_pick))::numeric,1),
                    round((avg(p90_minutes_to_pick))::numeric,1), sum(orders_with_pick)
               from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             union all
-            select 3, 'Picked -> dispatched', round((avg(p50_minutes_to_dispatch))::numeric,1),
+            select 4, 'Picked -> dispatched', round((avg(p50_minutes_to_dispatch))::numeric,1),
                    round((avg(p90_minutes_to_dispatch))::numeric,1), sum(orders_with_pick)
               from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             union all
-            select 4, 'Dispatched -> delivered', round((avg(p50_minutes_to_deliver))::numeric,1),
+            select 5, 'Dispatched -> delivered', round((avg(p50_minutes_to_deliver))::numeric,1),
                    round((avg(p90_minutes_to_deliver))::numeric,1), sum(orders_with_deliver)
               from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
             union all
-            select 5, 'Total cycle (placed -> delivered)',
+            select 6, 'Total cycle (placed -> delivered)',
                    round((avg(p50_minutes_placed_to_delivered))::numeric,1),
                    round((avg(p90_minutes_placed_to_delivered))::numeric,1), sum(orders_with_deliver)
               from "MART".mart_fulfillment_sla where order_date between %(start)s and %(end)s and wh = any(string_to_array(%(warehouses)s, ','))
@@ -332,7 +338,8 @@ select 1 as ordem, 'Placed -> payment' as etapa,
 
 1. ARRIVING EARLY AND ARRIVING LATE ARE OPPOSITE PROBLEMS, and a single 'adherence' rate erases which one is happening. Always publish the direction: low adherence invites the conclusion 'operations are running late', and this project has already measured the opposite case — BEFORE the fix below, on 2026-09-01, 84% of deliveries arrived BEFORE the window opened.
 2. THIS 84% MEASUREMENT WAS A MODEL DEFECT, not an operational one: `slot_lead_hours` drew the window's start between 2h and 24h after placement, while the sum of milestones delivered in at most 8.5h. The two assumptions were DECLARED SEPARATELY and never reconciled. Fixed in Phase 7: `slot_lead_hours_*` became DERIVED from the declared cycle in the same seed (1h to 8h, against 2h to 24h), and the test `assert_order_premises_are_internally_coherent` checks the DERIVATION — never the adherence, so that no one tunes the number until the KPI looks good. After the fix: 42.5% before, 24.8% within, 32.7% after — the distortion fell to less than half and the direction of the deviation (early, not late) held.
-3. In Power BI, publish all THREE counts. If a single indicator is required, use 'deliveries outside the window' with the direction detail alongside it.
+3. SECOND FIX, CR-017 (2026-10-30). Even after Phase 7 the window was drawn INDEPENDENTLY of the delivery time: only 25% arrived inside it, 77.5% of orders were delivered on the day they were placed and 22% before 07:00 Madrid time. The slot is now chosen first, on the operating calendar (next operating day at the earliest, Monday to Saturday, 07:00-22:00, one hour), picking and dispatch are scheduled BACKWARDS from it, and the delivery lands inside it at the declared `delivery_on_time_rate`. The share inside the window is therefore an ASSUMPTION read back, not a measured performance.
+4. In Power BI, publish all THREE counts. If a single indicator is required, use 'deliveries outside the window' with the direction detail alongside it.
 
 ```sql
 select 1 as ordem, 'Before the window opens' as resultado,
@@ -363,7 +370,7 @@ select 1 as ordem, 'Before the window opens' as resultado,
 
 **Caveats when rebuilding elsewhere**
 
-1. `orders_touching_category` IS NOT ADDITIVE across categories: an order with milk and bread counts once in each. Adding up the 151 categories of a single day gives far more than the ~22,947 orders of that day — and it's always ~22,947, because `daily_order_rate` is fixed and there's no day-of-week effect. Lines, units and value ARE additive, because each line belongs to exactly one category. For order counts use MART_ORDER_FUNNEL, which has the right grain.
+1. `orders_touching_category` IS NOT ADDITIVE across categories: an order with milk and bread counts once in each. Adding up the 151 categories of a single day gives far more than the orders of that day (17,702 to 27,210 per day across the window, measured 2026-10-30). Lines, units and value ARE additive, because each line belongs to exactly one category. For order counts use MART_ORDER_FUNNEL, which has the right grain.
 2. `revenue_fulfilled` is what was DELIVERED; `revenue_placed` is what was ordered. The difference (`revenue_lost`) is removal plus orders never picked. Don't swap one for the other on a 'revenue' chart without saying which.
 3. THE CATEGORY IS THE ONE AT ORDER TIME, recorded in the event itself, not the one the product has today. This is the correct behavior for historical revenue, and it differs from a join against the current dimension.
 
@@ -398,7 +405,7 @@ select
 
 **Caveats when rebuilding elsewhere**
 
-1. THE RATES ARE AN ASSUMPTION, NOT AN OBSERVATION. `substitution_rate` (0.04) and `removal_rate` (0.02) were DECLARED in the generator's seed; no source in this repository measures availability. The variation across categories is sampling noise over a constant rate, not an assortment signal. A panel that ranks categories by 'stockout risk' with this data is making it up.
+1. THE RATES ARE AN ASSUMPTION, NOT AN OBSERVATION. They are DECLARED in the generator's seed in two tiers (CR-017): FRESH lines — MAPA's own 'alimentacion fresca' scope — at `substitution_rate_fresh` 0.07 / `removal_rate_fresh` 0.035, everything else at 0.025 / 0.012. No source in this repository measures availability. The fresh-vs-packaged gap is the premise; the variation inside a tier is sampling noise. A panel that ranks categories by 'stockout risk' with this data is making it up.
 2. `unavailable` is the recorded reason, and NOT `out_of_stock`: no stock fact exists on this platform. The vocabulary is deliberate — naming it as stock would promise data nobody measured.
 3. Recalculate the rate from the SUMS (lines_substituted / lines_placed). Averaging the rates by day-warehouse-category weighs each cell equally, regardless of size — the classic Simpson's paradox in a panel.
 
@@ -632,7 +639,7 @@ select change_type as tipo_de_mudanca, count(*) as produtos,
 **Caveats when rebuilding elsewhere**
 
 1. THIS IS THE ONLY CROSS THE TWO MARTS ALLOW WITHOUT REAGGREGATION, and that's why both have grain (date, wh, category_id). The join is by equality on the three columns; any other level requires aggregating first and the result becomes dependent on the order of operations.
-2. DEMAND IS SYNTHETIC, AT TWO LEVELS THAT ARE NOT EQUAL. The demand GROUP (the high-level category) is drawn with WEIGHT CALIBRATED against MAPA 2025 since Phase 4 — it's not uniform, and this calibration is what this panel validates in `docs/demand-evidence/`. Within the group, the PRODUCT is still drawn UNIFORMLY, because no source in this repository measures turnover per SKU. Declared consequence: WITHIN a group, the mix MIRRORS THE SIZE OF THE ASSORTMENT; BETWEEN groups, the mix follows MAPA's weight. Reading 'demand coverage' as individual-product customer preference reads the assumption back — but at the aggregate category level, a real part of the signal comes from the benchmark.
+2. DEMAND IS SYNTHETIC, AT TWO LEVELS THAT ARE NOT EQUAL. The demand GROUP (the high-level category) is drawn with WEIGHT CALIBRATED against MAPA 2025 since Phase 4 — it's not uniform, and this calibration is what this panel validates in `docs/demand-evidence/`. Within the group, the PRODUCT is drawn by a POPULARITY WEIGHT since CR-017: Mercadona's own brands x2, and cheaper-than-the-group-median products more likely, with the price elasticity FITTED so that the simulated EUR/kg matches what MAPA measures households pay. No source in this repository measures turnover per SKU, so the weight is a model, not an observation. Reading 'demand coverage' as individual-product preference reads the model back — at the aggregate category level, a real part of the signal comes from the benchmark.
 3. An `inner join` hides the category with supply and no demand, which is exactly the interesting case. The `left join` starting from supply preserves the zero.
 
 ```sql

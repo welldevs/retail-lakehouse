@@ -34,7 +34,7 @@
 -- problems with the same `units_short`.
 --
 -- DECLARED LIMIT, and it matters for reading any number in this table: the stockout here is
--- INDEPENDENT of the order generator's `removal_rate`, which produces "unavailable" lines at
+-- INDEPENDENT of the order generator's `removal_rate_*`, which produces "unavailable" lines at
 -- a fixed drawn rate, without looking at any balance. Neither causes the other. Making them coherent
 -- would require the generator to READ the ledger, inverting the project's dependency (today orders
 -- generate stock). Trigger to change it: a second-pass generator.

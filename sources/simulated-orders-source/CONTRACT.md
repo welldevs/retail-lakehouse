@@ -146,9 +146,20 @@ availability. Every premise lives in `platform/dbt/seeds/order_premises_seed.csv
 `synthetic` (never `observed`, never `proxy` — a different label **fails** the export), and its
 `sha256` travels to `config.premises_sha256` in the manifest.
 
-`daily_order_rate` is the only premise **with no observational anchor at all**: that is why it
-lives in a seed anyone can edit and rebuild, and not in a constant hidden in the generator.
-There is no default for any premise — a missing key fails the generation.
+`daily_order_rate` has **no observational anchor at all**: that is why it lives in a seed anyone
+can edit and rebuild, and not in a constant hidden in the generator. There is no default for
+any premise — a missing key fails the generation.
+
+**Since CR-017 the premises fall in two groups, and the seed says which is which:**
+
+| Group | Premises | Origin |
+|---|---|---|
+| Rules a real operator publishes | no delivery on Sunday (`delivery_closed_isoweekday`), slots 07:00-22:00 (`delivery_open_hour`/`close_hour`), one-hour slot, never delivered on the order day (`slot_lead_day_weight_*` starts at 1), 50 EUR minimum (`min_order_amount_eur`) | Mercadona online service conditions, cited in each row |
+| Shapes nobody in this repo measures | customer cadence (`cadence_weight_*`, `order_skip_rate`), weekday (`order_weekday_weight_*`), placement hour in LOCAL time (`order_hour_weight_*`), slot hour, on-time/early/late split, fresh vs other substitution and removal rates, quantity tiers by price | declared, `synthetic` |
+
+The cadence weights and `order_skip_rate` are declared so that they **reproduce**
+`daily_order_rate` (`assert_order_premises_are_internally_coherent`): the cadence replaced the
+daily lottery without moving the rate the MAPA channel closure was built on.
 
 ### 2.6 Demand model — calibrated against MAPA 2025
 
@@ -161,18 +172,19 @@ describes the aggregate and still holds word for word.
 ```
 demand group       P(g)  <- MAPA VOLUME target (kg/L), tilted by the e-commerce channel
        |
-product in group         <- UNIFORM (no source measures per-SKU turnover)
-       |
-quantity                 <- w(k)=1/2^(k-1), unchanged
+product in group         <- popularity_weight (own brand x2, price relative to the group
+       |                    median ^ elasticity FITTED against MAPA EUR/kg) — platform-computed
+quantity                 <- w(k)=1/2^(k-1), up to the product's quantity_max (price tiers)
        |
 unit price               <- OBSERVED (Mercadona purchasable portion)
        |
 order value              <- consequence, never a target
 ```
 
-Price appears in no arrow pointing at demand. An expensive category can have low volume and
-high revenue — in MAPA, shellfish are **0.81% of volume and 2.88% of value** —, and that is a
-result of the model, not a defect.
+Price appears in no arrow pointing at the demand GROUP. An expensive category can have low
+volume and high revenue — in MAPA, shellfish are **0.81% of volume and 2.88% of value** —, and
+that is a result of the model, not a defect. Inside a group, since CR-017, price does weigh the
+choice of product — relative to the group median, so the group's share of lines is untouched.
 
 **What the benchmark calibrates:** the probability of a demand group appearing on a line.
 **What it does not calibrate, and cannot:** `daily_order_rate`, `basket_lines_min/mode/max` and
@@ -180,8 +192,9 @@ result of the model, not a defect.
 online-store orders, baskets or purchase cadence. Those remain `synthetic` in
 `order_premises_seed.csv`.
 
-**The bridge between a kg target and line draws** is the *observed* average package size,
-never the price: `P(g) ∝ volume_target_g / avg_kg_per_line_g`. A group whose typical package
+**The bridge between a kg target and line draws** is the average kg per line *as drawn* —
+package size x expected units, weighted by the same `popularity_weight` the generator uses:
+`P(g) ∝ volume_target_g / avg_kg_per_line_g`. A group whose typical package
 weighs 1 kg needs fewer lines than one whose typical product weighs 100 g to deliver the same
 volume. Groups with less than 50% of the assortment convertible to kg/L (`reference_format` in
 `ud`, `dz`) do **not** get a volume target — measured: `HUEVOS` converts 18% and falls into the
@@ -403,15 +416,17 @@ customers `2026-08-24` and `2026-08-27`).
 - **There is no stock fact.** That is why `order_line_removed` carries
   `reason = "unavailable"` and **not** `"out_of_stock"`: naming it as if there were stock would
   promise data nobody measured. The rate is declared, not the consequence of a balance.
-- **The product choice is UNIFORM on purpose, and that is not a "realistic basket".** No
-  source measures sales, turnover or basket composition. Weighting products would invent a
-  distribution nobody measured — the same prohibition Phase 1 applied to the street segment.
-  Declared consequence: **the category mix mirrors the size of the assortment**, and that is
-  the consequence of a premise, not a claim about the market.
+- **The product weight is a model, not an observation.** No source measures sales, turnover
+  or basket composition. Until CR-017 the product was drawn uniformly within its group, and on
+  the real catalog that made perfume the top non-food category and put two whole Iberian hams
+  on a line. The weight now favours own brands and cheaper-than-the-group products, with the
+  elasticity fitted so the basket's EUR/kg matches what MAPA measures households pay; the fit
+  and its error travel in `catalog.json` (`product_choice`).
 - **The delivery slot is a commercial promise on a fixed grid, never a route.** The Callejero
   has no coordinates or adjacency; computing a route or route time would be inventing
-  geography. `delivered_within_slot` compares two synthetic instants — it is not a measure of
-  real punctuality. Trigger for the real thing: a sixth source with coordinates (IGN's
+  geography. Since CR-017 the slot is chosen first, on the operating calendar, and picking and
+  dispatch are scheduled backwards from it; `delivered_within_slot` therefore reads back the
+  declared `delivery_on_time_rate` — it is not a measure of real punctuality. Trigger for the real thing: a sixth source with coordinates (IGN's
   CartoCiudad, or OSM).
 - **The window of days is bounded by the catalog, and the bound is measured.** The 4
   warehouses have a catalog from `2026-08-24` to `2026-08-27`; `mad1` also has `08-15` and
@@ -421,8 +436,12 @@ customers `2026-08-24` and `2026-08-27`).
   product of the same subgroup — nor, on a second attempt, of the same category — is
   available, the line stays fulfilled and no event is emitted. Inventing a substitute outside
   that warehouse's assortment would be worse: it would be inventing assortment.
-- **A customer places at most one order per day.** Declared simplification; no source in this
-  repo measures purchase cadence.
+- **A customer orders on a cadence, at most once per scheduled day.** Every 7/14/21/28 days on
+  their own weekday, from a hash of the customer; the day's draw only decides who skips.
+  Declared; no source in this repo measures purchase cadence.
+- **The partition day is the UTC day of `order_placed`.** Hours are drawn in local time
+  (Europe/Madrid, stdlib `zoneinfo`) and stamped in UTC; local hours that fall on the previous
+  UTC day (00h-01h in summer time) are not drawn.
 - **The customer's sex, age and address do not influence the basket.** Crossing demographics
   with consumption would require consumption data that does not exist. The correlation is
   discarded by construction, as Phase 1 discarded the real correlation between sex and age.

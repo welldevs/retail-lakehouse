@@ -17,14 +17,21 @@
 -- the same family as the Phase 6 allocation defect. That is why the test lives here, in the
 -- warehouse, where the two domains finally meet.
 --
--- THE COMPARISON IS `>=`, NOT `=`, and the difference is real: consumption is dated by PICKING,
--- and an order placed late on the last day is picked the next day. The ledger sees one
--- day MORE than the orders. Demanding equality would force discarding observed consumption to
--- make two tables look symmetric.
+-- THE WINDOW COMPARED IS THE PICKING WINDOW, not the order window, because consumption is
+-- dated by PICKING (stock_bridge.py: `cast(picked_at as date)`). Until CR-017 an order was
+-- picked on the day it was placed, so the two windows nearly coincided and this test compared
+-- order dates. Since CR-017 picking is scheduled backwards from the delivery slot — next
+-- operating day at the earliest — so the first consumption is the day AFTER the first order,
+-- and comparing order dates flagged a gap that is the model working as declared.
+--
+-- THE COMPARISON IS `>=`, NOT `=`: the ledger may see days the picking window does not (a
+-- series with no demand on a day still has a balance). Demanding equality would force
+-- discarding observed consumption to make two tables look symmetric.
 with pedidos as (
 
-    select min(order_date) as de, max(order_date) as ate
+    select min(cast(picked_at as date)) as de, max(cast(picked_at as date)) as ate
     from {{ ref('fact_order') }}
+    where picked_at is not null
 
 ),
 

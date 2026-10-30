@@ -71,6 +71,7 @@ WHERE EACH THING COMES FROM (and what was measured before writing this)
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import os
@@ -82,6 +83,7 @@ SERVICE_AREA_SEED = "warehouse_service_area_seed.csv"
 PROVINCE_MAP_SEED = "warehouse_province_map_seed.csv"
 CUSTOMER_PREMISES_SEED = "customer_premises_seed.csv"
 DEMAND_PROFILE_SEED = "demand_profile_seed.csv"
+PROPENSITY_SEED = "ine_online_propensity_seed"
 
 # Premises THIS export requires from the customer registry seed. Missing any of them fails: a
 # default here would produce a base sized by a number nobody declared.
@@ -814,6 +816,92 @@ def _build_customer_allocation(
 
 
 # --------------------------------------------------------------------------------
+# 5. Who shops online — INE TIC-H, applied INSIDE each warehouse (CR-017)
+# --------------------------------------------------------------------------------
+
+def _load_propensity(seeds_dir: str) -> dict:
+    """`ine_online_propensity_seed.csv` as {dimension: [(low, high, pct), ...]}."""
+    path = os.path.join(seeds_dir, f"{PROPENSITY_SEED}.csv")
+    if not os.path.exists(path):
+        raise ReferenceExportError(
+            f"{path} does not exist. Run `make seed-online-propensity`."
+        )
+    bands: dict = {}
+    with open(path, encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            high = row["age_or_population_high"]
+            bands.setdefault(row["dimension"], []).append(
+                (int(row["age_or_population_low"]), int(high) if high else None,
+                 float(row["online_pct"]))
+            )
+    for dimension in ("age", "habitat"):
+        if not bands.get(dimension):
+            raise ReferenceExportError(f"{path}: no '{dimension}' rows.")
+    return bands
+
+
+def _pct_of(bands: list, value: int) -> float | None:
+    for low, high, pct in bands:
+        if value >= low and (high is None or value <= high):
+            return pct
+    return None
+
+
+def _apply_online_propensity(weights: dict, ages: dict, propensity: dict) -> None:
+    """Reshapes WHO the customers are, never HOW MANY.
+
+    Until CR-017 both distributions mirrored the census: a municipality got customers in
+    proportion to its population, and an age in proportion to its share of adults. The
+    dashboard showed the consequence — 180 customers per 10,000 inhabitants in every province,
+    and 65+ placing 23% of the orders. The INE measures that online grocery buying is neither
+    flat by age (12.3% at 65-74 against 52.4% at 25-34) nor by habitat (30.0% below 10,000
+    inhabitants against 39.5% in cities above 100,000).
+
+    Both weights are multiplied by the INE rate of their band and renormalized. The
+    per-warehouse TOTAL stays the population allocation above — the MAPA channel closure and
+    `assert_customer_base_follows_the_declared_population_allocation` read it unchanged.
+
+    75+: the INE universe ends at 74, and the 65-74 rate is applied. Declared, not measured:
+    it is the oldest band the survey covers, and it likely OVERSTATES 75+.
+    """
+    for row in weights["rows"]:
+        pct = _pct_of(propensity["habitat"], int(row["population_total"]))
+        if pct is None:
+            raise ReferenceExportError(
+                f"no habitat band for {row['municipality_name']} "
+                f"({row['population_total']} inhabitants)"
+            )
+        row["census_proportion_within_wh"] = row["proportion_within_wh"]
+        row["online_pct"] = pct
+    for wh in sorted({row["wh"] for row in weights["rows"]}):
+        rows = [row for row in weights["rows"] if row["wh"] == wh]
+        total = sum(row["population_total"] * row["online_pct"] for row in rows)
+        for row in rows:
+            row["proportion_within_wh"] = row["population_total"] * row["online_pct"] / total
+
+    oldest = max(propensity["age"], key=lambda band: band[0])[2]
+    for row in ages["rows"]:
+        pct = _pct_of(propensity["age"], int(row["age"]))
+        row["census_proportion"] = row["proportion"]
+        row["online_pct"] = oldest if pct is None else pct
+    for province in sorted({row["province_code"] for row in ages["rows"]}):
+        rows = [row for row in ages["rows"] if row["province_code"] == province]
+        total = sum(row["census_proportion"] * row["online_pct"] for row in rows)
+        for row in rows:
+            row["proportion"] = row["census_proportion"] * row["online_pct"] / total
+
+    header = {
+        "source": "INE TIC-H, table 50116 — 'Alguna compra de un producto en formato fisico "
+                  "de corta duracion', % of persons aged 16-74",
+        "seed": f"{PROPENSITY_SEED}.csv",
+        "applied_to": "proportion_within_wh (habitat) and proportion (age); totals unchanged",
+        "age_75_plus": "65-74 rate applied: the INE universe ends at 74",
+    }
+    weights["online_propensity"] = header
+    ages["online_propensity"] = header
+
+
+# --------------------------------------------------------------------------------
 # Coherence across the three files
 # --------------------------------------------------------------------------------
 
@@ -913,6 +1001,9 @@ def build(connection, seeds_dir: str = DEFAULT_SEEDS_DIR) -> dict:
         weights, ages, min_age, penetration, premises["customer_penetration_source"]
     )
     _assert_allocation(weights)
+    # AFTER the allocation, on purpose: the propensity reshapes the distribution inside each
+    # warehouse and must not reach the per-warehouse total computed above.
+    _apply_online_propensity(weights, ages, _load_propensity(seeds_dir))
     return {"candidates": candidates, "weights": weights, "ages": ages}
 
 

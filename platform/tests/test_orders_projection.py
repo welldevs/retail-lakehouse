@@ -293,5 +293,42 @@ class TestPartitionSelection(unittest.TestCase):
             self.assertEqual(partitions_of(root), [])
 
 
+class RebuildOnResetTest(unittest.TestCase):
+    """Debt item 5 (CR-017): after a reset the table is empty and the rebuild is alone on it,
+    so the final state goes in ONE append. Batched upserts each scanned the whole table:
+    414 commits and ~55 min for 206,523 orders."""
+
+    def _rebuild(self, reset):
+        from unittest import mock
+
+        from retail_platform import orders_projection as op
+
+        table = FakeIcebergTable(rows=[state("ord_old", seq=9)])
+        events = [({"order_id": f"ord_{i:03d}"}, "") for i in range(7)]
+        with mock.patch("retail_platform.orders_oltp.verify_log"), \
+             mock.patch("retail_platform.orders_oltp.read_log", return_value=events), \
+             mock.patch.object(op, "fold_event",
+                               side_effect=lambda cur, ev, sla_minutes: state(ev["order_id"])):
+            result = op.rebuild(FakeCatalog(table), ["p1"], sla_minutes=60, batch_size=3,
+                                reset=reset)
+        return table, result
+
+    def test_reset_writes_everything_in_one_append(self):
+        table, result = self._rebuild(reset=True)
+        self.assertEqual(result.commits, 1)
+        self.assertEqual(table.upserts, 0)
+        self.assertEqual(getattr(table, "appends", 0), 1)
+        self.assertEqual(sorted(table.rows), [f"ord_{i:03d}" for i in range(7)])
+        self.assertTrue(all(r["written_by"] == "rebuild" for r in table.rows.values()))
+
+    def test_without_reset_it_still_merges_in_batches(self):
+        """The second-writer path keeps the monotonic merge: there may be another writer."""
+        table, result = self._rebuild(reset=False)
+        self.assertEqual(result.commits, 3)
+        self.assertEqual(getattr(table, "appends", 0), 0)
+        self.assertIn("ord_old", table.rows)
+
+
 if __name__ == "__main__":
     unittest.main()
+

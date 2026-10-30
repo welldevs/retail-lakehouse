@@ -7,7 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from simulated_orders_source import events as ev
 from simulated_orders_source.events import ORDER_PLACED
@@ -15,8 +17,10 @@ from simulated_orders_source.orders_generator import (
     GenerationError,
     _quantity_weights,
     _sample_indices,
+    customer_schedule,
     day_seed,
     generate,
+    is_scheduled,
 )
 from simulated_orders_source.premises import Premises
 from simulated_orders_source.reference_data import load
@@ -156,7 +160,8 @@ class NonTrivialFoldTest(unittest.TestCase):
     def test_without_substitution_or_removal_the_fold_becomes_trivial(self):
         # The explicit counterpoint: with both rates at zero, the picked value becomes
         # derivable from the first event. This is the scenario the inverted dbt test watches.
-        flat = dict(PREMISES, substitution_rate="0", removal_rate="0")
+        flat = dict(PREMISES, substitution_rate_fresh="0", substitution_rate_other="0",
+                    removal_rate_fresh="0", removal_rate_other="0")
         events = generate(self.reference, Premises(flat), WH, ORDER_DATE, 42)
         totals = totals_of(events)
         self.assertEqual(totals["substituted_lines"], 0)
@@ -241,10 +246,14 @@ class ReproducibilityTest(unittest.TestCase):
             {"wh": WH, "order_date": d, "price_as_of": ORDER_DATE, "price_source": "observed"}
             for d in (ORDER_DATE, "2026-08-25")
         ]
-        reference = _reference(os.path.join(self.tmp.name, "ref2"), calendar=calendar)
-        first = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
-        generate(reference, Premises(PREMISES), WH, "2026-08-25", 42)
-        self.assertEqual(first, generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42))
+        reference = _reference(os.path.join(self.tmp.name, "ref2"), calendar=calendar,
+                               customers=customer_rows(total=40))
+        # Customers split between Monday (the fixture day) and Tuesday, so both days order.
+        two_days = Premises(dict(PREMISES, order_weekday_weight_1="0.5",
+                                 order_weekday_weight_2="0.5"))
+        first = generate(reference, two_days, WH, ORDER_DATE, 42)
+        generate(reference, two_days, WH, "2026-08-25", 42)
+        self.assertEqual(first, generate(reference, two_days, WH, ORDER_DATE, 42))
 
 
 class RefusalTest(unittest.TestCase):
@@ -263,9 +272,9 @@ class RefusalTest(unittest.TestCase):
             generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         self.assertIn("existed", str(caught.exception))
 
-    def test_rate_that_zeroes_orders_is_refused(self):
+    def test_skip_that_zeroes_orders_is_refused(self):
         reference = _reference(os.path.join(self.tmp.name, "ref2"))
-        flat = dict(PREMISES, daily_order_rate="0")
+        flat = dict(PREMISES, order_skip_rate="1")
         with self.assertRaises(GenerationError):
             generate(reference, Premises(flat), WH, ORDER_DATE, 42)
 
@@ -329,7 +338,8 @@ class RegionalFrequencyTest(unittest.TestCase):
 
     def _orders(self, tmp, index):
         profile = demand_payload(frequency=index)
-        reference = load(write_reference(os.path.join(tmp, "ref"), demand=profile))
+        reference = load(write_reference(os.path.join(tmp, "ref"), demand=profile,
+                                         customers=customer_rows(total=40)))
         events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
         return sum(1 for e in events if e["event_type"] == ORDER_PLACED)
 
@@ -346,7 +356,8 @@ class RegionalFrequencyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             neutral = self._orders(tmp, {"13": "1.0", "09": "1.0"})
         with tempfile.TemporaryDirectory() as tmp:
-            reference = load(write_reference(os.path.join(tmp, "ref")))
+            reference = load(write_reference(os.path.join(tmp, "ref"),
+                                             customers=customer_rows(total=40)))
             events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
             default = sum(1 for e in events if e["event_type"] == ORDER_PLACED)
         self.assertEqual(neutral, default)
@@ -373,6 +384,97 @@ class CohortOnEventTest(unittest.TestCase):
                 )
                 seen.add(payload["buyer_age_band"])
             self.assertGreater(len(seen), 1, "the fixture must cover more than one band")
+
+
+class RealismTest(unittest.TestCase):
+    """CR-017: the operating calendar and the basket rules a real operator publishes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.reference = _reference(os.path.join(self.tmp.name, "ref"),
+                                    customers=customer_rows(total=40))
+        self.events = generate(self.reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+        self.orders = group_by_order(self.events)
+
+    @staticmethod
+    def _local(stamp):
+        moment = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return moment.astimezone(ZoneInfo("Europe/Madrid"))
+
+    def test_there_are_orders_to_check(self):
+        self.assertGreater(len(self.orders), 5)
+
+    def test_never_delivered_on_the_day_of_the_order_nor_on_sunday(self):
+        for order_events in self.orders.values():
+            placed = self._local(order_events[0]["occurred_at"]).date()
+            for event in order_events:
+                if event["event_type"] in (ev.ORDER_DELIVERED, ev.ORDER_DELIVERY_FAILED):
+                    delivered = self._local(event["occurred_at"])
+                    self.assertGreater(delivered.date(), placed)
+                    self.assertNotEqual(delivered.isoweekday(), 7)
+
+    def test_slots_are_one_hour_inside_the_operating_window(self):
+        for order_events in self.orders.values():
+            payload = order_events[0]["payload"]
+            start = self._local(payload["delivery_slot_start"])
+            end = self._local(payload["delivery_slot_end"])
+            self.assertEqual((end - start).total_seconds(), 3600)
+            self.assertGreaterEqual(start.hour, 7)
+            self.assertLessEqual(end.hour + end.minute / 60, 22)
+
+    def test_every_basket_reaches_the_minimum_order(self):
+        for order_events in self.orders.values():
+            self.assertGreaterEqual(Decimal(order_events[0]["payload"]["gross_amount"]),
+                                    Decimal(PREMISES["min_order_amount_eur"]))
+
+    def test_quantity_never_exceeds_the_products_own_ceiling(self):
+        ceiling = {row["source_product_id"]: row["quantity_max"] for row in catalog_rows()}
+        for order_events in self.orders.values():
+            for line in order_events[0]["payload"]["lines"]:
+                self.assertLessEqual(line["quantity"], ceiling[line["source_product_id"]])
+
+    def test_picking_and_dispatch_are_scheduled_before_the_slot(self):
+        for order_events in self.orders.values():
+            slot = order_events[0]["payload"]["delivery_slot_start"]
+            for event in order_events:
+                if event["event_type"] == ev.ORDER_DISPATCHED:
+                    self.assertLess(event["occurred_at"], slot)
+
+    def test_a_popular_product_is_chosen_far_more_often(self):
+        rows = catalog_rows()
+        for row in rows:
+            if row["source_product_id"] == "p0000":
+                row["popularity_weight"] = "1000.000000"
+        reference = _reference(os.path.join(self.tmp.name, "pop"), catalog=rows,
+                               customers=customer_rows(total=40))
+        events = generate(reference, Premises(PREMISES), WH, ORDER_DATE, 42)
+        baskets = [e["payload"]["lines"] for e in events if e["event_type"] == ORDER_PLACED]
+        with_star = sum(any(l["source_product_id"] == "p0000" for l in b) for b in baskets)
+        self.assertGreater(with_star / len(baskets), 0.5)
+
+
+class CadenceTest(unittest.TestCase):
+    def test_the_schedule_is_a_function_of_the_customer_alone(self):
+        premises = Premises(dict(PREMISES, cadence_weight_7d="0.5", cadence_weight_14d="0.5",
+                                 order_weekday_weight_1="0.5", order_weekday_weight_3="0.5"))
+        first = customer_schedule(42, "cust_x", premises)
+        self.assertEqual(first, customer_schedule(42, "cust_x", premises))
+        self.assertIn(first[0], (7, 14))
+        self.assertIn(first[1], (1, 3))
+
+    def test_a_weekly_customer_orders_once_a_week_on_their_weekday(self):
+        schedule = (7, 1, 0)  # weekly, Monday
+        days = [date(2026, 8, 24) + timedelta(days=offset) for offset in range(21)]
+        hits = [d for d in days if is_scheduled(schedule, d)]
+        self.assertEqual([d.isoweekday() for d in hits], [1, 1, 1])
+
+    def test_a_fortnightly_customer_skips_alternate_weeks(self):
+        days = [date(2026, 8, 24) + timedelta(days=offset) for offset in range(28)]
+        self.assertEqual(len([d for d in days if is_scheduled((14, 1, 0), d)]), 2)
+        self.assertEqual(len([d for d in days if is_scheduled((14, 1, 1), d)]), 2)
+        both = [d for d in days if is_scheduled((14, 1, 0), d) and is_scheduled((14, 1, 1), d)]
+        self.assertEqual(both, [])
 
 
 if __name__ == "__main__":

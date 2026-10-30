@@ -50,6 +50,23 @@ source.
 **synthetic** base as if it were market behavior. The label would need to travel in every
 column, as it does in `MART_MARKET_COVERAGE`.
 
+### Non-food mix: cleaning vs personal care vs pets
+
+**Why not.** `NO_FOOD` is ONE demand group, sized by the declared `food_line_share`, and the
+product inside it is chosen by popularity weight (CR-017). That cut perfume's revenue to a
+third, but cheap own-brand cosmetics still lead the non-food ranking and toilet paper and
+detergent sit outside the top 10 — the catalog simply has far more cosmetics SKUs. MAPA does
+not cover non-food, so the calibration that fixed the food mix has no anchor here.
+
+**Trigger.** The INE household budget survey measures it: EPF table **75006** (5-digit
+COICOP 2018) gives household spend on `05.6.1.1` cleaning products, `13.1.1.3` personal care,
+`09.3.2.2` pet articles and `06.1` pharmacy. Splitting `NO_FOOD` into those blocks, with a
+value-share target per block, is the same mechanism as the MAPA groups.
+
+**Declared trade-off.** `13.1.1.3` lumps perfume, shampoo and make-up together: the EPF would
+fix cleaning against personal care, never perfume against shampoo. Saying more than that would
+be inventing the split.
+
 ### The projection rebuild is O(n²)
 
 **Measured on 2026-09-01.** `orders-rebuild-projection` rebuilt 206,523 orders in **414

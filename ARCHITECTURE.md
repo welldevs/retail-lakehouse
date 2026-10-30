@@ -22,8 +22,8 @@ lives only in the generated page that measured it. See
 
 Last revised: **2026-10-30** — price window widened and capture re-sealed (CR-010, CR-016),
 renames, the indicator catalog move and English across the code (CR-012 to CR-014), pinned
-MinIO images (CR-015), and the daily schedule actually running (CR-016). The technical
-state of orders and customers is that of 2026-09-01.
+MinIO images (CR-015), the daily schedule actually running (CR-016), and customers, orders
+and stock regenerated to look like a real online grocer, anchored on INE and MAPA (CR-017).
 
 ## Real scale
 
@@ -41,30 +41,33 @@ enough to change the answer:
 
 **Where it stands today, measured on 2026-10-29** and re-sealed on 2026-10-30 with one more
 collection day, in the capture named by [`docs/FREEZE.md`](docs/FREEZE.md) (`capture_id
-6bb299bd…`; CR-010 and CR-016 widened the price window, orders and customers kept theirs):
+a781ea46…`; CR-010 and CR-016 widened the price window, CR-017 regenerated customers and
+orders on the same windows):
 
 | Metric | Value |
 |---|---|
-| Customers (`silver_customer`) | 286,826, across 4 AUFs |
-| Orders, 9-day window | 206,523 · 3,892,062 rows · 1,433,723 events |
-| Stock ledger | 173,970 rows · 17,397 series · 10 days |
-| Sealed RAW | 167 partitions · 2,616,199 records (2026-10-30) |
-| `make silver` | 25 models, 16 seeds, 392 nodes — **88 s** |
+| Customers (`silver_customer`) | 286,826, across 4 AUFs (shaped by INE TIC-H since CR-017) |
+| Orders, 9-day window | 211,367 · 4,251,892 rows · 1,464,306 events (2026-10-30) |
+| Stock ledger | 191,356 rows · 17,396 series · 11 days (2026-10-30) |
+| Sealed RAW | 167 partitions · 2,646,782 records (2026-10-30) |
+| `make silver` | 25 models, 17 seeds, 393 nodes — **~90 s** |
 | `make warehouse` | 24 models, 205 nodes — **90 s** |
-| Python suites, offline | 1,144 (2026-10-30) |
+| Python suites, offline | 1,175 (2026-10-30) |
 
 **No distributed technology is justified by this volume, and that's a result, not an
-assumption.** Orders grew 32× since Phase 3 measured them (6,400 → 206,523), and the full
+assumption.** Orders grew 33× since Phase 3 measured them (6,400 → 211,367), and the full
 Silver `dbt build` still runs in about a minute and a half on one laptop. The basket self-join — the natural
-candidate for "too big for one node" — doubled to 37.9 M pairs and still runs in **~1.5 s**
+candidate for "too big for one node" — grew to 41.9 M pairs and still runs in **~2 s**
 (the current decimal is in [`docs/spark-evidence/`](docs/spark-evidence/README.md)).
 
 **Where volume HURT, and it's a single place.** Rebuilding the Iceberg projection cost **414
-commits and ~55 min** for the 206,523 orders: each batch does an `upsert` against the entire
-table, so the cost grows with what's already been written. In Phase 3, with 6,400 orders,
-this took seconds and was invisible. The irony is worth writing down: Spark's justification
-says the volume trigger didn't fire, and it fired here — in the Python path, not in the
-analysis. Correction declared in [BACKLOG.md](BACKLOG.md).
+commits and ~55 min** for 206,523 orders (2026-09-01): each batch did an `upsert` against the
+entire table, so the cost grew with what was already written — and the streaming sink on an
+empty table reached only 38,300 of 211,367 orders in 80 minutes (2026-10-30). The irony is
+worth writing down: Spark's justification says the volume trigger didn't fire, and it fired
+here — in the Python path, not in the analysis. **Closed in CR-017:** after `--reset` the
+table is empty and the rebuild is alone on it, so the state goes in ONE append — **1 commit,
+~22 s** for 211,367 orders.
 
 What follows is not a refusal — it's the condition under which each technology becomes
 worth it.
@@ -89,10 +92,10 @@ L1  RAW           byte-identical partition in object storage, sha256 checked pos
     │         monotonic merge: whatever doesn't advance `last_sequence_no` drops out │
     └────────────────────────────────────────────────────────────────────────────────┘
 L2  Silver        typed parquet + 1 temporal model             · DuckDB
-                  s3://retail-lakehouse/silver/…               11,241,291 rows (2026-10-30)
+                  s3://retail-lakehouse/silver/…               11,658,778 rows (2026-10-30)
 ─────────────────── physical boundary: COPY INTO, never ref() ───────────────────
 L3  Stage         1:1 mirror of a CUT of the Silver             · Postgres (Snowflake opt-in)
-                  STAGE.STG_*                                     7,320,026 rows (65.1%)
+                  STAGE.STG_*                                     7,732,735 rows (66.3%)
 L4  Gold          conformed DIM_* / FACT_*, SCD2                · dbt-postgres / dbt-snowflake
 L5  Mart          MART_*, grain declared per table                 · dbt-postgres / dbt-snowflake
 ```
@@ -126,8 +129,8 @@ project.
 |---|---|---|---|---|
 | **Iceberg** | Snapshot isolation between concurrent writers, time travel, interop between engines | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 6). The trigger that fired was the literal one — *"a second engine needing to write the same table"*: `live_order_state` is written by the streaming consumer and by the batch rebuild, with DuckDB reading while both write. **It fired due to CONCURRENCY, not volume** — at this volume an atomic `os.replace` parquet would do. Preceded by a closed experiment (removed in CR-012, kept in git history) that measured catalog, upsert, conflict, isolation and reading by DuckDB before the projection existed; `make orders-prove-projection` proves the same properties on the live module today. The old trigger (`dim_product` SCD2 via `MERGE`) still hasn't fired: the SCD2 is derived from the full history, not accumulated. |
 | **Kafka** | Event transport, replay, decoupling point | — | — | **Adopted on 2026-08-28** (Phase 3, Milestone 5). The trigger that fired was the literal one — *"CDC of an OLTP"*: the event is born in the same transaction that changes the order (Milestone 4) and a stateful consumer keeps a read model below the batch. What got proven was **transport semantics**: at-least-once demonstrated by reproducing the duplication window, idempotent consumption with no ever-growing set, a gap refused, replay with no effect, 16 sha256 reproduced. **Not** proven, and it's written down: that anyone needs the latency, and that the broker is the origin — the canonical log is still born on disk. |
-| **Spark** | An engine outside Python writing the catalog, and a form of computation SQL doesn't express | — | — | **Adopted on 2026-09-01** (Phase 7). **The declared trigger did NOT fire, and that's measured**: the basket self-join — 37.9 M pairs, the natural candidate for "a partition DuckDB can't hold" — runs in **~1.5 s and ~2.4 GB** on one node. The final window doubled that number relative to the intermediate one (18.3 M) and the time stayed in seconds, which makes the claim stronger, not weaker. It got in for two other reasons. **First, interop:** Iceberg was justified by *interop between engines* since Phase 3, and that half was claimed and never demonstrated — both writers were Python. **Second, the shape:** the stock ledger is a running sum whose *inputs are generated by decisions made from the state itself* (low balance → order → arrival in N days → changes the next balance); a window function reads the partition but doesn't write back into it, and that was measured — the SQL running sum diverges on 14 of 30 days from the test case and reaches a balance of −70. Preceded by `make check-spark-iceberg`, with **both outcomes declared beforehand**: if Spark couldn't read the pyiceberg catalog, it wouldn't get in **and** the interop clause would come out of this table. `make spark-evidence` publishes the same job on both engines, **including when plain Python wins**. **Not** proven, and it's written down: scale. It runs `local[*]`, with no shuffle across nodes. |
-| **Snowflake** | Governed SQL, RBAC, BI connectivity | — | — | **Adopted on 2026-08-27** (Phase 2); **opt-in since 2026-09-14**, when Postgres became the default (see § "Warehouse destination" below). Receives a cut by scope, not the entire Silver — the measured ratio went from 3.85% in Phase 2 to 65.1% on 2026-10-30 with no rule changing, because it's a function of which sources fit the scope. The old friction — "can't reach a local MinIO" — was resolved without real S3 or a storage integration: an **internal stage** (`PUT file://`) reverses the direction, and it's the local process pushing the bytes, which sees both sides. |
+| **Spark** | An engine outside Python writing the catalog, and a form of computation SQL doesn't express | — | — | **Adopted on 2026-09-01** (Phase 7). **The declared trigger did NOT fire, and that's measured**: the basket self-join — 41.9 M pairs since CR-017 (37.9 M before), the natural candidate for "a partition DuckDB can't hold" — runs in **~2 s and ~2.5 GB** on one node. The final window doubled that number relative to the intermediate one (18.3 M) and the time stayed in seconds, which makes the claim stronger, not weaker. It got in for two other reasons. **First, interop:** Iceberg was justified by *interop between engines* since Phase 3, and that half was claimed and never demonstrated — both writers were Python. **Second, the shape:** the stock ledger is a running sum whose *inputs are generated by decisions made from the state itself* (low balance → order → arrival in N days → changes the next balance); a window function reads the partition but doesn't write back into it, and that was measured — the SQL running sum diverges on 14 of 30 days from the test case and reaches a balance of −70. Preceded by `make check-spark-iceberg`, with **both outcomes declared beforehand**: if Spark couldn't read the pyiceberg catalog, it wouldn't get in **and** the interop clause would come out of this table. `make spark-evidence` publishes the same job on both engines, **including when plain Python wins**. **Not** proven, and it's written down: scale. It runs `local[*]`, with no shuffle across nodes. |
+| **Snowflake** | Governed SQL, RBAC, BI connectivity | — | — | **Adopted on 2026-08-27** (Phase 2); **opt-in since 2026-09-14**, when Postgres became the default (see § "Warehouse destination" below). Receives a cut by scope, not the entire Silver — the measured ratio went from 3.85% in Phase 2 to 66.3% on 2026-10-30 with no rule changing, because it's a function of which sources fit the scope. The old friction — "can't reach a local MinIO" — was resolved without real S3 or a storage integration: an **internal stage** (`PUT file://`) reverses the direction, and it's the local process pushing the bytes, which sees both sides. |
 | **Airflow** | Retry, exit codes, pools, SLA, execution history | — | **Adopted.** Heavy for a 4-minute daily job, and taken on with that awareness: the value is in the operational contract (the 1-slot pool and exit-code handling have no cron equivalent). | — |
 
 ## Four measured constraints that shaped the design
@@ -405,7 +408,7 @@ workaround for an RBAC boundary the project keeps on purpose.
 
 Reviewed on **2026-09-01**, after Phase 7, and **restructured on 2026-09-02** so every item
 declares status and next step instead of just a reason, then kept current as items closed
-(CI on 2026-09-08, the Snowflake trial on 2026-09-14, the dbt warning on 2026-10-30) — a debt list that only shrinks by
+(CI on 2026-09-08, the Snowflake trial on 2026-09-14, the dbt warning and the projection rebuild on 2026-10-30) — a debt list that only shrinks by
 deletion is a sign nobody's looking, so a closed row stays, with its status updated, rather
 than disappearing.
 
@@ -419,7 +422,7 @@ be fixed, and the reason is written down), **open** (identified work remains), o
 | 2 | The Snowflake account was a trial | It expired on 2026-09-14 | **Closed (CR-007)** | None — told in § "Warehouse destination" |
 | 3 | `CustomKeyInConfigDeprecation` warning on `dbt build` | Log noise | **Closed (CR-016)** — a full `make silver` on dbt-duckdb 1.11 emits zero deprecation warnings, with `+format: parquet` unchanged | None |
 | 4 | No mart joins customer with order | No repurchase, RFM, LTV or cohort. The link exists in `FACT_ORDER.customer_sk`, in GOLD, out of reach of the BI role | **Open** — it's the most actionable functional gap, and the only one that closes by writing SQL | A customer-grain mart (`MART_CUSTOMER_ORDERS`), with the `synthetic` label traveling in every column. See [BACKLOG.md](BACKLOG.md) |
-| 5 | The projection rebuild is **O(n²)** | 414 commits and ~55 min for 206,523 orders: each batch does an `upsert` against the entire table. On a new machine it's a 55-minute tax | **Open.** It's the **only place in the project where volume actually hurt** — and the irony is worth noting: Spark's justification says the volume trigger didn't fire, and it fired here, in the Python path | A single-batch `append` path when `--reset` is used: the table starts empty and there's no concurrent writer, so there's nothing to `upsert` against. See [BACKLOG.md](BACKLOG.md) |
+| 5 | The projection rebuild was **O(n²)** | 414 commits and ~55 min for 206,523 orders: each batch did an `upsert` against the entire table | **Closed (CR-017)** — with `--reset` the table is empty and the rebuild is alone on it, so the state goes in one `append`: 1 commit, ~22 s for 211,367 orders. The batched merge stays for a rebuild WITHOUT reset, where a second writer may exist | None |
 | 6 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
 | 7 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
 | 8 | The seal guards a closed window, and the daily DAG now grows it every day | Since CR-016 fixed the schedule, every 06:00 run lands 4 partitions outside the seal: `make freeze-check` goes red daily by design, and an alarm that is always red trains reviewers to ignore it | **Open** — found once the schedule actually ran | Decide between re-sealing per published revision (today's practice, CR-010/CR-016) and a check that separates "window grew" from "sealed content changed" |

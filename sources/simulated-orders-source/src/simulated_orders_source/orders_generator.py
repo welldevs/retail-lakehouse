@@ -8,56 +8,61 @@ No product, price, customer or postal code is fabricated here.
 
 WHAT IS DRAWN, AND WHAT THAT MEANS
 ----------------------------------
+    customer        -> its own cadence (every 7/14/21/28 days), weekday and phase, from a
+                       hash of (seed, customer_id): the SAME schedule on every day generated
     day + warehouse -> its own sub-seed
-                    -> how many customers order today (rate x seasonal x regional index)
-                    -> which customers order today (UNIFORM, without replacement, among eligible)
+                    -> which scheduled customers actually order (1 - skip, x seasonal x regional)
                     -> which COHORT each of them is (age band x autonomous community)
-                    -> how many lines the basket has (declared triangular)
+                    -> how many lines the basket has (declared triangular), topped up to the
+                       minimum order amount
                     -> which DEMAND GROUP (weighted by THAT COHORT's profile)
-                    -> which product WITHIN the group (UNIFORM)
-                    -> quantity per line (decreasing, derived from quantity_max)
-                    -> time, delivery slot and milestones (declared ranges)
-                    -> which lines are substituted or removed (declared rates)
+                    -> which product WITHIN the group (weighted by `popularity_weight`)
+                    -> quantity per line (decreasing, up to the product's `quantity_max`)
+                    -> placement hour (LOCAL time profile), delivery day and slot (operating
+                       calendar), and picking/dispatch scheduled backwards from the slot
+                    -> which lines are substituted or removed (fresh vs other rates)
                     -> which terminal branch the order follows (declared rates)
 
-THE CHOICE OF PRODUCT WITHIN THE GROUP STAYS UNIFORM, on purpose: no source in this repo
-measures per-SKU turnover, and weighting products would invent a distribution nobody measured
-— the same prohibition Phase 1 applied to choosing the street segment ("there is no population
-per street or per segment in any source this platform ingests").
-
-WHAT CHANGED IN PHASE 4 is the level above. Before, the product was drawn uniformly over the
-WHOLE CATALOG, and the declared consequence was that the category mix mirrored the SIZE OF THE
-ASSORTMENT. Now there is an observational anchor that did not exist: MAPA's Informe del Consumo
-Alimentario en España 2025. The demand group is drawn with a weight calibrated against Spanish
-household volume, tilted by the e-commerce share; the product within the group stays uniform.
+WHAT CHANGED IN CR-017, AND WHY. The dashboard showed what independent uniform draws look like
+on a real catalog: the same number of orders every day, deliveries before 07:00 and on Sunday,
+77% delivered on the day of the order, perfume as the top non-food category, two whole
+Iberian hams per line. Each draw now follows a stated calendar or weight. The product weight
+and the units ceiling are computed by the platform (`product_choice.py`) — the price
+elasticity is FITTED so the basket's EUR/kg matches what MAPA measures households pay — and
+are read here, never recomputed.
 
 THE BOUNDARY, which matters more than the calibration: MAPA measures residents' household
-consumption. It does NOT measure online-store orders, baskets or purchase cadence. That is why
-`daily_order_rate`, `basket_lines_*` and `quantity_max` remain `synthetic` premises with no
-calibration at all, and the non-food third of the catalog — which the report does not cover —
-gets a declared share.
+consumption. It does NOT measure online-store orders, baskets or purchase cadence. Cadence,
+weekday, hour and delivery shapes remain `synthetic` premises, declared one by one in
+`order_premises_seed.csv`; the rules a real operator publishes (no delivery on Sunday,
+07:00-22:00, next-day at the earliest, 50 EUR minimum) are written there with their origin.
 
-REPRODUCIBILITY: SUB-SEED PER (WAREHOUSE, DAY)
-----------------------------------------------
-Each `(wh, order_date)` derives its own `random.Random` from `sha256(seed|wh|order_date)`.
-Consequence — and this is the analogue of Phase 1's "prefix property", on a different axis:
+REPRODUCIBILITY: SUB-SEED PER (WAREHOUSE, DAY), SCHEDULE PER CUSTOMER
+--------------------------------------------------------------------
+Each `(wh, order_date)` derives its own `random.Random` from `sha256(seed|wh|order_date)`, and
+each customer's cadence derives from `sha256(seed|cadence|customer_id)` — a pure function of
+the customer, not of the day. So:
 
-    ADDING A DAY TO THE WINDOW IS ADDITIVE. Already generated partitions stay byte-for-byte
-    identical, because no day depends on another day's draw.
+    ADDING A DAY TO THE WINDOW IS STILL ADDITIVE. Already generated partitions stay
+    byte-for-byte identical, because no day depends on another day's draw.
 
 `hashlib.sha256` is used, not `hash()`, because CPython's `str` hash is randomized per
 process: deriving the sub-seed from it would make the output depend on PYTHONHASHSEED.
 
 NO CLOCK. Every `occurred_at` derives from the partition date plus declared offsets. No call
-to `datetime.now()` in this module.
+to `datetime.now()` in this module. Times are drawn in LOCAL time (Europe/Madrid, stdlib
+`zoneinfo`) and stamped in UTC; the partition day is the UTC day of `order_placed`, so local
+hours that fall on the previous UTC day are not drawn.
 """
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 from . import SOURCE_NAME
 from .events import (
@@ -86,6 +91,8 @@ from .events import (
 )
 
 CENTS = Decimal("0.01")
+LOCAL = ZoneInfo("Europe/Madrid")
+CADENCE_DAYS = (7, 14, 21, 28)
 
 
 class GenerationError(Exception):
@@ -135,10 +142,11 @@ def _sample_indices(rng: random.Random, population: int, wanted: int) -> list[in
 
 
 def _quantity_weights(quantity_max: int) -> list[float]:
-    """Decreasing weights for 1..quantity_max, derived from the premise itself.
+    """Decreasing weights for 1..quantity_max, as a cumulative list.
 
-    w(k) = 1/2^(k-1): buying one unit dominates, and each extra unit is half as likely.
-    Deriving from the premise instead of tabulating avoids a second, undeclared premise.
+    w(k) = 1/2^(k-1): buying one unit dominates, and each extra unit is half as likely. The
+    CEILING is the product's own (`quantity_max` in the catalog, from declared price tiers):
+    six bottles of water, never two whole hams.
     """
     raw = [1.0 / (2 ** (k - 1)) for k in range(quantity_max)]
     total = sum(raw)
@@ -157,6 +165,76 @@ def _pick_weighted(rng: random.Random, cumulative: list[float]) -> int:
     return len(cumulative) - 1
 
 
+def _pick_relative(rng: random.Random, keys: tuple, weights: list[float]):
+    """One key, drawn proportionally to non-negative relative weights."""
+    total = sum(weights)
+    draw = rng.random() * total
+    running = 0.0
+    for key, weight in zip(keys, weights):
+        running += weight
+        if draw < running:
+            return key
+    return keys[-1]
+
+
+def _unit_floats(blob: str, count: int) -> list[float]:
+    """`count` uniform numbers in [0, 1) from one sha256 — no rng state, no PYTHONHASHSEED."""
+    digest = hashlib.sha256(blob.encode("utf-8")).digest()
+    return [int.from_bytes(digest[8 * i:8 * i + 8], "big") / 2 ** 64 for i in range(count)]
+
+
+def customer_schedule(seed: int, customer_id: str, premises) -> tuple[int, int, int]:
+    """(cadence in days, ISO weekday, phase in weeks) of one customer — a function of the
+    customer alone, so every generated day agrees on it."""
+    u_cadence, u_weekday, u_phase = _unit_floats(f"{seed}|cadence|{customer_id}", 3)
+    running, cadence = 0.0, CADENCE_DAYS[-1]
+    for days in CADENCE_DAYS:
+        running += premises.number(f"cadence_weight_{days}d")
+        if u_cadence < running:
+            cadence = days
+            break
+    running, weekday = 0.0, 7
+    for day in range(1, 8):
+        running += premises.number(f"order_weekday_weight_{day}")
+        if u_weekday < running:
+            weekday = day
+            break
+    return cadence, weekday, int(u_phase * (cadence // 7))
+
+
+def is_scheduled(schedule: tuple[int, int, int], day: date) -> bool:
+    """True when the customer's cadence lands on this day. Weeks are counted from 0001-01-01,
+    a Monday, so the phase means the same week on every machine."""
+    cadence, weekday, phase = schedule
+    if day.isoweekday() != weekday:
+        return False
+    week = (day.toordinal() - 1) // 7
+    return (week - phase) % (cadence // 7) == 0
+
+
+def _local(day: date, hour: int, minute: int = 0, second: int = 0) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, second, tzinfo=LOCAL)
+
+
+def _placement_hours(day: date) -> tuple:
+    """LOCAL hours whose whole hour falls on the same UTC day — the partition day."""
+    return tuple(
+        hour for hour in range(24)
+        if _local(day, hour).astimezone(timezone.utc).date() == day
+        and _local(day, hour, 59, 59).astimezone(timezone.utc).date() == day
+    )
+
+
+def _delivery_day(order_day: date, nth: int, closed_weekday: int) -> date:
+    """The nth operating day after the order day. Closed weekdays are skipped, not counted."""
+    current, counted = order_day, 0
+    while counted < nth:
+        current += timedelta(days=1)
+        if current.isoweekday() != closed_weekday:
+            counted += 1
+    return current
+
+
 def _order_id(wh: str, order_date: str, index: int) -> str:
     return f"ord_{wh}_{order_date.replace('-', '')}_{index:06d}"
 
@@ -164,21 +242,15 @@ def _order_id(wh: str, order_date: str, index: int) -> str:
 def _basket(rng, reference, premises, wh, price_as_of, cohort):
     """Build the basket: lines with real product, real price, drawn quantity.
 
-    TWO STEPS, and the separation between them is what this whole phase introduced:
+    TWO STEPS:
 
         1. DEMAND GROUP, weighted by the profile calibrated against MAPA — and, since
            `mapa_2025_v2`, by the profile OF THE COHORT of the customer placing the order.
-        2. PRODUCT WITHIN THE GROUP, uniform.
+        2. PRODUCT WITHIN THE GROUP, weighted by `popularity_weight` (CR-017; uniform before).
 
-    Step 2 stays uniform on purpose: no source in this repo measures per-SKU turnover, and
-    weighting products would invent a distribution nobody measured. Only step 1 changed —
-    before, the product was drawn uniformly over the WHOLE CATALOG, and the category mix
-    mirrored the SIZE OF THE ASSORTMENT. A catalog has 475 facial-care SKUs and 162 fruit and
-    vegetable ones; a household does not buy in that proportion.
-
-    PRICE TAKES NO PART IN EITHER DRAW. It only appears afterwards, copied from the
-    reference. An expensive category can have low volume and high revenue, and that is a
-    result of the model, not a defect: in MAPA, shellfish are 0.81% of volume and 2.88% of value.
+    The basket is then TOPPED UP to `min_order_amount_eur` with more lines drawn the same
+    way: a real operator refuses smaller orders, and 18.4% of the old baskets were below it.
+    Extra lines come from the same profile, so the mix does not move.
     """
     catalog = reference.catalog_of(wh, price_as_of)
     groups = reference.demand_groups_of(wh, price_as_of)
@@ -187,50 +259,63 @@ def _basket(rng, reference, premises, wh, price_as_of, cohort):
     low = premises.integer("basket_lines_min")
     high = premises.integer("basket_lines_max")
     mode = premises.integer("basket_lines_mode")
+    minimum = Decimal(str(premises.number("min_order_amount_eur")))
 
     wanted = int(rng.triangular(low, high + 1, mode))
     wanted = max(low, min(high, wanted))
     wanted = min(wanted, len(catalog))
 
-    quantity_cumulative = _quantity_weights(premises.integer("quantity_max"))
-
-    # WITHOUT REPLACEMENT, as before: a product appears at most once in the basket. The
-    # difference is that exclusion can now exhaust a small GROUP (MIEL has 5 products). When
-    # that happens the group draw is redone — and the wasted attempt consumed one rng draw,
-    # which keeps the sequence deterministic instead of silently "skipping".
-    # The attempt ceiling exists so that a pathological profile fails fast instead of
-    # hanging; it was never reached in the measured window.
+    # WITHOUT REPLACEMENT: a product appears at most once in the basket. A drawn product that
+    # is already in the basket is redrawn (the attempt consumes rng draws, which keeps the
+    # sequence deterministic). The ceiling makes a pathological profile fail fast.
     positions: list[int] = []
     taken: set = set()
     attempts = 0
-    ceiling = max(wanted * 8, 32)
-    while len(positions) < wanted and attempts < ceiling:
-        attempts += 1
-        group = reference.demand.pick(rng, groups, cumulative)
-        candidates = reference.positions_in_demand_group(wh, price_as_of, group)
-        free = [p for p in candidates if p not in taken]
-        if not free:
-            continue
-        picked = free[rng.randrange(len(free))]
-        taken.add(picked)
-        positions.append(picked)
+    gross = Decimal("0")
+    lines: list[dict] = []
 
-    lines = []
-    for line_no, position in enumerate(positions, start=1):
-        product = catalog[position]
-        quantity = _pick_weighted(rng, quantity_cumulative) + 1
-        lines.append(
-            {
-                "line_no": line_no,
-                "catalog_position": position,
-                "source_product_id": product["source_product_id"],
-                "display_name": product["display_name"],
-                "category_id": product["category_id"],
-                "subgroup_id": product["subgroup_id"],
-                "demand_group": product["demand_group"],
-                "quantity": quantity,
-                "unit_price": product["unit_price"],
-            }
+    def draw_line() -> bool:
+        nonlocal attempts, gross
+        while attempts < max(high * 16, 64):
+            attempts += 1
+            group = reference.demand.pick(rng, groups, cumulative)
+            candidates = reference.positions_in_demand_group(wh, price_as_of, group)
+            weights = reference.popularity_cdf_of(wh, price_as_of, group)
+            if not candidates:
+                continue
+            index = bisect.bisect_right(weights, rng.random() * weights[-1])
+            picked = candidates[min(index, len(candidates) - 1)]
+            if picked in taken:
+                continue
+            product = catalog[picked]
+            taken.add(picked)
+            positions.append(picked)
+            quantity = _pick_weighted(rng, _quantity_weights(product["quantity_max"])) + 1
+            lines.append(
+                {
+                    "line_no": len(lines) + 1,
+                    "catalog_position": picked,
+                    "source_product_id": product["source_product_id"],
+                    "display_name": product["display_name"],
+                    "category_id": product["category_id"],
+                    "subgroup_id": product["subgroup_id"],
+                    "demand_group": product["demand_group"],
+                    "quantity": quantity,
+                    "unit_price": product["unit_price"],
+                }
+            )
+            gross += product["unit_price"] * quantity
+            return True
+        return False
+
+    while len(lines) < wanted and draw_line():
+        pass
+    while gross < minimum and len(lines) < high and draw_line():
+        pass
+    if gross < minimum:
+        raise GenerationError(
+            f"basket of {len(lines)} line(s) reached {gross} EUR, below "
+            f"min_order_amount_eur={minimum}, with basket_lines_max={high}"
         )
     return lines
 
@@ -289,20 +374,25 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
     lines = _basket(rng, reference, premises, wh, price_as_of, cohort)
     gross = _money(sum((line["unit_price"] * line["quantity"] for line in lines), Decimal("0")))
 
-    placed_at = base_day + timedelta(
-        hours=rng.randint(premises.integer("order_hour_min"), premises.integer("order_hour_max")),
-        minutes=rng.randrange(60),
-        seconds=rng.randrange(60),
+    # PLACEMENT, in LOCAL time: evening peak, quiet overnight. Only the hours that stay on the
+    # partition's UTC day are drawn (see the module docstring).
+    order_day = base_day.date()
+    hours = _placement_hours(order_day)
+    hour = _pick_relative(rng, hours, [premises.number(f"order_hour_weight_{h:02d}") for h in hours])
+    placed_at = _local(order_day, hour, rng.randrange(60), rng.randrange(60)).astimezone(timezone.utc)
+
+    # DELIVERY SLOT, chosen on the operating calendar: never the day of the order, never on
+    # the closed weekday, a one-hour window between opening and closing (local time).
+    lead = _pick_relative(rng, (1, 2, 3),
+                          [premises.number(f"slot_lead_day_weight_{d}") for d in (1, 2, 3)])
+    delivery_day = _delivery_day(order_day, lead, premises.integer("delivery_closed_isoweekday"))
+    slot_hours = premises.slot_hours()
+    slot_hour = _pick_relative(
+        rng, slot_hours, [premises.number(f"slot_hour_weight_{h:02d}") for h in slot_hours]
     )
-    slot_start = (
-        placed_at
-        + timedelta(
-            hours=rng.randint(
-                premises.integer("slot_lead_hours_min"), premises.integer("slot_lead_hours_max")
-            )
-        )
-    ).replace(minute=0, second=0, microsecond=0)
+    slot_start = _local(delivery_day, slot_hour).astimezone(timezone.utc)
     slot_end = slot_start + timedelta(hours=premises.integer("slot_hours"))
+    opening = _local(delivery_day, premises.integer("delivery_open_hour")).astimezone(timezone.utc)
 
     events: list[dict] = []
     state = None
@@ -384,12 +474,37 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         },
     )
 
+    # --- schedule, BACKWARDS from the slot -----------------------------------------
+    # A dark store plans picking from the delivery window, not from the order time: dispatch
+    # a while before the slot opens, picking ends before dispatch and takes per-line minutes.
+    per_line = premises.integer("minutes_per_line_picked")
+    dispatch_at = slot_start - timedelta(
+        minutes=rng.randint(
+            premises.integer("minutes_dispatch_before_slot_min"),
+            premises.integer("minutes_dispatch_before_slot_max"),
+        )
+    )
+    picked_at = dispatch_at - timedelta(
+        minutes=rng.randint(
+            premises.integer("minutes_picked_before_dispatch_min"),
+            premises.integer("minutes_picked_before_dispatch_max"),
+        )
+    )
+    picking_at = picked_at - timedelta(minutes=per_line * len(lines))
+    if picking_at <= payment_at:
+        raise GenerationError(
+            f"{order_id}: picking would start at {picking_at}, before the payment at "
+            f"{payment_at}. The delivery calendar must leave at least a night between them."
+        )
+
     # --- cancellation -----------------------------------------------------------
     if rng.random() < premises.number("cancellation_rate"):
+        # Between the confirmation and the start of picking — the only time a customer can.
+        room = int((picking_at - payment_at).total_seconds() // 60) - 1
         cancel_at = payment_at + timedelta(
             minutes=rng.randint(
-                premises.integer("minutes_to_cancel_min"),
-                premises.integer("minutes_to_cancel_max"),
+                min(premises.integer("minutes_to_cancel_min"), room),
+                min(premises.integer("minutes_to_cancel_max"), room),
             )
         )
         emit(
@@ -403,22 +518,22 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
         return events, state
 
     # --- picking -----------------------------------------------------------------
-    picking_at = payment_at + timedelta(
-        minutes=rng.randint(
-            premises.integer("minutes_to_picking_min"), premises.integer("minutes_to_picking_max")
-        )
-    )
     emit(ORDER_PICKING_STARTED, picking_at, {})
 
-    per_line = premises.integer("minutes_per_line_picked")
-    substitution_rate = premises.number("substitution_rate")
-    removal_rate = premises.number("removal_rate")
     taken = {line["source_product_id"] for line in lines}
 
     for line in lines:
         line["status"] = LINE_FULFILLED
         line["effective_price"] = line["unit_price"]
         line_at = picking_at + timedelta(minutes=per_line * line["line_no"])
+
+        # Fresh lines (MAPA's own 'alimentacion fresca' scope) run out more often than
+        # packaged goods; one flat rate for every category was a synthetic tell (CR-017).
+        fresh = reference.demand.is_fresh(line["demand_group"])
+        substitution_rate = premises.number(
+            "substitution_rate_fresh" if fresh else "substitution_rate_other"
+        )
+        removal_rate = premises.number("removal_rate_fresh" if fresh else "removal_rate_other")
 
         # ONE draw per line, with two thresholds: that way both rates are exact and
         # independent of the number of rng calls, and not conditioned on each other.
@@ -460,7 +575,6 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
     net = _money(
         sum((line["effective_price"] * line["quantity"] for line in kept), Decimal("0"))
     )
-    picked_at = picking_at + timedelta(minutes=per_line * len(lines))
     emit(
         ORDER_PICKED,
         picked_at,
@@ -468,20 +582,22 @@ def _lifecycle(rng, reference, premises, wh, order_date, order_id, customer, bas
     )
 
     # --- dispatch and delivery---------------------------------------------------
-    dispatch_at = picked_at + timedelta(
-        minutes=rng.randint(
-            premises.integer("minutes_to_dispatch_min"),
-            premises.integer("minutes_to_dispatch_max"),
-        )
-    )
     emit(ORDER_DISPATCHED, dispatch_at, {})
 
-    delivery_at = dispatch_at + timedelta(
-        minutes=rng.randint(
-            premises.integer("minutes_to_delivered_min"),
-            premises.integer("minutes_to_delivered_max"),
+    # Mostly inside the slot; a few early (never before opening), the rest late.
+    outcome = rng.random()
+    slot_minutes = premises.integer("slot_hours") * 60
+    if outcome < premises.number("delivery_on_time_rate"):
+        delivery_at = slot_start + timedelta(minutes=rng.randrange(slot_minutes))
+    elif outcome < premises.number("delivery_on_time_rate") + premises.number("delivery_early_rate"):
+        early = slot_start - timedelta(
+            minutes=rng.randint(1, premises.integer("delivery_early_max_minutes"))
         )
-    )
+        delivery_at = max(early, opening, dispatch_at + timedelta(minutes=1))
+    else:
+        delivery_at = slot_end + timedelta(
+            minutes=rng.randint(1, premises.integer("delivery_late_max_minutes"))
+        )
     if rng.random() < premises.number("delivery_failure_rate"):
         emit(
             ORDER_DELIVERY_FAILED,
@@ -581,18 +697,32 @@ def generate(reference, premises, wh: str, order_date: str, seed: int) -> list[d
     # window's total orders do not move and what changes is the split between warehouses.
     regional = reference.demand.frequency_index(wh)
 
-    rate = premises.number("daily_order_rate") * factor * regional
-    wanted = round(len(eligible) * rate)
-    if wanted <= 0:
+    # CADENCE, NOT A DAILY LOTTERY (CR-017). Each customer reorders every 7/14/21/28 days on
+    # their own weekday, from a hash of the customer alone. The day's draw only decides who
+    # SKIPS — that is where day-to-day noise comes from. Before, each day drew a fixed
+    # `round(rate x eligible)` independently, so every warehouse had the same count every
+    # day and 1,130 customers ordered 4-6 times in 9 days. The cadence weights and the skip
+    # rate are declared so that they reproduce `daily_order_rate`
+    # (assert_order_premises_are_internally_coherent); seasonality and the regional index
+    # still scale the probability of a scheduled order happening.
+    day = base_day.date()
+    keep = (1.0 - premises.number("order_skip_rate")) * factor * regional
+    if not 0.0 < keep <= 1.0:
         raise GenerationError(
-            f"daily_order_rate={premises.number('daily_order_rate')} x seasonal factor "
-            f"{factor} x regional index {regional} over {len(eligible)} eligible "
-            f"customer(s) yields zero orders on {order_date}"
+            f"(1 - order_skip_rate) x seasonal factor {factor} x regional index {regional} "
+            f"= {keep}: outside (0, 1], it cannot be a probability"
         )
-
-    # Without replacement: a customer places at most one order per day. It is a declared
-    # simplification, not a measurement — no source in this repo measures purchase cadence.
-    chosen = _sample_indices(rng, len(eligible), wanted)
+    chosen = [
+        position
+        for position, customer in enumerate(eligible)
+        if is_scheduled(customer_schedule(seed, customer["customer_id"], premises), day)
+        and rng.random() < keep
+    ]
+    if not chosen:
+        raise GenerationError(
+            f"no eligible customer of wh={wh!r} is scheduled on {order_date} "
+            f"({len(eligible)} eligible): the cadence premises leave this weekday empty"
+        )
 
     events: list[dict] = []
     for index, position in enumerate(chosen):

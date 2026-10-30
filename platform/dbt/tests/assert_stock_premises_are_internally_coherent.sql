@@ -21,7 +21,7 @@
 --
 -- THERE IS NO ASSERTION HERE ABOUT STOCKOUT, TURNOVER OR COVER. Same rule as the sibling
 -- test: the coherence of the INPUTS is checked, never the result. A test that looked at the stockout
--- rate would bless whoever tuned `opening_days_of_demand` until it looked nice.
+-- rate would bless whoever tuned `opening_days_min/max` until it looked nice.
 with p as (
 
     select premise_key, cast(value as double) as v
@@ -32,7 +32,8 @@ with p as (
 premissa as (
 
     select
-        max(case when premise_key = 'opening_days_of_demand' then v end) as inicial,
+        max(case when premise_key = 'opening_days_min'       then v end) as inicial,
+        max(case when premise_key = 'opening_days_max'       then v end) as inicial_max,
         max(case when premise_key = 'reorder_point_days'     then v end) as ponto,
         max(case when premise_key = 'reorder_target_days'    then v end) as alvo,
         max(case when premise_key = 'supplier_lead_days'     then v end) as prazo
@@ -61,9 +62,19 @@ where alvo <= ponto
 union all
 
 select
-    'opening_days_of_demand',
+    'opening_days_min',
     inicial,
     ponto,
-    'estoque inicial <= ponto de reposicao: toda serie comeca precisando repor'
+    'estoque inicial <= ponto de reposicao: alguma serie comeca precisando repor'
 from premissa
 where inicial <= ponto
+
+union all
+
+select
+    'opening_days_max',
+    inicial_max,
+    alvo,
+    'cobertura inicial maxima acima do nivel alvo, ou abaixo da minima'
+from premissa
+where inicial_max > alvo or inicial_max < inicial

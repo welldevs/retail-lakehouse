@@ -103,6 +103,8 @@ import hashlib
 import os
 from decimal import Decimal
 
+from . import product_choice
+
 DEFAULT_SEEDS_DIR = os.path.join("platform", "dbt", "seeds")
 
 BENCHMARK_SEED = "mapa_2025_benchmark_seed.csv"
@@ -945,13 +947,27 @@ def build(
                 "catalog row without `demand_group`. Resolving the mapping is the "
                 "responsibility of whoever builds the catalog, and does not happen here."
             )
-        bucket = by_group.setdefault(key, {"products": 0, "with_kg": [], "without_kg": 0})
+        if row.get("popularity_weight") is None or row.get("quantity_max") is None:
+            raise DemandProfileError(
+                "catalog row without `popularity_weight`/`quantity_max`. They are stamped by "
+                "product_choice.stamp before the profile is built: the kg per line must be the "
+                "one of the basket the generator actually draws (CR-017)."
+            )
+        bucket = by_group.setdefault(
+            key, {"products": 0, "with_kg": [], "without_kg": 0, "kg_weight": Decimal("0"),
+                  "kg_volume": Decimal("0")}
+        )
         bucket["products"] += 1
         content = _content(row.get("net_content_kg_l"))
         if content is None:
             bucket["without_kg"] += 1
         else:
             bucket["with_kg"].append(content)
+            # kg per LINE, as drawn: popularity x expected units x content.
+            weight = Decimal(str(row["popularity_weight"]))
+            units = Decimal(str(round(product_choice.expected_quantity(int(row["quantity_max"])), 9)))
+            bucket["kg_weight"] += weight
+            bucket["kg_volume"] += weight * units * content
 
     unknown = [k for k in by_group if k not in benchmark]
     if unknown:
@@ -987,7 +1003,7 @@ def build(
         covered = len(info["with_kg"])
         coverage = Decimal(covered) / Decimal(info["products"])
         if coverage >= coverage_min:
-            mean_kg = _mean(info["with_kg"])
+            mean_kg = info["kg_volume"] / info["kg_weight"]
             weight = volume_target / mean_kg
             target_path = "volume"
         else:
@@ -1009,7 +1025,7 @@ def build(
             "channel_basis": basis,
             "target_path": target_path,
             "kg_coverage": str(round(coverage, 4)),
-            "mean_kg_per_unit": str(round(mean_kg, 6)) if mean_kg is not None else None,
+            "mean_kg_per_line": str(round(mean_kg, 6)) if mean_kg is not None else None,
             "assortment_products": info["products"],
             "informe_section": entry["informe_section"],
         }

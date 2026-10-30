@@ -18,6 +18,7 @@ make dashboard-check       # renders both panels against the live warehouse (App
 | `operations_app.py` | Orders, fulfillment, basket, assortment, stock, customer base |
 | `prices_app.py` | Mercadona catalog price movement — drops, rises, volatility, per-product history |
 | `connection.py` | Session as `retail_reader`, shared by both panels |
+| `display.py` | One number format for both panels — English notation in KPIs and tables, shares as %, a dash for null |
 | `smoke.py` | End-to-end render check with `AppTest`, for one or both panels |
 
 ## Decisions

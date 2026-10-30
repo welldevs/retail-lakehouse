@@ -309,7 +309,8 @@ def populate(con):
     """)
     con.execute("""
         insert into stock_premises values
-            ('opening_days_of_demand',7.0,'days','synthetic','Initial cover.'),
+            ('opening_days_min',4.0,'days','synthetic','Initial cover, lowest.'),
+            ('opening_days_max',9.0,'days','synthetic','Initial cover, highest.'),
             ('supplier_lead_days',2.0,'days','synthetic','Supplier lead time.')
     """)
     # THIS TABLE'S TRAP CASE is the STOCKOUT DAY: `units_short > 0` with

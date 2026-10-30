@@ -57,6 +57,7 @@ they stay as they are too.
 from __future__ import annotations
 
 import csv
+import hashlib
 import math
 import os
 import sys
@@ -92,11 +93,24 @@ def ler_premissas(path: str) -> dict:
     with open(path, encoding="utf-8") as handle:
         rows = {row["premise_key"]: float(row["value"])
                 for row in csv.DictReader(handle)}
-    missing = {"opening_days_of_demand", "reorder_point_days",
+    missing = {"opening_days_min", "opening_days_max", "reorder_point_days",
                "reorder_target_days", "supplier_lead_days"} - set(rows)
     if missing:
         raise SystemExit(f"{path} does not declare: {sorted(missing)}")
     return rows
+
+
+def opening_days(wh: str, product: str, low: float, high: float) -> float:
+    """This series' opening cover, between low and high, from a hash of the series alone.
+
+    sha256 and not `hash()`: CPython randomizes the str hash per process, and Spark runs the
+    function in separate Python workers — the same series would get a different cover on each.
+    Staggered on purpose (CR-017): one cover for every series made two thirds of them reorder
+    on the same day, a wave no real operation has.
+    """
+    digest = hashlib.sha256(f"{wh}|{product}".encode("utf-8")).digest()
+    fraction = int.from_bytes(digest[:8], "big") / 2 ** 64
+    return low + (high - low) * fraction
 
 
 def units(days: float, mean_demand: float) -> int:
@@ -120,7 +134,8 @@ def construir_ledger(premises: dict):
 
     import pandas as pd
 
-    cover = premises["opening_days_of_demand"]
+    cover_low = premises["opening_days_min"]
+    cover_high = premises["opening_days_max"]
     point_days = premises["reorder_point_days"]
     target_days = premises["reorder_target_days"]
     lead_time = int(premises["supplier_lead_days"])
@@ -130,7 +145,7 @@ def construir_ledger(premises: dict):
         pdf = pdf.sort_values("stock_date")
         mean_demand = float(pdf["mean_daily_demand"].iloc[0])
 
-        balance = units(cover, mean_demand)
+        balance = units(opening_days(wh, product, cover_low, cover_high), mean_demand)
         point = units(point_days, mean_demand)
         target = units(target_days, mean_demand)
 

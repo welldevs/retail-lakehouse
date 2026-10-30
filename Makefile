@@ -102,21 +102,18 @@ ORDERS_REFERENCE        = $(ORDERS_REFERENCE_ROOT)/ingestion_date=$(ORDERS_TO)
 # THE WINDOW IS DECLARED, not derived from "today". Whoever operates knows from when to when
 # the orders exist; guessing would produce a different fact base on every run.
 #
-# THE END OF THE WINDOW IS AN EXTERNAL CEILING: 2026-09-01 is as far as the observed Mercadona
-# catalog reaches across the four warehouses. It is not a chosen number.
+# THE END OF THE WINDOW IS THE SEALED ONE. When it was chosen (Phase 7), 2026-09-01 was as far
+# as the observed catalog reached across the four warehouses. The catalog now goes further
+# (CR-010), and the orders window stays put on purpose: widening it is a regeneration — seed,
+# stream reset, calibration evidence — not a refresh.
 #
-# THE START COMES FROM A MEASUREMENT REQUIREMENT, not from taste. The window must be LONGER
-# than the stock seed's `opening_days_of_demand` (7) — otherwise the opening stock covers the
-# whole period and stockouts are zero BY CONSTRUCTION, which is exactly what the first ledger
-# run flagged with 4 days. From 08-24 to 09-01 there are 9 order days, and the ledger sees 10
-# (the picking of an order placed late falls on the next day). 10 > 7.
-#
-# ONE REPLENISHMENT CYCLE CLOSES IN THIS WINDOW, TWO DO NOT. With 7 days of cover, reorder
-# point at 3 and lead time of 2, the first order goes out around day 5 and arrives on day 7;
-# the second would fall outside. This is declared instead of corrected: the alternative would
-# be lowering the cover until two cycles fit, and choosing a premise for what it does to the
-# chart is what this project refuses. `assert_stock_window_can_exercise_replenishment` guards
-# the limit that matters.
+# THE START COMES FROM A MEASUREMENT REQUIREMENT, not from taste. The stock window must be
+# LONGER than the largest opening cover in the stock seed (`opening_days_max`) — otherwise the
+# opening stock covers the whole period and stockouts are zero BY CONSTRUCTION, which is
+# exactly what the first ledger run flagged with 4 days. Since CR-017 each series draws its
+# own cover between `opening_days_min` and `opening_days_max`, so replenishment is spread over
+# the window instead of arriving as one wave, and
+# `assert_stock_window_can_exercise_replenishment` guards the limit that matters.
 #
 # Measured on 2026-09-01: the 4 warehouses have catalog from 08-24 to 09-01, with day 30
 # MISSING — that day produces a `carried_forward` price, a declared path that had never run.
@@ -156,7 +153,7 @@ ORDERS_OVERWRITE       ?=
         dashboard dashboard-venv indicators-contract dashboard-check price-dashboard \
         demand-reality-check demand-check-mapping \
         seed-province-map seed-service-area seed-municipality-codes \
-        seed-ambiguous-series
+        seed-ambiguous-series seed-online-propensity
 
 help:
 	@echo "infra"
@@ -301,6 +298,7 @@ help:
 	@echo "  seed-service-area         wh -> AUF municipalities (AUF_XLSX=$(AUF_XLSX))"
 	@echo "  seed-municipality-codes   name (Tempus3) -> official code   [network: INE API]"
 	@echo "  seed-ambiguous-series     series -> code, for homonyms      [network: INE API]"
+	@echo "  seed-online-propensity    online grocery buying by age/habitat [network: INE TIC-H]"
 	@echo ""
 	@echo "disk space —"
 	@echo "  data-usage                how much the local scratch (data/) is taking"
@@ -1044,6 +1042,9 @@ seed-municipality-codes:
 
 seed-ambiguous-series:
 	$(PYTHON) scripts/derive_ambiguous_series.py
+
+seed-online-propensity:
+	$(PYTHON) scripts/derive_online_propensity.py
 
 # ---- query ------------------------------------------------------------------
 # retail.duckdb holds only VIEWs over the object-storage parquet — it contains no

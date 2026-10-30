@@ -362,7 +362,7 @@ models:
       fault tolerance: it is what keeps Spark OPTIONAL — a fresh clone builds the whole
       Silver without a JVM.
 
-      DECLARED LIMIT: this ledger's stockout is independent of the generator's `removal_rate`,
+      DECLARED LIMIT: this ledger's stockout is independent of the generator's `removal_rate_*`,
       which produces "unavailable" lines at a fixed rate without looking at the balance. Neither causes the other.
       Making them coherent would require the generator to READ the ledger, inverting the project's
       dependency. Trigger: a second-pass generator.

@@ -3574,3 +3574,100 @@ Loss             The 6dc09846… seal stops being the guard. New debt item 8: wi
 ```
 
 Decision logged on 2026-10-30.
+
+### CR-017 · Simulated, but shaped like a real online grocer — anchored on INE and MAPA
+
+```
+Need             A high-bar review of the operations panel (2026-10-30) found the simulation
+                 visible in seconds, though every test was green: each warehouse placed the
+                 SAME number of orders every day (mad1 always 9,333); 77.5% of orders were
+                 delivered on the day they were placed, 21,679 on a Sunday and 22% before
+                 07:00 Madrid time; only 25% inside the promised window; 18.4% of baskets below
+                 the operator's 50 EUR minimum; perfume the top non-food category and toilet
+                 paper the last; whole Iberian hams (368-532 EUR) bought 1.8 at a time;
+                 substitution a flat 4% in every category; 1,130 customers ordering 4-6 times
+                 in 9 days; 65+ placing 23% of orders; 180 customers per 10k inhabitants in
+                 every province; 66% of stock series reordering on the same day.
+Evidence         Each figure from a query on GOLD/MART, recorded in the review. The causes
+                 were independent uniform draws: a fixed daily count, a delivery time summed
+                 from random delays with no calendar, a slot drawn apart from it, uniform
+                 product choice inside a demand group, one quantity distribution for every
+                 product, one opening stock cover for every series, and a customer base that
+                 mirrored the census.
+Insufficiency    No test can see "looks synthetic": every row was internally consistent.
+                 MAPA anchored the group mix only; nothing anchored who shops online.
+Component        DATA ANCHORS — new seed `ine_online_propensity_seed.csv` (INE TIC-H table
+                 50116: % of persons 16-74 who bought short-duration goods online, by age and
+                 habitat; `make seed-online-propensity`, scripts/derive_online_propensity.py),
+                 applied in customers_reference.py to the age and municipality weights INSIDE
+                 each warehouse (totals unchanged). New platform module product_choice.py:
+                 per-product `popularity_weight` (own brand x2, price relative to the group
+                 median ^ elasticity) and `quantity_max` (price tiers), stamped once on the
+                 orders reference; the elasticity is FITTED so the basket's EUR/kg matches
+                 MAPA's average price paid per group (mean absolute log error, each group
+                 counting once: 0.45, error 0.182 against 0.205 uniform). Weighting the fit
+                 by volume was measured and rejected: one group dragged it to the grid edge.
+                 demand_profile.py converts MAPA volume into lines with the same weights.
+                 SOURCE (simulated-orders-source, frozen — this CR): customer cadence from a
+                 hash of the customer (7/14/21/28 days, own weekday, skip drawn per day);
+                 placement hour in LOCAL time with an evening peak; slot chosen first on the
+                 operating calendar (next operating day at the earliest, Monday-Saturday,
+                 07:00-22:00, one hour) and picking/dispatch scheduled backwards from it;
+                 50 EUR minimum by topping up the basket; product by popularity weight;
+                 quantity up to the product's ceiling; fresh vs other substitution and
+                 removal rates (MAPA's own 'alimentacion fresca' scope). `validate` now
+                 rejects a slot or delivery on the order day or on Sunday, a slot outside
+                 opening hours, a basket below the minimum and a quantity above the ceiling.
+                 order_premises_seed v3 (97 rows: operator rules cited, unmeasured shapes
+                 declared synthetic); assert_order_premises_are_internally_coherent now
+                 checks that the cadence reproduces daily_order_rate. STOCK: opening cover
+                 drawn per series between opening_days_min/max from a hash (jobs/spark);
+                 assert_stock_ledger_covers_the_order_window compares the PICKING window,
+                 since consumption is dated by picking and picking is no longer same-day.
+                 Catalog caveats rewritten; Source CONTRACTs updated; new skill
+                 dashboard-quality-review (gitignored) makes the review repeatable.
+                 PANEL, found by that skill's screenshot pass: three number notations on one
+                 screen (KPIs 211.367, tables 211367, shares 0.0294 beside 94.58%) and the
+                 word None in a TOTAL row -> streamlit/display.py, one format for both panels;
+                 "top 20 by revenue" sorted alphabetically -> sorted by value; the default
+                 period was the union of every mart (08-15..10-30) over 9 days of orders ->
+                 the orders window (ORDERS_WINDOW); the stage table could not explain a
+                 30-hour cycle -> MART_FULFILLMENT_SLA gains p50/p90 minutes_to_picking and
+                 `percentis_etapa` shows the wait for the slot, with hours alongside.
+                 DEBT ITEM 5 CLOSED: replaying the regenerated log, the streaming Iceberg sink
+                 on an empty table reached only 38,300 of 211,367 orders in 80 minutes (each
+                 batch upserts against everything already written). `rebuild --reset` now
+                 writes the final state in ONE append — the table is empty and the rebuild is
+                 alone on it — 1 commit, ~22 s; without reset the batched monotonic merge
+                 stays, since a second writer may exist (orders_projection.py, two tests).
+Contracts        Event vocabulary, envelope, manifest fields and file layout unchanged.
+                 Catalog reference rows gain `popularity_weight`, `quantity_max`,
+                 `own_brand`; customer reference rows gain `online_pct` and the census
+                 weight alongside. Non-additive: customers and orders regenerated.
+Regression       Sources +15 tests (cadence, calendar, minimum, ceiling, popularity, tamper
+                 checks in validate); platform +16 (product choice, INE propensity, rebuild
+                 on reset). `make test` 1,175 green.
+Proof            On GOLD after regeneration, 2026-10-30: orders per warehouse per day vary
+                 (mad1 7,156-11,053); evening placement peak (20-21h local); 0% delivered on
+                 the order day, 0 on Sunday, all between 07 and 22h, 92.2% inside the slot;
+                 0% below 50 EUR, ticket 81.10 EUR; 70 lines at >= 300 EUR, all quantity 1;
+                 substitution fresh 6.76% vs other 2.39%; at most 2 orders per customer in 9
+                 days; 65+ = 8.7% of orders; customers per 10k from 65 to 243 by
+                 municipality; replenishment orders spread over 10 days. Stream replayed:
+                 1,464,306 events through OLTP -> Kafka -> Postgres and Iceberg, 0 gaps;
+                 `orders-reconcile`: Iceberg, Silver and OLTP agree on all 211,367 orders.
+                 Order events were regenerated once more after a premise TEXT edit — byte-
+                 identical, only the manifest's premises_sha256 changed to match the seed.
+                 `make freeze-check`: 44 differences, all "content CHANGED" in simulated_oltp
+                 (8) and simulated_orders (36), none in an observed source -> re-sealed:
+                 capture_id a781ea46..., 167 partitions, 2,646,782 records. Silver PASS=393
+                 (11,658,778 rows over the 18 tables), warehouse PASS=205, cut 7,732,735 rows
+                 (66.3%). Demand calibration error vs target 0.061 pt (was 0.070). Evidence
+                 pages regenerated (stream, spark, demand); Python still ~2.9x Spark.
+Loss             Customer, order and stock numbers published before this CR describe the old
+                 model; the 6bb299bd... seal stops being the guard. The Snowflake evidence
+                 page (2026-10-29) still describes the account loaded before this CR. Residual, declared: the non-food mix still favours cheap cosmetics
+                 (BACKLOG "Non-food mix" — INE EPF table 75006 is the anchor).
+```
+
+Decision logged on 2026-10-30.

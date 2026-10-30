@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from decimal import Decimal
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -174,6 +175,34 @@ class ValidateTest(Base):
         self.rewrite_log(events)
         code, _ = self.validate()
         self.assertEqual(code, 1)
+
+    def test_slot_moved_to_sunday_fails(self):
+        """The operating calendar is re-checked on the landed log, not trusted (CR-017)."""
+        events = self.log()
+        placed = next(e for e in events if e["event_type"] == "order_placed")
+        # 2026-08-30 is a Sunday; 10:00-11:00 local is 08:00-09:00 UTC in summer time.
+        placed["payload"]["delivery_slot_start"] = "2026-08-30T08:00:00Z"
+        placed["payload"]["delivery_slot_end"] = "2026-08-30T09:00:00Z"
+        self.rewrite_log(events)
+        code, output = self.validate()
+        self.assertEqual(code, 1)
+        self.assertIn("closed weekday", output)
+
+    def test_basket_below_the_minimum_order_fails(self):
+        events = self.log()
+        placed = next(e for e in events if e["event_type"] == "order_placed")
+        line = min(placed["payload"]["lines"],
+                   key=lambda l: Decimal(l["unit_price"]) * l["quantity"])
+        line["quantity"] = 1
+        self.assertLess(Decimal(line["unit_price"]), Decimal("5"))  # the fixture minimum
+        placed["payload"]["lines"] = [line]
+        placed["payload"]["line_count"] = 1
+        placed["payload"]["gross_amount"] = str(
+            Decimal(line["unit_price"]) * line["quantity"])
+        self.rewrite_log(events)
+        code, output = self.validate()
+        self.assertEqual(code, 1)
+        self.assertIn("min_order_amount_eur", output)
 
 
 if __name__ == "__main__":

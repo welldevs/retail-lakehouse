@@ -69,6 +69,7 @@ class DemandModel:
             raise DemandError("demand_profile.json: missing 'groups' list or empty list")
 
         weights: dict[str, float] = {}
+        scopes: dict[str, str | None] = {}
         for position, row in enumerate(groups):
             if not isinstance(row, dict):
                 raise DemandError(f"demand_profile.json: group {position} is not an object")
@@ -86,6 +87,9 @@ class DemandModel:
             if weight < 0:
                 raise DemandError(f"demand_profile.json: negative line_weight in {key!r}")
             weights[key] = weight
+            # MAPA's own scope label ('fresh' = "alimentacion fresca" as the report defines
+            # it). It decides the substitution/removal rate of the line (CR-017).
+            scopes[key] = row.get("scope")
 
         total = sum(weights.values())
         # Loose tolerance because weights travel as decimal text and are re-read as float;
@@ -97,6 +101,7 @@ class DemandModel:
             )
 
         self.weights = weights
+        self.scopes = scopes
         # SORTED tuple: it fixes the order of any CDF derived from here.
         self.groups = tuple(sorted(weights))
 
@@ -244,6 +249,10 @@ class DemandModel:
                 "demand premise."
             )
         return table[group]
+
+    def is_fresh(self, group: str) -> bool:
+        """True for MAPA's 'alimentacion fresca' groups: fresh produce, meat, fish, bread, eggs."""
+        return self.scopes.get(group) == "fresh"
 
     def seasonal_factor(self, month: int) -> float:
         """Factor on the month's ORDER RATE, never on the mix.

@@ -25,7 +25,9 @@ Two kinds of problem:
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from . import MANIFEST_VERSION
 from .canonical import CorruptFileError, digest, read_bytes, read_json, read_jsonl
@@ -33,6 +35,8 @@ from .events import (
     ENVELOPE_FIELDS,
     EVENT_VERSION,
     EventError,
+    ORDER_DELIVERED,
+    ORDER_DELIVERY_FAILED,
     ORDER_LINE_REMOVED,
     ORDER_LINE_SUBSTITUTED,
     ORDER_PICKED,
@@ -103,6 +107,51 @@ def _check_envelope(events, warehouse, order_date) -> list[str]:
     return problems
 
 
+LOCAL = ZoneInfo("Europe/Madrid")
+
+
+def _local(stamp: str):
+    """A UTC stamp of the log, read in local time. None if it does not parse."""
+    try:
+        moment = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return moment.astimezone(LOCAL)
+
+
+def _check_calendar(order_id: str, order_events: list, premises: dict) -> list[str]:
+    """The operating calendar (CR-017): a slot on an open day, inside opening hours, never on
+    the day of the order; deliveries never on the closed weekday nor on the order day."""
+    problems: list[str] = []
+    closed = int(float(premises["delivery_closed_isoweekday"]))
+    opening = int(float(premises["delivery_open_hour"]))
+    closing = int(float(premises["delivery_close_hour"]))
+    placed = _local(order_events[0]["occurred_at"])
+    payload = order_events[0]["payload"]
+    start = _local(payload.get("delivery_slot_start"))
+    end = _local(payload.get("delivery_slot_end"))
+    if placed is None or start is None or end is None:
+        return [f"{order_id}: unreadable placement or delivery slot timestamp"]
+    if start.date() <= placed.date():
+        problems.append(f"{order_id}: delivery slot on {start.date()}, not after the order day")
+    if start.isoweekday() == closed:
+        problems.append(f"{order_id}: delivery slot on closed weekday {closed}")
+    if start.hour < opening or (end.hour + end.minute / 60) > closing or end.date() != start.date():
+        problems.append(
+            f"{order_id}: slot {start:%H:%M}-{end:%H:%M} outside opening hours "
+            f"{opening:02d}:00-{closing:02d}:00"
+        )
+    for event in order_events:
+        if event["event_type"] in (ORDER_DELIVERED, ORDER_DELIVERY_FAILED):
+            moment = _local(event["occurred_at"])
+            if moment is None or moment.date() <= placed.date() or moment.isoweekday() == closed:
+                problems.append(
+                    f"{order_id}: {event['event_type']} at {event['occurred_at']} is on the order "
+                    f"day or on the closed weekday"
+                )
+    return problems
+
+
 def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str], list[str], int]:
     """Order-by-order coherence against the reference. Returns (errors, warnings, passed)."""
     problems: list[str] = []
@@ -118,6 +167,7 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
     catalog = {row["source_product_id"]: row for row in reference.catalog_of(warehouse, price_as_of)}
     customers = {row["customer_id"]: row for row in reference.customers_of(warehouse)}
     minimum = int(float(reference.premises["min_buyer_age"]))
+    minimum_order = Decimal(str(reference.premises["min_order_amount_eur"]))
 
     for order_id in sorted(grouped):
         order_events = grouped[order_id]
@@ -253,6 +303,12 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
                 )
                 failed = True
                 continue
+            if line["quantity"] > product["quantity_max"]:
+                problems.append(
+                    f"{order_id} line {line['line_no']}: quantity {line['quantity']} above the "
+                    f"product's ceiling ({product['quantity_max']})"
+                )
+                failed = True
             gross += price * line["quantity"]
 
         declared = _decimal(placed.get("gross_amount"))
@@ -261,6 +317,15 @@ def _check_orders(grouped, reference, warehouse, order_date) -> tuple[list[str],
                 f"{order_id}: gross_amount={placed.get('gross_amount')!r} is not the sum of "
                 f"the placed lines ({gross})"
             )
+            failed = True
+        if declared is not None and declared < minimum_order:
+            problems.append(
+                f"{order_id}: gross_amount={declared} below min_order_amount_eur={minimum_order}"
+            )
+            failed = True
+        calendar_problems = _check_calendar(order_id, order_events, reference.premises)
+        if calendar_problems:
+            problems.extend(calendar_problems)
             failed = True
         if placed.get("line_count") != len(lines):
             problems.append(
