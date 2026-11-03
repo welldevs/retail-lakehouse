@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
-from display import CHANGE_TYPE, daily_bars, fmt_currency, fmt_int, table  # noqa: E402
+from display import CHANGE_TYPE, daily_bars, fmt_currency, fmt_int, paired_bars, table  # noqa: E402
 from retail_platform.indicators import operations as I  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_DASHBOARD_TTL", "60"))
@@ -296,10 +296,11 @@ with tabs[2]:
         "GRUPO": "Group", "PCT_LT35": "% <35", "PCT_35_49": "% 35-49",
         "PCT_50_64": "% 50-64", "PCT_GE65": "% ≥65", "LINHAS_TOTAL": "Total lines",
     })
+    # MAPA's group codes as words: CARNE_OVINO_CAPRINO reached the reader as is (CR-019).
+    profile["Group"] = profile["Group"].str.replace("_", " ").str.capitalize()
     if not profile.empty:
         extremes = pd.concat([profile.head(8), profile.tail(8)])
-        st.bar_chart(extremes, x="Group", y=["% <35", "% ≥65"], horizontal=True,
-                     x_label="Demand group", y_label="Share of the age band's lines (%)")
+        paired_bars(extremes, "Group", ["% <35", "% ≥65"], "Share of the age band's lines (%)")
     table(profile, hide_index=True, width="stretch")
 
     st.divider()

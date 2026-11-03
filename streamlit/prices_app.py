@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # `connection` puts platform/src on the path, so it must come before the catalog import.
 from connection import DashboardError, identity, open_session, run  # noqa: E402
-from display import CHANGE_TYPE, fmt_int, table  # noqa: E402
+from display import CHANGE_TYPE, date_lines, dated_bars, fmt_int, table  # noqa: E402
 from retail_platform.indicators import prices as PI  # noqa: E402
 
 TTL = int(os.environ.get("RETAIL_PRICE_DASHBOARD_TTL", "60"))
@@ -115,7 +115,8 @@ with st.sidebar:
     )
     st.caption(f"Read at {ident['lido_em']}")
     with st.expander("What each mart shows"):
-        table(freshness.rename(columns={"MART": "Mart", "INICIO": "From", "FIM": "Through",
+        # The table's real name, as Postgres spells it — not the catalog's upper-case label.
+        table(freshness.assign(MART=freshness["MART"].str.lower()).rename(columns={"MART": "Mart", "INICIO": "From", "FIM": "Through",
                                         "LINHAS": "Rows"}),
               hide_index=True, width="stretch")
 
@@ -219,8 +220,9 @@ with tabs[2]:
     # Drops and increases summed over warehouses, stacked: unstacked, the increases bar
     # covered the drops bar on the same day.
     totals = daily_wide.groupby("Date", as_index=False)[["Drops", "Increases"]].sum()
-    st.bar_chart(totals, x="Date", y=["Drops", "Increases"], stack=True,
-                 x_label="Snapshot date", y_label="Price changes (all selected warehouses)")
+    dated_bars(totals.melt(id_vars="Date", var_name="Direction", value_name="Price changes"),
+               "Date", "Price changes", "Direction", "Price changes")
+    st.caption("All selected warehouses together.")
     st.caption("Days without a bar are days the catalog was not collected. On a warehouse's "
                "first snapshot every count is 0: there is no earlier price to compare with.")
     table(daily_wide, hide_index=True, width="stretch")
@@ -294,7 +296,8 @@ with tabs[4]:
             # price moving (CR-018).
             chosen = st.selectbox("Product", matches, index=0)
             historico = historico[historico["Product"] == chosen]
-            st.line_chart(historico, x="Date", y="Price", color="Warehouse")
+            date_lines(historico, "Date", "Price", "Price (EUR)", color="Warehouse",
+                       domain=warehouse_list)
             table(historico, hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------- Catalog
@@ -313,7 +316,8 @@ with tabs[5]:
         "NOVIDADES": "Flagged new by Mercadona", "PACOTES": "Packs",
         "EXCLUSIVOS_DO_ARMAZEM": "Exclusive to this warehouse",
     })
-    st.line_chart(catalogo, x="Date", y="Flagged new by Mercadona", color="Warehouse")
+    date_lines(catalogo, "Date", "Flagged new by Mercadona", "Products flagged new",
+               color="Warehouse", domain=warehouse_list, value_format=",.0f")
     st.caption("Mercadona's own \"new\" badge, which stays on for weeks — not the products "
                "that entered the catalog that day. Exclusivity is blank on a day only one "
                "warehouse was collected: there is nothing to compare it with.")

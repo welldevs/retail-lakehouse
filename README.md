@@ -83,6 +83,7 @@ make warehouse-refresh                 # cut -> bootstrap roles -> load -> dbt b
 make dashboard-venv                    # once: streamlit/pandas/altair
 make dashboard                         # operations panel:  http://localhost:8501
 make price-dashboard                   # price-watch panel: http://localhost:8502
+make price-evolution                   # price-evolution panel: http://localhost:8503
 
 # 3. optional planes
 make demand-reality-check              # demand calibration against the MAPA 2025 benchmark
@@ -179,25 +180,27 @@ Snowflake path (`make warehouse-snowflake-*`, dated evidence in
 mirror of the warehouse models are in
 [ARCHITECTURE.md § "Warehouse destination"](ARCHITECTURE.md).
 
-## Two dashboards over one indicator catalog
+## Three dashboards over one indicator catalog
 
 | Panel | Who it's for | Reads |
 |---|---|---|
 | **Operations** (`make dashboard`, port 8501) | whoever looks at the business: KPI, table, chart, no SQL on screen. 22 indicators in 7 groups | the `MART` only |
 | **Price-watch** (`make price-dashboard`, port 8502) | Mercadona price oscillation — drops, rises, daily movement, category dispersion. 9 indicators | two marts, on purpose |
+| **Price evolution** (`make price-evolution`, port 8503) | how far prices travelled over the accumulated history — a chained catalog index, start-against-end changes, the gap between warehouses. 7 indicators | one mart |
 
-Both connect as `retail_reader` (`streamlit/connection.py`), cache for 60 s with a refresh
+All three connect as `retail_reader` (`streamlit/connection.py`), cache for 60 s with a refresh
 button, and show the most recent date the marts cover.
 
 **The panels are consumers; the catalog is the asset.** Every query lives in
 [`platform/src/retail_platform/indicators/`](platform/src/retail_platform/indicators/) next
 to its explanation — `model.py` (the `Indicator` dataclass and the bound filters),
 `operations.py` (plus `OUT_OF_SCOPE`, each absence with the trigger that would unlock it),
-`prices.py`, and `contract.py`, the single generator. Each indicator declares its question,
+`prices.py`, `evolution.py`, and `contract.py`, the single generator. Each indicator declares its question,
 source grain, `kind` (observed / synthetic / mixed / derived), caveats, and SQL whose
 parameters are always bound. `make indicators-contract` regenerates the reviewable pages
-[`docs/indicators/operations.md`](docs/indicators/operations.md) and
-[`docs/indicators/prices.md`](docs/indicators/prices.md) without connecting to anything, and
+[`docs/indicators/operations.md`](docs/indicators/operations.md),
+[`docs/indicators/prices.md`](docs/indicators/prices.md) and
+[`docs/indicators/evolution.md`](docs/indicators/evolution.md) without connecting to anything, and
 an offline test fails if they drift. The catalog sits in the platform package, not in
 `streamlit/`, because its next consumer is an LLM/RAG layer: the same fields that stop a
 human from rebuilding a measure wrong are what a language model needs to answer from it.
@@ -212,13 +215,13 @@ Three examples of the caveats the catalog records:
 
 The most actionable gap: **no mart joins customer with order** — the link exists in
 `FACT_ORDER.customer_sk`, in GOLD, out of `retail_reader`'s reach by design (debt item #4).
-`make dashboard-check` renders both panels with `AppTest` against the live warehouse and
+`make dashboard-check` renders the three panels with `AppTest` against the live warehouse and
 demands zero exceptions. Details in [`streamlit/README.md`](streamlit/README.md).
 
 ## Dashboards — every tab, seal `a781ea46…`, 2026-10-30
 
-Every tab of both panels, shot to the bottom by `make dashboard-shots` and read before
-publishing (CR-018). Orders, customers and stock are **synthetic**, shaped by INE and MAPA;
+Every tab of the three panels, shot to the bottom by `make dashboard-shots` and read before
+publishing (CR-018, CR-019). Orders, customers and stock are **synthetic**, shaped by INE and MAPA;
 prices and assortment are **observed** Mercadona snapshots.
 
 | | |
@@ -229,7 +232,9 @@ prices and assortment are **observed** Mercadona snapshots.
 | ![Inventory](docs/screens/dashboard/operations-07-inventory.png) **Inventory** — computed stock ledger. Declared open defect: 87% of the shortage falls on 2026-09-01, because the min-max policy does not know Sunday has no picking (CR-018) | ![Price drops](docs/screens/dashboard/prices-01-drops-offers.png) **Price Watch: drops** — observed decreases between two snapshots, not confirmed promotions |
 | ![Price increases](docs/screens/dashboard/prices-02-increases.png) **Price Watch: increases** | ![Daily movement](docs/screens/dashboard/prices-03-daily-movement.png) **Price Watch: daily movement** — gaps are days the catalog was not collected |
 | ![Categories](docs/screens/dashboard/prices-04-categories.png) **Price Watch: categories** — volatility ranked only with at least 10 changes | ![Product](docs/screens/dashboard/prices-05-product.png) **Price Watch: one product** — avocado, warehouse by warehouse |
-| ![Catalog](docs/screens/dashboard/prices-06-catalog.png) **Price Watch: catalog** — Mercadona's "new" badge per day, not catalog entries | |
+| ![Catalog](docs/screens/dashboard/prices-06-catalog.png) **Price Watch: catalog** — Mercadona's "new" badge per day, not catalog entries | ![Price index](docs/screens/dashboard/evolution-01-index.png) **Price Evolution: index** — the same products collection after collection, chained: +0.34% from 2026-08-15 to 10-30; a catalog index, not a CPI |
+| ![Departments](docs/screens/dashboard/evolution-02-departments.png) **Price Evolution: departments** — drinks +3.05%, coffee and cocoa −1.25% | ![Over the period](docs/screens/dashboard/evolution-03-over-the-period.png) **Price Evolution: over the period** — first price against last; an offer that came back nets to zero |
+| ![Between warehouses](docs/screens/dashboard/evolution-04-between-warehouses.png) **Price Evolution: between warehouses** — about 4% of products priced differently; the dips are days one warehouse was not collected | ![One product](docs/screens/dashboard/evolution-05-product.png) **Price Evolution: one product** — the melon, out of season, doubled |
 
 ## Orchestration — the six pipelines, run on 2026-10-30
 
@@ -277,10 +282,10 @@ Mercadona category and product names, INE labels, and values such as the
 │   ├── dbt/tests/ + dbt/tests/warehouse/  # singular tests, Silver and Gold/Mart separately
 │   └── tests/              # no network — in-memory doubles of S3, Postgres, Kafka, Iceberg
 ├── orchestration/airflow/dags/  # 6 DAGs: 5 sources + warehouse_load
-├── streamlit/              # the two panels over the MART, as retail_reader
-│   ├── operations_app.py / prices_app.py   # the interfaces; no SQL of their own
-│   ├── connection.py                       # the read-only session, shared by both
-│   ├── display.py                          # one number format for both panels
+├── streamlit/              # the three panels over the MART, as retail_reader
+│   ├── operations_app.py / prices_app.py / evolution_app.py   # no SQL of their own
+│   ├── connection.py                       # the read-only session, shared by all
+│   ├── display.py                          # one number format and chart style for all
 │   └── smoke.py                            # AppTest render check (`make dashboard-check`)
 ├── scripts/                # one Makefile target each; provenance, checks, and adversarial proofs
 ├── jobs/spark/              # the only code that runs outside the platform's venv

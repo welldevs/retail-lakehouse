@@ -1,4 +1,4 @@
-"""Generates docs/indicators/{operations,prices}.md from the catalog.
+"""Generates docs/indicators/{operations,prices,evolution}.md from the catalog.
 
     make indicators-contract
 
@@ -21,7 +21,7 @@ import hashlib
 import os
 import sys
 
-from . import operations, prices
+from . import evolution, operations, prices
 from .model import DB, MART
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -174,7 +174,34 @@ def render_prices() -> str:
     return "\n".join(lines) + "\n"
 
 
-PAGES = {"operations.md": render_operations, "prices.md": render_prices}
+def render_evolution() -> str:
+    lines = _header(evolution, "evolution", "Price-evolution indicators")
+    lines += [
+        "## What it's for",
+        "",
+        "How far Mercadona's catalog prices travelled over the accumulated history — an index,",
+        "start-against-end changes, and the gap between warehouses. The price-watch catalog",
+        "counts EVENTS (this drop, that rise); this one measures EVOLUTION, where an offer that",
+        "goes and comes back adds up to zero.",
+        "",
+        "## Method",
+        "",
+        "A chained Jevons index, the standard for prices without consumption weights (ILO/IMF",
+        "*Consumer Price Index Manual*, elementary aggregates): at each collection, the geometric",
+        "mean of `price now / price at the previous collection` over the products observed both",
+        "times, chained by multiplication. A link counts only when both of its collections are",
+        "inside the selected period. Every product weighs the same: it is a catalog index, not a",
+        "consumer price index.",
+        "",
+    ]
+    lines += _boundary(" (`mart_price_evolution`)")
+    lines += _parameters(with_term=False) + _catalog(evolution.INDICATORS)
+    lines += _auxiliary(evolution, "the catalog was re-cut")
+    return "\n".join(lines) + "\n"
+
+
+PAGES = {"operations.md": render_operations, "prices.md": render_prices,
+         "evolution.md": render_evolution}
 
 
 def main(out_dir: str = OUT_DIR) -> int:

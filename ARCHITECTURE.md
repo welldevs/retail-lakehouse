@@ -24,7 +24,7 @@ Last revised: **2026-10-30** — price window widened and capture re-sealed (CR-
 renames, the indicator catalog move and English across the code (CR-012 to CR-014), pinned
 MinIO images (CR-015), the daily schedule actually running (CR-016), and customers, orders
 and stock regenerated to look like a real online grocer, anchored on INE and MAPA (CR-017),
-and every panel tab read to the bottom (CR-018).
+every panel tab read to the bottom (CR-018), and a third panel for price evolution (CR-019).
 
 ## Real scale
 
@@ -366,17 +366,20 @@ errors live — an aggregate summed with the detail, a forgotten scope, a column
 position. The warehouse SQL fails loud when it fails. And a non-expiring second engine
 (Postgres) means the tree is no longer one trial account away from not running at all.
 
-## Indicator catalog and the two panels
+## Indicator catalog and the three panels
 
-The panels in `streamlit/` (`operations_app.py`, `prices_app.py`) are **consumers**. The
-asset is the catalog in `platform/src/retail_platform/indicators/`: `operations.py` holds 22
-indicators in 7 groups plus `OUT_OF_SCOPE`, `prices.py` holds 9, both built on the
-`Indicator` dataclass and bound filters in `model.py`. Both panels read **only** `"MART"`,
+The panels in `streamlit/` (`operations_app.py`, `prices_app.py`, `evolution_app.py`) are
+**consumers**. The asset is the catalog in `platform/src/retail_platform/indicators/`:
+`operations.py` holds 22 indicators in 7 groups plus `OUT_OF_SCOPE`, `prices.py` holds 9
+(price EVENTS: drops, rises), `evolution.py` holds 7 (price EVOLUTION: a chained Jevons
+index of the catalog, start against end, the gap between warehouses), all built on the
+`Indicator` dataclass and bound filters in `model.py`. Every panel reads **only** `"MART"`,
 as `retail_reader`.
 
 The SQL and the explanation live together, and the reviewable pages
-[`docs/indicators/operations.md`](docs/indicators/operations.md) and
-[`docs/indicators/prices.md`](docs/indicators/prices.md) are **generated** from them by
+[`docs/indicators/operations.md`](docs/indicators/operations.md),
+[`docs/indicators/prices.md`](docs/indicators/prices.md) and
+[`docs/indicators/evolution.md`](docs/indicators/evolution.md) are **generated** from them by
 `contract.py` (`make indicators-contract`, no connection). If the explanation lived in a
 hand-written markdown, the two would diverge at the first SQL tweak — and verification would
 keep passing, because nobody reads a SQL and a text side by side looking for disagreement.
@@ -393,7 +396,7 @@ The *Out of scope* list is part of the deliverable: every absence carries the **
 that would unlock it. An absence with no trigger is an excuse; with a trigger it's a
 decision.
 
-`make dashboard-check` renders both panels via `AppTest` and requires zero exceptions
+`make dashboard-check` renders the three panels via `AppTest` and requires zero exceptions
 against the live warehouse: it's the only way for the 25 queries of the operations panel to
 be exercised the way Streamlit runs them, with parameters bound, instead of checked as text.
 
@@ -457,7 +460,7 @@ total comes from `make test`, measured, not written.
 | `test_postgres_load.py` | Quoted uppercase schemas, type mapping that fails instead of guessing, count recheck, and the bootstrap's grants and default privileges |
 | `test_snowflake_evidence.py` · `test_stream_evidence.py` | Totals summed and not written, broken isolation highlighted, and a failure not turning into an empty value |
 | `test_silver_gate.py` | The `dbt build` gate deciding in a single place |
-| `test_indicators_operations.py` · `test_indicators_prices.py` | `docs/indicators/` byte for byte equal to what the generator produces, every parameter bound, every caveat and out-of-scope trigger declared |
+| `test_indicators_operations.py` · `test_indicators_prices.py` · `test_indicators_evolution.py` | `docs/indicators/` byte for byte equal to what the generator produces, every parameter bound, every caveat and out-of-scope trigger declared |
 | `test_cli.py` | The command-line defaults, including `--count` **not** having one |
 
 Closed with an in-memory S3 client double (`platform/tests/fake_s3.py`), in the spirit of

@@ -150,7 +150,7 @@ ORDERS_OVERWRITE       ?=
         warehouse-snowflake warehouse-snowflake-refresh warehouse-snowflake-evidence \
         warehouse-snowflake-prove-tests \
         observability-prove-signals \
-        dashboard dashboard-venv indicators-contract dashboard-check price-dashboard \
+        dashboard dashboard-venv indicators-contract dashboard-check price-dashboard price-evolution \
         demand-reality-check demand-check-mapping \
         seed-province-map seed-service-area seed-municipality-codes \
         seed-ambiguous-series seed-online-propensity
@@ -291,8 +291,9 @@ help:
 	@echo "  dashboard-venv            installs streamlit/pandas/altair (extra, outside the image)"
 	@echo "  dashboard                 operations panel at http://localhost:$(DASHBOARD_PORT)"
 	@echo "  price-dashboard           prices panel at http://localhost:$(PRICE_DASHBOARD_PORT)"
-	@echo "  dashboard-check           renders both panels and demands zero exceptions (live warehouse)"
-	@echo "  dashboard-shots           every tab of both panels, to the bottom, into docs/screens/dashboard/"
+	@echo "  price-evolution           price-evolution panel at http://localhost:$(EVOLUTION_DASHBOARD_PORT)"
+	@echo "  dashboard-check           renders the three panels and demands zero exceptions (live warehouse)"
+	@echo "  dashboard-shots           every tab of the three panels, to the bottom, into docs/screens/dashboard/"
 	@echo "  dashboard-shots-approve   records that every PNG was READ (NOTE=...); make test needs it"
 	@echo ""
 	@echo "derived seeds (on demand; the versioned CSV is the truth, the script is the provenance) —"
@@ -1014,8 +1015,16 @@ price-dashboard:
 	$(PLATFORM_PY) -m streamlit run streamlit/prices_app.py \
 	  --server.port $(PRICE_DASHBOARD_PORT) --server.headless true
 
+# ---- price-evolution panel — how far prices travelled, not how often (CR-019) --------
+# A chained index, start-against-end changes and the gap between warehouses, over the same
+# mart. Its own catalog in indicators/evolution.py; the product search is the prices one.
+EVOLUTION_DASHBOARD_PORT ?= 8503
+price-evolution:
+	$(PLATFORM_PY) -m streamlit run streamlit/evolution_app.py \
+	  --server.port $(EVOLUTION_DASHBOARD_PORT) --server.headless true
+
 # ---- dashboard screenshots — published evidence, so never unread ---------------------
-# REQUIRES both panels running (make dashboard / make price-dashboard) and Playwright for
+# REQUIRES the three panels running (dashboard, price-dashboard, price-evolution) and Playwright for
 # Node (`npx playwright install chromium`; point SHOTS_NODE_PATH at its node_modules).
 # Each tab is measured and shot to the bottom, or the run fails (CR-018: a review trusted
 # shots cut at 1000 px). The manifest carries the seal the shots show and `reviewed_at:

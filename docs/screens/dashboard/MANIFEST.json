@@ -1,8 +1,8 @@
 {
   "capture_id": "a781ea4602b03a759da7608006446c724554c787bbd91054f8105d9edc4a6e6a",
-  "taken_at": "2026-10-30T17:56:54.347Z",
-  "reviewed_at": "2026-10-30T17:57:33+00:00",
-  "reviewed_note": "All 14 PNGs read at full height on 2026-10-30 after CR-018 fixes: no hidden column (sideways guard), English labels, order-date axes, TOTAL over 211,367, one product per price chart. Known and declared: 87% of stock shortage on 2026-09-01 (min-max ledger without weekday awareness, open in CR-018).",
+  "taken_at": "2026-10-30T20:53:24.132Z",
+  "reviewed_at": "2026-10-30T20:54:34+00:00",
+  "reviewed_note": "All 19 PNGs read at full height on 2026-10-30 after CR-019 fixes. New Price Evolution panel: index 100.34 = geometric mean of the four warehouse lines (pandas cross-check exact), 26 departments all labelled, collection dates on temporal axes, 10-13/10-28 dispersion dips explained on screen, trout preparation options declared. Fixed on reading: Price Watch daily/product/catalog charts back on one date-label format with collection points; age-band chart no longer stacks shares of different bands; MAPA codes shown as words (smoke now fails on codes in cells). Known and declared: 87% of stock shortage on 2026-09-01 (CR-018, open); Basket revenue chart truncates long category labels (full names in the table below it).",
   "files": [
     {
       "file": "cover.png",
@@ -29,8 +29,8 @@
       "file": "operations-03-basket.png",
       "panel": "operations",
       "tab": "Basket",
-      "height": 3493,
-      "content_height": 3493
+      "height": 3490,
+      "content_height": 3490
     },
     {
       "file": "operations-04-assortment-and-price.png",
@@ -78,8 +78,8 @@
       "file": "prices-03-daily-movement.png",
       "panel": "prices",
       "tab": "Daily movement",
-      "height": 1483,
-      "content_height": 1483
+      "height": 1522,
+      "content_height": 1522
     },
     {
       "file": "prices-04-categories.png",
@@ -101,6 +101,41 @@
       "tab": "Catalog",
       "height": 1506,
       "content_height": 1506
+    },
+    {
+      "file": "evolution-01-index.png",
+      "panel": "evolution",
+      "tab": "Index",
+      "height": 1434,
+      "content_height": 1434
+    },
+    {
+      "file": "evolution-02-departments.png",
+      "panel": "evolution",
+      "tab": "Departments",
+      "height": 2748,
+      "content_height": 2748
+    },
+    {
+      "file": "evolution-03-over-the-period.png",
+      "panel": "evolution",
+      "tab": "Over the period",
+      "height": 2346,
+      "content_height": 2346
+    },
+    {
+      "file": "evolution-04-between-warehouses.png",
+      "panel": "evolution",
+      "tab": "Between warehouses",
+      "height": 2385,
+      "content_height": 2385
+    },
+    {
+      "file": "evolution-05-product.png",
+      "panel": "evolution",
+      "tab": "Product",
+      "height": 1344,
+      "content_height": 1344
     }
   ]
 }

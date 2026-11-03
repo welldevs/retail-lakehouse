@@ -3738,3 +3738,64 @@ Loss             None in data. Found and NOT fixed, because it is a model decisi
 ```
 
 Decision logged on 2026-10-30.
+
+### CR-019 · A separate screen for price evolution — how far, not how often
+
+```
+Need             User request, 2026-10-30: the Mercadona API keeps accumulating prices, so
+                 a separate dashboard focused on how they evolve. Price Watch answers
+                 questions about EVENTS (this drop, that rise, changes per day); none of its
+                 screens answers "since August, have prices gone up, by how much, where?".
+Evidence         mart_price_evolution, 2026-10-30: 516,411 rows, 5,323 products, 32
+                 collections in 77 days (08-15..10-30), gaps up to 14 days (10-14 -> 10-28),
+                 bcn1 missing on 10-28, vlc1 on 10-13. Previous price present on every
+                 `estavel`/`preco_alterado` row; collection-to-collection ratios 0.51-2.17,
+                 no zero price.
+Insufficiency    Counting events cannot measure evolution: an offer that goes and comes back
+                 is two events and zero movement. Averaging prices across days mixes entries
+                 and exits into the level. Interpolating the gaps invents prices.
+Component        indicators/evolution.py (7 indicators: chained Jevons index per warehouse
+                 and overall, by department, products up/down over the period, top rises and
+                 falls start-against-end, dispersion between warehouses and its largest
+                 gaps), contract.py + docs/indicators/evolution.md, streamlit/evolution_app.py
+                 (5 tabs, product search reused from prices.py), `make price-evolution`
+                 (port 8503), display.py (date_lines, dated_bars, change_bars, paired_bars,
+                 full_height, fixed palette), smoke.py, scripts/dashboard_shots.js,
+                 tests/test_indicators_evolution.py. No dbt model: the mart already carries
+                 each link (previous price + days since it).
+Contracts        None. MART untouched; reads one mart, as retail_reader.
+Regression       test_indicators_evolution: every link has both ends inside the window,
+                 warehouses combine as a mean of their lines, no raw `unit_price` (the check
+                 proven able to fail), page byte for byte. smoke.py now also fails on codes
+                 shown as cell values (probe without the fix: 29 MAPA codes caught).
+Semantics        A catalog index, NOT a CPI: every product weighs the same; consumption
+                 weights would have to come from the simulated orders and make it synthetic.
+                 A link counts only if both collections are in the period. Each warehouse
+                 starts at 100 on its own first collection.
+Provenance       Observed Mercadona prices only (`purchasable_*`). Method: ILO/IMF Consumer
+                 Price Index Manual, elementary aggregates (Jevons, chained).
+Reproducibility  Same seal a781ea46; `make price-evolution`, `make dashboard-check`.
+Cost             Each query under 2 s on the local Postgres; no new dependency.
+Proof            2026-10-30: the index equals an independent pandas computation from the
+                 same rows (overall 100.34; bcn1 100.34, mad1 100.32, svq1 100.27, vlc1
+                 100.44). The first version pooled every warehouse's products into one link
+                 and ended at 100.45, ABOVE all four lines: bcn1's 15-day link after its
+                 missed day was averaged with three 1-day links. Fixed to the geometric mean
+                 of the warehouse lines. dashboard-check PASSED for the three panels; every
+                 tab of the three re-shot and read (19 PNGs), defects fixed before approval:
+                 26 department labels thinned to 13, cut axis titles, colours that paired
+                 All/bcn1 and mad1/svq1, tables showing 10 of 26 rows, the product search
+                 opening on "Medio melón" for "Melón piel de sapo", an unexplained dip on
+                 10-28 (a missing warehouse, now named on screen). Reading the other panels
+                 at the longer window found Price Watch's three date charts back on mixed
+                 labels ("Sat 15 … Aug 23 … October"), the age-band chart stacking the
+                 under-35 and over-65 shares end to end, and MAPA codes shown as values —
+                 all fixed. Departments over the period: drinks +3.05%, coffee/cocoa -1.25%.
+Loss             Declared, not fixed: preparation options of one fresh product (ids
+                 81200.1/.2/.3, 83 ids of 31 products) count as separate products — a
+                 repriced trout fills three rows and weighs three times in the index. Not
+                 merged, because siblings were priced differently in 563 rows. The Basket
+                 revenue chart still truncates long category labels (full names in the table).
+```
+
+Decision logged on 2026-10-30.

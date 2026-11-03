@@ -1,6 +1,6 @@
-// Screenshots of EVERY tab of both Streamlit panels, each one to the bottom — or nothing.
+// Screenshots of EVERY tab of the three Streamlit panels, each one to the bottom — or nothing.
 //
-//   make dashboard-shots        # panels running on 8501/8502; see the Makefile target
+//   make dashboard-shots        # panels running on 8501/8502/8503; see the Makefile target
 //
 // WHY IT REFUSES INSTEAD OF DOING ITS BEST. Streamlit scrolls inside its own container, so a
 // fixed viewport with `fullPage` captures only the first screen. On 2026-10-30 a review
@@ -19,7 +19,10 @@ const { chromium } = require('playwright');
 const [outdir, captureId] = process.argv.slice(2);
 const PANELS = [
   { name: 'operations', url: process.env.OPERATIONS_URL || 'http://localhost:8501' },
-  { name: 'prices', url: process.env.PRICES_URL || 'http://localhost:8502' },
+  { name: 'prices', url: process.env.PRICES_URL || 'http://localhost:8502',
+    search: 'e.g. coca cola', product: process.env.SHOTS_PRODUCT || 'Aguacate' },
+  { name: 'evolution', url: process.env.EVOLUTION_URL || 'http://localhost:8503',
+    search: 'e.g. aceite', product: process.env.SHOTS_EVOLUTION_PRODUCT || 'Melón piel de sapo' },
 ];
 const WIDTH = 1600;
 
@@ -70,11 +73,12 @@ const sidewaysTables = (page) => page.evaluate(() =>
     await page.waitForSelector('[data-testid="stTab"]', { timeout: 180000 });
     await settle(page);
 
-    if (panel.name === 'prices') {
+    if (panel.search) {
       // The Product tab is empty until someone searches: a published shot of an empty tab
-      // demonstrates nothing. Aguacate is among the biggest observed drops.
-      const search = page.getByPlaceholder('e.g. coca cola');
-      await search.fill(process.env.SHOTS_PRODUCT || 'Aguacate');
+      // demonstrates nothing. Aguacate is among the biggest observed drops; the melon is the
+      // biggest rise over the period on the evolution panel.
+      const search = page.getByPlaceholder(panel.search);
+      await search.fill(panel.product);
       await search.press('Enter');
       await settle(page);
     }

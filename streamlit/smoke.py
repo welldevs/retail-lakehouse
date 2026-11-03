@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs a dashboard end to end against the live warehouse and demands zero exceptions.
 
-    make dashboard-check          # both panels
+    make dashboard-check          # the three panels
 
 WHY SEPARATE FROM `make test`. The offline suite checks what can be checked without a
 network: catalog structure, bound parameters, and that docs/indicators/ matches the catalog.
@@ -20,7 +20,8 @@ for trust.
 MINIMUMS are proof that the screen rendered, not business numbers; pinning exact values would
 break on every new indicator. `warning: 0` is by design: a technical caveat leaking back onto
 a production panel shows up as an `st.warning`. The prices panel's Product tab shows no table
-until someone searches, so it does not count toward its dataframe minimum.
+until someone searches, so it does not count toward its dataframe minimum; the same holds for
+the evolution panel's Product tab.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 PANELS = {
     "operations": ("operations_app.py", {"metric": 10, "tabs": 7, "dataframe": 16, "warning": 0}),
     "prices": ("prices_app.py", {"metric": 6, "tabs": 6, "dataframe": 6, "warning": 0}),
+    "evolution": ("evolution_app.py", {"metric": 5, "tabs": 5, "dataframe": 7, "warning": 0}),
 }
 
 
@@ -56,6 +58,17 @@ def check(name: str) -> list[str]:
     if raw:
         print(f"RAW COLUMN NAMES ON SCREEN: {', '.join(raw)}")
         problems.append(f"{name}: {len(raw)} column(s) not renamed")
+    # The same leak in the CELLS: MAPA's group codes (CARNE_OVINO_CAPRINO) were shown as
+    # values in the age-band table, where the header check could not see them (CR-019).
+    codes = sorted({str(value) for frame in app.dataframe
+                    for column in getattr(frame.value, "columns", [])
+                    for value in frame.value[column].dropna().unique()
+                    # pandas 3 text columns are dtype `str`, not object: test the value
+                    if isinstance(value, str)
+                    and re.fullmatch(r"[A-Z][A-Z0-9]*(_[A-Z0-9]+)+", value)})
+    if codes:
+        print(f"RAW CODES IN CELLS: {', '.join(codes[:10])}")
+        problems.append(f"{name}: {len(codes)} code value(s) shown as is")
     counts = {"metric": len(app.metric), "tabs": len(app.tabs),
               "dataframe": len(app.dataframe), "warning": len(app.warning)}
     print(f"== {name} ({script})")

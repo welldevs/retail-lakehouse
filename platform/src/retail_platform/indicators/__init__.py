@@ -6,5 +6,6 @@ panels render it; `docs/indicators/` is generated from it; the LLM layer will re
 from it. Nothing here touches a database — a consumer brings the connection.
 
     operations — orders, fulfillment, basket, assortment, stock, customer base
-    prices     — Mercadona catalog price movement
+    prices     — Mercadona catalog price movement (events: drops, rises)
+    evolution  — Mercadona catalog price evolution (index, start against end, warehouses)
 """
