@@ -167,13 +167,31 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("MISSING from RAW", problems[0])
 
-    def test_new_partition_outside_the_seal(self):
-        """A WINDOW THAT GROWS AFTER CLOSING invalidates every number already published about
+    def test_new_partition_inside_the_sealed_window(self):
+        """A LATE LANDING INSIDE THE WINDOW invalidates every number already published about
         it — and breaks no sum, which is what makes it dangerous."""
-        current = self.sealed + [dict(self.sealed[0], partition_key="ingestion_date=2026-08-26")]
+        current = self.sealed + [dict(self.sealed[0],
+                                      partition_key="ingestion_date=2026-08-24/wh=vlc1")]
         problems = freeze.comparar(self.sealed, current)
         self.assertEqual(len(problems), 1)
-        self.assertIn("NEW partition, outside the seal", problems[0])
+        self.assertIn("NEW partition INSIDE the sealed window", problems[0])
+        self.assertEqual(freeze.crescimento(self.sealed, current), [])
+
+    def test_partition_after_the_window_is_growth_not_a_change(self):
+        """The daily schedule lands a new day every 06:00 (CR-016). Refusing that made the
+        check red every day by design (CR-020); it is reported as growth instead."""
+        current = self.sealed + [dict(self.sealed[0], partition_key="ingestion_date=2026-08-26")]
+        self.assertEqual(freeze.comparar(self.sealed, current), [])
+        self.assertEqual(freeze.crescimento(self.sealed, current),
+                         ["a/ingestion_date=2026-08-26"])
+
+    def test_a_new_source_or_an_undated_key_has_no_window_to_grow(self):
+        for extra in (dict(self.sealed[0], source="b"),
+                      dict(self.sealed[0], partition_key="snapshot=latest")):
+            with self.subTest(extra["source"] + "/" + extra["partition_key"]):
+                problems = freeze.comparar(self.sealed, self.sealed + [extra])
+                self.assertEqual(len(problems), 1)
+                self.assertIn("no sealed window to grow", problems[0])
 
     def test_content_changed_in_a_sealed_partition(self):
         current = [dict(self.sealed[0], content_sha256="ff" * 32), self.sealed[1]]

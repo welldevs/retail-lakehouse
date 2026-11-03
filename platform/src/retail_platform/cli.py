@@ -699,12 +699,14 @@ def _cmd_freeze(args) -> int:
 
 
 def _cmd_freeze_check(args) -> int:
-    """Re-read RAW and compare it with the seal. Exits 1 on ANY difference.
+    """Re-read RAW and compare it with the seal. Exits 1 if the SEALED capture moved.
 
     This is the verb that turns the discipline "don't touch RAW after closing" into a
-    check. Without it, the promise holds only as long as nobody forgets.
+    check. Without it, the promise holds only as long as nobody forgets. Partitions dated
+    after the sealed window are listed as growth and do not fail it (CR-020).
     """
-    from .freeze import FreezeError, capture_id, collect, comparar, ler_seed
+    from .freeze import (FreezeError, capture_id, collect, comparar, crescimento, janela,
+                         ler_seed)
 
     try:
         sealed = ler_seed(args.seed)
@@ -714,8 +716,17 @@ def _cmd_freeze_check(args) -> int:
         return EXIT_FAILED
 
     problems = comparar(sealed, current)
+    grown = crescimento(sealed, current)
     print(f"sealed ........... {capture_id(sealed)}  ({len(sealed)} partitions)")
     print(f"current .......... {capture_id(current)}  ({len(current)} partitions)")
+    if grown:
+        window = janela(sealed)
+        sources = sorted({g.split("/", 1)[0] for g in grown})
+        print()
+        print(f"GREW: {len(grown)} partition(s) dated after the sealed window — not a change:")
+        for source in sources:
+            mine = [g for g in grown if g.startswith(source + "/")]
+            print(f"  - {source}: {len(mine)} after {window[source]}")
     if problems:
         print()
         print(f"REFUSED ({len(problems)} difference(s)) — the sealed capture CHANGED:")
@@ -725,7 +736,74 @@ def _cmd_freeze_check(args) -> int:
             print(f"  ... and {len(problems) - 20} more")
         return EXIT_FAILED
     print()
-    print("OK: the capture is intact, byte for byte, against the seal.")
+    print("OK: every sealed partition is intact, byte for byte, against the seal.")
+    return EXIT_OK
+
+
+def _cmd_mercadona_export(args) -> int:
+    """Write the observed price history as CSV.gz with its sidecar manifest (CR-020)."""
+    from .backup import BackupError, export_prices
+
+    try:
+        out = export_prices(args.duckdb, args.out)
+    except BackupError as exc:
+        print(f"ERROR: {exc}")
+        return EXIT_FAILED
+    print(f"file ............. {os.path.relpath(out['path'])}")
+    print(f"window ........... {out['from']} .. {out['to']}  ({out['collections']} collections, "
+          f"{out['warehouses']} warehouses)")
+    print(f"rows ............. {out['rows']:,}  ({len(out['columns'])} columns)")
+    print(f"size ............. {out['bytes'] / 1024**2:.1f} MB  sha256 {out['sha256'][:16]}...")
+    print(f"manifest ......... {os.path.relpath(out['sidecar'])}")
+    print("Copy both files OFF this machine: exports/ is not in git.")
+    return EXIT_OK
+
+
+def _cmd_raw_archive(args) -> int:
+    """Archive the RAW partitions, restorable with raw-restore (CR-020)."""
+    from .backup import BackupError, archive_raw
+
+    try:
+        out = archive_raw(from_env(), args.out, args.source)
+    except BackupError as exc:
+        print(f"ERROR: {exc}")
+        return EXIT_FAILED
+    print(f"file ............. {os.path.relpath(out['path'])}")
+    print(f"partitions ....... {out['partitions']}  "
+          + ", ".join(f"{s}={n}" for s, n in sorted(out['partitions_by_source'].items())))
+    print(f"objects .......... {out['objects']:,}  ({out['raw_bytes'] / 1024**3:.2f} GB raw)")
+    print(f"size ............. {out['bytes'] / 1024**2:.1f} MB  sha256 {out['sha256'][:16]}...")
+    print(f"capture_id ....... {out['capture_id']}")
+    print(f"manifest ......... {os.path.relpath(out['sidecar'])}")
+    print("Copy both files OFF this machine: exports/ is not in git.")
+    return EXIT_OK
+
+
+def _cmd_raw_restore(args) -> int:
+    """Restore a raw-archive: verify what is already there, land what is missing."""
+    import tempfile
+
+    from .backup import BackupError, restore_raw
+
+    try:
+        if args.work_dir:
+            out = restore_raw(from_env(), args.archive, args.work_dir)
+        else:
+            with tempfile.TemporaryDirectory(prefix="raw-restore-") as tmp:
+                out = restore_raw(from_env(), args.archive, tmp)
+    except BackupError as exc:
+        print(f"ERROR: {exc}")
+        return EXIT_FAILED
+    print(f"capture_id ....... {out['capture_id']}  ({out['partitions']} partitions)")
+    print(f"landed ........... {len(out['landed'])}")
+    print(f"already present .. {len(out['already'])} (verified identical, not rewritten)")
+    if out["refused"]:
+        print(f"REFUSED .......... {len(out['refused'])} partition(s) differ from the archive; "
+              "RAW is immutable, nothing was overwritten:")
+        for prefix, errors in out["refused"][:20]:
+            print(f"  - {prefix}: {errors[0] if errors else ''}")
+        return EXIT_FAILED
+    print("OK: every partition of the archive is in RAW and verified. Next: make silver.")
     return EXIT_OK
 
 
@@ -1452,9 +1530,30 @@ def build_parser() -> argparse.ArgumentParser:
     frz.set_defaults(handler=_cmd_freeze)
 
     frz_ck = subparsers.add_parser(
-        "freeze-check", help="re-read RAW and compare with the seal; exits 1 on any difference")
+        "freeze-check",
+        help="re-read RAW and compare with the seal; exits 1 if the sealed capture moved")
     frz_ck.add_argument("--seed", default="platform/dbt/seeds/frozen_capture_seed.csv")
     frz_ck.set_defaults(handler=_cmd_freeze_check)
+
+    exp = subparsers.add_parser(
+        "mercadona-export", help="the whole observed price history as CSV.gz (from Silver)")
+    exp.add_argument("--duckdb", default="platform/dbt/retail.duckdb")
+    exp.add_argument("--out", default="exports/mercadona")
+    exp.set_defaults(handler=_cmd_mercadona_export)
+
+    arc = subparsers.add_parser(
+        "raw-archive", help="every RAW partition, byte for byte, into one tar.gz")
+    arc.add_argument("--out", default="exports/raw")
+    arc.add_argument("--source", action="append", default=None,
+                     help="limit to this source (repeatable); default: every source")
+    arc.set_defaults(handler=_cmd_raw_archive)
+
+    rst = subparsers.add_parser(
+        "raw-restore", help="restore a raw-archive into the RAW bucket; never overwrites")
+    rst.add_argument("archive")
+    rst.add_argument("--work-dir", default=None,
+                     help="where to unpack (default: a temporary directory)")
+    rst.set_defaults(handler=_cmd_raw_restore)
 
     spk_ev = subparsers.add_parser(
         "spark-evidence",

@@ -95,6 +95,7 @@ make airflow                           # the six DAGs, on :8080
 
 # 4. close
 make freeze && make freeze-check       # seal the RAW capture, and confirm it hasn't changed
+make mercadona-export && make raw-archive   # copies for exports/ — then OFF this machine
 ```
 
 The full stream sequence, the Silver gate's output, querying the DuckDB views, disk usage,
@@ -120,8 +121,8 @@ whether the documentation backs up what it claims.
 | 10 | How does it handle **gaps**? | `seq == last + 1` applies; `seq > last + 1` is a gap and **stops** instead of applying out of order | `make orders-prove-stream` |
 | 11 | How does it handle **concurrency**? | Optimistic conflict on Iceberg with the full cycle: detect → reload → reapply → retry, and an old `seq` **never** overwrites a newer `seq`. Demonstrated even **across different engines** | `make orders-prove-projection` · `make check-spark-iceberg` |
 | 12 | How does it know the **folds agree**? | `make orders-reconcile` closes across all three paths — batch, Iceberg projection, and Postgres sink — over 211,367 orders. It was disagreement between folds that found **three** real defects in this project | [Verification](#verification) |
-| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 167 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 on any difference | [`docs/FREEZE.md`](docs/FREEZE.md) |
-| 14 | What **limitations** remain? | Eight debt items (three open), each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
+| 13 | How does it know the **RAW hasn't changed**? | `make freeze` seals `(path, sha256, bytes, records)` for 167 partitions into a `capture_id`; `make freeze-check` re-reads the RAW and exits 1 if a sealed partition changed or went missing, or one appeared inside the sealed window; later days are reported as growth | [`docs/FREEZE.md`](docs/FREEZE.md) |
+| 14 | What **limitations** remain? | Eight debt items (two open), each with problem, impact, status, and next step; plus the scope that requires a new source | [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md) · [BACKLOG.md](BACKLOG.md) |
 
 ### What is **not** demonstrated in this project
 

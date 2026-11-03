@@ -140,7 +140,7 @@ ORDERS_OVERWRITE       ?=
         orders-projection-init orders-publish orders-project orders-lag \
         orders-replay orders-topic orders-prove-stream \
         check-spark-iceberg spark-build stock-consumption stock-ledger \
-        spark-evidence freeze freeze-check \
+        spark-evidence freeze freeze-check mercadona-export raw-archive raw-restore \
         iceberg-init iceberg-metadata orders-project-iceberg \
         orders-rebuild-projection orders-reconcile orders-prove-projection \
         stream-evidence \
@@ -247,6 +247,9 @@ help:
 	@echo "  spark-evidence            runs the ledger on BOTH engines and publishes both timings"
 	@echo "  freeze                    seals the RAW capture (docs/FREEZE.md + seed)"
 	@echo "  freeze-check              re-reads RAW and fails if the sealed capture changed"
+	@echo "  mercadona-export          the observed price history as CSV.gz in exports/ (copy it off the machine)"
+	@echo "  raw-archive               every RAW partition into one tar.gz in exports/ (copy it off the machine)"
+	@echo "  raw-restore               restores a raw-archive into RAW (ARCHIVE=...); never overwrites"
 	@echo ""
 	@echo "live projection (Iceberg) — two writers on the same table, one reader:"
 	@echo "  iceberg-init              SQL catalog + live_order_state table"
@@ -778,6 +781,25 @@ freeze:
 
 freeze-check:
 	@$(PLATFORM_PY) -m retail_platform freeze-check
+
+# ---- copies of what cannot be collected again (CR-020) --------------------------------
+# A clone brings the code, never the data, and Mercadona serves only today's price: if the
+# MinIO disk fails, the history since 2026-08-15 is gone. `mercadona-export` is the readable
+# copy (CSV from Silver); `raw-archive` is the restorable one (RAW, byte for byte, landed back
+# through land + verify by `raw-restore`, which never overwrites a partition already there).
+# Both write to exports/ (gitignored). Copying them OFF this machine is the operator's step.
+EXPORT_DIR ?= exports
+ARCHIVE    ?=
+mercadona-export:
+	@$(PLATFORM_PY) -m retail_platform mercadona-export --duckdb $(DUCKDB_PATH) --out $(EXPORT_DIR)/mercadona
+
+raw-archive:
+	@$(PLATFORM_PY) -m retail_platform raw-archive --out $(EXPORT_DIR)/raw
+
+raw-restore:
+	@if [ -z "$(ARCHIVE)" ]; then \
+	  echo "usage: make raw-restore ARCHIVE=$(EXPORT_DIR)/raw/raw_<stamp>.tar.gz"; exit 2; fi
+	@$(PLATFORM_PY) -m retail_platform raw-restore $(ARCHIVE)
 
 SPARK_EVIDENCE ?= docs/spark-evidence/README.md
 # THE EVIDENCE RUNS BOTH ENGINES and publishes both timings, whoever wins. It exists to

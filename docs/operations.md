@@ -256,8 +256,27 @@ edits the documentation:
 
 On a new machine the operator runs `make freeze`, which seals **their capture** in
 [`FREEZE.md`](FREEZE.md) with a `capture_id`. From then on `make freeze-check` fails if any
-sealed partition changes — and the test starts guarding their capture, not the one that
-produced the numbers published here.
+sealed partition changes or goes missing, or a new one appears inside the sealed window —
+and the test starts guarding their capture, not the one that produced the numbers published
+here. Days collected after the window are reported as growth, not refused (CR-020).
+
+### Starting from zero without losing the history
+
+A clone brings the code, never the data, and the Mercadona API serves only today's price:
+the history exists only in this machine's MinIO volume. Two copies, both in `exports/`
+(gitignored), both meant to be copied **off this machine**:
+
+| Copy | Command | For |
+|---|---|---|
+| Price history, CSV.gz from Silver (all 38 columns, one row per product, category, warehouse and collection) + `*.manifest.json` | `make mercadona-export` | people and other tools; not what the pipeline loads |
+| Every RAW partition, byte for byte, with its manifests, in one tar.gz + `*.manifest.json` (sha256, `capture_id`) | `make raw-archive` | the restore |
+
+To restore on a new machine: `make up`, then `make raw-restore ARCHIVE=exports/raw/<file>.tar.gz`,
+then `make silver` and `make warehouse-refresh`. The restore lands each partition through the
+same `land` + `verify-landing` as a fresh collection; a partition already in the bucket is
+verified and skipped if identical, **refused** if different — it never overwrites RAW. An
+archive of the sealed partitions carries the sealed `capture_id`, so `make freeze-check`
+confirms the restored capture is the same one.
 
 **Three things require a download or a credential and don't come up on their own:** the
 Callejero files (`temp/`), the MAPA report PDF, and — only for the opt-in Snowflake path —

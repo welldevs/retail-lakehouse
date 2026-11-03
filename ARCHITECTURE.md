@@ -24,7 +24,8 @@ Last revised: **2026-10-30** — price window widened and capture re-sealed (CR-
 renames, the indicator catalog move and English across the code (CR-012 to CR-014), pinned
 MinIO images (CR-015), the daily schedule actually running (CR-016), and customers, orders
 and stock regenerated to look like a real online grocer, anchored on INE and MAPA (CR-017),
-every panel tab read to the bottom (CR-018), and a third panel for price evolution (CR-019).
+every panel tab read to the bottom (CR-018), a third panel for price evolution (CR-019), and off-machine copies of RAW plus a seal check
+that tells growth from change (CR-020).
 
 ## Real scale
 
@@ -429,7 +430,7 @@ be fixed, and the reason is written down), **open** (identified work remains), o
 | 5 | The projection rebuild was **O(n²)** | 414 commits and ~55 min for 206,523 orders: each batch did an `upsert` against the entire table | **Closed (CR-017)** — with `--reset` the table is empty and the rebuild is alone on it, so the state goes in one `append`: 1 commit, ~22 s for 211,367 orders. The batched merge stays for a rebuild WITHOUT reset, where a second writer may exist | None |
 | 6 | The ledger stockout is independent of the order's `unavailable` rows | One doesn't cause the other, and crossing them would produce an invented correlation | **Accepted**, and declared in the data: the generator drops a row at a fixed sampled rate, without looking at balance | A second-pass generator that rereads the balance. It **would invert the project's dependency** — today the order generates the stock —, and that's what's holding the item back |
 | 7 | Silver's parquet survives the gate excluding the model | It actually happened: `MART_STOCK_HEALTH` described 5 days while the other marts described 9, **with not a single test failing** — each domain closed on its own | **Mitigated per domain, class still open.** `assert_stock_ledger_covers_the_order_window` compares the two domains' windows in the warehouse. The class is general: **any** excluded model leaves stale parquet behind | A generic check — for every model the gate excludes, compare the parquet's age against the current build's. Not done because it would require the gate to publish what it excluded, and the phase closed |
-| 8 | The seal guards a closed window, and the daily DAG now grows it every day | Since CR-016 fixed the schedule, every 06:00 run lands 4 partitions outside the seal: `make freeze-check` goes red daily by design, and an alarm that is always red trains reviewers to ignore it | **Open** — found once the schedule actually ran | Decide between re-sealing per published revision (today's practice, CR-010/CR-016) and a check that separates "window grew" from "sealed content changed" |
+| 8 | The seal guards a closed window, and the daily DAG now grows it every day | Since CR-016 fixed the schedule, every 06:00 run lands 4 partitions outside the seal: `make freeze-check` goes red daily by design, and an alarm that is always red trains reviewers to ignore it | **Closed (CR-020)** — `freeze-check` now refuses a sealed partition that changed or went missing, and a new partition dated INSIDE the sealed window; one dated after it is reported as growth. On 2026-11-03: 16 partitions grew, 0 changed, exit 0 | None. Re-sealing stays a decision per published revision |
 
 **Where the rest of this history lives.** Closed items with their full story (the RBAC
 defects, `warehouse_load`'s first real run, the timestamp 56 million years in the future,

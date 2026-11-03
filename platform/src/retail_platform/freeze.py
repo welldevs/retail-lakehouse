@@ -27,6 +27,19 @@ the MAPA URL points to "latest data". Everything DOWNSTREAM is deterministic giv
 RAW. `capture_id` is what names that condition: on a new machine the operator runs `make
 freeze` and seals THEIR capture, and the test starts guarding theirs.
 
+A WINDOW THAT GROWS IS NOT A CAPTURE THAT CHANGED (CR-020). Since the daily schedule runs
+(CR-016), every 06:00 lands four Mercadona partitions dated AFTER the sealed window. Failing
+on those made `freeze-check` red every day by design — an alarm that is always red trains
+reviewers to ignore it (ARCHITECTURE debt #8). The check now separates three things:
+
+    sealed partition changed or missing           -> REFUSED (the published numbers moved)
+    new partition dated INSIDE the sealed window  -> REFUSED (a late landing for 10-28
+                                                     would move them just as silently)
+    new partition dated AFTER the sealed window   -> reported, not refused (growth)
+
+The window is per source: the latest `ingestion_date` sealed for it. A new source, or a
+partition key without a date, has no window to be after, so it is refused.
+
 TWO ARTIFACTS, and the duplication has a reason:
 
     docs/FREEZE.md                          for a human to read
@@ -43,6 +56,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -51,6 +65,7 @@ DEFAULT_PAGE = os.path.join("docs", "FREEZE.md")
 DEFAULT_SEED = os.path.join("platform", "dbt", "seeds", "frozen_capture_seed.csv")
 
 MANIFEST_NAME = "_manifest.json"
+DATE_IN_KEY = re.compile(r"ingestion_date=(\d{4}-\d{2}-\d{2})")
 FIELDS = ("source", "partition_key", "files", "records", "bytes", "content_sha256")
 
 
@@ -152,15 +167,40 @@ def ler_seed(origin: str = DEFAULT_SEED) -> list[dict]:
         ]
 
 
+def _key_date(partition_key: str) -> str | None:
+    match = DATE_IN_KEY.search(partition_key)
+    return match.group(1) if match else None
+
+
+def janela(sealed: list[dict]) -> dict[str, str]:
+    """The sealed window per source: its latest sealed `ingestion_date`."""
+    window: dict[str, str] = {}
+    for r in sealed:
+        day = _key_date(r["partition_key"])
+        if day and day > window.get(r["source"], ""):
+            window[r["source"]] = day
+    return window
+
+
+def _grew(key: tuple[str, str], window: dict[str, str]) -> bool:
+    day = _key_date(key[1])
+    return key[0] in window and day is not None and day > window[key[0]]
+
+
 def comparar(sealed: list[dict], current: list[dict]) -> list[str]:
-    """Differences between the seal and today's RAW. Empty list = the capture is intact."""
+    """What moved the sealed capture. Empty list = intact (it may still have GROWN —
+    see `crescimento`)."""
     by_key = lambda items: {(r["source"], r["partition_key"]): r for r in items}  # noqa: E731
     a, b = by_key(sealed), by_key(current)
+    window = janela(sealed)
     problems: list[str] = []
     for key in sorted(set(a) - set(b)):
         problems.append(f"partition SEALED but MISSING from RAW: {key[0]}/{key[1]}")
     for key in sorted(set(b) - set(a)):
-        problems.append(f"NEW partition, outside the seal: {key[0]}/{key[1]}")
+        if key[0] not in window or _key_date(key[1]) is None:
+            problems.append(f"NEW partition with no sealed window to grow: {key[0]}/{key[1]}")
+        elif not _grew(key, window):
+            problems.append(f"NEW partition INSIDE the sealed window: {key[0]}/{key[1]}")
     for key in sorted(set(a) & set(b)):
         if a[key]["content_sha256"] != b[key]["content_sha256"]:
             problems.append(
@@ -169,6 +209,15 @@ def comparar(sealed: list[dict], current: list[dict]) -> list[str]:
                 f"current={b[key]['content_sha256'][:16]}..."
             )
     return problems
+
+
+def crescimento(sealed: list[dict], current: list[dict]) -> list[str]:
+    """New partitions dated AFTER their source's sealed window: growth, not a change."""
+    sealed_keys = {(r["source"], r["partition_key"]) for r in sealed}
+    window = janela(sealed)
+    return [f"{r['source']}/{r['partition_key']}" for r in current
+            if (r["source"], r["partition_key"]) not in sealed_keys
+            and _grew((r["source"], r["partition_key"]), window)]
 
 
 def render(records: list[dict]) -> str:
@@ -212,12 +261,13 @@ def render(records: list[dict]) -> str:
         "## How to check",
         "",
         "```bash",
-        "make freeze-check   # rereads RAW and compares it with this seal; exits 1 on any difference",
+        "make freeze-check   # rereads RAW and compares it with this seal; exits 1 if it moved",
         "```",
         "",
-        "Changing a single byte of a sealed partition fails it. Adding a new partition does",
-        "too — because a window that keeps growing after closing invalidates every number",
-        "already published about it.",
+        "Changing a single byte of a sealed partition fails it, and so does a missing one or a",
+        "new partition dated INSIDE the sealed window — a late landing would invalidate every",
+        "number already published about it. A partition dated AFTER the window (the daily",
+        "schedule's next collection) is reported as growth and does not fail it (CR-020).",
         "",
         "## Summary by source",
         "",

@@ -29,12 +29,13 @@ sha256 and not the generation date.
 ## How to check
 
 ```bash
-make freeze-check   # rereads RAW and compares it with this seal; exits 1 on any difference
+make freeze-check   # rereads RAW and compares it with this seal; exits 1 if it moved
 ```
 
-Changing a single byte of a sealed partition fails it. Adding a new partition does
-too — because a window that keeps growing after closing invalidates every number
-already published about it.
+Changing a single byte of a sealed partition fails it, and so does a missing one or a
+new partition dated INSIDE the sealed window — a late landing would invalidate every
+number already published about it. A partition dated AFTER the window (the daily
+schedule's next collection) is reported as growth and does not fail it (CR-020).
 
 ## Summary by source
 

@@ -3799,3 +3799,56 @@ Loss             Declared, not fixed: preparation options of one fresh product (
 ```
 
 Decision logged on 2026-10-30.
+
+### CR-020 · Copies off the machine, and a seal check that tells growth from change
+
+```
+Need             User request, 2026-11-03, after running every DAG: (1) an export of the
+                 collected Mercadona data to start from zero without losing it; (2) a
+                 `freeze-check` that is useful again; (3) the INE DAG comments fixed.
+Evidence         A clone of origin/main deploys (make test 1,191 green on a clean checkout,
+                 Airflow image built --no-cache, 6 DAGs parse with zero errors) — but brings
+                 no data: RAW is 3.15 GB in ONE MinIO volume, and Mercadona serves only
+                 today's price. `freeze-check` was red with 16 NEW partitions (31/10..03/11,
+                 the daily schedule) and 0 changed: red every day by design (debt #8).
+                 Re-triggering the INE DAGs on landed dates skipped `silver`, while their
+                 comment said it "still runs".
+Insufficiency    A CSV alone cannot be restored: the pipeline reads RAW (JSON + manifest +
+                 sha256). Re-sealing daily would make the seal mean nothing. `land` replaces
+                 a differing object — right for a retry, wrong for a restore.
+Component        backup.py (export_prices, archive_raw, restore_raw), cli.py (mercadona-export,
+                 raw-archive, raw-restore, freeze-check output), freeze.py (janela,
+                 crescimento; comparar refuses changed / missing / new INSIDE the window),
+                 docs/FREEZE.md and its generator (same diff: regenerating would re-date the
+                 seal), Makefile, .gitignore (exports/), tests/test_backup.py,
+                 tests/test_freeze.py, two INE DAG comments, docs/operations.md, README,
+                 ARCHITECTURE (debt #8 closed).
+Contracts        None. RAW, Silver and the warehouse untouched; the seal a781ea46 unchanged.
+Regression       test_backup: archive round trip into an empty bucket gives the same
+                 capture_id; identical restore writes nothing; a differing partition is
+                 refused and left as it was; a damaged copy is refused before any write; an
+                 archive member escaping the restore directory is refused; an incomplete
+                 partition is not archived. Mutation: without the "already present" guard
+                 two tests fail. test_freeze: inside-window partition refused, after-window
+                 reported as growth, new source / undated key refused.
+Semantics        The CSV is `silver_product_price` as is (38 columns, purchasable_* is the
+                 comparable price), for people and other tools; the archive is the restore.
+                 Growth = a partition dated after its source's latest sealed ingestion_date.
+Provenance       Both artifacts carry a sidecar manifest (window or partitions, sha256);
+                 the archive also the capture_id, computed by the same function as freeze.
+Reproducibility  `make mercadona-export`, `make raw-archive`, `make raw-restore ARCHIVE=...`.
+Cost             CSV 49.9 MB (~1.4 MB per collection), archive 248 MB for 3.15 GB of RAW;
+                 export 8 s, archive 1 min 42 s, restore 1 min 40 s (verify) / 3 min 32 s
+                 (landing into an empty bucket). Disk outside git; copying off the machine
+                 is the operator's step.
+Proof            2026-11-03: CSV 622,557 rows, 2026-08-15..11-03, 36 collections. Archive
+                 183 partitions, 21,302 objects, capture_id 0b84abb3 = freeze-check's
+                 current. Restore against the real bucket: 183 verified identical, 0 written.
+                 Restore into an empty throwaway MinIO: 183 landed and verified, and
+                 freeze-check against it: same capture_id, every sealed partition intact.
+                 freeze-check on the real RAW: GREW 16 after 2026-10-30, exit 0.
+Loss             The archive is a full copy each time (no incremental); the CSV is not a
+                 load path. Neither leaves the machine on its own.
+```
+
+Decision logged on 2026-11-03.

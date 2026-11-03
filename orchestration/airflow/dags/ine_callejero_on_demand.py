@@ -232,8 +232,11 @@ with DAG(
         task_id="silver",
         python_callable=silver,
         retries=1,
-        # Same trigger_rule as the other two: if the gate short-circuited (nothing new),
-        # silver still runs (cheap, idempotent) instead of being dragged into `skipped`.
+        # Same trigger_rule as the other two. With ONE upstream it reduces to: something landed ->
+        # silver runs; the gate short-circuited (nothing new) -> silver is `skipped`, which is
+        # correct (Silver is already built from this RAW); anything failed -> no Silver on
+        # suspect RAW. Measured on 2026-11-03: a re-trigger on a landed date skips it. The
+        # comment here used to promise that silver "still runs"; it never did.
         trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
     )
 

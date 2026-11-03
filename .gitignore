@@ -79,3 +79,6 @@ docs/*.pdf
 docs/screens/*.webm
 docs/screens/*.mp4
 docs/screens/*.mov
+
+# Off-machine copies (CR-020): a CSV/tar that grows every day has no place in git history.
+exports/
