@@ -82,3 +82,6 @@ docs/screens/*.mov
 
 # Off-machine copies (CR-020): a CSV/tar that grows every day has no place in git history.
 exports/
+
+# Unrelated side project (narrated video of this repo); not part of the platform.
+meu-video/

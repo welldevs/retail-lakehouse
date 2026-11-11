@@ -8,6 +8,12 @@ through an OLTP → Kafka → Iceberg stream plane.
 
 ![Operations dashboard — commercial tab, reading only the MART](docs/screens/dashboard/cover.png)
 
+[![Retail Lakehouse — narrated walkthrough, in Spanish](docs/screens/video-cover.png)](https://youtu.be/OrFKcvRthBU)
+
+**Watch the 5-minute narrated walkthrough** (Spanish, Spain): the layers, the sealed RAW, the
+stream plane, and what is *not* demonstrated. It tells the same story as this page, in the
+same order, and every figure in it comes from the documents linked below.
+
 The customer is invented, the address where they live is not; the order is invented, but
 who buys, what is bought, and how much it costs is not. Every Source is a **frozen,
 independent** package under [`sources/`](sources/) with its own physical contract

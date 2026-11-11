@@ -3852,3 +3852,32 @@ Loss             The archive is a full copy each time (no incremental); the CSV 
 ```
 
 Decision logged on 2026-11-03.
+
+### CR-021 · A narrated walkthrough on the front page
+
+```
+Need             User request, 2026-11-11: a narrated video of the project as a portfolio
+                 case, linked from the repository's front page.
+Evidence         The README is 300+ lines; a reader deciding whether to read it has no
+                 5-minute version. The video exists (YouTube, Spanish, 5 min).
+Insufficiency    The README's own cover is a dashboard screenshot; it says nothing about the
+                 layers, the seal or the declared limits, which are the project's argument.
+Component        README.md (one image link + three lines under the cover),
+                 docs/screens/video-cover.png (the thumbnail, read in full before linking).
+Contracts        None. No code, data, generated page or test input changes.
+Regression       test_docs: links resolve (the image exists), README under its line ceiling.
+Semantics        The video narrates only figures already in README/FREEZE.md (167 partitions,
+                 66.3%, 211,367 orders, +0.34%). Its limits scene repeats "not demonstrated".
+Provenance       The video is made outside this repository (a separate, git-ignored Remotion
+                 project, `meu-video/`, not part of the platform); it is not reproducible
+                 from here and is not a source of truth. The thumbnail carries a synthetic
+                 dashboard shot already published in the README.
+Reproducibility  None claimed for the video; the repository's claims do not depend on it.
+Cost             One external link: if the video is removed, the link dies (the README text
+                 around it stands alone). The voice is a synthetic one.
+Proof            2026-11-11: oEmbed of the link returns the video; thumbnail opened and read.
+Loss             The video is dated: it shows the 2026-10-30 seal and will not follow later
+                 changes. It is in Spanish only.
+```
+
+Decision logged on 2026-11-11.
