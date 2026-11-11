@@ -8,7 +8,7 @@ through an OLTP → Kafka → Iceberg stream plane.
 
 ![Operations dashboard — commercial tab, reading only the MART](docs/screens/dashboard/cover.png)
 
-[![Retail Lakehouse — narrated walkthrough, in Spanish](docs/screens/video-cover.png)](https://youtu.be/OrFKcvRthBU)
+[![Watch the 5-minute narrated walkthrough of Retail Lakehouse on YouTube (Spanish)](docs/screens/video-cover.png)](https://youtu.be/OrFKcvRthBU)
 
 **Watch the 5-minute narrated walkthrough** (Spanish, Spain): the layers, the sealed RAW, the
 stream plane, and what is *not* demonstrated. It tells the same story as this page, in the

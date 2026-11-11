@@ -3863,19 +3863,20 @@ Evidence         The README is 300+ lines; a reader deciding whether to read it 
 Insufficiency    The README's own cover is a dashboard screenshot; it says nothing about the
                  layers, the seal or the declared limits, which are the project's argument.
 Component        README.md (one image link + three lines under the cover),
-                 docs/screens/video-cover.png (the thumbnail, read in full before linking).
+                 docs/screens/video-cover.png (a banner: play button, "Watch the walkthrough", and the
+                 L0-L5 layers; read in full before linking).
 Contracts        None. No code, data, generated page or test input changes.
 Regression       test_docs: links resolve (the image exists), README under its line ceiling.
 Semantics        The video narrates only figures already in README/FREEZE.md (167 partitions,
                  66.3%, 211,367 orders, +0.34%). Its limits scene repeats "not demonstrated".
 Provenance       The video is made outside this repository (a separate, git-ignored Remotion
                  project, `meu-video/`, not part of the platform); it is not reproducible
-                 from here and is not a source of truth. The thumbnail carries a synthetic
-                 dashboard shot already published in the README.
+                 from here and is not a source of truth. The banner carries only labels and
+                 figures already in the README (5 sources, 3 dashboards, sealed RAW).
 Reproducibility  None claimed for the video; the repository's claims do not depend on it.
 Cost             One external link: if the video is removed, the link dies (the README text
                  around it stands alone). The voice is a synthetic one.
-Proof            2026-11-11: oEmbed of the link returns the video; thumbnail opened and read.
+Proof            2026-11-11: oEmbed of the link returns the video; banner opened and read.
 Loss             The video is dated: it shows the 2026-10-30 seal and will not follow later
                  changes. It is in Spanish only.
 ```
