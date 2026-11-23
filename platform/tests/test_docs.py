@@ -273,6 +273,36 @@ class AnchorsResolveTest(unittest.TestCase):
         self.assertEqual(problems, [], "\n" + "\n".join(problems))
 
 
+class DecisionsIndexTest(unittest.TestCase):
+    """The index of DECISIONS.md is written in the present tense, so it ages; the dated
+    narrative below it does not (CR-022). Its shape is checkable, its truth is not."""
+
+    def _text(self) -> str:
+        return (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+
+    def _index_entries(self) -> list[tuple[str, str]]:
+        text = self._text()
+        region = text.split("## Decision index", 1)[1].split("# The full narrative", 1)[0]
+        parts = re.split(r"^### ", region, flags=re.M)[1:]
+        return [(part.splitlines()[0], part) for part in parts]
+
+    def test_every_index_entry_declares_status_and_revisit_trigger(self):
+        entries = self._index_entries()
+        self.assertGreaterEqual(len(entries), 10, "the index lost its entries")
+        missing = sorted(
+            f"{title}: {field}" for title, body in entries
+            for field in ("**Status.**", "**Revisit when.**") if field not in body
+        )
+        self.assertEqual(missing, [], "index entries without a field:\n  " + "\n  ".join(missing))
+
+    def test_every_change_request_is_listed_in_the_cr_index(self):
+        text = self._text()
+        listed = set(re.findall(r"^- (CR-\d{3}) · ", text, re.M))
+        written = set(re.findall(r"^### (CR-\d{3}) · ", text, re.M))
+        self.assertEqual(sorted(written - listed), [], "CR blocks missing from the CR index")
+        self.assertEqual(sorted(listed - written), [], "CR index lines without a CR block")
+
+
 class NoTrackedJunkTest(unittest.TestCase):
     """A run log committed by mistake gets in nobody's way, and that is why it stays for years.
 

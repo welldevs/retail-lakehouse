@@ -17,6 +17,11 @@ and points to the full narrative, which was kept **intact**, with the date and t
 held true when it was written. A dated number doesn't rot: it was true on that day. What
 rots is a number presented as current state, and that's why it doesn't live here.
 
+Each entry also carries a **status** (what happened to it since) and **revisit when** (the
+trigger that would reopen it — only where one is written down elsewhere; otherwise the entry says
+so). Figures in the index are dated by the entry's own text; the live ones are on the generated
+pages. Changes after the freeze are listed in the [CR index](#cr-index) below.
+
 **Not every decision has a comfortable trade-off, and the ones that don't are the ones that matter most.**
 A "cost nothing" in this list is a sign that the analysis was shallow, not that the decision was
 good.
@@ -37,6 +42,8 @@ good.
 - **Trade-off.** Repeated code across the five. Accepted: clear repetition costs less than
   premature abstraction, and the payoff showed up in the Airflow image — zero dependency means
   the Source runs anywhere.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Source ↔ platform boundary"](ARCHITECTURE.md)
 
 ### Second and third sources: INE and Callejero
@@ -49,6 +56,8 @@ good.
   produced `ine_ambiguous_series_seed` — derived by script, with a target in the Makefile.
 - **Trade-off.** The Callejero is a **semiannual manual download**, and that breaks the
   automatic reproducibility of RAW. That's the reason `capture_id` exists.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Second source"](#second-source-ine-population) · [§ "Third source"](#third-source-ine-callejero)
 
 ### Snowflake gets a cut, not the whole Silver
@@ -57,11 +66,13 @@ good.
   second copy of the lakehouse.
 - **Reason.** Copying RAW to Snowflake just because Snowflake exists is the opposite of
   architecture.
-- **Evidence.** The cut ratio went from 3.85% to 46.9% between Phase 2 and Phase 6 **with no
-  rule changing** — it is a function of which sources fall within scope, and therefore is not a
+- **Evidence.** The cut ratio went from 3.85% (Phase 2) to 46.9% (Phase 6, 2026-09-01) and
+  66.3% (2026-10-30) **with no rule changing** — it is a function of which sources fall within scope, and therefore is not a
   property of the design.
 - **Trade-off.** Questions outside the cut require going back to the lakehouse. Accepted, and
   declared on the dashboard as *Out of scope*.
+- **Status.** Accepted; **opt-in since 2026-09-14**, when Postgres became the default destination (CR-006 → CR-007: the trial expired; CR-008: a new account). The cut principle holds for both engines.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Phase 2"](#phase-2-analytical-layer-on-snowflake)
 
 ### Orders are born as an EVENT LOG, not a snapshot
@@ -72,8 +83,12 @@ good.
 - **Evidence.** Three independent folds — window function, transactional, and streaming —
   agree order by order. Two folds disagreeing found two defects that no test
   caught.
-- **Trade-off.** The fold is expensive and reconstruction is O(n²) at the current volume — 55 min
-  for 206 thousand orders. Declared in [BACKLOG.md](BACKLOG.md) with the fix.
+- **Trade-off.** The fold is expensive. As written on 2026-09-01, rebuilding the projection was
+  O(n²) — 55 min for 206 thousand orders. Closed on 2026-10-30 by CR-017 (1 commit, ~22 s for
+  211,367 orders, with `--reset`); the cost that remains is the batched merge of a rebuild
+  *without* reset. See [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md), item 5.
+- **Status.** Accepted. The O(n²) cost in the trade-off was **closed by CR-017** (2026-10-30).
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Phase 3"](#phase-3-orders-as-events-fifth-source)
 
 ### Transactional outbox instead of dual write
@@ -86,6 +101,8 @@ good.
   both sides fall together.
 - **Trade-off.** Duplication **is possible** between the broker's ACK and marking the outbox,
   and the project **does not promise exactly-once**. Dedup lives in the consumer.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** Changes must be captured from tables **outside** the outbox design — the trigger for Debezium / Kafka Connect in [BACKLOG.md](BACKLOG.md).
 - → [§ "Phase 3, second half"](#phase-3-second-half-the-oltp-and-the-transactional-outbox)
 
 ### Kafka is transport, never the canonical source
@@ -95,6 +112,8 @@ good.
 - **Evidence.** Replay reproduces the 16 sha256; a sequence gap is refused; a duplicate is
   discarded.
 - **Trade-off.** Nobody here needs the latency that Kafka buys, and that is written down.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Phase 3, third half"](#phase-3-third-half-transport-replay-and-idempotent-consumption)
 
 ### Iceberg comes in for CONCURRENCY, not volume
@@ -108,6 +127,8 @@ good.
 - **Trade-off.** Half of the justification — *interop between engines* — stayed **asserted and
   not demonstrated** for four phases, because both writers were Python. Only Phase 7 paid down
   that debt.
+- **Status.** Accepted. The interop debt in the trade-off was paid in Phase 7.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Phase 3, fourth half"](#phase-3-fourth-half-the-concurrent-projection-in-iceberg)
 
 ### Calibrate demand against MAPA 2025 — benchmark, never ground truth
@@ -120,6 +141,8 @@ good.
 - **Trade-off.** MAPA measures **household consumption in volume**, not e-commerce cart in
   value. The conversion is a declared heuristic, and the benchmark calibrates volume; value is
   a consequence of the observed price.
+- **Status.** Accepted. Non-food stays uncalibrated (MAPA does not cover it).
+- **Revisit when.** For the non-food mix: INE EPF table 75006 would anchor it — see [BACKLOG.md](BACKLOG.md), "Non-food mix".
 - → [§ "Demand calibration"](#demand-calibration-against-mapa-2025-phase-4)
 
 ### Cohort only with an observed attribute
@@ -132,6 +155,8 @@ good.
   holders — because age had started to govern demand.
 - **Trade-off.** Neutral-index groups hide defects: a segment with no measured difference
   looks calibrated and simply wasn't tested.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Customer consumption profile"](#customer-consumption-profile-phase-5)
 
 ### The customer base is served population, not buyers
@@ -143,6 +168,8 @@ good.
   an allocation defect, which only a test that redoes the split from the source catches.
 - **Trade-off.** Simulation density looks like market penetration, and it's the number easiest
   to quote out of context across the whole dashboard. The label travels with every column.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 - → [§ "Real density of the customer base"](#real-density-of-the-customer-base-phase-6)
 
 ---
@@ -159,12 +186,15 @@ good.
   write back into the partition it reads.
 - **Evidence.** `make spike-spark-iceberg`, 18 questions, run **before** any line of this
   phase, with both outcomes declared beforehand. The volume trigger was **measured and did not
-  fire**: 37.9M basket pairs in ~1.5 s and ~2.4 GB on one node. And S7b runs the same input
+  fire**: 37.9M basket pairs in ~1.5 s and ~2.4 GB on one node (2026-09-01; the current capture
+  is on the generated [spark-evidence page](docs/spark-evidence/README.md)). And S7b runs the same input
   through the running sum in SQL: it diverges on 14 of 30 days and reaches a balance of −70.
 - **Trade-off.** One more JVM, one more image, and one more compose profile. Contained by
   construction: Spark is **optional** — `make silver` runs green on a tree where it never ran,
   and that is test, not promise. And `make spark-evidence` publishes the pure-Python time
   alongside it, which wins at this volume.
+- **Status.** Accepted; optional by construction.
+- **Revisit when.** The volume trigger fires — a partition DuckDB can't hold in memory; for a real cluster, a volume that doesn't fit on one node ([BACKLOG.md](BACKLOG.md)). `make spark-evidence` publishes the current measurement.
 
 ### Contradictory assumptions are a model defect, and can be corrected
 
@@ -180,6 +210,8 @@ good.
 - **Trade-off.** It becomes trivially easy to keep tweaking until the KPI pleases. Contained:
   `assert_order_premises_are_internally_coherent` checks the **derivation**, never the result —
   measured, swapping the threshold from 60 to 75 fails, even though it's a plausible value.
+- **Status.** Accepted, unchanged.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 
 ### RAW is sealed, not reproduced
 
@@ -192,6 +224,8 @@ good.
 - **Trade-off.** The seal covers the **data**, not the run: `run_id` and timestamps are left
   out on purpose, otherwise a byte-identical re-land would break the seal — and an alarm that
   fires with no cause trains reviewers to ignore it.
+- **Status.** Accepted. Re-sealing is a decision per published revision (CR-010); `freeze-check` tells growth from change since CR-020.
+- **Revisit when.** None declared. An absence of trigger is a gap in this entry, not a statement that the decision is permanent.
 
 ---
 
@@ -2646,7 +2680,8 @@ list, with problem, impact, status, and next step, is in
 [ARCHITECTURE.md § "Technical debt"](ARCHITECTURE.md).
 
 The most uncomfortable item is the one place in the project where **volume actually
-hurt**: rebuilding the projection is **O(n²)** — 414 commits and ~55 min for 206,523
+hurt** (*superseded: closed by CR-017 on 2026-10-30 — 1 commit, ~22 s; text below as
+written on 2026-09-01*): rebuilding the projection is **O(n²)** — 414 commits and ~55 min for 206,523
 orders, because every batch does an `upsert` against the whole table. In Phase 3, with
 6,400 orders, this took seconds and was invisible. The irony is worth writing down: Spark's
 justification says the volume trigger didn't fire, and it fired **here**, in the Python
@@ -2682,6 +2717,33 @@ market,"* *"it looks more professional,"* *"it's a best practice,"* *"companies 
 *"it might be useful in the future,"* *"it looks good on a résumé."*
 
 An idea with no CR goes to [BACKLOG.md](BACKLOG.md).
+
+### CR index
+
+One line per change request below, in order. A new CR block must be listed here (checked by test).
+
+- CR-001 · Chain `warehouse_load` after `mercadona_catalog_daily`
+- CR-002 · Translate the project to English (reading layer only)
+- CR-003 · Screenshot proof for four demonstrations that were only ever prose
+- CR-004 · Close the six required observability signals with what already exists
+- CR-005 · GitHub Actions CI for the offline half
+- CR-006 · Postgres as a second warehouse target, fallback to the Snowflake trial
+- CR-007 · Flip the default warehouse target to Postgres — the Snowflake trial expired
+- CR-008 · A new Snowflake account replaces the expired trial — and the bootstrap's escaping defect
+- CR-009 · Documentation and generator drift found by the 2026-10-29 review
+- CR-010 · Widen the price window to 2026-10-29 and re-seal the capture
+- CR-011 · Fix documentation that gave wrong results to whoever followed it
+- CR-012 · Rename what lied about what it does
+- CR-013 · One indicator catalog, outside the UI — groundwork for the LLM layer
+- CR-014 · English everywhere a reader looks
+- CR-015 · MinIO images that can still be pulled
+- CR-016 · The daily schedule never ran — and three silent defects found by running every DAG
+- CR-017 · Simulated, but shaped like a real online grocer — anchored on INE and MAPA
+- CR-018 · Reading every tab to the bottom — what the panel still said wrong
+- CR-019 · A separate screen for price evolution — how far, not how often
+- CR-020 · Copies off the machine, and a seal check that tells growth from change
+- CR-021 · A narrated walkthrough on the front page
+- CR-022 · Index entries that stopped being true, and a check that keeps them honest
 
 ### CR-001 · Chain `warehouse_load` after `mercadona_catalog_daily`
 
@@ -3882,3 +3944,45 @@ Loss             The video is dated: it shows the 2026-10-30 seal and will not f
 ```
 
 Decision logged on 2026-11-11.
+
+### CR-022 · Index entries that stopped being true, and a check that keeps them honest
+
+```
+Need             The 2026-11-23 second review of this file found, in the index (the part most
+                 read): (1) the Orders entry said the rebuild "is O(n²)" and "declared in
+                 BACKLOG.md" — CR-017 closed it and BACKLOG no longer lists it; (2) the
+                 Snowflake entry said nothing of CR-006/007/008, which made Postgres the
+                 default; (3) the Spark figures (37.9M pairs) were undated while the generated
+                 page now says 41.9M; (4) the debt section told the O(n²) story with no note
+                 that it was superseded; (5) no entry had a status or a revisit trigger, and
+                 the 21 CRs had no list.
+Evidence         DECISIONS.md lines for each item above, against ARCHITECTURE.md "Technical
+                 debt" item 5 (closed, CR-017), BACKLOG.md (item absent) and
+                 docs/spark-evidence/README.md (41,880,353 pairs).
+Insufficiency    The narrative sections are dated and stay true; the index is written in the
+                 present tense and does not. Nothing checked it, so it aged unnoticed.
+Component        DECISIONS.md (index, one superseded note, CR index, this block) and
+                 platform/tests/test_docs.py (DecisionsIndexTest). No code, data or generated
+                 page changes.
+Contracts        None.
+Regression       test_docs: links and anchors still resolve; the new test must fail on an
+                 index entry without Status/Revisit and on a CR missing from the CR index.
+Semantics        No field changes meaning. The Orders and Spark entries now carry the date their
+                 numbers were true; nothing in a dated narrative section was edited, apart from
+                 the one superseded marker.
+Provenance       Every status and revisit trigger repeats text already written in
+                 ARCHITECTURE.md or BACKLOG.md; where none exists the entry says "None
+                 declared" instead of inventing one.
+Reproducibility  Unaffected.
+Cost             Two bullets per index entry and one test of ~25 lines. The file does not
+                 grow by narrative.
+Proof            DecisionsIndexTest fails on the file as it was before this CR (no entry had
+                 Status or Revisit when; no CR index) and passes on this one.
+Loss             The index is no longer a four-line summary: it is six lines. The review's
+                 proposal to split the narrative into docs/experiments and docs/engineering
+                 was NOT adopted: ARCHITECTURE cites this file in ten places, the CR template
+                 lives here, and "history only here" is the rule three documentation
+                 revisions bought.
+```
+
+Decision logged on 2026-11-23.
