@@ -61,13 +61,13 @@ with colocadas as (
                    "subgroup_id":"INTEGER","demand_group":"VARCHAR","quantity":"INTEGER",
                    "unit_price":"VARCHAR"}]'
             )
-        ) as linha
+        ) as line_rec
     from {{ ref('silver_order_event') }}
     where event_type = 'order_placed'
 
 ),
 
-substituicoes as (
+substitutions as (
 
     select
         order_id,
@@ -82,7 +82,7 @@ substituicoes as (
 
 ),
 
-remocoes as (
+removals as (
 
     select
         order_id,
@@ -97,13 +97,13 @@ remocoes as (
 -- WHAT HAPPENED TO THE ORDER, to decide what happened to the line. Only two facts
 -- matter, and both come from a declared event: there was picking, and there was an end
 -- before it.
-marcos_do_pedido as (
+order_milestones as (
 
     select
         order_id,
-        max(case when event_type = 'order_picked' then 1 else 0 end)  as foi_separado,
+        max(case when event_type = 'order_picked' then 1 else 0 end)  as was_picked,
         max(case when event_type in ('order_cancelled', 'order_payment_failed')
-                 then 1 else 0 end)                                   as morreu_antes
+                 then 1 else 0 end)                                   as died_before
     from {{ ref('silver_order_event') }}
     group by order_id
 
@@ -113,29 +113,29 @@ select
     c.ingestion_date,
     c.wh,
     c.order_id,
-    c.linha.line_no                                        as line_no,
+    c.line_rec.line_no                                        as line_no,
     c.customer_id,
     c.placed_at,
 
     c.price_as_of,
     c.price_source,
 
-    c.linha.source_product_id                              as source_product_id,
-    c.linha.category_id                                    as category_id,
-    c.linha.subgroup_id                                    as subgroup_id,
+    c.line_rec.source_product_id                              as source_product_id,
+    c.line_rec.category_id                                    as category_id,
+    c.line_rec.subgroup_id                                    as subgroup_id,
     -- Stamped on the event by the Source, resolved by the platform against the versioned
     -- mapping. It comes from the event and not from a join with the catalog here, for the
     -- same reason as `unit_price`: what matters is the group that applied AT THE TIME OF THE
     -- ORDER, not what the mapping would say today.
-    c.linha.demand_group                                   as demand_group,
-    c.linha.quantity                                       as quantity,
-    cast(c.linha.unit_price as decimal(10, 2))             as unit_price,
+    c.line_rec.demand_group                                   as demand_group,
+    c.line_rec.quantity                                       as quantity,
+    cast(c.line_rec.unit_price as decimal(10, 2))             as unit_price,
 
     case
         when r.line_no is not null       then 'removed'
         when s.line_no is not null       then 'substituted'
-        when m.foi_separado = 1          then 'fulfilled'
-        when m.morreu_antes = 1          then 'not_picked'
+        when m.was_picked = 1          then 'fulfilled'
+        when m.died_before = 1          then 'not_picked'
         else 'placed'
     end                                                    as line_status,
 
@@ -144,13 +144,13 @@ select
     case
         when r.line_no is not null then null
         when s.line_no is not null then s.substitute_source_product_id
-        when m.foi_separado = 1    then c.linha.source_product_id
+        when m.was_picked = 1    then c.line_rec.source_product_id
         else null
     end                                                    as fulfilled_source_product_id,
     case
         when r.line_no is not null then null
         when s.line_no is not null then s.substitute_unit_price
-        when m.foi_separado = 1    then cast(c.linha.unit_price as decimal(10, 2))
+        when m.was_picked = 1    then cast(c.line_rec.unit_price as decimal(10, 2))
         else null
     end                                                    as fulfilled_unit_price,
 
@@ -158,15 +158,15 @@ select
     -- sum closes with net_amount without any consumer-side filter.
     case
         when r.line_no is not null then cast(0 as decimal(12, 2))
-        when s.line_no is not null then cast(s.substitute_unit_price * c.linha.quantity as decimal(12, 2))
-        when m.foi_separado = 1    then cast(cast(c.linha.unit_price as decimal(10, 2)) * c.linha.quantity as decimal(12, 2))
+        when s.line_no is not null then cast(s.substitute_unit_price * c.line_rec.quantity as decimal(12, 2))
+        when m.was_picked = 1    then cast(cast(c.line_rec.unit_price as decimal(10, 2)) * c.line_rec.quantity as decimal(12, 2))
         -- A line of an order that was never picked contributes ZERO, for the same reason a
         -- removed line contributes zero: `line_amount` is what the line delivered, and it
         -- delivered nothing. The ordered value remains in `line_amount_placed`, next to it.
         else cast(0 as decimal(12, 2))
     end                                                    as line_amount,
 
-    cast(cast(c.linha.unit_price as decimal(10, 2)) * c.linha.quantity as decimal(12, 2))
+    cast(cast(c.line_rec.unit_price as decimal(10, 2)) * c.line_rec.quantity as decimal(12, 2))
                                                            as line_amount_placed,
 
     s.substituted_at,
@@ -174,6 +174,6 @@ select
     r.removal_reason
 
 from colocadas c
-left join substituicoes s on c.order_id = s.order_id and c.linha.line_no = s.line_no
-left join remocoes      r on c.order_id = r.order_id and c.linha.line_no = r.line_no
-join marcos_do_pedido   m on c.order_id = m.order_id
+left join substitutions s on c.order_id = s.order_id and c.line_rec.line_no = s.line_no
+left join removals      r on c.order_id = r.order_id and c.line_rec.line_no = r.line_no
+join order_milestones   m on c.order_id = m.order_id

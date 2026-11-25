@@ -17,21 +17,21 @@
 -- four days, but the model does not depend on that: what is required is that the transition be to the
 -- next band and forward in time. Two non-adjacent bands, or a customer who
 -- GETS YOUNGER over the window, are defects.
-with por_cliente as (
+with per_customer as (
 
     select
         customer_id,
         wh,
         buyer_age_band,
-        min(ingestion_date) as primeiro_dia,
-        max(ingestion_date) as ultimo_dia
+        min(ingestion_date) as first_day,
+        max(ingestion_date) as last_day
     from {{ ref('silver_order') }}
     where buyer_age_band is not null
     group by 1, 2, 3
 
 ),
 
-ordem as (
+banded as (
 
     select
         p.*,
@@ -40,21 +40,21 @@ ordem as (
             when '35_49' then 2
             when '50_64' then 3
             when 'GE65'  then 4
-        end as posicao
-    from por_cliente p
+        end as band_rank
+    from per_customer p
 
 ),
 
-extremos as (
+extremes as (
 
     select
         customer_id,
         wh,
-        count(*)                                            as faixas,
-        min(posicao)                                        as primeira,
-        max(posicao)                                        as ultima,
-        string_agg(buyer_age_band, ' | ' order by posicao)  as faixas_vistas
-    from ordem
+        count(*)                                            as bands,
+        min(band_rank)                                        as first_rank,
+        max(band_rank)                                        as last_rank,
+        string_agg(buyer_age_band, ' | ' order by band_rank)  as bands_seen
+    from banded
     group by 1, 2
 
 )
@@ -62,21 +62,21 @@ extremos as (
 select
     e.customer_id,
     e.wh,
-    e.faixas,
-    e.faixas_vistas,
-    inicial.ultimo_dia   as fim_da_faixa_mais_nova,
-    final.primeiro_dia   as inicio_da_faixa_mais_velha
-from extremos e
-join ordem inicial
-  on inicial.customer_id = e.customer_id and inicial.wh = e.wh
- and inicial.posicao = e.primeira
-join ordem final
-  on final.customer_id = e.customer_id and final.wh = e.wh
- and final.posicao = e.ultima
-where e.faixas > 1
+    e.bands,
+    e.bands_seen,
+    younger.last_day   as end_of_younger_band,
+    older.first_day   as start_of_older_band
+from extremes e
+join banded younger
+  on younger.customer_id = e.customer_id and younger.wh = e.wh
+ and younger.band_rank = e.first_rank
+join banded older
+  on older.customer_id = e.customer_id and older.wh = e.wh
+ and older.band_rank = e.last_rank
+where e.bands > 1
   and (
       -- a jump of more than one band: no birthday explains it
-      e.ultima - e.primeira > 1
+      e.last_rank - e.first_rank > 1
       -- or the older band starts BEFORE the younger one ends: the customer got younger
-      or final.primeiro_dia < inicial.ultimo_dia
+      or older.first_day < younger.last_day
   )

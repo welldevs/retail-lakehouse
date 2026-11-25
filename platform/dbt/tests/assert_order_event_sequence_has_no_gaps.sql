@@ -11,8 +11,8 @@
 select
     order_id,
     count(*)                as eventos,
-    min(sequence_no)        as menor,
-    max(sequence_no)        as maior,
+    min(sequence_no)        as lowest,
+    max(sequence_no)        as highest,
     count(distinct sequence_no) as distintos
 from {{ ref('silver_order_event') }}
 group by order_id

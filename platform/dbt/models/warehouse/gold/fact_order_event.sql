@@ -1,6 +1,6 @@
 -- THE LOG INSIDE THE WAREHOUSE — a transactional fact, one event per row.
 --
--- GRAIN: event_id. 44,456 rows. TYPE: synthetic (the event) — but the event_id is
+-- GRAIN: event_id. TYPE: synthetic (the event) — but the event_id is
 --       DETERMINISTIC, sha256(order_id|sequence_no), never uuid4: the Source has no
 --       clock or entropy, and re-running the same day produces the same ids.
 --

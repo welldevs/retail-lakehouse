@@ -26,82 +26,82 @@ with p as (
     select premise_key, cast(value as double) as v
     from {{ ref('order_premises') }}
 ),
-premissa as (
+premise as (
     select
-        max(case when premise_key = 'daily_order_rate'         then v end) as taxa_diaria,
-        max(case when premise_key = 'order_skip_rate'          then v end) as pulo,
+        max(case when premise_key = 'daily_order_rate'         then v end) as daily_rate,
+        max(case when premise_key = 'order_skip_rate'          then v end) as skip_rate,
         max(case when premise_key = 'cadence_weight_7d'        then v end) as c7,
         max(case when premise_key = 'cadence_weight_14d'       then v end) as c14,
         max(case when premise_key = 'cadence_weight_21d'       then v end) as c21,
         max(case when premise_key = 'cadence_weight_28d'       then v end) as c28,
-        sum(case when premise_key like 'order_weekday_weight_%' then v end) as dias_semana,
-        sum(case when premise_key like 'slot_lead_day_weight_%' then v end) as antecedencia,
-        max(case when premise_key = 'delivery_open_hour'       then v end) as abre,
-        max(case when premise_key = 'delivery_close_hour'      then v end) as fecha,
-        max(case when premise_key = 'slot_hours'               then v end) as janela,
-        max(case when premise_key = 'minutes_per_line_picked'  then v end) as por_linha,
-        max(case when premise_key = 'basket_lines_min'         then v end) as linhas_min,
-        max(case when premise_key = 'basket_lines_mode'        then v end) as linhas_moda,
-        max(case when premise_key = 'basket_lines_max'         then v end) as linhas_max,
-        max(case when premise_key = 'sla_minutes_picking'      then v end) as sla_separacao,
-        max(case when premise_key = 'sla_picking_percentile'   then v end) as sla_percentil
+        sum(case when premise_key like 'order_weekday_weight_%' then v end) as weekday_weights,
+        sum(case when premise_key like 'slot_lead_day_weight_%' then v end) as lead_day_weights,
+        max(case when premise_key = 'delivery_open_hour'       then v end) as opens,
+        max(case when premise_key = 'delivery_close_hour'      then v end) as closes,
+        max(case when premise_key = 'slot_hours'               then v end) as slot_len,
+        max(case when premise_key = 'minutes_per_line_picked'  then v end) as minutes_per_line,
+        max(case when premise_key = 'basket_lines_min'         then v end) as lines_min,
+        max(case when premise_key = 'basket_lines_mode'        then v end) as lines_mode,
+        max(case when premise_key = 'basket_lines_max'         then v end) as lines_max,
+        max(case when premise_key = 'sla_minutes_picking'      then v end) as sla_picking,
+        max(case when premise_key = 'sla_picking_percentile'   then v end) as sla_percentile
     from p
 ),
-derivado as (
+derived as (
     select
         *,
-        (c7 / 7 + c14 / 14 + c21 / 21 + c28 / 28) * (1 - pulo)          as taxa_da_cadencia,
-        c7 + c14 + c21 + c28                                              as cadencia_total,
-        por_linha * linhas_max                                            as separacao_teto,
-        por_linha * linhas_moda                                           as separacao_moda,
-        floor((linhas_max + 1)
-              - sqrt((1 - sla_percentil) * ((linhas_max + 1) - linhas_min)
-                                         * ((linhas_max + 1) - linhas_moda)))
-              * por_linha                                                 as sla_derivado
-    from premissa
+        (c7 / 7 + c14 / 14 + c21 / 21 + c28 / 28) * (1 - skip_rate)          as cadence_rate,
+        c7 + c14 + c21 + c28                                              as cadence_total,
+        minutes_per_line * lines_max                                            as picking_ceiling,
+        minutes_per_line * lines_mode                                           as picking_mode,
+        floor((lines_max + 1)
+              - sqrt((1 - sla_percentile) * ((lines_max + 1) - lines_min)
+                                         * ((lines_max + 1) - lines_mode)))
+              * minutes_per_line                                                 as sla_derived
+    from premise
 )
 select
-    'daily_order_rate' as premissa,
-    taxa_diaria        as declarado,
-    taxa_da_cadencia   as derivado,
-    'a cadencia declarada (sum(peso/dias) x (1 - order_skip_rate)) deve reproduzir a taxa '
-      || 'diaria em 2%' as regra
-from derivado
-where abs(taxa_da_cadencia - taxa_diaria) > 0.02 * taxa_diaria
+    'daily_order_rate' as premise,
+    daily_rate        as declared,
+    cadence_rate   as derived,
+    'the declared cadence (sum(weight/days) x (1 - order_skip_rate)) must reproduce the daily rate '
+      || 'within 2%' as reason
+from derived
+where abs(cadence_rate - daily_rate) > 0.02 * daily_rate
 union all
-select 'cadence_weight_*', cadencia_total, 1, 'os pesos de cadencia somam 1'
-from derivado where abs(cadencia_total - 1) > 1e-9
+select 'cadence_weight_*', cadence_total, 1, 'cadence weights sum to 1'
+from derived where abs(cadence_total - 1) > 1e-9
 union all
-select 'order_weekday_weight_*', dias_semana, 1, 'os pesos por dia da semana somam 1'
-from derivado where abs(dias_semana - 1) > 1e-9
+select 'order_weekday_weight_*', weekday_weights, 1, 'weekday weights sum to 1'
+from derived where abs(weekday_weights - 1) > 1e-9
 union all
-select 'slot_lead_day_weight_*', antecedencia, 1, 'os pesos de antecedencia somam 1'
-from derivado where abs(antecedencia - 1) > 1e-9
+select 'slot_lead_day_weight_*', lead_day_weights, 1, 'lead-day weights sum to 1'
+from derived where abs(lead_day_weights - 1) > 1e-9
 union all
-select 'delivery_close_hour', fecha, abre + janela,
-       'a janela de entrega cabe entre abertura e fechamento'
-from derivado where not (abre < fecha and abre + janela <= fecha)
-union all
-select
-    'sla_minutes_picking',
-    sla_separacao,
-    separacao_teto,
-    'limiar >= teto aritmetico (basket_lines_max x minutes_per_line_picked): inexercivel'
-from derivado
-where sla_separacao >= separacao_teto
+select 'delivery_close_hour', closes, opens + slot_len,
+       'the delivery slot fits between opening and closing'
+from derived where not (opens < closes and opens + slot_len <= closes)
 union all
 select
     'sla_minutes_picking',
-    sla_separacao,
-    sla_derivado,
-    'derivado de sla_picking_percentile sobre a triangular declarada da cesta'
-from derivado
-where sla_separacao <> sla_derivado
+    sla_picking,
+    picking_ceiling,
+    'threshold >= arithmetic ceiling (basket_lines_max x minutes_per_line_picked): unexercisable'
+from derived
+where sla_picking >= picking_ceiling
 union all
 select
     'sla_minutes_picking',
-    sla_separacao,
-    separacao_moda,
-    'limiar <= separacao modal (basket_lines_mode x minutes_per_line_picked): alerta constante'
-from derivado
-where sla_separacao <= separacao_moda
+    sla_picking,
+    sla_derived,
+    'derived from sla_picking_percentile over the declared triangular basket'
+from derived
+where sla_picking <> sla_derived
+union all
+select
+    'sla_minutes_picking',
+    sla_picking,
+    picking_mode,
+    'threshold <= modal picking time (basket_lines_mode x minutes_per_line_picked): constant alert'
+from derived
+where sla_picking <= picking_mode

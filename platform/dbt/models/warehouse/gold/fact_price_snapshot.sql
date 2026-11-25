@@ -1,6 +1,6 @@
 -- OBSERVED PRICE — and the PRESENCE OF THE ROW IS THE ASSORTMENT.
 --
--- GRAIN: (snapshot_date, wh, source_product_id). 60,384 rows.
+-- GRAIN: (snapshot_date, wh, source_product_id).
 -- TYPE: observed.
 --
 -- IT IS CALLED SNAPSHOT, NOT DAILY, and the difference is not stylistic. There are

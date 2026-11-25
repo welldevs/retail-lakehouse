@@ -27,33 +27,33 @@
 -- THE COMPARISON IS `>=`, NOT `=`: the ledger may see days the picking window does not (a
 -- series with no demand on a day still has a balance). Demanding equality would force
 -- discarding observed consumption to make two tables look symmetric.
-with pedidos as (
+with orders_window as (
 
-    select min(cast(picked_at as date)) as de, max(cast(picked_at as date)) as ate
+    select min(cast(picked_at as date)) as from_date, max(cast(picked_at as date)) as to_date
     from {{ ref('fact_order') }}
     where picked_at is not null
 
 ),
 
-estoque as (
+stock_window as (
 
-    select min(stock_date) as de, max(stock_date) as ate
+    select min(stock_date) as from_date, max(stock_date) as to_date
     from {{ ref('fact_stock_ledger') }}
 
 )
 
 select
-    p.de   as pedidos_de,
-    p.ate  as pedidos_ate,
-    e.de   as estoque_de,
-    e.ate  as estoque_ate,
+    p.from_date   as orders_from,
+    p.to_date  as orders_to,
+    e.from_date   as stock_from,
+    e.to_date  as stock_to,
     case
-        when e.ate < p.ate
-            then 'o ledger termina ANTES dos pedidos: estoque velho publicado sobre janela nova'
-        when e.de > p.de
-            then 'o ledger comeca DEPOIS dos pedidos: consumo do inicio da janela sem saldo'
-    end    as violacao
-from pedidos p
-cross join estoque e
-where e.ate < p.ate
-   or e.de  > p.de
+        when e.to_date < p.to_date
+            then 'the ledger ends BEFORE the orders: stale stock published over a new window'
+        when e.from_date > p.from_date
+            then 'the ledger starts AFTER the orders: consumption at the start of the window without a balance'
+    end    as reason
+from orders_window p
+cross join stock_window e
+where e.to_date < p.to_date
+   or e.from_date  > p.from_date

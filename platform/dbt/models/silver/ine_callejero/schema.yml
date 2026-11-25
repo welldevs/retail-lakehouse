@@ -74,7 +74,7 @@ models:
           Name of the nucleus/entity within the municipality: a historically annexed hamlet/village
           (e.g. Valencia has 16 named ones — BENIFARAIG, PINEDO, EL SALER...) or
           "*DISEMINADO*" for scattered population outside any nucleus. It is NOT an administrative
-          neighborhood (like Chamberi/Retiro in Madrid) — that concept belongs to each city's
+          neighborhood (like Chamberí/Retiro in Madrid) — that concept belongs to each city's
           council, not to the INE gazetteer, and it is not in any of this source's
           4 files. Measured: Madrid, Barcelona and Sevilla city are ONE single
           entity with no subdivision in UP (they only return the municipality's own name);
@@ -86,7 +86,7 @@ models:
   - name: silver_callejero_streets
     description: >
       INE streets (the Callejero VIAS file). GRAIN: (ingestion_date, street_code).
-      Validated against real addresses (Alcala/Madrid, Gran Via in 3 municipalities) — see
+      Validated against real addresses (Alcalá/Madrid, Gran Vía in 3 municipalities) — see
       the source's CONTRACT.md.
     columns:
       - name: ingestion_date
@@ -218,7 +218,7 @@ models:
       - name: postal_code
         description: >
           Postal code (CPOS in the official layout). The only one of the 4 Callejero datasets with a postal
-          code. Validated: always with the right province prefix in 305,361/305,408
+          code. Validated: always with the right province prefix in 304,905/304,952
           real rows (99.985%); the few exceptions occur only in Barcelona.
         tests: [not_null]
       - name: numbering_type

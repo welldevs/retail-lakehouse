@@ -22,11 +22,11 @@ select
     numbering_type,
     house_number,
     case
-        when numbering_type = '0'                       then 'numero em via sem numeracao'
-        when house_number < 1                           then 'numero menor que 1'
-        when numbering_type = '1' and house_number % 2 = 0 then 'par em via impar'
-        when numbering_type = '2' and house_number % 2 = 1 then 'impar em via par'
-    end                                                 as motivo
+        when numbering_type = '0'                       then 'number on a street without numbering'
+        when house_number < 1                           then 'number lower than 1'
+        when numbering_type = '1' and house_number % 2 = 0 then 'even number on an odd street'
+        when numbering_type = '2' and house_number % 2 = 1 then 'odd number on an even street'
+    end                                                 as reason
 from {{ ref('silver_customer') }}
 where house_number is not null
   and (

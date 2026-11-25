@@ -1,4 +1,4 @@
--- Category tree: level 1 (26) > level 2 (151), per partition.
+-- Category tree: level 1 > level 2, per partition.
 --
 -- Verified in the snapshots: the tree has EXACTLY two levels — no level-2 node carries
 -- children. That is why the flattening here is final, and not a simplification.

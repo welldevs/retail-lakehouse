@@ -2744,6 +2744,8 @@ One line per change request below, in order. A new CR block must be listed here 
 - CR-020 · Copies off the machine, and a seal check that tells growth from change
 - CR-021 · A narrated walkthrough on the front page
 - CR-022 · Index entries that stopped being true, and a check that keeps them honest
+- CR-023 · Silver stopped reading RAW: MinIO drops connections past ~29k objects
+- CR-024 · dbt descriptions that no longer matched the warehouse, and a table without a contract
 
 ### CR-001 · Chain `warehouse_load` after `mercadona_catalog_daily`
 
@@ -3986,3 +3988,84 @@ Loss             The index is no longer a four-line summary: it is six lines. Th
 ```
 
 Decision logged on 2026-11-23.
+
+### CR-023 · Silver stopped reading RAW: MinIO drops connections past ~29k objects
+
+```
+Need             `make silver` and the `silver` task of `mercadona_catalog_daily` fail on
+                 `silver_product_price` (365 pass, 1 error, 26 skipped). The failed run kept
+                 `trigger_warehouse_load` from firing, so MART has stopped at 2026-11-17.
+Evidence         2026-11-24: scheduled run 2026-11-23 failed in Airflow; `make silver`
+                 reproduced it on another object ("IO Error: Failure when receiving data from
+                 the peer ... HTTP HEAD"). Plain DuckDB over the same glob: November alone
+                 1,216 rows in 0.9 s, October 6,384 in 6.3 s, the full glob fails after ~25 s;
+                 threads=1 also fails; http_retries=10 reads 29,106 rows in 88 s.
+Insufficiency    The default of 3 HTTP retries does not survive the connection drops MinIO
+                 shows under a glob of this size. Cause of the drops NOT established (MinIO
+                 logs are empty): PROBABLE connection/volume limit, not confirmed.
+Component        platform/dbt/profiles.yml (dev target: http_retries, http_retry_wait_ms) and
+                 platform/tests/test_silver_gate.py (one regression test).
+Contracts        None. No model, column or Silver path changes.
+Regression       The test fails if either setting is removed from the dev target.
+Semantics        None. The read is idempotent: a retried request returns the same bytes.
+Provenance       Unchanged; same RAW, same SQL.
+Reproducibility  Silver stays deterministic given the same RAW (`make freeze-check`).
+Cost             `silver_product_price` takes ~90 s instead of failing. It will keep growing
+                 with every daily partition.
+Proof            `make silver` green end to end; `make platform-test`; then `warehouse` load
+                 and `make dashboard-check` showing the new snapshot dates.
+Loss             The retry hides the drops instead of explaining them. Reading by partition
+                 (or listing once) would scale better and is NOT done here; revisit if the
+                 model passes ~5 minutes or the retries stop being enough.
+```
+
+Decision logged on 2026-11-24.
+
+### CR-024 · dbt descriptions that no longer matched the warehouse, and a table without a contract
+
+```
+Need             A folder-by-folder review of platform/dbt found text that gave wrong answers
+                 to whoever relied on it, and one Silver table with no declared contract:
+                 (1) headers and descriptions in GOLD/MART and `schema.yml` quoted row counts
+                 the live warehouse contradicts (runs, order events, price rows, premises,
+                 categories); the INE street-map description gave 305,361/305,408 rows where
+                 Silver has 304,905/304,952; the Mercadona price-basis note said 105 rows;
+                 (2) `dbt_project.yml` named a Makefile target that does not exist
+                 (`warehouse-postgres-bootstrap`; it is `warehouse-bootstrap`); a Silver
+                 comment said "five Silver models" and cited an `ine/` folder that is
+                 `ine_population/` and `ine_callejero/`; the warehouse macros header counted
+                 four macros where there are seven; (3) `frozen_capture` is read by Silver
+                 and the seal check but had no entry in `models/silver/schema.yml`; (4) the
+                 singular tests named their failure-message column three ways (`violation`,
+                 `reason`, `rule`); (5) 13 seeds had no description.
+Evidence         Live Postgres (GOLD/MART) and Silver counts queried on 2026-11-25 against the
+                 text of each file; `grep` of every `assert_*` and `scripts/*.py` reference in
+                 the tests (all resolve); `make silver`, `make warehouse-refresh` and
+                 `make platform-test` green after the edits.
+Insufficiency    A count written into prose is true on the day it is written and false after
+                 the next load. Nothing checks it, so it drifted (change-control, section 6).
+Component        platform/dbt only: model and test comments, `schema.yml` descriptions, the
+                 `frozen_capture` entry and the singular tests' failure-message column.
+Contracts        None changed. Model names, column names, seeds and enum values are as they
+                 were. Seed CSVs are untouched: they are hashed byte for byte into the
+                 manifests and the seal. The only new declaration is `frozen_capture`
+                 (`source` and `partition_key` not null).
+Regression       `make silver` gains two tests (the `not_null` pair). No other test changes
+                 its verdict. The failure-message column of a singular test is now always
+                 `reason`; nothing outside dbt reads it.
+Semantics        No field changes meaning. Counts that were removed are not replaced by new
+                 ones; the one measurement kept (price-basis combinations) carries its date.
+Provenance       Unchanged. Narratives about the first capture window (2026-08-24 to
+                 2026-08-27) stay as dated history.
+Reproducibility  Unaffected: no SQL logic, seed or RAW input changed (`make freeze-check`).
+Cost             None at run time; one schema entry and two tests.
+Proof            `make silver`: 394 pass, 0 error. `make warehouse-refresh`: 205 pass, 0 error.
+                 `make platform-test`: 512 tests, OK.
+Loss             The prose no longer tells the reader how big a table is; they run the
+                 query. Narratives from the first capture window are still out of date and
+                 are NOT rewritten here. `stock_ledger_metadata` is read by
+                 `silver_stock_ledger.sql` but not declared in the dbt vars, and
+                 `stock_premises_seed` has no column types: both left for their own CR.
+```
+
+Decision logged on 2026-11-25.

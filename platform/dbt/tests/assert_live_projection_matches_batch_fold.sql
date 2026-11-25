@@ -24,22 +24,22 @@
 -- no picking", and both implementations must agree on that too.
 select
     b.order_id,
-    b.order_status              as status_lote,
-    v.order_status              as status_stream,
-    b.last_sequence_no          as seq_lote,
-    v.last_sequence_no          as seq_stream,
-    b.gross_amount_placed       as bruto_lote,
-    v.gross_amount_placed       as bruto_stream,
-    b.net_amount                as liquido_lote,
-    v.net_amount                as liquido_stream,
-    b.line_count_placed         as linhas_lote,
-    v.line_count_placed         as linhas_stream,
-    b.line_count_picked         as separadas_lote,
-    v.line_count_picked         as separadas_stream,
-    b.substituted_lines         as substituidas_lote,
-    v.substituted_lines         as substituidas_stream,
-    b.removed_lines             as removidas_lote,
-    v.removed_lines             as removidas_stream
+    b.order_status              as batch_status,
+    v.order_status              as stream_status,
+    b.last_sequence_no          as batch_seq,
+    v.last_sequence_no          as stream_seq,
+    b.gross_amount_placed       as batch_gross,
+    v.gross_amount_placed       as stream_gross,
+    b.net_amount                as batch_net,
+    v.net_amount                as stream_net,
+    b.line_count_placed         as batch_lines_placed,
+    v.line_count_placed         as stream_lines_placed,
+    b.line_count_picked         as batch_lines_picked,
+    v.line_count_picked         as stream_lines_picked,
+    b.substituted_lines         as batch_substituted,
+    v.substituted_lines         as stream_substituted,
+    b.removed_lines             as batch_removed,
+    v.removed_lines             as stream_removed
 from {{ ref('silver_order') }} b
 full outer join {{ ref('silver_live_order_state') }} v on b.order_id = v.order_id
 where b.order_id is null

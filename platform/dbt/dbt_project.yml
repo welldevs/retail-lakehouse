@@ -10,7 +10,7 @@ clean-targets: ["target", "dbt_packages"]
 # POSTGRES TARGET ONLY. `try_parse_json` is native to Snowflake; here the same call,
 # deliberately IDENTICAL in fact_order_event.sql on both engines, needs an equivalent
 # function that dbt itself creates before any model runs — not a manual step to remember
-# after `make warehouse-postgres-bootstrap`. See macros/warehouse_compat.sql.
+# after `make warehouse-bootstrap`. See macros/warehouse_compat.sql.
 on-run-start:
   - "{% if target.type == 'postgres' %}{{ create_try_parse_json_function() }}{% endif %}"
 

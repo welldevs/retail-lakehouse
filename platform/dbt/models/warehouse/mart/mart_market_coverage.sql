@@ -16,7 +16,7 @@
 -- real market penetration.
 {{ config(materialized = 'table') }}
 
-with clientes as (
+with customer_counts as (
 
     select
         wh,
@@ -88,7 +88,7 @@ from geografia g
 join {{ ref('dim_warehouse') }} w on w.wh = g.wh
 -- LEFT: a municipality with no customer MUST appear. It is the only way for the table to show
 -- what is missing instead of only what exists.
-left join clientes c
+left join customer_counts c
        on  c.wh                = g.wh
       and  c.province_code     = g.province_code
       and  c.municipality_code = g.municipality_code

@@ -18,14 +18,14 @@
 -- fails ALL 14 partitions at once, as if the model were broken.
 --
 -- Fails with one row per day/warehouse that exists on only one side.
-with precos as (
+with prices as (
 
     select distinct snapshot_date as ingestion_date, wh
     from {{ ref('fact_price_snapshot') }}
 
 ),
 
-execucoes as (
+runs as (
 
     select distinct ingestion_date, wh
     from {{ ref('fact_ingestion_run') }}
@@ -37,11 +37,11 @@ select
     coalesce(p.ingestion_date, e.ingestion_date)             as ingestion_date,
     coalesce(p.wh, e.wh)                                     as wh,
     case
-        when e.ingestion_date is null then 'preco sem execucao de ingestao'
-        else 'execucao valida sem nenhum preco'
+        when e.ingestion_date is null then 'price without an ingestion run'
+        else 'valid run without any price'
     end                                                      as problema
-from precos p
-full outer join execucoes e
+from prices p
+full outer join runs e
   on  e.ingestion_date = p.ingestion_date
  and  e.wh             = p.wh
 where p.ingestion_date is null or e.ingestion_date is null

@@ -10,9 +10,9 @@
 -- Terminal states (PAYMENT_FAILED, CANCELLED, DELIVERY_FAILED, RETURNED) do not appear as
 -- a starting state in any pair: by construction, any event after them fails.
 -- DELIVERED does appear, and only as the start of order_returned.
-with transicoes(estado_antes, tipo) as (
+with transitions(state_before, event_kind) as (
     values
-        ('INICIO',     'order_placed'),
+        ('START',     'order_placed'),
         ('PLACED',     'order_payment_authorized'),
         ('PLACED',     'order_payment_failed'),
         ('PLACED',     'order_cancelled'),
@@ -27,7 +27,7 @@ with transicoes(estado_antes, tipo) as (
         ('DELIVERED',  'order_returned')
 ),
 
-estados(tipo, estado_depois) as (
+states(event_kind, state_after) as (
     values
         ('order_placed',             'PLACED'),
         ('order_payment_authorized', 'CONFIRMED'),
@@ -43,21 +43,21 @@ estados(tipo, estado_depois) as (
         ('order_returned',           'RETURNED')
 ),
 
-encadeado as (
+chained as (
     select
         e.order_id,
         e.sequence_no,
         e.event_type,
         coalesce(
-            lag(s.estado_depois) over (partition by e.order_id order by e.sequence_no),
-            'INICIO'
-        ) as estado_antes
+            lag(s.state_after) over (partition by e.order_id order by e.sequence_no),
+            'START'
+        ) as state_before
     from {{ ref('silver_order_event') }} e
-    join estados s on e.event_type = s.tipo
+    join states s on e.event_type = s.event_kind
 )
 
-select c.order_id, c.sequence_no, c.estado_antes, c.event_type
-from encadeado c
-left join transicoes t
-       on c.estado_antes = t.estado_antes and c.event_type = t.tipo
-where t.tipo is null
+select c.order_id, c.sequence_no, c.state_before, c.event_type
+from chained c
+left join transitions t
+       on c.state_before = t.state_before and c.event_type = t.event_kind
+where t.event_kind is null

@@ -18,7 +18,7 @@
 -- row-generation syntaxes have no common denominator, so the branch is by `target.type`
 -- and not by avoiding-what-is-missing. The result (full_date, 2020-01-01 to 2030-12-31) is
 -- identical on both sides.
-with dias as (
+with calendar_days as (
 
     {% if target.type == 'postgres' %}
     select generate_series('2020-01-01'::date, '2030-12-31'::date, interval '1 day')::date
@@ -66,4 +66,4 @@ select
     {% endif %}
 
     cast(to_char(full_date, 'YYYY-MM') as varchar)         as year_month
-from dias
+from calendar_days

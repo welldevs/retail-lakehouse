@@ -1,7 +1,7 @@
 -- Street SEGMENTS (tramos) of the Callejero (TRAM file): the only one of INE's 4 geography
 -- sources that links, in a single record, census section + entity/nucleus + street OR
 -- pseudo-street + POSTAL CODE + numbering range. It is what makes it possible to assemble
--- Street+City+Postcode+Neighbourhood (nucleus, where it exists) in a single query, joining
+-- Street+City+Postcode+Neighborhood (nucleus, where it exists) in a single query, joining
 -- with the other 3 models of this source by code (there is no physical FK in the files,
 -- only the codes match).
 --
@@ -20,8 +20,8 @@
 -- confirmed in 304,905/304,952 rows — 47 exceptions, 0.015%, only in Barcelona) · [47:48]
 -- TINUM, numbering type (0=no numbering, 1=odd, 2=even) · [48:52]+[52:53] EIN+CEIN,
 -- lower bound of the range + duplicate qualifier · [53:57]+[57:58] ESN+CESN, upper bound
--- + qualifier · [61:69] reference date. Confirmed against the official INE/IDA-Padron
--- "Diseno de registro" (it names the "Tramero" fields in the same order observed in the
+-- + qualifier · [61:69] reference date. Confirmed against the official INE/IDA-Padrón
+-- "Diseño de registro" (it names the "Tramero" fields in the same order observed in the
 -- bytes) — see CONTRACT.md section 6 for the reference.
 --
 -- street_code/pseudo_address_code are rebuilt (province+municipality+id) for a direct JOIN

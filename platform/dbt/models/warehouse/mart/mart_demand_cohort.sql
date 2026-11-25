@@ -23,7 +23,7 @@
 -- across categories in MART_BASKET_DAILY. Lines, units and value are additive.
 {{ config(materialized = 'table') }}
 
-with linhas as (
+with order_lines as (
 
     select
         i.order_date,
@@ -48,7 +48,7 @@ por_coorte as (
         wh,
         buyer_age_band,
         count(*) as lines_in_band
-    from linhas
+    from order_lines
     group by 1, 2, 3
 
 )
@@ -75,7 +75,7 @@ select
     -- (day, warehouse), not the total: that is how the comparison across bands isolates
     -- propensity from cohort size.
     round({{ div0('count(*)', 'max(b.lines_in_band)') }}, 6) as share_within_band
-from linhas l
+from order_lines l
 join {{ ref('dim_date') }} d on d.date_key = l.date_key
 join por_coorte b
   on b.order_date = l.order_date

@@ -8,9 +8,9 @@
 -- INE in the download: 604-char line, code at [0:12] (province 2 + municipality 3 +
 -- suffix 7; suffix "0000000" is the AGGREGATE row for the whole municipality, the others
 -- are nuclei/entities within it), date at [15:23], MUNICIPALITY name at [94:314], name
--- of the POPULATION UNIT (the nucleus -- e.g. "*DISEMINADO*" for scattered population) at
+-- of the POPULATION UNIT (the nucleus — e.g. "*DISEMINADO*" for scattered population) at
 -- [459:529]. There are more repetitions of the same text at other widths (abbreviated
--- forms), not extracted here -- confirmed by comparing the real content, not assumed
+-- forms), not extracted here — confirmed by comparing the real content, not assumed
 -- from positional similarity.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_population_units.parquet',

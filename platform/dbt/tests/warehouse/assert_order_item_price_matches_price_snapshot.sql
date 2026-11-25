@@ -36,13 +36,13 @@ select
     i.price_as_of,
     i.fulfilled_source_product_id,
     i.unit_price_paid,
-    p.purchasable_unit_price                                as preco_no_catalogo,
-    p.unit_price                                            as preco_cru_da_fonte,
+    p.purchasable_unit_price                                as catalog_price,
+    p.unit_price                                            as source_raw_price,
     p.price_basis,
     case
-        when p.source_product_id is null then 'produto cumprido ausente do catalogo daquele armazem e dia'
-        else 'preco pago diverge do catalogo'
-    end                                                     as motivo
+        when p.source_product_id is null then 'fulfilled product missing from that warehouse and day catalog'
+        else 'price paid differs from the catalog'
+    end                                                     as reason
 from {{ ref('fact_order_item') }} i
 left join {{ ref('fact_price_snapshot') }} p
        on  p.snapshot_date      = i.price_as_of

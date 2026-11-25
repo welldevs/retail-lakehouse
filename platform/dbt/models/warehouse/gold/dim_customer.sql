@@ -13,7 +13,7 @@
 --   * GROWING THE BASE IS ADDITIVE. The generator consumes a single random.Random(seed) in
 --     fixed order and nothing before the loop depends on `count`, so the first N customers
 --     of a larger generation are byte for byte the same as before. Verified end to end:
---     200 -> 5,000 preserved the 200 (test_aumentar_count_e_aditivo_nao_reembaralha, and
+--     200 -> 5,000 preserved the 200 (test_increasing_count_is_additive_not_reshuffled, and
 --     the sha256s checked on the real data). Growing does NOT invalidate who already exists.
 --   * CHANGING THE DATE OR THE SEED IS NOT ADDITIVE. Another ingestion_date preserves the
 --     AGE and shifts birth_year — the same person, older. Another seed swaps the people

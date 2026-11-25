@@ -33,7 +33,7 @@
 -- the basket. Filling it with gross_amount_placed would claim a value nobody determined.
 {{ config(materialized = 'table') }}
 
-with pedidos as (
+with order_rows as (
 
     select * from {{ source('stage', 'STG_ORDER') }}
 
@@ -41,7 +41,7 @@ with pedidos as (
 
 -- The customer version in effect on the order date. Closed-open interval, the same as
 -- fact_price_snapshot: `valid_to` is the valid_from of the NEXT version, so `<` and not `<=`.
-cliente as (
+customer_ref as (
 
     select customer_sk, customer_id, valid_from, valid_to
     from {{ ref('dim_customer') }}
@@ -108,7 +108,7 @@ select
 
     -- ---- the commercial promise -------------------------------------------------
     -- Delivery window, not route: the Callejero has no coordinates or adjacency, so route time
-    -- would be invented. What is measured here is the fulfilment of a promise.
+    -- would be invented. What is measured here is the fulfillment of a promise.
     o.delivery_slot_start,
     o.delivery_slot_end,
     o.delivered_within_slot,
@@ -137,8 +137,8 @@ select
     o.price_source,
     o.event_count,
     o.last_sequence_no
-from pedidos o
-left join cliente c
+from order_rows o
+left join customer_ref c
   on  c.customer_id     = o.customer_id
  and  o.ingestion_date >= c.valid_from
  and  (c.valid_to is null or o.ingestion_date < c.valid_to)

@@ -57,7 +57,7 @@ models:
         tests: [not_null]
 
   - name: dim_category
-    description: "2-level tree, global. Grain: level-2 category (151)."
+    description: "2-level tree, global. Grain: level-2 category."
     columns:
       - name: category_sk
         tests: [not_null, unique]
@@ -297,7 +297,7 @@ models:
 
   - name: fact_order_item
     description: >
-      Grain (order_id, line_no) — 120,693 rows. Carries the ORDERED and the FULFILLED product
+      Grain (order_id, line_no). Carries the ORDERED and the FULFILLED product
       side by side, each resolved to the DIM_PRODUCT version in effect at price_as_of.
       unit_price_paid is a DEGENERATE MEASURE: price varies by warehouse and by day, so it could
       never be an attribute of a global product dimension.
@@ -327,7 +327,7 @@ models:
 
   - name: fact_order_event
     description: >
-      TRANSACTIONAL FACT, grain event_id — 44,456 rows. It keeps the events that do not fit
+      TRANSACTIONAL FACT, grain event_id. It keeps the events that do not fit
       in a milestone column because they occur N times per order: 4,670 substitutions and 2,321
       line removals. Two dates, and the difference is measured: date_key is the ORDER day
       (partition axis), event_date_key is the day the event OCCURRED — they diverge on

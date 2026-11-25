@@ -1,4 +1,4 @@
--- Cada warehouse precisa ter exatamente 1 municipio marcado como sede
+-- Each warehouse must have exactly 1 municipality flagged as home
 -- (is_home_municipality = true) — nem 0 nem 2+.
 select
     wh,

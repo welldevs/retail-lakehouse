@@ -7,8 +7,9 @@
 -- the generator consumed to produce the durations. If the warehouse kept that threshold in
 -- a dbt var, there would be two places where the premise lives — and the day someone edits
 -- the seed and not the var, the mart starts measuring against a threshold no order ever
--- knew, without failing anything. That stopped being hypothetical in Phase 7: the threshold dropped from 90 to 60. The `currency` var is the opposite case and that is why it stays a var:
--- Mercadona does not declare a currency in any field, so the premise has no other home.
+-- knew, without failing anything. That stopped being hypothetical in Phase 7: the threshold
+-- dropped from 90 to 60. The `currency` var is the opposite case and that is why it stays a
+-- var: Mercadona does not declare a currency in any field, so the premise has no other home.
 --
 -- IT DOES NOT BELONG IN simulated_orders/. That folder holds what is derived from the
 -- Source's RAW; this is an input declaration, and it does not depend on any partition

@@ -23,6 +23,13 @@ retail_lakehouse:
         s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'minioadmin') }}"
         s3_use_ssl: false
         s3_url_style: "path"
+        # `silver_product_price` globs every Mercadona catalog file in RAW (~29k objects,
+        # one HEAD + one GET each). Against MinIO, with the default of 3 retries, the build
+        # died with "Failure when receiving data from the peer" once the capture grew past
+        # that volume (CR-023). 10 retries with a 500 ms wait absorb the dropped
+        # connections; the read is idempotent, so retrying it cannot change a value.
+        http_retries: 10
+        http_retry_wait_ms: 500
 
     # SECOND TARGET, same project. The models/silver/ tree only exists when
     # target.type == 'duckdb' and models/warehouse/ only when in ('snowflake', 'postgres')

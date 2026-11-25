@@ -5,10 +5,10 @@
 -- to any query made the way the rest of the platform queries Silver — measured:
 -- `make query SQL="select * from warehouse_province_map"` gave "table does not exist"
 -- even with the seed loaded, because the table only existed LOCALLY, never in the
--- bucket. This model is just a "select *" of the seed, materialized like the other 5
+-- bucket. This model is just a "select *" of the seed, materialized like the other
 -- Silver models, so it is visible the same way they are.
 --
--- It does not belong in mercadona/ nor in ine/: it is a reference table (dimension),
+-- It does not belong in mercadona/ nor in ine_population/ or ine_callejero/: it is a reference table (dimension),
 -- orthogonal to both sources, so it sits directly under silver/ like raw_manifest.sql
 -- did before it became Mercadona-specific.
 {{ config(

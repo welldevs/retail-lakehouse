@@ -12,9 +12,9 @@
 --
 -- Fails when NO postal code crosses municipalities (that is, when the composite grain has lost its reason
 -- to exist and the test needs to be reassessed).
-with compartilhados as (
+with shared as (
 
-    select postal_code, count(distinct province_code || municipality_code) as municipios
+    select postal_code, count(distinct province_code || municipality_code) as municipalities
     from {{ ref('dim_geography') }}
     group by 1
     having count(distinct province_code || municipality_code) > 1
@@ -22,7 +22,7 @@ with compartilhados as (
 )
 
 select
-    'nenhum CEP cruza municipio: o grao composto de dim_geography perdeu a justificativa'
-        as motivo,
-    (select count(*) from compartilhados)  as ceps_compartilhados
-where (select count(*) from compartilhados) = 0
+    'no postal code crosses a municipality: the composite grain of dim_geography lost its justification'
+        as reason,
+    (select count(*) from shared)  as shared_postal_codes
+where (select count(*) from shared) = 0

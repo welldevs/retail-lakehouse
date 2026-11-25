@@ -23,9 +23,10 @@ sources:
     database: "{{ 'RETAIL' if target.type == 'snowflake' else target.database }}"
     schema: STAGE
     description: >
-      A 1:1 mirror of the Silver cut — 406,855 rows, 9.95% of Silver's 4,087,507.
-      No business rule: geographic scope filter, latest-ingestion filter and
-      grain deduplication, nothing else. Full refresh on every load.
+      A 1:1 mirror of the Silver cut (the cut/Silver ratio moves with the source scope,
+      not with pipeline changes). No business rule: geographic scope filter,
+      latest-ingestion filter and grain deduplication, nothing else. Full refresh on
+      every load.
     tables:
       - name: STG_PRODUCT_PRICE
         description: "Grain (ingestion_date, warehouse, source_product_id). The presence of the row IS the assortment."

@@ -36,15 +36,15 @@ with esperado as (
 select
     coalesce(m.order_date, e.order_date)                    as order_date,
     coalesce(m.wh, e.wh)                                    as wh,
-    e.orders_placed                                         as esperado_colocados,
-    m.orders_placed                                         as no_mart_colocados,
-    e.orders_delivered                                      as esperado_entregues,
-    m.orders_delivered                                      as no_mart_entregues,
+    e.orders_placed                                         as expected_placed,
+    m.orders_placed                                         as mart_placed,
+    e.orders_delivered                                      as expected_delivered,
+    m.orders_delivered                                      as mart_delivered,
     case
-        when m.wh is null then 'dia-armazem ausente do mart'
-        when e.wh is null then 'dia-armazem que o fato nao tem'
-        else 'contagem de etapa diverge'
-    end                                                     as motivo
+        when m.wh is null then 'day-warehouse missing from the mart'
+        when e.wh is null then 'day-warehouse the fact does not have'
+        else 'stage count differs'
+    end                                                     as reason
 from esperado e
 full outer join {{ ref('mart_order_funnel') }} m
              on m.order_date = e.order_date and m.wh = e.wh

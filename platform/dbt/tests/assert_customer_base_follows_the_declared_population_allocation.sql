@@ -28,7 +28,7 @@
 -- wrong denominator, wrong rate — are off by thousands, never by one.
 {{ config(severity = 'error') }}
 
-with premissa as (
+with premise as (
 
     select
         max(case when premise_key = 'min_customer_age' then cast(value as integer) end)
@@ -39,7 +39,7 @@ with premissa as (
 
 ),
 
-taxa as (
+rate as (
 
     select cast(value as double) as penetration_pct
     from {{ ref('demand_profile_seed') }}
@@ -68,7 +68,7 @@ municipal as (
 ),
 
 -- The WHOLE provincial pyramid. The two aggregate labels are excluded for the same reason as the
--- export: 'Total' and '85 y mas anos' overlap the 101 single ages and summing all 103
+-- export: 'Total' and '85 y más años' overlap the 101 single ages and summing all 103
 -- naively gives 2.03x the right value.
 piramide as (
 
@@ -104,12 +104,12 @@ share_adulto as (
         sum(case when pi.age >= pr.min_customer_age then pi.population_value else 0 end)
             / sum(pi.population_value) as adult_share
     from piramide pi
-    cross join premissa pr
+    cross join premise pr
     group by 1
 
 ),
 
-esperado as (
+expected as (
 
     select
         m.wh,
@@ -120,17 +120,17 @@ esperado as (
         -- the same way, and the export uses exactly this form so that both give the
         -- same integer without depending on a tie-breaking convention.
         cast(floor(m.population_total * sa.adult_share * t.penetration_pct / 100.0 + 0.5)
-             as bigint) as clientes_esperados
+             as bigint) as expected_customers
     from municipal m
     join {{ ref('warehouse_province_map') }} wp on wp.wh = m.wh
     join share_adulto sa on sa.province_name = wp.province_name
-    cross join taxa t
+    cross join rate t
 
 ),
 
 real as (
 
-    select wh, count(*) as clientes_reais
+    select wh, count(*) as actual_customers
     from {{ ref('silver_customer') }}
     where is_latest_ingestion
     group by 1
@@ -139,17 +139,17 @@ real as (
 
 select
     e.wh                                              as wh,
-    'ALOCACAO'                                        as verificacao,
+    'ALLOCATION'                                        as check_name,
     cast(e.population_total as bigint)                as population_total,
     round(e.adult_share * 100, 3)                     as adult_share_pct,
-    e.clientes_esperados                              as clientes_esperados,
-    r.clientes_reais                                  as clientes_reais,
-    r.clientes_reais - e.clientes_esperados           as diferenca
-from esperado e
+    e.expected_customers                              as expected_customers,
+    r.actual_customers                                  as actual_customers,
+    r.actual_customers - e.expected_customers           as difference
+from expected e
 full outer join real r on r.wh = e.wh
-where r.clientes_reais is null
-   or e.clientes_esperados is null
-   or abs(r.clientes_reais - e.clientes_esperados) > 1
+where r.actual_customers is null
+   or e.expected_customers is null
+   or abs(r.actual_customers - e.expected_customers) > 1
 
 union all
 
@@ -158,11 +158,11 @@ union all
 -- the premise no longer declares, and passing silently would be worse than failing.
 select
     'PREMISSA'                                        as wh,
-    'PONTEIRO_DA_TAXA'                                as verificacao,
+    'RATE_POINTER'                                as check_name,
     null                                              as population_total,
     null                                              as adult_share_pct,
-    null                                              as clientes_esperados,
-    null                                              as clientes_reais,
-    null                                              as diferenca
-from premissa
+    null                                              as expected_customers,
+    null                                              as actual_customers,
+    null                                              as difference
+from premise
 where penetration_source is distinct from 'demand_profile.channel_reference_pct'

@@ -1,10 +1,11 @@
 {#
-    FOUR SNOWFLAKE FUNCTIONS WITH NO SYNTAX EQUIVALENT IN POSTGRES, used DOZENS of times
-    in Gold and Mart: date_key (to_char + NUMBER), count_if, div0, datediff.
+    SNOWFLAKE FUNCTIONS WITH NO SYNTAX EQUIVALENT IN POSTGRES, used DOZENS of times in Gold
+    and Mart: date_key (to_char + NUMBER), count_if, div0, datediff, median, max_bool and
+    listagg — one macro each, below.
 
     Unlike the WINDOW in dim_customer.sql — where both engines accept the SAME syntax and
     one simply avoids the one missing in the other —, here there is no common syntactic
-    denominator. The alternative to these four macros would be a
+    denominator. The alternative to these macros would be a
     `{% if target.type == 'postgres' %}` at each of the ~40 call sites, repeating the same
     translation 40 times instead of once. The dbt SQL remains the portable asset
     (ARCHITECTURE.md:44) — only the TRANSLATION of Snowflake-only syntax lives in one place.

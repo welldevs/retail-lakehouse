@@ -7,7 +7,7 @@
 -- Putting them in a single file would make every order regeneration look like a stock
 -- policy change, and vice versa.
 --
--- WHAT IS SYNTHETIC HERE, AND WHAT IS NOT. The four rows are POLICY — how many days to
+-- WHAT IS SYNTHETIC HERE, AND WHAT IS NOT. The rows are POLICY — how many days to
 -- cover, when to replenish, up to where to replenish, how long the supplier takes. No
 -- source in this repository measures stock, and the `label` says `synthetic` on all of them.
 --

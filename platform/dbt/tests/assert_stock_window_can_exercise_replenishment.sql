@@ -20,7 +20,7 @@
 -- replenishment cycle closes in the 10-day window and the second does not. Lowering the cover until
 -- two cycles fit would be choosing a premise for what it does to the chart, and the window's ceiling
 -- is external — 2026-09-01 is as far as the observed catalog reaches.
-with cobertura as (
+with cover as (
 
     -- The LARGEST opening cover (CR-017 staggered it per series): even the best-covered
     -- series must be consumed inside the window.
@@ -30,22 +30,22 @@ with cobertura as (
 
 ),
 
-janela as (
+horizon as (
 
     select
-        count(distinct stock_date) as dias,
-        min(stock_date)            as de,
-        max(stock_date)            as ate
+        count(distinct stock_date) as days,
+        min(stock_date)            as first_date,
+        max(stock_date)            as last_date
     from {{ ref('silver_stock_ledger') }}
 
 )
 
 select
-    j.dias                        as dias_na_janela,
-    c.opening_days_of_demand      as dias_de_cobertura_inicial,
-    j.de,
-    j.ate,
-    'a janela nao consome o estoque inicial: ruptura fica zero por construcao' as violacao
-from janela j
-cross join cobertura c
-where j.dias <= c.opening_days_of_demand
+    j.days                        as days_in_window,
+    c.opening_days_of_demand      as opening_cover_days,
+    j.first_date,
+    j.last_date,
+    'the window does not consume the opening stock: stockout is zero by construction' as reason
+from horizon j
+cross join cover c
+where j.days <= c.opening_days_of_demand

@@ -1,6 +1,6 @@
 -- PRICE TRANSITION between EXISTING snapshots.
 --
--- GRAIN: (snapshot_date, previous_snapshot_date, wh, source_product_id). 43,204 rows.
+-- GRAIN: (snapshot_date, previous_snapshot_date, wh, source_product_id).
 -- TYPE: observed (derived by diff, but from observed data).
 --
 -- WHY IT EXISTS, and it is not for convenience. The source's `price_decreased` field is

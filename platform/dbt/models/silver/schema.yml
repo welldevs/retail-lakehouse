@@ -123,3 +123,15 @@ models:
                 values: [synthetic]
       - name: rationale
         tests: [not_null]
+
+  - name: frozen_capture
+    description: >
+      Pass-through of the frozen_capture_seed seed to object storage — same mechanism as
+      order_premises. GRAIN: (source, partition_key), one row per sealed RAW partition. It may
+      be EMPTY: zero rows means "not sealed yet", and assert_raw_matches_the_frozen_capture
+      treats that as nothing to guard. See frozen_capture_seed for how the seal is written.
+    columns:
+      - name: source
+        tests: [not_null]
+      - name: partition_key
+        tests: [not_null]

@@ -34,7 +34,7 @@ models:
         tests: [not_null]
 
   - name: silver_category
-    description: "Flattened category tree: level 1 (26) > level 2 (151), per partition."
+    description: "Flattened category tree: level 1 > level 2, per partition."
     columns:
       - name: ingestion_date
         tests: [not_null]
@@ -85,7 +85,8 @@ models:
         description: >
           How this row's price is formed, MEASURED at the source (CONTRACT.md 4.5):
           `bunch` = selling_method 1 with null unit_size, where
-          unit_price = reference_price * 99 and is NOT usable (105 rows);
+          unit_price = reference_price * 99 and is NOT usable (10 product x warehouse
+          combinations; measured on 2026-08-31, see silver_product_price.sql);
           `piece` = whole piece, unit_price = reference_price * unit_size, a legitimate price;
           `unit` = consumer package, the normal case.
         tests:

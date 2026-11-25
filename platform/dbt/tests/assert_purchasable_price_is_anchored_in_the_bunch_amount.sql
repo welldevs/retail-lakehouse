@@ -23,7 +23,7 @@
 --      the derivation's blast radius: it fixes 10 rows, and must not start rewriting
 --      the other 18,550 without anyone noticing. Without this half, a sign error in the CASE
 --      would get past the first.
-with bunch_desancorado as (
+with bunch_unanchored as (
 
     select
         warehouse,
@@ -34,8 +34,8 @@ with bunch_desancorado as (
         reference_price,
         min_bunch_amount,
         purchasable_unit_price,
-        (reference_price * min_bunch_amount)::decimal(10, 2) as esperado,
-        'bunch fora da ancora' as motivo
+        (reference_price * min_bunch_amount)::decimal(10, 2) as expected,
+        'bunch off the anchor' as reason
     from {{ ref('silver_product_price') }}
     where price_basis = 'bunch'
       and (
@@ -46,7 +46,7 @@ with bunch_desancorado as (
 
 ),
 
-nao_bunch_reescrito as (
+non_bunch_rewritten as (
 
     select
         warehouse,
@@ -57,14 +57,14 @@ nao_bunch_reescrito as (
         reference_price,
         min_bunch_amount,
         purchasable_unit_price,
-        unit_price as esperado,
-        'nao-bunch com preco reescrito' as motivo
+        unit_price as expected,
+        'non-bunch with a rewritten price' as reason
     from {{ ref('silver_product_price') }}
     where price_basis <> 'bunch'
       and purchasable_unit_price is distinct from unit_price
 
 )
 
-select * from bunch_desancorado
+select * from bunch_unanchored
 union all
-select * from nao_bunch_reescrito
+select * from non_bunch_rewritten

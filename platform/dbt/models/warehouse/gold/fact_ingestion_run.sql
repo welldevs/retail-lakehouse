@@ -1,4 +1,4 @@
--- 24 ROWS THAT KEEP A MART FROM LYING.
+-- ONE ROW PER RUN, AND THEY KEEP A MART FROM LYING.
 --
 -- GRAIN: (source_name, ingestion_date, wh). TYPE: observed (operational metadata).
 --

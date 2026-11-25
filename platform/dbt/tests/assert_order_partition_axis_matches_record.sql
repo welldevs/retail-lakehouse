@@ -6,7 +6,7 @@
 -- path's disappears. Without `partition_wh`, a partition landed under the wrong directory would be
 -- internally consistent and therefore invisible to every downstream test. The same defect
 -- the invalid Mercadona API `wh` produces, which is already recorded in ARCHITECTURE.md.
-select 'silver_order_event' as modelo, order_id as chave, wh, partition_wh
+select 'silver_order_event' as model, order_id as record_key, wh, partition_wh
 from {{ ref('silver_order_event') }}
 where partition_wh is distinct from wh
 

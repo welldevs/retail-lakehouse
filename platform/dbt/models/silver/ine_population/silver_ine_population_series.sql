@@ -70,7 +70,7 @@
     options = {'overwrite_or_ignore': 1}
 ) }}
 
-with provincias (province_name) as (
+with provinces (province_name) as (
 
     -- The 52 provinces of Spain (50 + Ceuta and Melilla), as they appear in "Nombre".
     -- Closed list, measured against the real payload of table_id=31304 — not a general
@@ -132,9 +132,9 @@ classified as (
         -- territory: matches the known province OR "Total Nacional", in any of the 3
         -- segments. coalesce takes the first one that matches.
         coalesce(
-            case when seg1 = 'Total Nacional' or seg1 in (select province_name from provincias) then seg1 end,
-            case when seg2 = 'Total Nacional' or seg2 in (select province_name from provincias) then seg2 end,
-            case when seg3 = 'Total Nacional' or seg3 in (select province_name from provincias) then seg3 end
+            case when seg1 = 'Total Nacional' or seg1 in (select province_name from provinces) then seg1 end,
+            case when seg2 = 'Total Nacional' or seg2 in (select province_name from provinces) then seg2 end,
+            case when seg3 = 'Total Nacional' or seg3 in (select province_name from provinces) then seg3 end
         ) as province_name,
 
         -- sex: matches one of the 3 fixed values, in any of the 3 segments.

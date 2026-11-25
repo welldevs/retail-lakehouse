@@ -1,5 +1,15 @@
 version: 2
 
+# LANGUAGE OF THE SEED FILES. Descriptions in this file are English, like the rest of the
+# project (CR-014). The `rationale`/`note`/`label` text INSIDE some CSVs is still Portuguese
+# (customer_premises, order_premises, demand_profile, demand_seasonality,
+# demand_category_mapping, demand_cohort_age/region, mapa_2025_benchmark/region), and a few
+# place names are accent-stripped Spanish. That is a declared exception, not an oversight:
+# the generators hash each seed byte for byte (`seed_sha256`, `demand_seeds_sha256`) into
+# every partition manifest and into the capture seal, so translating a single character
+# changes the hashes and forces regenerating customers and orders. A translation is a
+# change request of its own, with `make freeze` after it.
+
 seeds:
   - name: warehouse_province_map_seed
     description: >
@@ -67,7 +77,7 @@ seeds:
 
       What is NOT synthetic is the number they multiply: the average daily demand per
       series comes from consumption MEASURED in silver_order_line. The policy comes from here, the scale comes
-      from the data. See assert_stock_premises_are_internally_coherent, which crosses the four
+      from the data. See assert_stock_premises_are_internally_coherent, which crosses them
       against each other — reorder point above the lead time, target level above the point, and opening
       cover above the point.
     columns:
@@ -104,3 +114,84 @@ seeds:
         tests: [not_null]
       - name: content_sha256
         tests: [not_null]
+
+  - name: warehouse_service_area_seed
+    description: >
+      The municipalities of each warehouse's Functional Urban Area (INE), including the home
+      municipality itself (is_home_municipality = true). GRAIN: (wh, province_code,
+      municipality_code). Derived and cross-validated against the real Callejero by
+      scripts/derive_warehouse_service_area.py. Passed through to object storage by the model
+      warehouse_service_area.
+
+  - name: ine_ambiguous_series_seed
+    description: >
+      Official INE codes (province + municipality) of the population series whose NAME is
+      ambiguous across provinces (homonymous municipalities), obtained from the INE API by
+      scripts/derive_ambiguous_series.py. Used by silver_ine_population_by_municipality to
+      keep only the series that belongs to the municipality in scope.
+
+  - name: ine_ccaa_map_seed
+    description: >
+      Province to autonomous community (CCAA) map for the provinces in scope. Used to read
+      MAPA's regional figures against this platform's warehouses.
+
+  - name: ine_online_propensity_seed
+    description: >
+      Share of people who bought a physical short-lived product online, by age band and by
+      municipality size band (INE TIC-H, table 50116). Observed. The pointer to the table and
+      the exact label of each row travel in `ine_table`, `provenance` and `note`.
+
+  - name: customer_premises_seed
+    description: >
+      The DECLARED premises that govern who EXISTS as an account holder: minimum age, where
+      the penetration rate comes from, which population is its denominator and how the count
+      is split across warehouses. GRAIN: premise_key. `label` is 'synthetic' on every row.
+      Passed through to object storage by the model customer_premises.
+
+  - name: order_premises_seed
+    description: >
+      The DECLARED premises the order generator consumes: cadence, basket, exception rates,
+      durations between milestones and the picking SLA. GRAIN: premise_key. `label` is
+      'synthetic' on every row. Passed through to object storage by the model order_premises,
+      so the warehouse compares against the SAME threshold the generator used.
+
+  - name: demand_profile_seed
+    description: >
+      Parameters of the demand model (version, food share of the basket, channel reference
+      and others). GRAIN: param_key. `value` is varchar because the column mixes a version, a
+      rule name and numbers. Changing a value changes the orders generated behind the same ids.
+
+  - name: demand_seasonality_seed
+    description: >
+      Monthly seasonality factor of the demand model, one row per calendar month (1-12).
+      Declared, not measured: the source publishes the monthly charts as images, so the
+      values are not extractable. GRAIN: month.
+
+  - name: demand_category_mapping_seed
+    description: >
+      Map from the catalog category levels (l1, l2, l3) to a MAPA benchmark key (`mapa_key`);
+      `SIN_BENCHMARK` marks the categories the report has no share for. `rationale` explains
+      each mapping.
+
+  - name: mapa_2025_benchmark_seed
+    description: >
+      The MAPA 2025 household food consumption benchmark, one row per `mapa_key`: volume and
+      value shares, average price per kg or litre, year-on-year changes and the e-commerce
+      share. `informe_section`, `provenance` and `note` carry the traceability to the report.
+
+  - name: mapa_2025_region_seed
+    description: >
+      MAPA 2025 per-capita consumption by autonomous community (`ccaa_code`); `00` is the
+      national average, used as the denominator, not a region. GRAIN: ccaa_code.
+
+  - name: demand_cohort_age_seed
+    description: >
+      Population share and volume share by age band for each `mapa_key`, with the report pages
+      cited in `informe_page`. `provenance` says whether a row is read from the report or
+      derived from it.
+
+  - name: demand_cohort_region_seed
+    description: >
+      Population share and volume share by autonomous community for each `mapa_key`, with the
+      report pages cited in `informe_page`. `provenance` says whether a row is read from the
+      report or derived from it.

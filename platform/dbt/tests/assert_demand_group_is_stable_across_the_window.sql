@@ -27,8 +27,8 @@ select
     subgroup_id,
     count(distinct demand_group)                                  as grupos_distintos,
     string_agg(distinct demand_group, ' | ' order by demand_group) as grupos,
-    min(ingestion_date)                                           as primeiro_dia,
-    max(ingestion_date)                                           as ultimo_dia
+    min(ingestion_date)                                           as first_day,
+    max(ingestion_date)                                           as last_day
 from {{ ref('silver_order_line') }}
 where demand_group is not null
 group by 1, 2, 3

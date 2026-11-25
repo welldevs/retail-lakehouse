@@ -20,7 +20,7 @@
 -- THE LEAD TIME IS NOT A CONSTANT OF THIS FILE: it comes from `stock_premises`, which projects the seed the
 -- job read. Hard-coding 2 here would create a second copy, and the day the seed changed this test
 -- would start checking a loop no row went through.
-with prazo as (
+with lead_time as (
 
     select cast(value as integer) as supplier_lead_days
     from {{ ref('stock_premises') }}
@@ -28,9 +28,9 @@ with prazo as (
 
 ),
 
-janela as (
+horizon as (
 
-    select max(stock_date) as ultimo_dia from {{ ref('silver_stock_ledger') }}
+    select max(stock_date) as last_day from {{ ref('silver_stock_ledger') }}
 
 ),
 
@@ -41,13 +41,13 @@ ledger as (
 ),
 
 -- 1. orphan arrival: received without anything having been ordered on the right day
-chegada_sem_ordem as (
+arrival_without_order as (
 
     select
         c.wh, c.source_product_id, c.stock_date,
-        'chegada sem ordem que a explique ' || p.supplier_lead_days || ' dia(s) antes' as violacao
+        'arrival without an order that explains it ' || p.supplier_lead_days || ' day(s) earlier' as reason
     from ledger c
-    cross join prazo p
+    cross join lead_time p
     left join ledger o
            on o.wh = c.wh
           and o.source_product_id = c.source_product_id
@@ -63,36 +63,36 @@ eta_errada as (
 
     select
         l.wh, l.source_product_id, l.stock_date,
-        'reorder_eta <> stock_date + supplier_lead_days' as violacao
+        'reorder_eta <> stock_date + supplier_lead_days' as reason
     from ledger l
-    cross join prazo p
+    cross join lead_time p
     where l.reorder_units > 0
       and l.reorder_eta is distinct from l.stock_date + p.supplier_lead_days
 
 ),
 
 -- 3. an order that would fit in the window and never arrived
-ordem_perdida as (
+lost_order as (
 
     select
         o.wh, o.source_product_id, o.stock_date,
-        'ordem com chegada dentro da janela que nunca chegou' as violacao
+        'order with arrival inside the window that never arrived' as reason
     from ledger o
-    cross join prazo p
-    cross join janela j
+    cross join lead_time p
+    cross join horizon j
     left join ledger c
            on c.wh = o.wh
           and c.source_product_id = o.source_product_id
           and c.stock_date = o.reorder_eta
           and c.units_received = o.reorder_units
     where o.reorder_units > 0
-      and o.reorder_eta <= j.ultimo_dia
+      and o.reorder_eta <= j.last_day
       and c.wh is null
 
 )
 
-select * from chegada_sem_ordem
+select * from arrival_without_order
 union all
 select * from eta_errada
 union all
-select * from ordem_perdida
+select * from lost_order

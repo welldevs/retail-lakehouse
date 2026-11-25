@@ -1,7 +1,7 @@
 -- PSEUDO-STREETS of the Callejero (PSEU file): addressable points outside a conventional
--- street -- grouped mailboxes ("BUZON..."), car parks, named building complexes. It is
+-- street — grouped mailboxes ("BUZON..."), car parks, named building complexes. It is
 -- not an auxiliary of VIAS: they are their own identities and codes, with no 1:1
--- correspondence with any street -- which is why it becomes its own Silver model, not
+-- correspondence with any street — which is why it becomes its own Silver model, not
 -- just an extra column in silver_callejero_streets.
 --
 -- GRAIN: (ingestion_date, pseudo_address_code). The code (10 digits) is already unique
@@ -9,7 +9,7 @@
 --
 -- Measured layout (the source's CONTRACT.md, section 2): 127-char line, code at [0:10]
 -- (province 2 + municipality 3 + id 5), name at [10:63], date at [63:71], full name
--- at [77:127]. No street-type field -- pseudo-streets are not classified by type.
+-- at [77:127]. No street-type field — pseudo-streets are not classified by type.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_pseudo_addresses.parquet',
     options = {'overwrite_or_ignore': 1}

@@ -2,17 +2,17 @@
 -- decomposing the code, which the source concatenates without a separator.
 --
 -- GRAIN: (ingestion_date, section_code). section_code (10 digits) is already unique within
--- an ingestion_date -- it embeds province+municipality+district+section, so there is no
+-- an ingestion_date — it embeds province+municipality+district+section, so there is no
 -- collision between different provinces.
 --
--- SECC has no field other than the code -- measured against the 4 real files (the
+-- SECC has no field other than the code — measured against the 4 real files (the
 -- source's CONTRACT.md, section 2). Line width is 11 (10 digits + 1 trailing space), not
--- 10 -- the space is part of the line, not of the code.
+-- 10 — the space is part of the line, not of the code.
 --
 -- The file is fixed-width text in ISO-8859-1 (Latin-1) with CRLF, not JSON: each whole
 -- line is read as a single column (a delimiter that never appears in the data) and fields
 -- are extracted with substr(), the same technique silver_ine_population_series uses for
--- "Nombre" -- here applied to byte offsets, not to segments separated by ". ".
+-- "Nombre" — here applied to byte offsets, not to segments separated by ". ".
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_sections.parquet',
     options = {'overwrite_or_ignore': 1}

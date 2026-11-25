@@ -13,7 +13,7 @@
 --     or errors, and no type changed;
 --   * assert_gold_grains_are_unique — the grain stayed unique;
 --   * assert_order_funnel_totals_match_fact_order — a funnel is made of
---     `count_if(marco is not null)`, and "not null" stays exact when the instant is
+--     `count_if(milestone is not null)`, and "not null" stays exact when the instant is
 --     shifted 56 million years;
 --   * assert_fact_order_amount_equals_sum_of_items — money does not go through a timestamp.
 --
@@ -35,7 +35,7 @@
 -- makes the shift visible.
 --
 -- Fails with one row per implausible order.
-{% set marcos = [
+{% set milestones = [
     'confirmed_at', 'payment_failed_at', 'cancelled_at', 'picking_started_at',
     'picked_at', 'dispatched_at', 'delivered_at', 'delivery_failed_at', 'returned_at'
 ] %}
@@ -46,15 +46,15 @@ select
     placed_at,
     last_event_at,
     case
-        when cast(placed_at as date) <> order_date then 'colocacao fora do dia do pedido'
-        {% for marco in marcos %}
-        when {{ marco }} < placed_at then '{{ marco }} antes da colocacao'
-        when {{ datediff("'day'", "order_date", marco) }} > 7 then '{{ marco }} mais de 7 dias depois'
+        when cast(placed_at as date) <> order_date then 'placement outside the order day'
+        {% for milestone in milestones %}
+        when {{ milestone }} < placed_at then '{{ milestone }} before placement'
+        when {{ datediff("'day'", "order_date", milestone) }} > 7 then '{{ milestone }} more than 7 days later'
         {% endfor %}
-    end                                                     as motivo
+    end                                                     as reason
 from {{ ref('fact_order') }}
 where cast(placed_at as date) <> order_date
-   {% for marco in marcos %}
-   or {{ marco }} < placed_at
-   or {{ datediff("'day'", "order_date", marco) }} > 7
+   {% for milestone in milestones %}
+   or {{ milestone }} < placed_at
+   or {{ datediff("'day'", "order_date", milestone) }} > 7
    {% endfor %}

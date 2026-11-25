@@ -31,51 +31,51 @@
 -- THE TOLERANCE IS 1 PERCENTAGE POINT, and it is loose on purpose: with almost 200 thousand samples the
 -- sampling error is around 0.07 pp, so 1 pp only fires if the SHAPE changes. Tightening it
 -- further would turn a distribution test into a luck test.
-with premissa as (
+with premise as (
 
     select
         max(case when premise_key = 'basket_lines_min'        then cast(value as double) end) as a,
         max(case when premise_key = 'basket_lines_max'        then cast(value as double) end) + 1 as b,
         max(case when premise_key = 'basket_lines_mode'       then cast(value as double) end) as m,
-        max(case when premise_key = 'minutes_per_line_picked' then cast(value as double) end) as por_linha,
-        max(case when premise_key = 'sla_minutes_picking'     then cast(value as double) end) as limiar,
-        max(case when premise_key = 'sla_picking_percentile'  then cast(value as double) end) as percentil
+        max(case when premise_key = 'minutes_per_line_picked' then cast(value as double) end) as minutes_per_line,
+        max(case when premise_key = 'sla_minutes_picking'     then cast(value as double) end) as threshold,
+        max(case when premise_key = 'sla_picking_percentile'  then cast(value as double) end) as percentile
     from {{ ref('order_premises') }}
 
 ),
 
-teorico as (
+theoretical as (
 
     select
         *,
         -- cut in LINES: exceeding the threshold requires the first line above it
-        (limiar / por_linha) + 1                             as corte,
-        power(b - ((limiar / por_linha) + 1), 2)
-            / ((b - a) * (b - m))                            as p_estouro
-    from premissa
+        (threshold / minutes_per_line) + 1                             as cutoff,
+        power(b - ((threshold / minutes_per_line) + 1), 2)
+            / ((b - a) * (b - m))                            as breach_p
+    from premise
 
 ),
 
-observado as (
+observed as (
 
     select
-        count(*)                                                          as separados,
+        count(*)                                                          as picked,
         count(*) filter (
-            where date_diff('minute', picking_started_at, picked_at) > (select limiar from premissa)
-        )                                                                 as estouros
+            where date_diff('minute', picking_started_at, picked_at) > (select threshold from premise)
+        )                                                                 as breaches
     from {{ ref('silver_order') }}
     where picked_at is not null
 
 )
 
 select
-    o.separados,
-    o.estouros,
-    round(o.estouros::double / o.separados, 5) as taxa_observada,
-    round(t.p_estouro, 5)                      as taxa_teorica,
-    round(1 - t.percentil, 5)                  as taxa_declarada,
-    'a cesta observada nao segue a triangular declarada no seed' as violacao
-from observado o
-cross join teorico t
-where o.separados > 0
-  and abs(o.estouros::double / o.separados - t.p_estouro) > 0.01
+    o.picked,
+    o.breaches,
+    round(o.breaches::double / o.picked, 5) as observed_rate,
+    round(t.breach_p, 5)                      as theoretical_rate,
+    round(1 - t.percentile, 5)                  as declared_rate,
+    'the observed basket does not follow the triangular declared in the seed' as reason
+from observed o
+cross join theoretical t
+where o.picked > 0
+  and abs(o.breaches::double / o.picked - t.breach_p) > 0.01

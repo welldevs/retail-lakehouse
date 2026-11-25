@@ -25,14 +25,14 @@ select
     f.order_id,
     f.order_date,
     f.customer_id,
-    f.customer_ingestion_date                               as declarada_pela_source,
-    f.customer_version_from                                 as resolvida_pelo_scd2,
+    f.customer_ingestion_date                               as declared_by_source,
+    f.customer_version_from                                 as resolved_by_scd2,
     case
-        when f.customer_sk is null                              then 'sem versao'
-        when f.order_date < f.customer_version_from             then 'versao futura'
+        when f.customer_sk is null                              then 'no version'
+        when f.order_date < f.customer_version_from             then 'future version'
         when f.customer_ingestion_date <> f.customer_version_from
-                                                            then 'versao divergente'
-    end                                                     as motivo
+                                                            then 'divergent version'
+    end                                                     as reason
 from {{ ref('fact_order') }} f
 where f.customer_sk is null
    or f.order_date < f.customer_version_from

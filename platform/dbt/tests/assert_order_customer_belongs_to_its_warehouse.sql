@@ -13,8 +13,8 @@
 -- municipalities spelled differently by INE's two sources applies here too.
 select
     o.order_id,
-    o.wh          as warehouse_do_pedido,
-    c.wh          as warehouse_do_cliente,
+    o.wh          as order_warehouse,
+    c.wh          as customer_warehouse,
     o.customer_id
 from {{ ref('silver_order') }} o
 left join (

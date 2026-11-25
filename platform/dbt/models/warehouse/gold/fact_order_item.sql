@@ -1,6 +1,6 @@
 -- ORDER LINE — and `unit_price_paid` is a DEGENERATE MEASURE, not a dimension attribute.
 --
--- GRAIN: (order_id, line_no). 120,693 rows. TYPE: synthetic (the line) over observed
+-- GRAIN: (order_id, line_no). TYPE: synthetic (the line) over observed
 --       (product, price and catalog date, all copied from the real source).
 --
 -- WHY THE PRICE PAID IS A MEASURE AND NOT A DIM_PRODUCT ATTRIBUTE. Price varies by
@@ -28,7 +28,7 @@
 -- will forget.
 {{ config(materialized = 'table') }}
 
-with linhas as (
+with order_lines as (
 
     select * from {{ source('stage', 'STG_ORDER_LINE') }}
 
@@ -90,7 +90,7 @@ select
     l.substituted_at,
     l.removed_at,
     l.removal_reason
-from linhas l
+from order_lines l
 left join produto ped
   on  ped.source_product_id = l.source_product_id
  and  l.price_as_of        >= ped.valid_from

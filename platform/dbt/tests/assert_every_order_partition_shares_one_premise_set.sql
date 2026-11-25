@@ -23,7 +23,7 @@
 -- old, they agree with each other and this test passes. Comparing RAW against the repository's CURRENT
 -- seed requires recomputing the hash of the reference package, which is work outside
 -- dbt — and it is what `make freeze` seals.
-with particoes as (
+with partitions as (
 
     select distinct
         premises_sha256,
@@ -32,21 +32,21 @@ with particoes as (
 
 ),
 
-contagem as (
+counts as (
 
     select
-        count(distinct premises_sha256)  as conjuntos_de_premissa,
-        count(distinct generator_version) as versoes_do_gerador
-    from particoes
+        count(distinct premises_sha256)  as premise_sets,
+        count(distinct generator_version) as generator_versions
+    from partitions
 
 )
 
 select
-    c.conjuntos_de_premissa,
-    c.versoes_do_gerador,
-    (select string_agg(distinct premises_sha256, ' | ') from particoes) as premissas,
-    (select string_agg(distinct generator_version, ' | ') from particoes) as geradores,
-    'a janela mistura mais de um contrato: metade dela responde a outra politica' as violacao
-from contagem c
-where c.conjuntos_de_premissa <> 1
-   or c.versoes_do_gerador <> 1
+    c.premise_sets,
+    c.generator_versions,
+    (select string_agg(distinct premises_sha256, ' | ') from partitions) as premises,
+    (select string_agg(distinct generator_version, ' | ') from partitions) as generators,
+    'the window mixes more than one contract: half of it answers to another policy' as reason
+from counts c
+where c.premise_sets <> 1
+   or c.generator_versions <> 1

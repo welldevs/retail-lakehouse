@@ -39,7 +39,7 @@ with catalogo as (
 
 ),
 
-pedido as (
+order_lines as (
 
     select
         l.order_id,
@@ -61,20 +61,20 @@ select
     p.line_status,
     p.source_product_id,
     p.unit_price,
-    c.unit_price        as preco_no_catalogo,
-    c.source_unit_price as preco_cru_da_fonte,
+    c.unit_price        as catalog_price,
+    c.source_unit_price as source_raw_price,
     c.price_basis,
     p.fulfilled_source_product_id,
     p.fulfilled_unit_price,
-    f.unit_price   as preco_do_substituto_no_catalogo,
+    f.unit_price   as substitute_catalog_price,
     case
-        when c.source_product_id is null then 'produto pedido nao esta no catalogo deste (wh, data)'
-        when p.unit_price is distinct from c.unit_price then 'preco pago diverge do observado'
+        when c.source_product_id is null then 'ordered product is not in the catalog of this (wh, date)'
+        when p.unit_price is distinct from c.unit_price then 'price paid differs from the observed one'
         when p.fulfilled_source_product_id is not null and f.source_product_id is null
-            then 'produto entregue nao esta no catalogo deste (wh, data)'
-        else 'preco do produto entregue diverge do observado'
-    end as motivo
-from pedido p
+            then 'delivered product is not in the catalog of this (wh, date)'
+        else 'delivered product price differs from the observed one'
+    end as reason
+from order_lines p
 left join catalogo c
        on p.wh = c.wh and p.price_as_of = c.price_as_of
       and p.source_product_id = c.source_product_id

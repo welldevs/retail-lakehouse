@@ -19,13 +19,13 @@
 -- folds, and this test is what keeps it from coming back.
 --
 -- Fails with one row per order that does not close.
-with por_pedido as (
+with per_order as (
 
     select
         order_id,
-        count(*)                                            as linhas,
-        sum(line_amount_placed)                             as soma_colocada,
-        sum(line_amount)                                    as soma_entregue
+        count(*)                                            as line_rows,
+        sum(line_amount_placed)                             as placed_sum,
+        sum(line_amount)                                    as fulfilled_sum
     from {{ ref('fact_order_item') }}
     group by 1
 
@@ -35,23 +35,23 @@ select
     f.order_id,
     f.order_status,
     f.line_count_placed,
-    i.linhas                                                as linhas_no_fato_de_item,
+    i.line_rows                                                as lines_in_item_fact,
     f.gross_amount_placed,
-    i.soma_colocada,
+    i.placed_sum,
     f.net_amount,
-    i.soma_entregue,
+    i.fulfilled_sum,
     case
-        when i.order_id is null                             then 'pedido sem linhas'
-        when f.line_count_placed <> i.linhas                then 'contagem de linhas diverge'
-        when f.gross_amount_placed <> i.soma_colocada       then 'valor colocado diverge'
-        when f.net_amount is null and i.soma_entregue <> 0  then 'nunca separado mas com valor'
-        when f.net_amount is not null and f.net_amount <> i.soma_entregue
-                                                            then 'valor separado diverge'
-    end                                                     as motivo
+        when i.order_id is null                             then 'order without lines'
+        when f.line_count_placed <> i.line_rows                then 'line count differs'
+        when f.gross_amount_placed <> i.placed_sum       then 'placed amount differs'
+        when f.net_amount is null and i.fulfilled_sum <> 0  then 'never picked but has an amount'
+        when f.net_amount is not null and f.net_amount <> i.fulfilled_sum
+                                                            then 'picked amount differs'
+    end                                                     as reason
 from {{ ref('fact_order') }} f
-left join por_pedido i on i.order_id = f.order_id
+left join per_order i on i.order_id = f.order_id
 where i.order_id is null
-   or f.line_count_placed <> i.linhas
-   or f.gross_amount_placed <> i.soma_colocada
-   or (f.net_amount is null     and i.soma_entregue <> 0)
-   or (f.net_amount is not null and f.net_amount <> i.soma_entregue)
+   or f.line_count_placed <> i.line_rows
+   or f.gross_amount_placed <> i.placed_sum
+   or (f.net_amount is null     and i.fulfilled_sum <> 0)
+   or (f.net_amount is not null and f.net_amount <> i.fulfilled_sum)

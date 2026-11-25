@@ -7,8 +7,8 @@
 -- Measured layout (the source's CONTRACT.md, section 2): 132-char line, code at [0:10]
 -- (province 2 + municipality 3 + street id 5), short name at [10:38], date at [38:46],
 -- street type (CALLE/PLAZA/CMNO/PRAJE...) at [52:57], full name at [57:107], alternative
--- short name at [107:132]. Validated against real addresses: "Alcala" in municipality
--- 079 (Madrid), "Gran Via" in 3 different municipalities.
+-- short name at [107:132]. Validated against real addresses: "Alcalá" in municipality
+-- 079 (Madrid), "Gran Vía" in 3 different municipalities.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_callejero_streets.parquet',
     options = {'overwrite_or_ignore': 1}

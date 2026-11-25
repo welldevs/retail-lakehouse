@@ -21,7 +21,7 @@
 -- covers them is `freeze-check`. Widening this test to them would require a manifest model
 -- for each, which does not exist today — and creating four models for a risk that does not
 -- materialize would be building against a hypothesis.
-with selo as (
+with seal as (
 
     -- EXPLICIT CAST, not trust in inference. The seal is born EMPTY, and a parquet with no
     -- rows does not carry a reliable type between write and read: the first run
@@ -30,14 +30,14 @@ with selo as (
     -- here solves the read, and together they make the unsealed state behave like
     -- the sealed one, only without rows.
     select
-        replace(cast(partition_key as varchar), 'ingestion_date=', '')  as chave,
+        replace(cast(partition_key as varchar), 'ingestion_date=', '')  as partition_ref,
         cast(records as bigint)                                         as records
     from {{ ref('frozen_capture') }}
     where cast(source as varchar) = 'simulated_orders'
 
 ),
 
-vivo as (
+live as (
 
     -- `declared_event_rows`, AND NOT THE SUM OF THE THREE COUNTS. The first version of this test
     -- summed orders + lines + events and failed on all 36 partitions — not from a defect, from
@@ -49,7 +49,7 @@ vivo as (
     -- stops holding — and failing is the right behavior, because the seal would be measuring something
     -- else.
     select
-        strftime(ingestion_date, '%Y-%m-%d') || '/wh=' || partition_wh  as chave,
+        strftime(ingestion_date, '%Y-%m-%d') || '/wh=' || partition_wh  as partition_ref,
         declared_event_rows                                             as records
     from {{ ref('silver_orders_manifest') }}
 
@@ -57,15 +57,15 @@ vivo as (
 
 -- Empty seal: nothing to guard yet.
 select
-    coalesce(s.chave, v.chave)                    as chave,
-    s.records                                     as registros_selados,
-    v.records                                     as registros_no_silver,
+    coalesce(s.partition_ref, v.partition_ref)                    as partition_ref,
+    s.records                                     as sealed_records,
+    v.records                                     as silver_records,
     case
-        when s.chave is null then 'particao NOVA, aterrissada depois do selo'
-        when v.chave is null then 'particao SELADA que sumiu do Silver'
-        else 'contagem declarada MUDOU dentro de uma particao selada'
-    end                                           as violacao
-from selo s
-full outer join vivo v on v.chave = s.chave
-where (select count(*) from selo) > 0
-  and (s.chave is null or v.chave is null or s.records <> v.records)
+        when s.partition_ref is null then 'NEW partition, landed after the seal'
+        when v.partition_ref is null then 'SEALED partition that vanished from Silver'
+        else 'declared count CHANGED inside a sealed partition'
+    end                                           as reason
+from seal s
+full outer join live v on v.partition_ref = s.partition_ref
+where (select count(*) from seal) > 0
+  and (s.partition_ref is null or v.partition_ref is null or s.records <> v.records)

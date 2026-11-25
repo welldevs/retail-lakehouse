@@ -6,7 +6,7 @@
 -- and silently inflates every downstream sum.
 --
 -- Fails with one row per repeated key, saying in which model.
-{% set graos = [
+{% set grains = [
     ('fact_price_snapshot',      ['snapshot_date', 'wh', 'source_product_id']),
     ('fact_price_change',        ['snapshot_date', 'previous_snapshot_date', 'wh', 'source_product_id']),
     ('fact_ingestion_run',       ['source_name', 'ingestion_date', 'wh']),
@@ -27,13 +27,13 @@
     ('mart_basket_daily',        ['order_date', 'wh', 'category_id']),
 ] %}
 
-{% for modelo, colunas in graos %}
+{% for model, columns in grains %}
 select
-    '{{ modelo }}'                          as modelo,
-    '{{ colunas | join(", ") }}'            as grao,
-    count(*)                                as linhas_na_chave
-from {{ ref(modelo) }}
-group by {{ colunas | join(', ') }}
+    '{{ model }}'                          as model,
+    '{{ columns | join(", ") }}'            as grao,
+    count(*)                                as rows_per_key
+from {{ ref(model) }}
+group by {{ columns | join(', ') }}
 having count(*) > 1
 {% if not loop.last %}union all{% endif %}
 {% endfor %}

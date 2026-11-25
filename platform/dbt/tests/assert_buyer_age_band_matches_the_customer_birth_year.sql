@@ -19,7 +19,7 @@
 -- `birth_year` was built in the OLTP Source (`reference_year - age`) and the same the
 -- generator uses. Comparing with the full date here would produce a second definition of age and
 -- this test would fail by convention, not by defect.
-with pedido as (
+with order_rows as (
 
     select
         o.order_id,
@@ -28,7 +28,7 @@ with pedido as (
         o.customer_id,
         o.customer_ingestion_date,
         o.buyer_age_band,
-        year(o.ingestion_date) - c.birth_year as idade
+        year(o.ingestion_date) - c.birth_year as age
     from {{ ref('silver_order') }} o
     join {{ ref('silver_customer') }} c
       on c.customer_id = o.customer_id
@@ -41,18 +41,18 @@ select
     wh,
     ingestion_date,
     customer_id,
-    idade,
+    age,
     buyer_age_band,
     case
-        when idade <= 34 then 'LT35'
-        when idade <= 49 then '35_49'
-        when idade <= 64 then '50_64'
+        when age <= 34 then 'LT35'
+        when age <= 49 then '35_49'
+        when age <= 64 then '50_64'
         else 'GE65'
-    end as faixa_esperada
-from pedido
+    end as expected_band
+from order_rows
 where buyer_age_band is distinct from case
-        when idade <= 34 then 'LT35'
-        when idade <= 49 then '35_49'
-        when idade <= 64 then '50_64'
+        when age <= 34 then 'LT35'
+        when age <= 49 then '35_49'
+        when age <= 64 then '50_64'
         else 'GE65'
     end

@@ -15,11 +15,11 @@
 -- Measured on the 2026-08-24 to 08-27 window: 4,670 substituted lines and 2,321 removed out of
 -- 120,693, and 5,166 orders with a picked value different from the placed one.
 select
-    count(*)                                                        as pedidos_com_separacao,
+    count(*)                                                        as orders_picked,
     sum(case when substituted_lines > 0 or removed_lines > 0 then 1 else 0 end)
-                                                                    as pedidos_com_cesta_alterada,
+                                                                    as orders_with_changed_basket,
     sum(case when net_amount is distinct from gross_amount_placed then 1 else 0 end)
-                                                                    as pedidos_com_valor_diferente
+                                                                    as orders_with_different_amount
 from {{ ref('silver_order') }}
 where net_amount is not null
 having sum(case when substituted_lines > 0 or removed_lines > 0 then 1 else 0 end) = 0

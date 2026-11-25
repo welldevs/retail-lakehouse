@@ -386,3 +386,16 @@ class DailyCollectionDateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DevProfileHttpRetriesTest(unittest.TestCase):
+    """CR-023: the dev target must retry HTTP reads of RAW beyond DuckDB's default of 3."""
+
+    def test_dev_target_sets_http_retries(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "dbt", "profiles.yml")
+        text = open(path, encoding="utf-8").read()
+        dev = text.split("    # SECOND TARGET", 1)[0]
+        self.assertIn("settings:", dev)  # not vacuous: we are looking at the dev block
+        for key in ("http_retries", "http_retry_wait_ms"):
+            self.assertRegex(dev, rf"(?m)^\s+{key}:\s*\d+", key)
+

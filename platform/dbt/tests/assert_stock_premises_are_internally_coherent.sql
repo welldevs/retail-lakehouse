@@ -29,52 +29,52 @@ with p as (
 
 ),
 
-premissa as (
+premise as (
 
     select
-        max(case when premise_key = 'opening_days_min'       then v end) as inicial,
-        max(case when premise_key = 'opening_days_max'       then v end) as inicial_max,
-        max(case when premise_key = 'reorder_point_days'     then v end) as ponto,
-        max(case when premise_key = 'reorder_target_days'    then v end) as alvo,
-        max(case when premise_key = 'supplier_lead_days'     then v end) as prazo
+        max(case when premise_key = 'opening_days_min'       then v end) as opening_min,
+        max(case when premise_key = 'opening_days_max'       then v end) as opening_max,
+        max(case when premise_key = 'reorder_point_days'     then v end) as reorder_point,
+        max(case when premise_key = 'reorder_target_days'    then v end) as reorder_target,
+        max(case when premise_key = 'supplier_lead_days'     then v end) as lead_days
     from p
 
 )
 
 select
-    'reorder_point_days' as premissa,
-    ponto                as declarado,
-    prazo                as comparado,
-    'ponto de reposicao <= prazo do fornecedor: a ordem chega depois da ruptura, sempre' as regra
-from premissa
-where ponto <= prazo
+    'reorder_point_days' as premise,
+    reorder_point                as declared,
+    lead_days                as compared,
+    'reorder point <= supplier lead time: the order arrives after the stockout, always' as reason
+from premise
+where reorder_point <= lead_days
 
 union all
 
 select
     'reorder_target_days',
-    alvo,
-    ponto,
-    'nivel alvo <= ponto de reposicao: a ordem de compra nasce com quantidade <= 0'
-from premissa
-where alvo <= ponto
+    reorder_target,
+    reorder_point,
+    'target level <= reorder point: the purchase order is born with quantity <= 0'
+from premise
+where reorder_target <= reorder_point
 
 union all
 
 select
     'opening_days_min',
-    inicial,
-    ponto,
-    'estoque inicial <= ponto de reposicao: alguma serie comeca precisando repor'
-from premissa
-where inicial <= ponto
+    opening_min,
+    reorder_point,
+    'opening stock <= reorder point: some series starts already needing replenishment'
+from premise
+where opening_min <= reorder_point
 
 union all
 
 select
     'opening_days_max',
-    inicial_max,
-    alvo,
-    'cobertura inicial maxima acima do nivel alvo, ou abaixo da minima'
-from premissa
-where inicial_max > alvo or inicial_max < inicial
+    opening_max,
+    reorder_target,
+    'maximum opening cover above the target level, or below the minimum'
+from premise
+where opening_max > reorder_target or opening_max < opening_min

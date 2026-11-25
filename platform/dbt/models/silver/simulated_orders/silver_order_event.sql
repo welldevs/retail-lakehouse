@@ -32,7 +32,7 @@
 --
 -- This model assumes at least one landed file (read_json fails on an empty glob).
 -- When the source has not landed anything yet, `make silver` excludes it from the build via
--- `retail-platform has-data simulated_orders` — the same treatment as the other four.
+-- `retail-platform has-data simulated_orders` — the same treatment as the other sources.
 {{ config(
     location = 's3://retail-lakehouse/silver/silver_order_event.parquet',
     options = {'overwrite_or_ignore': 1}

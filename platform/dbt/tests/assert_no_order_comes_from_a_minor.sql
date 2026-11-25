@@ -35,7 +35,7 @@ select
     o.ingestion_date,
     o.customer_id,
     c.birth_year,
-    year(o.ingestion_date) - c.birth_year as idade_no_pedido,
+    year(o.ingestion_date) - c.birth_year as age_at_order,
     l.min_buyer_age
 from {{ ref('silver_order') }} o
 join {{ ref('silver_customer') }} c
@@ -55,7 +55,7 @@ select
     current_date                                        as ingestion_date,
     '-'                                                 as customer_id,
     null                                                as birth_year,
-    null                                                as idade_no_pedido,
+    null                                                as age_at_order,
     l.min_buyer_age
 from limite l
 where l.min_buyer_age < 18

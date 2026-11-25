@@ -12,7 +12,7 @@
 -- with warehouse/source_warehouse.
 --
 -- Fails with one row per divergence.
-select 'silver_customer' as modelo, ingestion_date, wh, partition_wh as caminho, count(*) as linhas
+select 'silver_customer' as model, ingestion_date, wh, partition_wh as path_wh, count(*) as row_count
 from {{ ref('silver_customer') }}
 where partition_wh is distinct from wh
 group by 1, 2, 3, 4

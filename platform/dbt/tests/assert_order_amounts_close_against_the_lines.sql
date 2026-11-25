@@ -11,18 +11,18 @@
 --
 -- `net_amount` is null for an order that never reached picking. Those stay out of the
 -- second test on purpose: null there means "there was no picking", not "zero".
-with das_linhas as (
+with line_totals as (
 
     select
         order_id,
         cast(sum(line_amount_placed) as decimal(14, 2)) as soma_colocada,
         cast(sum(line_amount) as decimal(14, 2))        as soma_efetiva,
-        count(*)                                        as linhas,
+        count(*)                                        as line_count,
         -- Counting the COMPLEMENT of 'removed' was equivalent while only three
         -- values existed. With `not_picked` in the vocabulary it no longer is: a line of a
         -- cancelled order was not removed and was not fulfilled either.
         sum(case when line_status in ('fulfilled', 'substituted') then 1 else 0 end)
-                                                        as linhas_cumpridas
+                                                        as fulfilled_lines
     from {{ ref('silver_order_line') }}
     group by order_id
 
@@ -35,12 +35,12 @@ select
     o.net_amount,
     l.soma_efetiva,
     o.line_count_placed,
-    l.linhas,
+    l.line_count,
     o.line_count_picked,
-    l.linhas_cumpridas
+    l.fulfilled_lines
 from {{ ref('silver_order') }} o
-join das_linhas l on o.order_id = l.order_id
+join line_totals l on o.order_id = l.order_id
 where o.gross_amount_placed is distinct from l.soma_colocada
-   or o.line_count_placed   is distinct from l.linhas
+   or o.line_count_placed   is distinct from l.line_count
    or (o.net_amount is not null and o.net_amount is distinct from l.soma_efetiva)
-   or (o.line_count_picked is not null and o.line_count_picked is distinct from l.linhas_cumpridas)
+   or (o.line_count_picked is not null and o.line_count_picked is distinct from l.fulfilled_lines)

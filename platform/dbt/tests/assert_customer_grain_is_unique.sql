@@ -10,7 +10,7 @@
 select
     ingestion_date,
     customer_id,
-    count(*) as linhas
+    count(*) as row_count
 from {{ ref('silver_customer') }}
 group by 1, 2
 having count(*) > 1

@@ -1,11 +1,11 @@
 -- THE CATEGORY TREE, flattened into two levels.
 --
--- GRAIN: one level-2 category (151). KEY: category_id.
+-- GRAIN: one level-2 category. KEY: category_id.
 -- TYPE: observed.
 --
--- GLOBAL, with no warehouse or date axis: measured that the tree has exactly 151
--- level-2 categories in EACH of the 4 warehouses, identical. Giving this dimension a `wh`
--- axis would create 604 rows to represent 151 things.
+-- GLOBAL, with no warehouse or date axis: measured that the tree has exactly the
+-- same level-2 categories in EACH of the 4 warehouses, identical. Giving this dimension a
+-- `wh` axis would multiply every row by 4 to represent the same things.
 --
 -- TWO LEVELS IS FINAL, not a simplification: verified in the snapshots that no level-2
 -- node carries children. And level 1 (26 categories) exists ONLY in this tree — the API

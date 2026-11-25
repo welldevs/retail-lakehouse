@@ -1,5 +1,5 @@
 -- POPULATION by MUNICIPALITY from INE (Tempus3, table_id 29005 — "Cifras oficiales del
--- padron por municipio"), projected with no interpretation beyond splitting
+-- padrón por municipio"), projected with no interpretation beyond splitting
 -- municipality/sex, which the source concatenates in "Nombre", and resolving the
 -- municipality CODE via the ine_municipality_codes_seed seed — table_id=29005 carries no
 -- code, only the full name (see the source's CONTRACT.md, section 2, and
@@ -35,7 +35,7 @@
 -- series from our province and the homonymous one from elsewhere. Fanout measured in 3
 -- municipalities:
 --
---     "Torrent. Total. Total habitantes. Personas. " -> DPOP21778 = 90.928 (46244)
+--     "Torrent. Total. Total habitantes. Personas. " -> DPOP21778 = 90,928 (46244)
 --     "Torrent. Total. Total habitantes. Personas. " -> DPOP7960  =    182 (17197, Girona)
 --
 -- The grain test (ingestion_date, series_code, year, fk_periodo) did not catch it, because

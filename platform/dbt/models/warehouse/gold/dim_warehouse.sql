@@ -27,7 +27,7 @@ with area as (
 
 ),
 
-cobertura as (
+coverage as (
 
     select wh, count(distinct postal_code) as postal_codes_served
     from {{ source('stage', 'STG_GEOGRAPHY') }}
@@ -63,5 +63,5 @@ select
     p.population_served
 from {{ source('stage', 'STG_WAREHOUSE') }} w
 left join area a       on a.wh = w.wh
-left join cobertura c  on c.wh = w.wh
+left join coverage c  on c.wh = w.wh
 left join populacao p  on p.wh = w.wh

@@ -28,7 +28,7 @@
 -- tolerance: it is the property that keeps Spark OPTIONAL. A fresh clone of the
 -- repository, where nobody pulled the Spark image, builds the whole Silver — the
 -- `silver_gate.py` gate removes from here what depends on a missing table, and
--- `test_O_SPARK_E_OPCIONAL_e_isto_e_o_que_prova` guards that.
+-- `test_SPARK_IS_OPTIONAL_and_this_is_what_proves_it` guards that.
 --
 -- `written_by` is PROVENANCE. In this table it is always 'spark', and it is still worth
 -- it: it is how a query finds out there is a third writer in the catalog, and the first

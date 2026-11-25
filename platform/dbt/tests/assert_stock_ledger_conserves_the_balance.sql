@@ -30,14 +30,14 @@ select
     closing_balance,
     case
         when closing_balance <> opening_balance + units_received - units_fulfilled
-            then 'conservacao: fechamento <> abertura + recebido - atendido'
+            then 'conservation: closing <> opening + received - fulfilled'
         when closing_balance < 0
-            then 'saldo negativo: a prateleira nao deve o que nao tem'
+            then 'negative balance: the shelf cannot owe what it does not have'
         when units_short > 0 and closing_balance > 0
-            then 'ruptura com saldo sobrando: o job deixou de atender o que podia'
+            then 'stockout with balance left over: the job failed to serve what it could'
         when units_fulfilled + units_short <> units_demanded
-            then 'demanda perdida: atendido + faltou <> pedido'
-    end as violacao
+            then 'lost demand: fulfilled + short <> demanded'
+    end as reason
 from {{ ref('silver_stock_ledger') }}
 where closing_balance <> opening_balance + units_received - units_fulfilled
    or closing_balance < 0
